@@ -97,6 +97,43 @@ test('出した指示: カードの詳細に、本文と時刻を新しい順に
   assert.match(text(page(aoba(), { tab: 'done', doneSel: '/ws/aoba#d19' })), /出した指示 .* 決定: 議題だけテキストで送る 反映済み/)
 })
 
+test('相談: カードの詳細に相談のメモへのリンクと、新しい返しから決まったことを 3 件まで出し、窓口が帳簿に入れたか・保留かを札で分ける', () => {
+  const m = aoba((v) => {
+    v.cockpit!.cards.find((x) => x.id === 'd21')!.from_returns = ['d21-1']
+    v.cockpit!.cards.find((x) => x.id === 'd21')!.held_returns = ['d21-3']
+    v.consults = [
+      { card: 'd21', path: '/ws/aoba/.orca/consult/d21.md', returns: [
+        { return_id: 'd21-1', decisions: [{ text: '入口は 1 つにする' }, { text: '古い決定' }] },
+        { return_id: 'd21-2', choice: 'draw', decisions: [{ text: '社内向けは別の図にする' }] },
+        { return_id: 'd21-3', decisions: [] }
+      ] },
+      { card: 'c4', path: '/ws/aoba/.orca/consult/c4.md', returns: [] }
+    ]
+  })
+  const d21 = page(m, { sel: '/ws/aoba#d21' })
+  const label = m.boards[0]!.v.cockpit!.cards.find((x) => x.id === 'd21')!.options!.find((o) => o.id === 'draw')!.label
+  assert.ok(text(d21).includes(`これまでに決まったこと 選んだ案: ${label} 未反映 社内向けは別の図にする 未反映 入口は 1 つにする 反映済み ファイル 相談のメモ`), text(d21))
+  assert.doesNotMatch(text(d21), /古い決定/)
+  assert.match(d21, /data-file="\/ws\/aoba\/\.orca\/consult\/d21\.md"/)
+  const c4 = text(page(m, { sel: '/ws/aoba#c4' }))
+  assert.match(c4, /相談のメモ/)
+  assert.doesNotMatch(c4, /これまでに決まったこと/)
+  assert.doesNotMatch(text(page(m, { sel: '/ws/aoba#r5' })), /相談のメモ/)
+})
+
+test('Codex 13-6: 表示の 14 日を過ぎた済んだカードも、タスクの詳細の出した指示から対応済みのタブで開ける', () => {
+  const m = aoba((v) => {
+    const d19 = v.cockpit!.cards.find((x) => x.id === 'd19')!
+    d19.tasks = ['t1']
+    d19.resolved_at = new Date(NOW - 20 * 86_400_000).toISOString()
+  })
+  assert.ok(!m.boards[0]!.d.closed.some((r) => r.card.id === 'd19'), '対応済みの一覧には出さない')
+  const side = page(m, { tab: 'whole', task: 't1' })
+  assert.match(side, /<button type="button" class="code" data-jump="\/ws\/aoba#d19">d19<\/button>/)
+  const done = page(m, { tab: 'done', doneSel: '/ws/aoba#d19' })
+  assert.match(text(done.slice(done.indexOf('aria-label="詳細"'))), /定例の資料は作らず、議題だけテキストで送る/)
+})
+
 test('対応済み: 確認の返答が無いまま閉じた見てに札を付け、詳細に返した答えと片付けた人を出す', () => {
   const m = aoba((v) => {
     v.cockpit!.cards.push({ id: 'v9', rev: 1, kind: 'review', state: 'done', title: '窓口が閉じた見て', resolved_at: '2026-11-21T09:30:00+09:00', closed_without_review: true })

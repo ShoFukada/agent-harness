@@ -92,6 +92,9 @@ test('案件の列は、止まっている・期限切れ・今日・話し中�
 test('担当と話すの知らせは、次に押す場所を名前で言う', () => {
   assert.equal(talkMessage({ opened: true, how: 'ワークスペース「aoba」', tab: 'AWS 構成案（担当）' }, true), 'ワークスペース「aoba」を前に出しました。チャットの「AWS 構成案（担当）」を開き、書き出しをコピーしたので、貼って話してください')
   assert.equal(talkMessage({ opened: true, how: '窓口の端末' }, false), '窓口の端末を開きました。話してください')
+  assert.equal(talkMessage({ opened: true, how: '相談のタブ' }, false), '相談のタブを開きました。話してください')
+  assert.equal(talkMessage({ opened: true, how: '窓口の端末', note: '相談のタブを開けませんでした（consult: 操縦席が見つからない）' }, false),
+    '相談のタブを開けませんでした（consult: 操縦席が見つからない）。窓口に回します。窓口の端末を開きました。話してください')
   assert.equal(talkMessage({ opened: false, how: '窓口の端末' }, true), '窓口の端末を開けませんでした。Orca で開き、書き出しをコピーしたので、貼って話してください')
   // 開けなかった理由があれば、何も起きなかったように見せず、理由を出す。
   assert.equal(talkMessage({ opened: false, how: '窓の版 3のチャット', reason: '担当「窓の版 3」のチャットの居場所の worktree（gone）が Orca にありません。片付けられたようです' }, true),
