@@ -162,7 +162,7 @@ test('Codex v3 4・5: 属性の値の中の > でタグを切らず、コピー�
 })
 
 test('追加 20: コピーは素の文字列とスレッドを押したその場で始め、書式の決まる宛先だけ clip-draft で上書きする', async () => {
-  const run = async (d: Parameters<typeof copyDraft>[0], o: { clip?: ClipResult | Error; write?: Error } = {}) => {
+  const run = async (d: Parameters<typeof copyDraft>[0], o: { clip?: ClipResult | Error; write?: Error; plainOnly?: boolean } = {}) => {
     const log: string[] = []
     const said: string[] = []
     const t = {
@@ -176,11 +176,11 @@ test('追加 20: コピーは素の文字列とスレッドを押したその場
     const done = copyDraft(d, t, async (text) => {
       log.push(`write ${text}`)
       if (o.write) throw o.write
-    }, (x) => said.push(x))
+    }, (x) => said.push(x), o.plainOnly)
     // await の前に、素の文字列の書き込みとスレッドを開くのが始まっている。
     const sync = [...log]
-    await done
-    return { sync, log, said }
+    const ret = await done
+    return { sync, log, said, ret }
   }
   const teams = await run({ to: 'a', via: 'Teams', text: '- **a**', href: 'https://teams.microsoft.com/l/1' })
   assert.deepEqual(teams.sync, ['write - **a**', 'open https://teams.microsoft.com/l/1'])
@@ -189,20 +189,22 @@ test('追加 20: コピーは素の文字列とスレッドを押したその場
   // 書式の決まらない宛先は clip-draft を呼ばない。
   const line = await run({ to: 'a', via: 'LINE', text: 't', href: 'https://line.me/x' })
   assert.deepEqual([line.sync, line.log, line.said], [['write t', 'open https://line.me/x'], ['write t', 'open https://line.me/x'], [copyMessage({ opened: true })]])
-  // clip-draft が失敗しても素の文字列は入っている。両方とも失敗したら、押し直しを促す。
-  const fallback = await run({ to: 'a', via: 'Slack', text: 't' }, { clip: new Error('pandoc が無い') })
-  assert.equal(fallback.said.at(-1), '本文を素の文字列でコピーしました。書式に直せませんでした: pandoc が無い')
-  const both = await run({ to: 'a', via: 'Slack', text: 't' }, { clip: { copied: false, reason: 'swift が無い' }, write: new Error('Document is not focused') })
-  assert.equal(both.said.at(-1), '本文をコピーできませんでした: swift が無い。もう一度押してください')
+  // clip-draft はクリップボードを空にしてから書くので、失敗したら中身を確かめられない。押し直しは素の文字列だけを入れ、スレッドは開き直さない。
+  const failed = await run({ to: 'a', via: 'Slack', text: 't', href: 'https://acme.slack.com/x' }, { clip: new Error('swift が無い') })
+  assert.equal(failed.ret, true)
+  assert.equal(failed.said.at(-1), '本文をSlackの書式に直せませんでした: swift が無い。クリップボードの中身を確かめられないので、もう一度押して素の文字列でコピーしてください')
+  const again = await run({ to: 'a', via: 'Slack', text: 't', href: 'https://acme.slack.com/x' }, { plainOnly: true })
+  assert.deepEqual([again.ret, again.log, again.said], [false, ['write t'], ['本文を素の文字列でコピーしました']])
+  const refused = await run({ to: 'a', via: 'LINE', text: 't' }, { write: new Error('Document is not focused') })
+  assert.deepEqual([refused.ret, refused.said], [false, ['本文をコピーできませんでした: Document is not focused。もう一度押してください']])
   // 素の文字列を断られても、書式つきで入れば成功として知らせる。
   const blocked = await run({ to: 'a', via: 'メール', text: '件名: x\n\n本文' }, { clip: { copied: true, subject: 'x' }, write: new Error('Document is not focused') })
   assert.equal(blocked.said.at(-1), '本文をメールの書式でコピーしました。件名は「x」です（本文からは外しました）')
 })
 
-test('追加 20: コピーの知らせは宛先の書式・素の文字列に戻した理由・メールの件名を添える', () => {
+test('追加 20: コピーの知らせは宛先の書式・メールの件名を添える', () => {
   assert.equal(copyMessage(undefined, { copied: true, format: 'teams' }), '本文をTeamsの書式でコピーしました')
-  assert.equal(copyMessage({ opened: false, reason: 'x' }, { copied: false, reason: 'pandoc が無い', format: 'teams' }),
-    '本文を素の文字列でコピーしましたが、スレッドを開けませんでした: x。書式に直せませんでした: pandoc が無い')
+  assert.equal(copyMessage({ opened: false, reason: 'x' }, { copied: true, format: 'slack' }), '本文をSlackの書式でコピーしましたが、スレッドを開けませんでした: x')
   assert.equal(copyMessage({ opened: true }, { copied: true, subject: '【ご確認】手順書', format: 'mail' }),
     `本文をメールの書式でコピーし、スレッドを開きました。送ったら「${SENT_LABEL}」を押してください。件名は「【ご確認】手順書」です（本文からは外しました）`)
 })

@@ -25,43 +25,50 @@ export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['uns
 
 const THEME_KEY = 'cockpit.theme'
 
-/** 帯の印（Orca で止まった worker）を開いた結果を、担当と話すと同じ知らせにする。 */
 const FORMAT_LABEL: Record<DraftFormat, string> = { slack: 'Slack', teams: 'Teams', mail: 'メール' }
 
 /**
- * 本文をコピーしたあとの知らせ。宛先の書式で入れたかと、メールの件名を添える。スレッドを開けたら、今あるボタンの名前で次の操作を案内する。
- * clip は宛先の書式で入れようとした結果（書式が決まらない宛先は無し）。
+ * 本文をコピーしたあとの知らせ。宛先の書式で入れたときはその書式とメールの件名を添える。スレッドを開けたら、今あるボタンの名前で次の操作を案内する。
+ * clip は宛先の書式で入れた結果（書式が決まらない宛先は無し）。
  */
 export function copyMessage(res?: OpenResult, clip?: ClipResult & { format: DraftFormat }): string {
-  const copied = !clip ? '本文をコピー' : clip.copied ? `本文を${FORMAT_LABEL[clip.format]}の書式でコピー` : '本文を素の文字列でコピー'
+  const copied = clip ? `本文を${FORMAT_LABEL[clip.format]}の書式でコピー` : '本文をコピー'
   const head = !res ? `${copied}しました` : res.opened ? `${copied}し、スレッドを開きました。送ったら「${SENT_LABEL}」を押してください`
     : `${copied}しましたが、スレッドを開けませんでした${res.reason ? `: ${res.reason}` : ''}`
-  const notes = [
-    clip && !clip.copied && `書式に直せませんでした${clip.reason ? `: ${clip.reason}` : ''}`,
-    clip?.subject !== undefined && `件名は「${clip.subject}」です（本文からは外しました）`
-  ].filter(Boolean)
-  return [head, ...notes].join('。')
+  return clip?.subject !== undefined ? `${head}。件名は「${clip.subject}」です（本文からは外しました）` : head
 }
 
 /**
  * 送る文面をコピーし、元のスレッドを開く。素の文字列とスレッドは呼んだその場で始める（ブラウザは操作の外のクリップボードへの書き込みを、
  * パネルは操作の外で外部のブラウザを開くのを断る）。書式の決まる宛先は、そのあと clip-draft が書式つきで上書きする。
- * 押すたびに素の文字列から入れるので、失敗しても押し直せば写せる。
+ * clip-draft はクリップボードを空にしてから書くので、失敗すると中身が残っているか分からない。そのときは true を返し、
+ * 次に押されたら plainOnly で素の文字列だけを（押した操作の中で）入れ直す。
  */
-export async function copyDraft(d: Draft | undefined, t: Pick<Transport, 'openUrl' | 'clip'>, write: (text: string) => Promise<void>, say: (text: string) => void): Promise<void> {
+export async function copyDraft(d: Draft | undefined, t: Pick<Transport, 'openUrl' | 'clip'>, write: (text: string) => Promise<void>, say: (text: string) => void, plainOnly = false): Promise<boolean> {
   const format = d && draftFormat(d)
   const plain = write(d?.text ?? '').then(() => undefined, (e: Error) => e)
+  if (plainOnly) {
+    const e = await plain
+    say(e ? `本文をコピーできませんでした: ${e.message}。もう一度押してください` : '本文を素の文字列でコピーしました')
+    return !!e
+  }
   const opening = d?.href ? t.openUrl(d.href).catch((e: Error): OpenResult => ({ opened: false, reason: e.message })) : undefined
   const plainError = await plain
-  let clip: (ClipResult & { format: DraftFormat }) | undefined
-  if (d && format) {
-    say(`本文を${FORMAT_LABEL[format]}の書式に直しています`)
-    clip = { ...(await t.clip(d.text, format).catch((e: Error): ClipResult => ({ copied: false, reason: e.message }))), format }
+  if (!d || !format) {
+    say(plainError ? `本文をコピーできませんでした: ${plainError.message}。もう一度押してください` : copyMessage(await opening))
+    return false
   }
-  if (plainError && !clip?.copied) return say(`本文をコピーできませんでした: ${clip?.reason ?? plainError.message}。もう一度押してください`)
-  say(copyMessage(await opening, clip))
+  say(`本文を${FORMAT_LABEL[format]}の書式に直しています`)
+  const clip = await t.clip(d.text, format).catch((e: Error): ClipResult => ({ copied: false, reason: e.message }))
+  if (!clip.copied) {
+    say(`本文を${FORMAT_LABEL[format]}の書式に直せませんでした${clip.reason ? `: ${clip.reason}` : ''}。クリップボードの中身を確かめられないので、もう一度押して素の文字列でコピーしてください`)
+    return true
+  }
+  say(copyMessage(await opening, { ...clip, format }))
+  return false
 }
 
+/** 帯の印（Orca で止まった worker）を開いた結果を、担当と話すと同じ知らせにする。 */
 const focusResult = (x: FocusResult, title: string): TalkResult =>
   x.focused ? { opened: true, how: x.how === '端末' || !x.how ? `${title}の端末` : x.how } : { opened: false, how: `${title}の端末`, reason: `「${title}」の端末も worktree も Orca にありません` }
 
@@ -203,7 +210,22 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
   }
 
-  const copy = (r: VRow) => copyDraft(r.card.draft, t, (text) => navigator.clipboard.writeText(text), toast)
+  /** clip-draft で書式つきに直している間は次のコピーを受けない（遅れて終わった前のカードの本文が、あとのカードの本文を上書きするため）。 */
+  let copying = false
+  /** clip-draft が失敗したカード。次に押されたら素の文字列だけを入れ直す。 */
+  const plainNext = new Set<string>()
+  async function copy(r: VRow): Promise<void> {
+    if (copying) return toast('前のコピーが終わるまで待ってから押してください')
+    copying = true
+    const k = keyOf(r)
+    try {
+      const retry = await copyDraft(r.card.draft, t, (text) => navigator.clipboard.writeText(text), toast, plainNext.has(k))
+      if (retry) plainNext.add(k)
+      else plainNext.delete(k)
+    } finally {
+      copying = false
+    }
+  }
 
   async function decide(r: VRow): Promise<void> {
     const k = keyOf(r)
