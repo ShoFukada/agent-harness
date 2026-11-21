@@ -66,13 +66,14 @@ class WorktreeSweepTest(unittest.TestCase):
         git(self.root, "init", "-q", "-b", "trunk")
         git(self.root, "config", "user.email", "t@example.com")
         git(self.root, "config", "user.name", "t")
-        self.commit(self.root, ".gitignore", ".env\nnode_modules/\n.DS_Store\n")
+        self.commit(self.root, ".gitignore", ".env\nnode_modules/\n.DS_Store\npostgres_data/\n")
         # default ブランチは origin/HEAD が指す trunk にする。
         git(self.root, "update-ref", "refs/remotes/origin/trunk", "HEAD")
         git(self.root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
         self.rows = [self.row(self.root, "trunk", main=True)]
         self.workers = []
         self.plugins = []
+        self.workers_doc = self.plugins_doc = None  # 渡すと一覧の代わりにそのまま返す
 
     def commit(self, cwd, name, body):
         with open(os.path.join(cwd, name), "w") as fh:
@@ -84,18 +85,23 @@ class WorktreeSweepTest(unittest.TestCase):
         return {"path": path, "branch": "refs/heads/" + branch, "repoId": repo, "repo": "repo", "isMainWorktree": main,
                 "workspaceKind": "git", "hostId": "local", "displayName": os.path.basename(path), "agents": list(agents),
                 "workspaceStatus": status, "lastActivityAt": int(time.time() * 1000) - idle * HOUR,
+                "createdAt": int(time.time() * 1000) - 48 * HOUR,
                 "worktreeId": "r1::" + path, "parentWorktreeId": None if main else "r1::" + self.root}
 
-    def worktree(self, name, **kw):
+    def worktree(self, name, finished=True, **kw):
+        """finished: その worktree を使った worker が終わった記録（dispatch）を Orca の一覧に置く。"""
         path = os.path.join(self.under, "repo", name)
         git(self.root, "worktree", "add", "-q", "-b", name, path)
         self.rows.append(self.row(path, name, **kw))
+        if finished:
+            self.workers.append({"state": "succeeded", "liveness": "unverifiable", "workspace": "r1::" + path})
         return path
 
     def run_sweep(self, *args, code=0):
-        for name, data in (("ps.json", {"worktrees": self.rows}), ("plugins.json", {"plugins": self.plugins}),
-                           ("workers.json", self.workers is not None and {"workers": self.workers, "scope": {"source": "all"}})):
-            if data:
+        for name, data in (("ps.json", {"worktrees": self.rows}), ("plugins.json", {"plugins": self.plugins} if self.plugins_doc is None else self.plugins_doc),
+                           ("workers.json", {"workers": self.workers, "scope": {"source": "all"}} if self.workers_doc is None
+                            and self.workers is not None else self.workers_doc)):
+            if data is not None:
                 with open(os.path.join(self.fake, name), "w") as fh:
                     json.dump(data, fh)
         env = dict(os.environ, PATH=self.bin + ":/usr/bin:/bin", ORCA_FAKE=self.fake, ORCA_CLI_COMMAND="orca",
@@ -119,8 +125,7 @@ class WorktreeSweepTest(unittest.TestCase):
         working = self.worktree("working", agents=[{"state": "working"}])
         kept = self.worktree("kept", status="completed")
         lead = self.worktree("lead")
-        self.workers = [{"state": "ready", "liveness": "live", "workspace": "r1::" + lead},
-                        {"state": "succeeded", "liveness": "exited", "workspace": "r1::" + merged}]
+        self.workers += [{"state": "ready", "liveness": "live", "workspace": "r1::" + lead}]
         chat = self.worktree("chat", agents=[{"state": "done", "address": "orca_session_id:x"}])
         stale = self.worktree("stale", idle=30)
         self.commit(stale, "b.txt", "b")
@@ -220,16 +225,94 @@ class WorktreeSweepTest(unittest.TestCase):
         open(os.path.join(copy, ".pytest_cache", "v", "lastfailed"), "w").close()
         os.makedirs(os.path.join(copy, "資料"))
         open(os.path.join(copy, "資料", ".DS_Store"), "w").close()
-        for name, body in ((".env", "A=1\n"), ("CLAUDE.local.md", "memo\n")):
-            with open(os.path.join(copy, name), "w") as fh:
-                fh.write(body)
+        with open(os.path.join(copy, ".env"), "w") as fh:
+            fh.write("A=1\n")
         out = self.run_sweep("--apply")
         self.assertEqual(self.kind(out, local), "判断が要る")
         self.assertIn("gitignore されたファイルがルートと違うかルートに無い（.env）", out)
-        self.assertEqual(self.removed(), [copy], "ルートの写しと作り直せるディレクトリだけなら消す")
+        self.assertEqual(self.removed(), [copy], "ルートと同じ .env と作り直せるものだけなら消す")
         with open(os.path.join(self.fake, "calls")) as fh:
-            self.assertNotIn("--force", fh.read(), "写しは先に消し、--force は使わない")
+            self.assertNotIn("--force", fh.read())
         self.assertFalse(os.path.exists(copy))
+
+    def test_untracked_copy_of_a_root_file_is_left_untouched(self):
+        # 最後に確かめたあとに人が保存するかもしれないので、ルートと同じ中身でも無人では消さない。
+        copy = self.worktree("copy", idle=30)
+        for d in (self.root, copy):
+            with open(os.path.join(d, "CLAUDE.local.md"), "w") as fh:
+                fh.write("memo\n")
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.kind(out, copy), "判断が要る")
+        self.assertEqual(self.removed(), [])
+        self.assertTrue(os.path.exists(os.path.join(copy, "CLAUDE.local.md")))
+
+    def test_ignored_directory_that_is_not_regenerable_keeps_the_worktree(self):
+        db = self.worktree("db", idle=30)
+        built = self.worktree("built")
+        os.makedirs(os.path.join(db, "postgres_data"))
+        open(os.path.join(db, "postgres_data", "PG_VERSION"), "w").close()
+        os.makedirs(os.path.join(built, "node_modules", "x"))
+        open(os.path.join(built, "node_modules", "x", "i.js"), "w").close()
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.kind(out, db), "判断が要る")
+        self.assertIn("postgres_data/", out)
+        self.assertEqual(self.removed(), [built])
+
+    def test_worktree_without_a_finished_worker_is_not_removed(self):
+        # 人が Orca で作ったばかりで、まだ会話も編集も始めていない worktree。
+        new = self.worktree("new", finished=False)
+        old = self.worktree("old", finished=False, idle=30)
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.kind(out, new), "触らない")
+        self.assertEqual(self.kind(out, old), "判断が要る")
+        self.assertIn("終わった記録が無い", out)
+        self.assertEqual(self.removed(), [])
+
+    def test_lists_missing_their_arrays_count_as_unreadable(self):
+        merged = self.worktree("merged")
+        for workers, plugins in (({"scope": {"source": "all"}}, None), (None, {}),
+                                 (None, {"plugins": [{"pluginKey": "local.x", "isDev": True, "source": {}}]})):
+            self.workers_doc, self.plugins_doc = workers, plugins
+            out = self.run_sweep("--apply", code=1)
+            self.assertEqual(self.kind(out, merged), "触らない", (workers, plugins))
+        self.assertEqual(self.removed(), [])
+
+    def test_root_notes_ignored_and_identical_to_the_root_are_kept(self):
+        notes = self.worktree("notes", idle=30)
+        with open(os.path.join(self.root, ".gitignore"), "a") as fh:
+            fh.write("CLAUDE.local.md\n")
+        git(self.root, "commit", "-qam", "ignore notes")
+        git(notes, "merge", "-q", "--ff-only", "trunk")
+        for d in (self.root, notes):
+            with open(os.path.join(d, "CLAUDE.local.md"), "w") as fh:
+                fh.write("memo\n")
+        out = self.run_sweep("--apply")
+        self.assertIn("CLAUDE.local.md", out)
+        self.assertEqual(self.removed(), [])
+
+    def test_dispatch_with_unknown_liveness_still_protects(self):
+        merged = self.worktree("merged", finished=False)
+        for liveness in (None, "starting"):
+            self.workers = [{"state": "succeeded", "workspace": "r1::" + merged, **({"liveness": liveness} if liveness else {})}]
+            out = self.run_sweep("--apply")
+            self.assertEqual(self.kind(out, merged), "触らない", liveness)
+        self.assertEqual(self.removed(), [])
+
+    def test_worktree_recreated_on_a_finished_workers_path_waits_a_day(self):
+        # 終わった worker の worktree を片付けたあと、人が同じパスに作り直したばかりのもの。
+        again = self.worktree("again")
+        self.rows[-1]["createdAt"] = int(time.time() * 1000) - HOUR
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.kind(out, again), "触らない")
+        self.assertIn("作られて 24 時間たっていない", out)
+        self.assertEqual(self.removed(), [])
+
+    def test_open_conversation_is_not_offered_as_a_decision(self):
+        waiting = self.worktree("waiting", idle=30, agents=[{"state": "done", "address": "orca_session_id:x"}])
+        self.commit(waiting, "b.txt", "b")
+        out = self.run_sweep()
+        self.assertEqual(self.kind(out, waiting), "触らない")
+        self.assertIn("会話が開いている", out)
 
     def test_nothing_is_removed_when_dispatches_or_plugins_cannot_be_read(self):
         merged = self.worktree("merged")
