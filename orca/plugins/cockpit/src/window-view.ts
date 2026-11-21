@@ -64,7 +64,7 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
     : c.due ? `<span class="${isHot(c.due, now) ? 'hot' : ''}">${esc(nearDate(c.due, now))}</span>` : ''
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${kindName(c)}<small>${esc(c.id.startsWith('#') ? 'Orca' : c.id)}</small></span>
-    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}${recOf(r)}</span>${t ? `<span class="crumb">${esc(`${t.task.id} ${t.task.title}`)}</span>` : ''}</span>
+    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}${recOf(r)}</span>${t ? `<span class="crumb"><span class="code tid">${esc(t.task.id)}</span>${esc(t.task.title)}</span>` : ''}</span>
     <span class="du${closed ? ' cl' : ''}">${right}</span></button>`
 }
 
@@ -203,7 +203,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const c = r.card
   const s = r.stream
   const t = taskOf(b, r)
-  const crumbs = [b.v.cockpit!.workspace.name, s?.title ?? '仕事の割り当てなし', t && `${t.task.id} ${t.task.title}`].filter(Boolean) as string[]
+  const crumbs = [esc(b.v.cockpit!.workspace.name), esc(s?.title ?? '仕事の割り当てなし'), t && `<span class="code tid">${esc(t.task.id)}</span>${esc(t.task.title)}`].filter(Boolean) as string[]
   const notes = [
     closed ? `<div class="note ok"><b>${esc(r.how ?? '')}</b>　${esc(fmtDate(r.when))}${c.resolved_at_inferred ? '（時刻は推定）' : ''}${r.pending ? '・窓口の受け取り待ち' : c.resolved_by === 'user' ? '・深田さんの回答' : ''}${c.closed_without_review ? '・確認の返答なし' : ''}</div>` : '',
     r.talking ? `<div class="note wait"><b>協議中</b>　${esc(fmtDate(r.talking.since))} から・${esc(r.owner.how === 'main' ? '窓口' : `担当（${r.owner.title}）`)}</div>` : '',
@@ -216,7 +216,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const acts = actsHtml(r, ui, true).replace('</div>', next ? `<button class="btn quiet nx" type="button" data-sel="${esc(next)}">次へ（j）</button></div>` : '</div>')
   const sent = sentHtml(sentOps([c], b.v.log, b.v.cockpit!.applied_ops))
   return `<div class="wdet k-${c.kind}">
-    <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${esc(x)}</span>`).join('<i>›</i>')}</div>
+    <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}</div>
       <div class="kl"><span class="kd">${kindName(c)}</span><span class="mut">${esc(c.id.startsWith('#') ? 'Orca から' : c.id)}</span>${c.due ? dueHtml(c.due, now) : ''}</div>
       <h2>${esc(c.title)}</h2><div>${ownerHtml(r.owner)}</div></div>
     ${c.purpose ? `<p class="purp">${esc(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${sent}
@@ -433,7 +433,7 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
   return `<div class="ck win" data-theme="${ui.dark ? 'dark' : 'light'}">
     <div class="wtop"><span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
       <div class="tabs" role="tablist">${tabBtn('todo', '要対応', total)}${tabBtn('whole', '全体')}${tabBtn('done', '対応済み', b.d.closed.length, true)}</div>
-      <div class="flags"><span class="${stuck ? 'err' : 'mut'}">停止中 ${stuck} 件</span>${m.live !== undefined ? `<span class="mut">稼働中のエージェント ${m.live}</span>` : ''}
+      <div class="flags"><span class="${stuck ? 'err' : 'mut'}">停止中 ${stuck} 件</span>${m.live !== undefined ? `<span class="mut">稼働中のエージェント ${m.live} 件</span>` : ''}
         ${theme}</div></div>
     ${hard.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
     ${softHtml(soft, ui, 'wnotes')}

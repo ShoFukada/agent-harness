@@ -414,7 +414,7 @@ body { margin:0; }
 /* 済んだカードは弱く、要対応・修正待ちだけを目立たせる。 */
 .ck.win .lc.cl, .ck.win .lc.cl .kd { color:var(--ink3); font-weight:400; }
 .ck.win .rqd { display:grid; gap:6px; }
-.ck.win .rqd .code { margin-right:6px; }
+.ck.win .rqd .code, .ck.win .tid { margin-right:6px; }
 .ck.win .rqd .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
 .ck.win .lc .now { font-size:var(--fs-xs); font-weight:700; color:var(--ink); white-space:nowrap; }
 /* タスクの事実はラベルを左、値を右にそろえる。 */
