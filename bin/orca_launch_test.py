@@ -27,7 +27,14 @@ elif args[:2] == ["terminal", "wait"]:
     blocked = os.environ.get("FAKE_BLOCKED")
     out({"wait": {"satisfied": not blocked, "status": "running", **({"blockedReason": blocked} if blocked else {})}})
 elif args[:2] == ["orchestration", "worker-start"]:
+    spec = args[args.index("--spec-file") + 1]
+    with open(os.environ["FAKE_LOG"] + ".spec", "w") as fh:
+        fh.write(open(spec).read())
     out({"runId": "run_1", "taskId": "task_1", "dispatchId": "ctx_1", "terminal": "term_x", "state": "ready"})
+elif args[:2] == ["agent", "list"]:
+    out({"agents": [{"orcaSessionId": "sess_lead", "worktreeId": "repo::/lead"}]})
+elif args[:2] == ["terminal", "list"]:
+    out({"terminals": []})
 '''
 
 
@@ -85,6 +92,53 @@ class LaunchTest(unittest.TestCase):
         r = self.run_launch(ORCA_WORKTREE_ID="r::wt")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(any(x[:2] == ["worktree", "set"] for x in self.calls()))
+
+    def cockpit(self, owners):
+        root = os.path.join(self.tmp, "root")
+        os.makedirs(os.path.join(root, ".orca"))
+        with open(os.path.join(root, ".orca", "cockpit.json"), "w") as fh:
+            json.dump({"version": 2, "workspace": {"name": "ハーネス"}, "streams": [{"id": "s1", "title": "操縦席の窓"}],
+                       "tasks": [{"id": "t65", "stream": "s1", "phase": "実装", "title": "窓の版 3", "state": "run"}],
+                       "owners": owners, "cards": [],
+                       "requests": [{"id": "r30", "at": "", "title": "上限の判定", "tasks": ["t65"], "done_when": ["LIMIT が 3 行の上限の文言に当たる"]},
+                                    {"id": "r31", "at": "", "title": "別の仕事", "tasks": ["t1"], "done_when": ["関係ない"]}]}, fh)
+        return root
+
+    def run_cockpit(self, root):
+        return subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--cockpit-task", "t65", "--cockpit-root", root,
+                               "--spec-file", self.spec], capture_output=True, text=True, env=self.env)
+
+    def test_cockpit_task_names_parents_and_passes_done_when(self):
+        root = self.cockpit([{"id": "o1", "title": "窓の版 3", "stream": "s1", "session": "sess_lead", "state": "open"}])
+        r = self.run_cockpit(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
+        self.assertEqual(setw[setw.index("--display-name") + 1], "窓の版 3")
+        self.assertEqual(setw[setw.index("--comment") + 1], "操縦席の窓 › t65｜worker が作業中")
+        self.assertEqual(setw[setw.index("--parent-worktree") + 1], "id:repo::/lead")
+        create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
+        self.assertEqual(create[create.index("--title") + 1], "窓の版 3（worker）")
+        with open(self.log + ".spec") as fh:
+            spec = fh.read()
+        self.assertTrue(spec.startswith("brief"))
+        self.assertIn("- r30#0: LIMIT が 3 行の上限の文言に当たる", spec)
+        self.assertNotIn("r31", spec)
+        with open(os.path.join(root, ".orca", "cockpit.json")) as fh:
+            self.assertIn("t65", fh.read())
+
+    def test_cockpit_task_without_owner_hangs_under_main(self):
+        root = self.cockpit([])
+        r = self.run_cockpit(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
+        self.assertEqual(setw[setw.index("--parent-worktree") + 1], "path:" + root)
+
+    def test_cockpit_task_unknown(self):
+        root = self.cockpit([])
+        r = subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--cockpit-task", "t99", "--cockpit-root", root,
+                            "--spec-file", self.spec], capture_output=True, text=True, env=self.env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("タスク t99 が無い", r.stderr)
 
     def test_codex_takes_extra_args(self):
         r = self.run_launch("--agent", "codex", "--", "-m", "gpt-x")

@@ -6,6 +6,12 @@ orca orchestration worker-start --agent は起動コマンドを指定できず�
 worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator）に知らせる。
 
   orca-launch --worktree <selector> --title <短い題> --spec-file <brief> [--keep-open] [--run <run_id>] [-- <追加の引数>]
+  orca-launch --worktree <selector> --cockpit-task <task id> --spec-file <brief> [--cockpit-root <root>] ...
+
+--cockpit-task は操縦席（<root>/.orca/cockpit.json）のタスクから、題（タスクの題）・comment（「<仕事の題> › <タスク id>｜worker が作業中」）・
+親の worktree（仕事の担当の worktree、担当がいなければ窓口の worktree）を決め、そのタスクを持つ依頼の済の条件を brief の末尾に足して渡す。
+cockpit.json は読むだけで書かない（受け取りの runId・taskId は窓口が cockpit-write で書く）。root を省くと、今のディレクトリから上に
+.orca/cockpit.json を探し、無ければ git の本線（リポジトリのルート）を使う。
 
 claude は CLAUDE_CONFIG_DIR（呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動する。
 確認の画面（初めてのリポジトリで出る「フォルダを信頼するか」など）で止まったら、Task を渡さずに止めて知らせる
@@ -21,6 +27,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 
 WAIT_MS = 90000
 
@@ -47,10 +54,78 @@ def command(a):
     return shlex.join(env + argv + a.extra)
 
 
+def cockpit_root(given):
+    if given:
+        return os.path.abspath(given)
+    d = os.getcwd()
+    while True:
+        if os.path.isfile(os.path.join(d, ".orca", "cockpit.json")):
+            return d
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        d = up
+    r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
+    return os.path.dirname(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
+
+def owner_worktree(c, stream):
+    """仕事の担当の worktree の id。担当がいない・Orca に見つからなければ None。"""
+    o = next((x for x in c.get("owners") or [] if x.get("stream") == stream and x.get("state") != "done"), None)
+    if not o:
+        return None
+    if o.get("session"):
+        agents = (orca("agent", "list").get("result") or {}).get("agents") or []
+        hit = next((x for x in agents if x.get("orcaSessionId") == o["session"]), None)
+        if hit and hit.get("worktreeId"):
+            return hit["worktreeId"]
+    if o.get("terminal"):
+        terms = (orca("terminal", "list", "--limit", "500").get("result") or {}).get("terminals") or []
+        hit = next((x for x in terms if x.get("handle") == o["terminal"]), None)
+        if hit and hit.get("worktreeId"):
+            return hit["worktreeId"]
+    return None
+
+
+def cockpit_plan(a):
+    """--cockpit-task から題・comment・親の worktree・済の条件を足した brief を決める。"""
+    root = cockpit_root(a.cockpit_root)
+    path = os.path.join(root or "", ".orca", "cockpit.json")
+    if not root or not os.path.isfile(path):
+        sys.exit("orca-launch: 操縦席（.orca/cockpit.json）が見つからない。--cockpit-root で窓口のワークスペースを渡す")
+    with open(path) as fh:
+        c = json.load(fh)
+    t = next((x for x in c.get("tasks") or [] if x.get("id") == a.cockpit_task), None)
+    if not t:
+        sys.exit("orca-launch: 操縦席にタスク %s が無い（%s）" % (a.cockpit_task, path))
+    s = next((x for x in c.get("streams") or [] if x.get("id") == t.get("stream")), None)
+    owner = owner_worktree(c, t.get("stream"))
+    lines = []
+    for r in c.get("requests") or []:
+        if a.cockpit_task in (r.get("tasks") or []):
+            for i, w in enumerate(r.get("done_when") or []):
+                lines.append("- %s#%d: %s" % (r["id"], i, w))
+    spec = a.spec_file
+    if lines:
+        with open(a.spec_file) as fh:
+            body = fh.read()
+        fd, spec = tempfile.mkstemp(prefix="brief-%s-" % a.cockpit_task, suffix=".md")
+        with os.fdopen(fd, "w") as fh:
+            fh.write(body.rstrip("\n") + "\n\n## 済の条件（操縦席の依頼。戻りはこの番号ごとに証拠を返す）\n" + "\n".join(lines) + "\n")
+    return {
+        "title": t["title"],
+        "comment": "%s › %s｜worker が作業中" % ((s or {}).get("title") or t.get("stream") or "仕事", t["id"]),
+        "parent": "id:" + owner if owner else "path:" + root,
+        "spec": spec,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser(prog="orca-launch", description=__doc__.split("\n")[0])
     ap.add_argument("--worktree", required=True, help="worker を置く worktree（orca の selector。先に orca worktree create で作る）")
-    ap.add_argument("--title", required=True, help="仕事の短い日本語名（サイドバーは 20 文字ほどで切れるので、何の仕事かを先頭に）")
+    ap.add_argument("--title", help="仕事の短い日本語名（サイドバーは 20 文字ほどで切れるので、何の仕事かを先頭に）。--cockpit-task のときはタスクの題")
+    ap.add_argument("--cockpit-task", help="操縦席のタスクの id。題・comment・親の worktree・済の条件をそこから引く")
+    ap.add_argument("--cockpit-root", help="操縦席のあるワークスペースの root（省くと探す）")
     ap.add_argument("--spec-file", required=True, help="brief のファイル")
     ap.add_argument("--task-title")
     ap.add_argument("--agent", choices=("claude", "codex"), default="claude")
@@ -63,12 +138,19 @@ def main():
     a.extra = a.extra[1:] if a.extra[:1] == ["--"] else a.extra
     if not os.path.isfile(a.spec_file):
         sys.exit("orca-launch: brief が無い: %s" % a.spec_file)
+    plan = cockpit_plan(a) if a.cockpit_task else None
+    if plan:
+        a.title = a.title or plan["title"]
+        a.spec_file = plan["spec"]
+    if not a.title:
+        sys.exit("orca-launch: --title か --cockpit-task が要る")
 
     wt = (orca("worktree", "show", "--worktree", a.worktree).get("result") or {}).get("worktree") or {}
     if not wt.get("path"):
         sys.exit("orca-launch: worktree %s が Orca に無い" % a.worktree)
     if wt.get("id") and wt["id"] != os.environ.get("ORCA_WORKTREE_ID"):
-        orca("worktree", "set", "--worktree", a.worktree, "--display-name", a.title, "--workspace-status", "in-progress")
+        meta = ["--comment", plan["comment"], "--parent-worktree", plan["parent"]] if plan else []
+        orca("worktree", "set", "--worktree", a.worktree, "--display-name", a.title, "--workspace-status", "in-progress", *meta)
     created = orca("terminal", "create", "--worktree", a.worktree, "--title", "%s（worker）" % a.title, "--command", command(a))
     handle = ((created.get("result") or {}).get("terminal") or {}).get("handle")
     if not handle:
