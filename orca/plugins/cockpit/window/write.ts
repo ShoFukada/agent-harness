@@ -1,8 +1,3 @@
-// cockpit-write の使い方:
-//   node window/write.ts <ワークスペースの root> <変更の JSON ファイル | ->            … 検査して書く
-//   node window/write.ts <ワークスペースの root> <変更の JSON ファイル | -> --check    … 書かずに検査だけ
-//   node window/write.ts migrate-v3 <ワークスペースの root> [--write]                 … 版 3 の形に移す（--write が無ければ結果を出すだけ）
-// 変更の形は src/write.ts の Change（cards・tasks・requests・streams・owners・intake・applied_ops を id 単位で足すか置き換える）。
 import { constants as fsConstants, promises as fsp } from 'node:fs'
 import path from 'node:path'
 import { parseCockpit, parseUserLog, VERSION, type Cockpit, type UserLog } from '../src/model.ts'
@@ -87,15 +82,15 @@ if (import.meta.main) {
     console.error(e.message)
     process.exit(1)
   }
-  if (plain[0] === 'migrate-v3' && plain[1]) {
+  if (plain[0] === 'migrate-v3' && plain.length <= 2) {
     const orca = orcaCli(process.env.COCKPIT_ORCA ?? 'orca')
-    migrate(path.resolve(plain[1]), async (d) => (await orca.show(d))?.dispatch?.runId ?? undefined, args.includes('--write')).then((r) => {
+    migrate(path.resolve(plain[1] ?? '.'),async (d) => (await orca.show(d))?.dispatch?.runId ?? undefined, args.includes('--write')).then((r) => {
       console.log(r.summary.join('\n'))
       if (r.sort.length) console.log(`\n窓口が仕分ける古い依頼（id・題・タスク・最後の更新）:\n${r.sort.map((x) => `  ${x.id} ${x.title}｜${x.tasks}｜${x.last ?? '—'}`).join('\n')}`)
       console.log(args.includes('--write') ? '\n書き換えた。元は .orca/cockpit.v2.json' : '\n（書き換えていない。--write で書き換える）')
     }, fail)
-  } else if (plain.length === 2) {
-    readChange(plain[1]!).then((ch) => write(path.resolve(plain[0]!), ch, args.includes('--check'))).then((r) => {
+  } else if (plain.length === 1 || plain.length === 2) {
+    readChange(plain[1] ?? '-').then((ch) => write(path.resolve(plain[0]!), ch, args.includes('--check'))).then((r) => {
       for (const w of r.warnings) console.log(`注意: ${w}`)
       if (r.errors.length) {
         console.error(`書いていない:\n${r.errors.map((e) => `  ${e}`).join('\n')}`)
@@ -104,7 +99,7 @@ if (import.meta.main) {
       console.log(args.includes('--check') ? '検査を通った（書いていない）' : '書いた')
     }, fail)
   } else {
-    console.error('使い方: cockpit-write <ワークスペースの root> <変更の JSON ファイル | -> [--check]\n        cockpit-write migrate-v3 <ワークスペースの root> [--write]')
+    console.error('使い方: cockpit-write <ワークスペースの root> [変更の JSON ファイル | -] [--check]\n        cockpit-write migrate-v3 [ワークスペースの root] [--write]')
     process.exit(2)
   }
 }

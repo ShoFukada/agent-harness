@@ -397,7 +397,8 @@ export type StateReport = {
   waiting: { id: string; who: string; what: string; since: string; remind_at?: string }[]
   /** orca は Orca のサイドバーに出す形（表示名・状態・未読の印）。担当の作業場所に当てる。 */
   jobs: { id: string; title: string; state: JobState; label: string; next?: string; orca: { display_name: string; status: OrcaStatus; unread: boolean } }[]
-  tasks: { id: string; title: string; state: TaskState; from: TaskShown['why'] }[]
+  /** dispatch は今の Dispatch の id（最初の Task から続きをたどった先。worker の無いタスクは null）。担当と hook はこれで今の Dispatch を引く。 */
+  tasks: { id: string; title: string; state: TaskState; from: TaskShown['why']; dispatch: string | null }[]
   /** 依頼の帳簿の今（受けた順）。state は証拠から決めたもの。 */
   requests: { id: string; title: string; state: RequestState; legacy: boolean }[]
   workers: { task?: string; job?: string; state: string; stop?: StopReason }[]
@@ -474,7 +475,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
     fixing: d.fixing.map((r) => r.card.id),
     waiting: d.waiting.map((r) => ({ id: r.card.id, who: r.card.awaiting?.who ?? '', what: r.card.awaiting?.what ?? r.card.title, since: r.card.awaiting?.since ?? '', remind_at: r.card.awaiting?.remind_at })),
     jobs: d.jobs.map((j) => ({ id: j.id, title: j.title, state: j.state, label: j.label, next: j.next, orca: { display_name: j.title, status: ORCA_STATUS[j.state], unread: j.state === 'mine' } })),
-    tasks: tasks.map((t) => ({ id: t.task.id, title: t.task.title, state: t.state, from: t.why })),
+    tasks: tasks.map((t) => ({ id: t.task.id, title: t.task.title, state: t.state, from: t.why, dispatch: currentDispatch(t.task, facts) ?? null })),
     requests: d.requests.map((r) => ({ id: r.req.id, title: r.req.title, state: r.state, legacy: r.legacy })),
     workers: (facts?.workers ?? []).map((w) => ({ task: w.task, job: w.job, state: w.state, stop: w.stop })),
     checks: {

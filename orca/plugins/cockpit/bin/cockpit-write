@@ -2,4 +2,4 @@
 # 操縦席の帳簿（.orca/cockpit.json）を書く道具。中身は orca/plugins/cockpit/window/write.ts（使い方もそこに書いてある）。
 # 窓口は Write・Edit で cockpit.json を書かず、これを通す（hook が Write・Edit を止める）。
 here=$(cd "$(dirname "$0")" && pwd -P)
-exec node --disable-warning=ExperimentalWarning "$here/../orca/plugins/cockpit/window/write.ts" "$@"
+exec node --disable-warning=ExperimentalWarning "$here/../window/write.ts" "$@"

@@ -234,6 +234,8 @@ test('タスクの今の Dispatch は Run の続きをたどった先（current�
   const facts = { workers: [], dispatches: { ctx_2: { state: 'succeeded', settledAt: NOW - 3_600_000, taskStatus: 'completed' } }, current: { t1: 'ctx_2' } }
   const r = report(c, w.log, [], facts, 'ok', NOW)
   assert.equal(r.tasks.find((t) => t.id === 't1')!.from, 'intake')
+  assert.equal(r.tasks.find((t) => t.id === 't1')!.dispatch, 'ctx_2')
+  assert.equal(r.tasks.find((t) => t.id === 't8')!.dispatch, null)
   assert.deepEqual(r.checks.stale_tasks, ['t1'])
   assert.deepEqual(r.checks.loose_tasks, ['t8'])
   assert.deepEqual(r.checks.unknown_phase, ['t8（作る）'])
