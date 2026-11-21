@@ -23,7 +23,10 @@ const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'appl
 export type WriteResult = { next?: Cockpit; errors: string[]; warnings: string[] }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+/** 欄の順に依らずに同じ中身か（窓口が欄の順を変えて書き戻しても、中身を変えたことにしない）。 */
+const stable = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(stable) : isObj(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable(v[k])])) : v
+const same = (a: unknown, b: unknown) => JSON.stringify(stable(a)) === JSON.stringify(stable(b))
 /** 片付ける・顧客待ちにする書き換えで動く欄。rev を上げずに書いてよい（上げると「これでよい」の版の照合から外れる）。 */
 const CLOSING_FIELDS = new Set(['state', 'resolved_by', 'resolved_at', 'resolved_option', 'resolved_text', 'resolved_at_inferred', 'closed_without_review', 'awaiting', 'why', 'element_map'])
 /** 承認を取り込むときに書く要素の行き先。承認した版の中身ではないので、開いたままでも rev を上げずに書ける（上げると承認が外れる）。 */
@@ -142,7 +145,9 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (!TASK_STATES.includes(t.state as TaskState)) errors.push(`タスク ${t.id}: state は ${TASK_STATES.join('・')} のどれか`)
     if (!has(streams, t.stream)) errors.push(`タスク ${t.id}: 仕事 ${t.stream} が無い`)
     const rec = t as unknown as Record<string, unknown>
-    const bad = Object.keys(TASK_SHAPE).filter((k) => rec[k] != null && !TASK_SHAPE[k]!(rec[k]))
+    // null は、その行に元から null で書かれていた欄だけ書き戻してよい（読み込みは null の欄を無いものとして読む）。
+    const was = old as unknown as Record<string, unknown> | undefined
+    const bad = Object.keys(TASK_SHAPE).filter((k) => rec[k] !== undefined && !(rec[k] === null && was?.[k] === null) && !TASK_SHAPE[k]!(rec[k]))
     if (bad.length) errors.push(`タスク ${t.id}: ${bad.join('・')} の形が違う（done は文字列か { text, at } の配列、reviewed_for・sources は文字列の配列、ほかは文字列）`)
     if (t.worker !== undefined) {
       if (!WORKER_SHAPE(t.worker)) errors.push(`タスク ${t.id}: worker は { run_id, task_id }`)
@@ -191,9 +196,17 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   // 依頼を書き換えたら、その依頼を指す既にあるカードの行き先も確かめる（済の条件を減らして「r1#2」を宙に浮かせない）。
   const touched = new Set((ch.requests ?? []).map((r) => r.id))
   const incomingCards = new Set((ch.cards ?? []).map((x) => x.id))
-  for (const x of c.cards)
-    if (!incomingCards.has(x.id) && Array.isArray(x.element_map) && x.element_map.some((m) => touched.has(String(m?.request ?? '').split('#')[0]!)))
-      errors.push(...mapErrors(x).map((e) => `${e}（依頼の書き換えで外れる）`))
+  for (const x of c.cards) {
+    if (incomingCards.has(x.id) || !Array.isArray(x.element_map)) continue
+    for (const m of x.element_map) {
+      const [rid, w] = String(m?.request ?? '').split('#')
+      if (!touched.has(rid!) || w === undefined) continue
+      const before = c.requests?.find((r) => r.id === rid)?.done_when?.[Number(w) - 1]
+      const after = requests.find((r) => r.id === rid)?.done_when?.[Number(w) - 1]
+      // 番号は同じでも中身が変われば（条件を削って後ろが詰まったなど）、カードの行き先は黙って別の条件を指す。
+      if (before !== after) errors.push(`カード ${x.id}: 要素 ${m.n} の行き先 ${m.request} の済の条件が${after === undefined ? '無くなる' : '変わる'}（依頼の書き換えで外れる）。同じ変更でカードの element_map も書き直す`)
+    }
+  }
   for (const x of ch.cards ?? []) {
     const head = cardHeadError(x)
     if (head) {

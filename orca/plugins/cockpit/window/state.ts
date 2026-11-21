@@ -7,18 +7,21 @@ import { emptyFiles, loadFiles } from '../src/store.ts'
 import { currentDispatches, orcaAgents, orcaDispatches, pluginProblem, type Chain, type Failure, type PluginRow, type PsRow, type WorkerShow } from './orca-state.ts'
 import { orcaCli } from './server.ts'
 
-/** worker の記録がある済んでいないタスクがあるときだけ Orca を呼ぶ（hook は発言のたびに走るので、要らない呼び出しを省く）。 */
+/**
+ * Dispatch の問い合わせは worker の記録がある済んでいないタスクがあるときだけにする（hook は発言のたびに走るので、要らない呼び出しを省く）。
+ * worktree ps と端末の一覧は毎回読む（担当のチャットだけが止まった案件でも、窓と同じ詰まりを出すため）。
+ */
 export async function orcaFacts(root: string, c: Cockpit, ps: () => Promise<PsRow[]>, terminals: () => Promise<{ handle: string; leafId: string; tabId: string }[]>, show: (dispatch: string) => Promise<WorkerShow | null>, chain?: Chain, failures?: () => Promise<Record<string, Failure>>): Promise<{ facts?: OrcaFacts; state: StateReport['orca'] }> {
-  if (!c.tasks.some((t) => t.worker && t.state !== 'ok')) return { state: 'skipped' }
+  const workers = c.tasks.some((t) => t.worker && t.state !== 'ok')
   try {
-    const { current, status } = chain ? await currentDispatches(c, chain, new Map()) : { current: {}, status: {} }
-    const [rows, terms, dispatches] = await Promise.all([ps(), terminals(), orcaDispatches(c, show, current, status)])
+    const { current, status } = chain && workers ? await currentDispatches(c, chain, new Map()) : { current: {}, status: {} }
+    const [rows, terms, dispatches] = await Promise.all([ps(), terminals(), workers ? orcaDispatches(c, show, current, status) : {}])
     const byPane = new Map<string, string>()
     for (const t of terms) byPane.set(`${t.tabId}:${t.leafId}`, t.handle)
     // 失敗の理由（利用枠・ログイン切れ）は inbox にしかないので、失敗で止まったエージェントがいるときだけ読む（窓と同じ）。
     const fails = failures && rows.some((r) => r.agents.some((a) => a.mainAgent?.outcome === 'failure')) ? await failures().catch(() => ({})) : {}
-    const { workers } = orcaAgents(root, rows, byPane, c, dispatches, current, fails)
-    return { facts: { workers, dispatches, current }, state: 'ok' }
+    const agents = orcaAgents(root, rows, byPane, c, dispatches, current, fails).workers
+    return { facts: { workers: agents, dispatches, current }, state: 'ok' }
   } catch {
     return { state: 'error' }
   }

@@ -258,6 +258,8 @@ export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk'
 export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss']
 /** Orca から作った詰まりの行の id（帳簿に無い）。 */
 export const isSynthetic = (id: string) => id.startsWith('#agent:') || id.startsWith('#dispatch:')
+/** 「済ませた」で隠せる詰まり。版（止まった時刻）が取れないもの（0）は、次の停止と見分けられないので隠させない。 */
+export const dismissable = (c: Pick<Card, 'id' | 'rev'>) => isSynthetic(c.id) && c.rev > 0
 export type Op = {
   op_id: number
   at: string
@@ -396,6 +398,7 @@ export const INTAKE_SHAPE: Shape = (v) => obj([], ['through', 'checked_through']
 /** カード 1 枚の id・題・版・種類・状態が読めるか。読めなければ理由。画面で class 名や印に使うので、知らない値は断る。 */
 export function cardHeadError(c: unknown): string | undefined {
   if (!isObj(c) || typeof c.id !== 'string' || typeof c.title !== 'string' || typeof c.rev !== 'number') return 'id・title・rev を読めない'
+  if (c.id.startsWith('#')) return 'id が # で始まる（Orca から作る詰まりの行のために空けてある）'
   if (!KINDS.includes(c.kind as CardKind)) return `kind が不正: ${String(c.kind)}`
   if (c.state !== 'open' && c.state !== 'waiting' && c.state !== 'done') return `state が不正: ${String(c.state)}`
   return undefined
@@ -562,9 +565,13 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardVie
   return out
 }
 
-/** 依頼の証拠の操作が指すカード。済の判定がそのカードの版を見るので、表示の期間を過ぎても窓に送る。 */
-export function evidenceCards(c: Cockpit, log: UserLog): Set<string> {
-  const ids = new Set<string>()
+/**
+ * 依頼の今の判定が読むカード（証拠の操作が指すカードと、request_id で依頼に結ばれたカード）。済・進行中の判定がこのカードの版と有無を見るので、
+ * 表示の期間を過ぎても窓に送る（窓と CLI で依頼の今が食い違わないように）。
+ */
+export function requestCards(c: Cockpit, log: UserLog): Set<string> {
+  const reqs = new Set((c.requests ?? []).map((r) => r.id))
+  const ids = new Set(c.cards.filter((x) => x.request_id && reqs.has(x.request_id)).map((x) => x.id))
   for (const e of (c.requests ?? []).flatMap((r) => r.evidence ?? []))
     if (e.kind === 'op') {
       const o = log.ops.find((x) => String(x.op_id) === e.ref)
@@ -577,7 +584,8 @@ export function evidenceCards(c: Cockpit, log: UserLog): Set<string> {
 export function unappliedOps(c: Cockpit | undefined, log: UserLog): Op[] {
   const applied = new Set(c?.applied_ops ?? [])
   // 詰まりの「済ませた」とその取り消しは窓だけの記録で、窓口に反映させるものが無い。
-  return log.ops.filter((o) => !applied.has(o.op_id) && !isSynthetic(o.item_id))
+  const dismiss = new Set(log.ops.filter((o) => o.type === 'dismiss').map((o) => o.op_id))
+  return log.ops.filter((o) => !applied.has(o.op_id) && !dismiss.has(o.op_id) && !(o.type === 'undo' && dismiss.has(o.undo_of ?? -1)))
 }
 
 const SEV: Record<TaskState, number> = { stop: 0, run: 1, wait: 2, idle: 3, ok: 4 }

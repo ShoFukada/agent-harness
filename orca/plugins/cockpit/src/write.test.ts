@@ -179,8 +179,8 @@ test('書く道具: 依頼の済の条件を減らして、既にあるカード
   c.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '一覧', utterances: [{ id: 'u1', quote: 'x' }], kind: 'work', done_when: ['a', 'b'] }]
   c.cards.push({ id: 'v9', rev: 1, kind: 'review', state: 'done', title: '見て', elements: [{ n: 1, text: 'x' }], element_map: [{ n: 1, request: 'r1#2' }] })
   const r = applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['a'] }] }, utter)
-  assert.match(r.errors.join('\n'), /カード v9: 要素 1 の行き先 r1#2 に当たる済の条件が無い（依頼の書き換えで外れる）/)
-  assert.deepEqual(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['a', 'b2'] }] }, utter).errors, [])
+  assert.match(r.errors.join('\n'), /カード v9: 要素 1 の行き先 r1#2 の済の条件が無くなる（依頼の書き換えで外れる）/)
+  assert.deepEqual(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['a', 'b', 'c'] }] }, utter).errors, [], '後ろに足すのは受ける')
 })
 
 test('migrate-v3: 書かない（--dry-run）ときはロックを取らない。Orca への問い合わせはロックの外で済ませ、その間の書き込みを消さない（Codex 高 5・中 10）', async () => {
@@ -209,4 +209,18 @@ test('migrate-v3: 仕分けの一覧の最後の更新は時刻で比べる（+0
   c.tasks[0]!.done = [{ text: 'a', at: '2026-11-21T10:00:00+09:00' }, { text: 'b', at: '2026-11-21T02:00:00Z' }]
   c.requests = [{ id: 'r1', at: '', title: '進行中', state: 'open', tasks: ['t1'] }]
   assert.equal(migrateV3(c, { ops: [] }, [], {}, NOW).sort[0]!.last, '2026-11-21T02:00:00Z')
+})
+
+test('書く道具（Codex 2 回目）: 欄の順だけ違う閉じ方は中身の変更にしない。null は元から null の欄だけ。条件を削って番号の中身が変わる依頼の書き換えを断る', () => {
+  const c = aoba()
+  const d = card(c, 'd21')
+  const reversed = Object.fromEntries(Object.entries({ ...d, state: 'done', resolved_by: 'owner', resolved_at: '2026-11-21T10:00:00+09:00' }).reverse()) as Card
+  assert.deepEqual(applyChange(c, { cards: [reversed] }).errors, [])
+  assert.match(applyChange(c, { tasks: [{ ...c.tasks[0]!, sources: null as never }] }).errors.join('\n'), /タスク t1: sources の形が違う/)
+  const withNull = { ...c, tasks: [{ ...c.tasks[0]!, waiting_on: null as never }, ...c.tasks.slice(1)] }
+  assert.deepEqual(applyChange(withNull, { tasks: [{ ...withNull.tasks[0]!, title: '題を直した' }] }).errors, [])
+  c.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '一覧', utterances: [{ id: 'u1', quote: 'x' }], kind: 'work', done_when: ['A', 'B', 'C'] }]
+  c.cards.push({ id: 'v9', rev: 1, kind: 'review', state: 'done', title: '見て', elements: [{ n: 1, text: 'x' }], element_map: [{ n: 1, request: 'r1#2' }] })
+  assert.match(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['A', 'C'] }] }, utter).errors.join('\n'), /カード v9: 要素 1 の行き先 r1#2 の済の条件が変わる/)
+  assert.deepEqual(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['A', 'B', 'C2'] }] }, utter).errors, [])
 })

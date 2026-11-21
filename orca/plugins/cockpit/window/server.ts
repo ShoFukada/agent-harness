@@ -8,7 +8,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chatMain, evidenceCards, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
+import { chatMain, requestCards, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
 import type { CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
 import { currentDispatches, descendants, failuresOf, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type Failure, type InboxMessage, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
@@ -190,8 +190,8 @@ export function createServer(opts: Options) {
     const ws = root ? wss.get(root) : undefined
     const files = ws?.files ?? emptyFiles()
     const since = Date.now() - CLOSED_DAYS * 86_400_000
-    // 依頼の済は証拠の「これでよい」が指すカードの版で決めるので、表示の期間を過ぎてもそのカードは送る（CLI と窓で済が食い違わないように）。
-    const proof = files.cockpit ? evidenceCards(files.cockpit, files.log) : new Set<string>()
+    // 依頼の今は証拠の「これでよい」が指すカードの版と、依頼に結ばれたカードで決めるので、表示の期間を過ぎても送る（CLI と窓で食い違わないように）。
+    const proof = files.cockpit ? requestCards(files.cockpit, files.log) : new Set<string>()
     const keep = (x: Card) => x.state !== 'done' || !x.resolved_at || Date.parse(x.resolved_at) > since || proof.has(x.id)
     const cockpit = slim && files.cockpit ? slimmed(files.cockpit, keep) : files.cockpit
     return {

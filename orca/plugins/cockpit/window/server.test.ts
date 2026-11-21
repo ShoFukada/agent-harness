@@ -186,7 +186,8 @@ test('送る量を絞る: 14 日より前に片付いたカードと、タスク
   c.cards.push({ id: 'old', rev: 1, kind: 'decide', title: '昔の判断', state: 'done', resolved_at: old })
   // 依頼の証拠の「これでよい」が指すカードは古くても送る（窓の済の判定が版を見るため。Codex 中 7）。
   c.cards.push({ id: 'proof', rev: 1, kind: 'review', title: '昔の見て', state: 'done', resolved_at: old })
-  c.requests = [{ id: 'q1', at: old, title: '依頼', evidence: [{ when: 1, kind: 'op', ref: '1', card: 'proof' }] }]
+  c.cards.push({ id: 'linked', rev: 1, kind: 'decide', title: '昔の決める', state: 'done', resolved_at: old, request_id: 'q2' })
+  c.requests = [{ id: 'q1', at: old, title: '依頼', evidence: [{ when: 1, kind: 'op', ref: '1', card: 'proof' }] }, { id: 'q2', at: old, title: '依頼 2' }]
   c.tasks[0].done = ['長い作業の記録']
   const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(c) })
   const { s, port } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
@@ -194,6 +195,7 @@ test('送る量を絞る: 14 日より前に片付いたカードと、タスク
   const got = board(v, a)!.cockpit!
   assert.ok(!got.cards.some((x) => x.id === 'old'))
   assert.ok(got.cards.some((x) => x.id === 'proof'))
+  assert.ok(got.cards.some((x) => x.id === 'linked'), '依頼に結ばれたカードも送る（依頼の今の判定が読む）')
   assert.ok(got.cards.some((x) => x.id === 'd19'))
   assert.equal(got.tasks[0]!.done, undefined)
 })

@@ -1,5 +1,5 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, isSynthetic, type Card, type CardKind, type Repo } from './model.ts'
+import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, dismissable, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, countsText, derive, dueAt, fmtDate, hhmm, isHot, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -317,7 +317,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   const other = b('other', otherOpen ? '別の答えを閉じる' : '別の答え', 'quiet')
   let btns: string[]
   // Orca から作った詰まり: 開いて直し、直したら「済ませた」で隠す（同じ失敗のあいだ。次に止まればまた出る）。
-  const dismiss = isSynthetic(c.id) ? [b('dismiss', '済ませた')] : []
+  const dismiss = dismissable(c) ? [b('dismiss', '済ませた')] : []
   if (r.agent) btns = [b('focus', r.agent.chat ? 'チャットを開く' : '端末を開く', 'pri'), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返事は要らない'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break

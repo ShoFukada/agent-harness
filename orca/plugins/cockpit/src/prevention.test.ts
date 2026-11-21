@@ -6,7 +6,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { failureOf, failuresOf, orcaAgents, resetAt, stopReason, type PsRow } from '../window/orca-state.ts'
-import { parseCockpit, unappliedOps, type Card, type Cockpit, type UserLog } from './model.ts'
+import { orcaFacts } from '../window/state.ts'
+import { dismissable, parseCockpit, unappliedOps, type Card, type Cockpit, type UserLog } from './model.ts'
 import { derive, report } from './state.ts'
 import { appendOp, parseRulings } from './store.ts'
 import { applyChange } from './write.ts'
@@ -130,4 +131,44 @@ test('追加 7: 戻る時刻は 24 時間制で出し、読めなければ出さ
   assert.equal(stopReason(a), 'error')
   // 前の失敗の知らせ（止まった時刻より 5 分以上前）は使わない。
   assert.equal(failureOf({ ...a, stateStartedAt: 10 * 60_000 }, { s: { kind: 'usageLimitReached', at: 0 } }), undefined)
+})
+
+test('追加 7（Codex 2 回目）: 止まった時刻の取れない詰まりは隠させない。端末の行を済ませても、同じ停止を Dispatch の行で出し直さない。# の id は帳簿に書けない', async () => {
+  const { c, log } = base()
+  c.tasks.push({ id: 't9', stream: 's1', phase: '実装', title: 'x', state: 'run', worker: { task_id: 'task_9', run_id: 'run_9' } })
+  const agent = { terminalId: 'term_9', title: 'w9', agent: 'claude', state: 'done' as const, since: Date.parse('2026-11-21T18:00:00+09:00'), stop: 'error' as const, task: 't9' }
+  const facts = { workers: [agent], dispatches: { ctx_9: { state: 'failed' } }, current: { t9: 'ctx_9' } }
+  const ids = (l: UserLog) => derive(c, l, [], '/r', facts, NOW).queue.filter((r) => r.card.kind === 'stuck' && r.card.id.endsWith('9')).map((r) => r.card.id)
+  assert.deepEqual(ids(log), ['#agent:term_9'])
+  const l2 = { ops: [...log.ops, { op_id: 900, at: '2026-11-21T10:00:00.000Z', item_id: '#agent:term_9', item_rev: agent.since, type: 'dismiss' as const }] }
+  assert.deepEqual(ids(l2), [], '済ませた端末の行の代わりに Dispatch の行を出さない')
+  // 止まった時刻（settledAt）の無い Dispatch の行は、済ませたを出さず、記録も断る。
+  const only = derive(c, log, [], '/r', { workers: [], dispatches: { ctx_9: { state: 'failed' } }, current: { t9: 'ctx_9' } }, NOW).queue.find((r) => r.card.id === '#dispatch:t9')!
+  assert.equal(only.card.rev, 0)
+  assert.equal(dismissable(only.card), false)
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-dismiss0-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(c))
+  await assert.rejects(appendOp(root, c, { root, item_id: '#dispatch:t9', item_rev: 0, type: 'dismiss' }), /「済ませた」だけ/)
+  // # で始まる id のカードは書く道具も読み込みも断る（Orca から作る行と取り違えない）。未反映から外すのは dismiss とその取り消しだけ。
+  assert.match(applyChange(c, { cards: [{ id: '#agent:ops', rev: 1, kind: 'review', state: 'open', title: 'x' }] }).errors.join('\n'), /# で始まる/)
+  const p: string[] = []
+  parseCockpit(JSON.stringify({ ...c, cards: [...c.cards, { id: '#agent:ops', rev: 1, kind: 'review', state: 'open', title: 'x' }] }), p)
+  assert.match(p.join('\n'), /カード #agent:ops（id が # で始まる/)
+  const l3 = { ops: [...l2.ops, { op_id: 901, at: '2026-11-21T10:00:01.000Z', item_id: '#agent:term_9', item_rev: 0, type: 'undo' as const, undo_of: 900 }, { op_id: 902, at: '2026-11-21T10:00:02.000Z', item_id: 'd21', item_rev: 1, type: 'accept' as const }] }
+  assert.deepEqual(unappliedOps({ ...c, applied_ops: log.ops.map((o) => o.op_id) }, l3).map((o) => o.op_id), [902])
+})
+
+test('追加 7（Codex 2 回目）: CLI は worker の記録が無くても worktree ps を読み、担当のチャットの停止を窓と同じく出す', async () => {
+  const { c } = base()
+  c.tasks = c.tasks.map((t) => ({ ...t, worker: undefined }))
+  const rows: PsRow[] = [{ worktreeId: 'r::main', path: '/ws/main', parentWorktreeId: null, agents: [] }, {
+    worktreeId: 'r::lead', path: '/ws/lead', parentWorktreeId: 'r::main', displayName: '窓の版 3（担当）',
+    agents: [{ paneKey: 'structured-agent-session-s1:x', orcaSessionId: 's1', state: 'done', stateStartedAt: 1000, mainAgent: { outcome: 'failure' } }]
+  }]
+  let shown = 0
+  const r = await orcaFacts('/ws/main', c, async () => rows, async () => [], async () => (shown++, null), undefined, async () => ({ s1: { kind: 'usageLimitReached', at: 2000 } }))
+  assert.equal(r.state, 'ok')
+  assert.equal(shown, 0, 'worker の記録が無ければ Dispatch は問い合わせない')
+  assert.deepEqual(r.facts!.workers.map((w) => [w.stop, w.session]), [['limit', 's1']])
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { evidenceCards, parseCockpit, type Card, type Cockpit } from './model.ts'
+import { parseCockpit, requestCards, type Card, type Cockpit } from './model.ts'
 import type { AgentRow } from './protocol.ts'
 import { bucketOf, byUrgency, derive, NAME_MAX, ORCA_STATUS, report, routeProblem, type Row } from './state.ts'
 
@@ -302,7 +302,7 @@ test('依頼の証拠の操作が指すカードは、表示の期間（14 日�
   const w = ws(0)
   const c = w.cockpit
   c.requests = [{ id: 'q1', at: '', title: 't', evidence: [{ when: 1, kind: 'op', ref: '50', card: 'v0' }, { when: 1, kind: 'op', ref: '1' }, { when: 1, kind: 'pr', ref: 'x' }] }]
-  assert.deepEqual([...evidenceCards(c, w.log)].sort(), [...new Set(['v0', ...w.log.ops.filter((o) => o.op_id === 1).map((o) => o.item_id)])].sort())
+  assert.deepEqual([...requestCards(c, w.log)].sort(), [...new Set(['v0', ...w.log.ops.filter((o) => o.op_id === 1).map((o) => o.item_id)])].sort())
 })
 
 test('同じ順位の要対応・顧客待ち・報告は時刻で並べる（+09:00 と Z が混ざっても。Codex 中 11）', () => {
