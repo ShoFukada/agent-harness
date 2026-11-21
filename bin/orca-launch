@@ -14,7 +14,8 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
 cockpit.json は読むだけで書かない（受け取りの runId・taskId は窓口が cockpit-write で書く）。root を省くと、今のディレクトリから上に
 .orca/cockpit.json を探し、無ければ git の本線（リポジトリのルート）を使う。
 
-claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなければ呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動する。
+claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなければ呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動し、
+端末と設定のファイルを stallwatch の worker-launches.json に記録する（席の切り替えで Orca が --settings を落としたとき、account-failover が戻す）。
 呼んだ側の値をそのまま渡さないのは、account-failover が利用枠の上限で席を切り替えたあとも元の席に残るチャットの担当から立てたとき、
 worker が上限の席で起動するのを避けるため。
 確認の画面（その席で初めて開く作業場所の「フォルダを信頼するか」・席で一度だけ出る「auto mode を既定にするか」・ログインの画面など）で
@@ -72,13 +73,18 @@ def stopped_at(handle, home, email, why):
     return "席 %s の端末 %s が「%s」で止まっている%s" % (where, handle, name, "\n" + tail if tail else "")
 
 
+def worker_settings(a):
+    settings = a.settings or os.environ.get("ORCA_WORKER_SETTINGS")
+    return os.path.expanduser(settings) if settings else None
+
+
 def command(a, home):
     if a.agent == "codex":
         return shlex.join(["codex", *a.extra])
     argv = ["claude", "--model", a.model]
-    settings = a.settings or os.environ.get("ORCA_WORKER_SETTINGS")
+    settings = worker_settings(a)
     if settings:
-        argv += ["--settings", os.path.expanduser(settings)]
+        argv += ["--settings", settings]
     env = ["env", "CLAUDE_CONFIG_DIR=" + home] if home else []
     return shlex.join(env + argv + a.extra)
 
@@ -238,6 +244,12 @@ def main():
     handle = ((created.get("result") or {}).get("terminal") or {}).get("handle")
     if not handle:
         sys.exit("orca-launch: 端末を作れなかった")
+    settings = worker_settings(a)
+    if a.agent == "claude" and settings:
+        try:
+            sw.note_launch(handle, settings, a.model)
+        except OSError as e:  # sandbox の中の worker が helper を立てるときは書けない。立てることは止めない
+            sys.stderr.write("orca-launch: worker の記録を書けなかった（席の切り替えで設定を戻せない）: %s\n" % e)
     args = ["orchestration", "worker-start", "--spec-file", a.spec_file, "--terminal", handle]
     args += ["--task-title", a.task_title] if a.task_title else []
     args += ["--keep-open"] if a.keep_open else []

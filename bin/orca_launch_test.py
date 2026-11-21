@@ -61,7 +61,8 @@ class LaunchTest(unittest.TestCase):
         with open(self.spec, "w") as fh:
             fh.write("brief")
         self.env = {**{k: v for k, v in os.environ.items() if k != "ORCA_WORKTREE_ID"}, "ORCA_CLI_COMMAND": fake, "FAKE_LOG": self.log, "FAKE_WT": self.wt,
-                    "CLAUDE_CONFIG_DIR": self.cfg, "ORCA_WORKER_SETTINGS": "/s/worker.json"}
+                    "CLAUDE_CONFIG_DIR": self.cfg, "ORCA_WORKER_SETTINGS": "/s/worker.json",
+                    "STALLWATCH_HOME": os.path.join(self.tmp, "stallwatch")}
 
     def run_launch(self, *extra, **env):
         return subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--title", "t",
@@ -78,6 +79,10 @@ class LaunchTest(unittest.TestCase):
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
         cmd = create[create.index("--command") + 1]
         self.assertIn("CLAUDE_CONFIG_DIR=" + self.cfg, cmd)
+        # 席の切り替えで Orca が --settings を落としたとき、account-failover が戻せるよう端末と設定を記録する。
+        with open(os.path.join(self.tmp, "stallwatch", "worker-launches.json")) as fh:
+            rec = json.load(fh)
+        self.assertEqual({h: (r["settings"], r["model"]) for h, r in rec.items()}, {"term_x": ("/s/worker.json", "opus")})
         self.assertIn("--model opus --settings /s/worker.json", cmd)
         start = next(x for x in self.calls() if x[:2] == ["orchestration", "worker-start"])
         self.assertEqual(start[start.index("--terminal") + 1], "term_x")

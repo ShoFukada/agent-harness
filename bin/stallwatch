@@ -65,6 +65,30 @@ def save(path, data):
     os.replace(tmp, path)
 
 
+# orca-launch が立てた worker の端末と、その claude に付けた worker の設定（--settings）。Orca が席の切り替えで起こし直した claude は
+# --settings を落とし、起こし直したあとの端末の出力には元の起動の行が残らないので、account-failover はここから設定を戻す。
+LAUNCHES = os.path.join(HOME, "worker-launches.json")
+LAUNCH_KEEP_MS = 14 * 24 * 60 * 60_000
+
+
+def worker_launches():
+    """端末の handle → {"settings", "model", "at"}。"""
+    v = load(LAUNCHES, {})
+    return v if isinstance(v, dict) else {}
+
+
+def note_launch(handle, settings, model, drop=None):
+    """worker の端末を記録する（drop の handle は消す。起こし直して handle が変わったとき）。2 週間より古い記録は捨てる。"""
+    import fcntl
+    os.makedirs(HOME, exist_ok=True)
+    with open(LAUNCHES + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        now = now_ms()
+        v = {h: r for h, r in worker_launches().items() if h != drop and now - (r.get("at") or 0) < LAUNCH_KEEP_MS}
+        v[handle] = {"settings": settings, "model": model, "at": now}
+        save(LAUNCHES, v)
+
+
 def alert(aid, text, root=None, confirm=False):
     """confirm: 2 回続けて見えたら出す（Orca の更新や再起動の途中の一瞬を知らせない）。"""
     return {"id": aid, "text": text, "root": root, "confirm": confirm}

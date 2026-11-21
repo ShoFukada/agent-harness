@@ -79,6 +79,14 @@ elif cmd == "orchestration worker-show":
     ok(load("shows.json")[a[a.index("--dispatch") + 1]])
 elif cmd == "orchestration run-current":
     ok({"runId": load("run-current.json") if os.path.exists(os.path.join(d, "run-current.json")) else "run_1"})
+elif cmd == "orchestration run-show":
+    coords = load("coords.json") if os.path.exists(os.path.join(d, "coords.json")) else {"run_1": "coord_1"}
+    run = a[a.index("--id") + 1]
+    ok({"run": {"id": run, "coordinator_handle": coords[run]}} if run in coords else {})
+elif cmd == "orchestration send" and os.path.exists(os.path.join(d, "send-fails")):
+    print(json.dumps({"ok": False, "error": {"message": "refused"}}))
+elif cmd == "orchestration send":
+    ok({"messageId": "msg_1"})
 elif cmd == "orchestration worker-start" and os.path.exists(os.path.join(d, "start-fenced")):
     print(json.dumps({"ok": False, "error": {"code": "consumer_fenced", "message": "This caller is not bound to Run run_1."}}))
 elif cmd == "orchestration worker-start":
@@ -86,6 +94,13 @@ elif cmd == "orchestration worker-start":
 elif cmd == "terminal send":
     h, text = a[a.index("--terminal") + 1], a[a.index("--text") + 1]
     screens = load("screens.json")
+    if text.startswith(("claude ", "env ")) and os.path.exists(os.path.join(d, "launch-fails-once")):
+        os.remove(os.path.join(d, "launch-fails-once"))
+        print(json.dumps({"ok": False, "error": {"message": "send failed"}}))
+        sys.exit(0)
+    if text == "/exit" and os.path.exists(os.path.join(d, "exit-closes-dispatch")):
+        # claude を終えると、Orca がその端末の Dispatch を閉じる場合。
+        save("workers.json", [dict(w, state="failed", outcome=None) if w.get("terminal") == h else w for w in load("workers.json")])
     if text == "/exit" and not os.path.exists(os.path.join(d, "exit-hangs")):
         # claude は終わるときに会話を開き直すコマンドを出し、画面の幅で折り返す。
         # 開き直していた会話 id（出力に無ければ、閉じた端末の終わりの案内のもの）。
@@ -364,7 +379,8 @@ class AccountFailoverTest(unittest.TestCase):
         self.run_failover()
         self.assertEqual(self.selects(), [C])
 
-    def test_switch_names_workers_whose_dispatch_was_lost(self):
+    def lost_on_switch(self):
+        """切り替えで Dispatch を失う worker の端末 t1（上限で止まっていた）。Orca は t1-new として worker の設定のまま起こし直す。"""
         self.terminals([terminal("t1", LIMIT_LINE)])
         self.agents([claude_agent("t1")])
         self.restart(["t1"])
@@ -372,14 +388,45 @@ class AccountFailoverTest(unittest.TestCase):
         self.lose_on_switch()
         self.put("heads.json", {"t1-new": launch_head(S1, WORKER_SETTINGS)})
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+
+    def test_switch_rebinds_lost_workers_as_their_coordinator(self):
+        self.lost_on_switch()
         self.run_failover()
-        # launchd からは結び直せない（Orca は Run の coordinator にしか許さない）ので、打たずに知らせる。
+        # coordinator（窓口・担当）が上限で止まっていても進むよう、launchd が Run の coordinator の名で結び直す。
+        self.assertIn("orchestration worker-start --task task_1 --terminal t1-new --from coord_1 --run run_1", self.calls())
+        # worker-start が Task を渡して作業を始めさせるので、続きは別に頼まない（二重に頼まない）。
+        self.assertEqual(self.sends(), [])
+        # 結び直したことを、worker の端末から coordinator に知らせる。
+        (told,) = [c for c in self.calls() if c.startswith("orchestration send")]
+        self.assertIn("--from t1-new --type status", told)
+        self.assertIn("同じ Task を別の worker に出さない", told)
+        self.assertIn("Dispatch が失われた worker 1 個（task_1）を、Orca が起こし直した端末に結び直して続けさせた", self.notes()[0])
+        self.assertEqual(self.history()[-1]["rebound"], ["task_1"])
+
+    def test_switch_asks_the_worker_to_continue_when_it_cannot_rebind(self):
+        self.lost_on_switch()
+        self.put("coords.json", {})
+        self.run_failover()
         self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
-        self.assertIn("Dispatch が失われた worker 1 個（task_1）", self.notes()[0])
-        self.assertIn("account-failover --after-switch", self.notes()[0])
-        (send,) = [c for c in self.calls() if c.startswith("terminal send")]
-        self.assertIn("Dispatch は席の切り替えで失われた", send)
-        self.assertEqual(self.history()[-1]["lost"][0]["new"], "t1-new")
+        # 続きを頼むと、coordinator が別の端末に出し直した同じ Task と二重に動きうるので頼まない。
+        self.assertEqual(self.sends(), [])
+        self.assertIn("続きを頼んでいない。Dispatch を結び直せなかった（Run run_1 の coordinator が分からない）", self.notes()[0])
+        self.assertIn("結び直せなかった worker task_1（Run run_1 の coordinator が分からない）。Run run_1 の coordinator が "
+                      "account-failover --after-switch を打つ", self.notes()[0])
+
+    def test_switch_resends_the_notice_to_the_coordinator_when_it_could_not_send(self):
+        self.lost_on_switch()
+        open(os.path.join(self.fake, "send-fails"), "w").close()
+        self.run_failover()
+        os.remove(os.path.join(self.fake, "send-fails"))
+        self.accounts(B, {A: usage(session=100), B: usage(), C: usage()})
+        self.run_failover()
+        tells = [c for c in self.calls() if c.startswith("orchestration send")]
+        self.assertEqual(len(tells), 2)
+        self.assertEqual(tells[0], tells[1])
+        self.assertEqual(len([c for c in self.calls() if c.startswith("orchestration worker-start")]), 1)
+        self.run_failover()
+        self.assertEqual(len([c for c in self.calls() if c.startswith("orchestration send")]), 2)  # 送れたら送り直さない
 
     def test_restarted_terminal_stuck_at_a_startup_screen_is_named(self):
         self.terminals([terminal("t3")])
@@ -665,14 +712,146 @@ class AccountFailoverTest(unittest.TestCase):
         self.restart(["t1"])
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
         self.seat_home(B, hasSeenAutoDefaultNudge=True)
-        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1", "t1")], sessions={"ctx_1": S1}, settings=WORKER_SETTINGS)
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1", "t1")], sessions={"ctx_1": S1})
         self.lose_on_switch()
-        self.put("heads.json", {"t1-new": launch_head(S1)})
+        # 終わりの案内には --settings が出ない（本物）。切り替える前の起動の行から worker の設定を控える。
+        self.put("heads.json", {"t1": {"tail": ["env 'CLAUDE_CONFIG_DIR=/seat/a' claude --model opus --settings " + WORKER_SETTINGS]},
+                                "t1-new": launch_head(S1)})
         self.run_failover()
         sends = [c.split("--text ")[1] for c in self.calls() if c.startswith("terminal send")]
         self.assertEqual(sends[:2], ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
                                      % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1)])
-        self.assertIn("席の切り替えで失われた", sends[2])
+        self.assertEqual(len(sends), 2)
+        acts = [c for c in self.calls() if c.startswith(("terminal send", "orchestration worker-start"))]
+        self.assertEqual(acts[-1], "orchestration worker-start --task task_1 --terminal t1-new --from coord_1 --run run_1")
+        # 次の切り替えでも戻せるよう、記録は新しい端末に移る。
+        with open(os.path.join(self.home, "worker-launches.json")) as fh:
+            self.assertEqual({h: r["settings"] for h, r in json.load(fh).items()}, {"t1-new": WORKER_SETTINGS})
+
+    def finished_worker(self, record=True, head=None):
+        """Task を終えて開いたまま待っていた worker の端末 t1（in_progress の Dispatch が無い）。Orca は --settings を落として起こし直す。"""
+        self.terminals([terminal("t1")])
+        self.agents([claude_agent("t1")])
+        self.restart(["t1"])
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.seat_home(B, hasSeenAutoDefaultNudge=True)
+        if record:
+            os.makedirs(self.home, exist_ok=True)
+            with open(os.path.join(self.home, "worker-launches.json"), "w") as fh:
+                json.dump({"t1": {"settings": WORKER_SETTINGS, "model": "opus", "at": now_ms()}}, fh)
+        self.put("heads.json", {"t1": head or {"tail": ["❯"]}, "t1-new": launch_head(S1)})
+
+    def test_switch_restores_the_settings_of_a_worker_that_had_finished_its_task(self):
+        self.finished_worker()
+        self.run_failover()
+        sends = [c.split("--text ")[1] for c in self.calls() if c.startswith("terminal send")]
+        self.assertEqual(sends, ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
+                                 % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1)])
+        self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
+
+    def test_switch_reads_the_worker_settings_from_the_launch_line_before_switching(self):
+        # orca-launch の記録が無い（記録を始める前に立てた）worker は、切り替える前の起動の行から設定を読む。
+        self.finished_worker(record=False, head={"tail": ["env 'CLAUDE_CONFIG_DIR=/seat/a' claude --model opus --settings " + WORKER_SETTINGS]})
+        self.run_failover()
+        self.assertIn("terminal send --terminal t1-new --text env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
+                      % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1), self.calls())
+
+    def test_switch_does_not_take_settings_given_as_json_for_a_worker(self):
+        # Orca は claude に JSON の設定を直に渡すことがある。それは worker の設定ではないので、worker と見なさない。
+        self.finished_worker(record=False, head={"tail": ["claude '/orca-agent-view' --settings '{\"fastMode\":false}'"]})
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+
+    def stale_terminal(self, preview=LIMIT_LINE, record=False):
+        """切り替えで Orca が起動し直さなかった端末 t4（既定は元の席の上限で止まっている）を作って切り替える。record は orca-launch の記録。"""
+        self.terminals([terminal("t4", preview)])
+        self.agents([dict(claude_agent("t4"), orcaSessionId="claude_" + S2.replace("-", "_"))])
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.restart([])
+        self.put("heads.json", {"t4": launch_head(S2)})
+        if record:
+            os.makedirs(self.home, exist_ok=True)
+            with open(os.path.join(self.home, "worker-launches.json"), "w") as fh:
+                json.dump({"t4": {"settings": WORKER_SETTINGS, "model": "opus", "at": now_ms()}}, fh)
+        self.run_failover()
+        self.assertEqual(self.history()[-1]["not_moved"], ["題 t4（t4）"])
+        self.accounts(B, {A: usage(session=100), B: usage(), C: usage()})
+        self.seat_home(B, hasSeenAutoDefaultNudge=True)
+
+    def relaunched_to(self, settings=None):
+        return "env CLAUDE_CONFIG_DIR=%s claude%s --resume %s --enter" % (
+            os.path.join(self.tmp, "seat-" + B[:8]), " --model opus --settings " + settings if settings else "", S2)
+
+    def texts(self):
+        return [c.split("--text ")[1] for c in self.calls() if c.startswith("terminal send")]
+
+    def test_terminal_left_on_the_old_seat_is_moved_when_it_is_idle(self):
+        self.stale_terminal()
+        self.run_failover()
+        sends = self.texts()
+        self.assertEqual(sends[:2], ["/exit --enter --wait-submit 10", self.relaunched_to()])
+        self.assertIn("席を admin@example.com に切り替えて", sends[2])  # 上限で止まっていたので続きを頼む
+        self.assertIn("題 t4（t4） を今の席 admin@example.com で起こし直した", self.notes()[-1])
+        self.run_failover()
+        self.assertEqual(len(self.texts()), 3)  # 1 回だけ
+
+    def test_terminal_left_on_the_old_seat_waits_while_busy_or_working_on_its_task(self):
+        self.stale_terminal(preview="❯")
+        self.put("screens.json", {"t4": ["● 調べています"]})
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+        # Task を持って入力待ち（上限ではない）の worker は、claude を終えると Dispatch を失うので触らない。
+        self.put("screens.json", {})
+        self.workers(live=[("ctx_9", "t4", "t4")])
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+
+    def test_terminal_left_on_the_old_seat_is_not_touched_after_its_conversation_changed(self):
+        self.stale_terminal()
+        # 切り替えのあと、人が同じ端末で別の会話を始めた。
+        self.agents([dict(claude_agent("t4"), orcaSessionId="claude_" + S1.replace("-", "_"))])
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+        self.assertIn("別の会話に替わったか", self.notes()[-1])
+
+    def test_worker_left_on_the_old_seat_without_known_settings_is_not_touched(self):
+        # 記録を始める前に立てて、Task を終えた worker（Dispatch は終わっていて、起動の行も読めない）。
+        self.put("workers.json", [{"dispatchId": "ctx_8", "taskId": "task_8", "state": "succeeded", "outcome": "succeeded",
+                                   "terminal": "t4", "workspace": "r::/w/t4"}])
+        self.stale_terminal()
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+        self.assertIn("worker だが、worker の設定（--settings）が分からないので起こし直さない", self.notes()[-1])
+
+    def test_worker_left_on_the_old_seat_at_its_limit_keeps_its_dispatch(self):
+        self.workers(live=[("ctx_9", "t4", "t4")])
+        self.stale_terminal(record=True)
+        self.run_failover()
+        sends = self.texts()
+        self.assertEqual(sends[:2], ["/exit --enter --wait-submit 10", self.relaunched_to(WORKER_SETTINGS)])
+        self.assertIn("席を admin@example.com に切り替えて", sends[2])
+        self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
+
+    def test_worker_left_on_the_old_seat_is_rebound_when_exiting_closed_its_dispatch(self):
+        self.workers(live=[("ctx_9", "t4", "t4")])
+        self.show("ctx_9", runId="run_1", taskId="task_ctx_9")
+        self.put("tasks.json", {"run_1": [{"id": "task_ctx_9", "status": "failed"}]})
+        open(os.path.join(self.fake, "exit-closes-dispatch"), "w").close()
+        self.stale_terminal(record=True)
+        self.run_failover()
+        self.assertIn("orchestration worker-start --task task_ctx_9 --retry-of ctx_9 --terminal t4 --from coord_1 --run run_1", self.calls())
+        self.assertEqual(len(self.texts()), 2)  # worker-start が Task を渡すので、続きは別に頼まない
+
+    def test_terminal_left_on_the_old_seat_is_started_again_after_claude_exited(self):
+        self.stale_terminal()
+        open(os.path.join(self.fake, "launch-fails-once"), "w").close()
+        self.run_failover()
+        self.assertEqual(self.texts(), ["/exit --enter --wait-submit 10", self.relaunched_to()])
+        # claude はもう終わっている（端末はシェル）ので、次の回は起こすところから続ける。
+        self.agents([])
+        self.run_failover()
+        self.assertEqual(self.texts()[2], self.relaunched_to())
+        self.assertEqual(self.texts().count("/exit --enter --wait-submit 10"), 1)
 
     def test_after_switch_trusts_a_relaunch_done_by_the_switch(self):
         self.test_switch_restores_the_worker_settings_before_asking_to_continue()
