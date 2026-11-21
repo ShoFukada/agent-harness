@@ -1,9 +1,10 @@
 # agent-harness
 
-Orca で複数のコーディングエージェントを並べて動かすときの、人とエージェントのやり取りの仕組み。いまは次の 2 つが入っている。
+Orca で複数のコーディングエージェントを並べて動かすときの、人とエージェントのやり取りの仕組み。いまは次の 3 つが入っている。
 
 - **操縦席**（`orca/plugins/cockpit`）: 各ワークスペースのメインのエージェントが書く `.orca/cockpit.json` を、人が決めること・顧客に聞くこと・見て承認する成果物に絞って出す画面。Orca の右のサイドバーのパネルと、別のディスプレイに置くブラウザの窓の 2 か所に出す。押した操作は `.orca/cockpit.user.json` に残り、メインが読んで反映する
 - **workerctl**（`bin/workerctl`）: メインが worker（別の worktree の端末で動く Claude Code や Codex）を立てて指示を送り、止まった・質問した・許可を待っている・端末が消えた、を知らせとして受け取るコマンド。Claude Code の hook からも呼ばれ、未処理の知らせをメインに差し込む
+- **stallwatch**（`bin/stallwatch`）: Orca の監督の外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓のサーバー・launchd の定時ジョブ）を launchd から数分おきに見て、macOS の通知と窓の上の帯に出す見張り。モデルは呼ばない
 
 ## 2 枚のディスプレイでの使い方
 
@@ -18,6 +19,7 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 | `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐のプロセス（`window/server.ts`）。仕組みは同じ場所の README、画面が満たすことは `docs/user-stories.md` |
 | `bin/workerctl` | worker の一覧と知らせの記録。置き場所は `~/Library/Application Support/orca-worker-watch/`（`WORKERCTL_HOME` で差し替え） |
 | `bin/workerctl_test.py` | workerctl のテスト |
+| `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものは窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
 
 ## 入れ方
 
@@ -54,6 +56,19 @@ macOS、Orca 1.4.248 以降、Node 24 以降、Python 3.9 以降を前提にす�
    <key>KeepAlive</key><true/>
    ```
    窓はブラウザで `http://127.0.0.1:47231` を開く
+6. 見張り（stallwatch）を launchd で 5 分おきに動かす。Orca の更新や再起動でメインと一緒に止まらないよう、Orca の automations ではなく launchd に置く。PATH には orca CLI のある Orca.app の bin を入れる
+   ```xml
+   <key>ProgramArguments</key>
+   <array>
+     <string>/usr/bin/python3</string>
+     <string>/Users/you/.config/agent-harness/bin/stallwatch</string>
+     <string>--window-log</string><string>/Users/you/Library/Logs/cockpit-window.log</string>
+     <string>--service</string><string>com.example.cockpit-window</string>
+     <string>--job</string><string>com.example.nightly=/Users/you/Library/Logs/nightly.log</string>
+   </array>
+   <key>StartInterval</key><integer>300</integer>
+   ```
+   `--job` は終わりのコードとログの最後の行（失敗した実行のあとでも launchctl が終わりのコード 0 を返したことがあるので、ログにだけ残った失敗も拾う）、`--service` は動いているかを見る。メインは、worker が止まったあとメインが 10 分動いていないと、`orca orchestration send` で起こす。メインそのものが止まっているときは通知だけにする
 5. Claude Code の hook に workerctl をつなぐ。メインの settings.json には `workerctl hook main-pretool`（PreToolUse）・`main-context`（UserPromptSubmit と SessionStart）・`main-stop`（Stop）を、worker の settings.json には `workerctl hook worker`（Stop・UserPromptSubmit・PreToolUse の AskUserQuestion・Notification）を登録する
 
 ### 設定のリポジトリから参照するとき
@@ -124,6 +139,7 @@ home.file.".local/bin/workerctl".source =
 ```sh
 (cd orca/plugins/cockpit && orca plugin test .)
 python3 bin/workerctl_test.py
+python3 bin/stallwatch_test.py
 ```
 
 ## ライセンス

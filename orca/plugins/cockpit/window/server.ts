@@ -119,6 +119,7 @@ export function createServer(opts: Options) {
   let terms = new Map<string, string>()
   let orcaError: string | undefined
   let pluginNote: string | undefined
+  let alerts: string[] = []
   let focus: Focus = {}
   let mode: WindowView['mode'] = 'follow'
   let manual: string | undefined
@@ -203,7 +204,7 @@ export function createServer(opts: Options) {
 
   async function windowView(): Promise<WindowView> {
     const live = ps.flatMap((r) => r.agents).filter((a) => a.hasLivePty === true || (a.hasLivePty !== false && a.state !== 'done')).length
-    return { mode, focused: followRoot(), rows: rows(), live, view: await cockpitView(selected()), errors: [orcaError, pluginNote].filter((e): e is string => !!e) }
+    return { mode, focused: followRoot(), rows: rows(), live, view: await cockpitView(selected()), errors: [orcaError, pluginNote, ...alerts].filter((e): e is string => !!e) }
   }
 
   function broadcast(): void {
@@ -350,6 +351,19 @@ export function createServer(opts: Options) {
       // メインが作業中で合図を待たせていたら、入力待ちになったかを確かめて送る。
       for (const ws of wss.values()) if (ws.signal) void autoSignal(ws).then(broadcast, (e) => console.error(e))
     }
+  }
+
+  async function readAlerts(): Promise<void> {
+    let next: string[] = []
+    try {
+      const d = JSON.parse(await fsp.readFile(path.join(opts.dir, 'alerts.json'), 'utf8')) as { alerts?: { text?: unknown }[] }
+      next = (d.alerts ?? []).map((a) => a.text).filter((t): t is string => typeof t === 'string').map((t) => `止まっている: ${t}`)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return void console.error(`alerts.json: ${(e as Error).message}`)
+    }
+    if (next.join('\n') === alerts.join('\n')) return
+    alerts = next
+    broadcast()
   }
 
   function startPolling(): void {
@@ -570,11 +584,13 @@ export function createServer(opts: Options) {
       await fsp.mkdir(opts.dir, { recursive: true })
       // focus.json は rename で置き換わるので、ファイルではなく置き場所を見張る。
       focusWatcher = watch(opts.dir, (_ev, name) => {
+        if (name === 'alerts.json') return void readAlerts()
         if (name !== 'focus.json') return
         clearTimeout(focusTimer)
         focusTimer = setTimeout(() => void readFocus(), 30)
       })
       await readFocus()
+      await readAlerts()
       for (const ws of wss.values()) void autoSignal(ws).catch((e) => console.error(e))
       await new Promise<void>((resolve) => server.listen(opts.port, opts.host ?? '127.0.0.1', resolve))
       port = (server.address() as { port: number }).port

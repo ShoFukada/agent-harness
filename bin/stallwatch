@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""Orca の監督の外で止まったもの（各ワークスペースのメイン・操縦席の窓のサーバー・launchd の定時ジョブ）を見つけて知らせる。
+
+launchd が数分おきに 1 回ずつ起こす。Orca や Claude の会話の中に置くと、Orca の更新や会話の終わりと一緒に止まるため外に置く。モデルは呼ばない。
+worker の生死は Orca の orchestration（worker-start の監督）が見るので、ここでは見ない。
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+HOME = os.environ.get("STALLWATCH_HOME") or os.path.expanduser("~/Library/Application Support/stallwatch")
+COCKPIT_DIR = os.environ.get("COCKPIT_DIR") or os.path.expanduser("~/Library/Application Support/cockpit")
+UNHANDLED_MS = 10 * 60_000
+# 作業中のまま Orca の記録が更新されない時間。長いテストやビルドでも Orca は状態を更新するので、それより十分長くとる。
+STALE_MS = 45 * 60_000
+LOG_TAIL = 20_000
+LOG_ERRORS = 3
+# ログのエラーは窓を開き直したときだけ出ることがあるので、最後のエラーからこれだけの間は直ったと見なさない。
+LOG_STICKY_MS = 60 * 60_000
+LOG_ERROR = re.compile(r"\b(Error|ENOENT|EACCES|EADDRINUSE|Unhandled|Traceback)\b")
+JOB_FAILED = re.compile(r"(?i)\b(error|failed|failure|fatal|traceback|unauthorized)\b|失敗|エラー")
+# orca-state.ts の stopReason と同じ。長い発言は作業の報告なので、短いものだけを見る。
+SHORT = 400
+LIMIT = re.compile(r"(?i)usage limit|rate limit|limit reached|out of extra usage|上限に達")
+AUTH = re.compile(r"(?i)/login|not logged in|authentication_error|oauth token|invalid api key|\b401\b")
+LABEL = {"working": "作業中", "done": "止まった", "blocked": "許可待ち", "waiting": "返事待ち"}
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+def load(path, default):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def save(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def alert(aid, text, root=None, confirm=False, wake=None):
+    """confirm: 2 回続けて見えたら出す（Orca の更新や再起動の途中の一瞬を知らせない）。wake: メインに送る (session, 本文)。"""
+    return {"id": aid, "text": text, "root": root, "confirm": confirm, "wake": wake}
+
+
+def orca(*args):
+    """(result, エラーの 1 行, runtimeId)。runtimeId は Orca が起動するたびに変わる。"""
+    try:
+        r = subprocess.run([os.environ.get("ORCA_CLI_COMMAND") or "orca"] + list(args) + ["--json"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e), None
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        return None, " ".join((r.stderr or r.stdout or "出力なし").split())[:160], None
+    if not d.get("ok"):
+        return None, ((d.get("error") or {}).get("message") or "ok でない")[:160], None
+    return d.get("result") or {}, None, (d.get("_meta") or {}).get("runtimeId")
+
+
+def pick_main(agents):
+    """本線にいるエージェントのうちメインに当たるもの。1 人ならその人、複数ならチャット、それも複数なら最近動いた方。
+    窓（orca-state.ts）は cockpit.json の main.terminal で引くが、チャットのメインは端末を持たないので、ここでは形で選ぶ。"""
+    if len(agents) <= 1:
+        return agents[0] if agents else None
+    chats = [a for a in agents if str(a.get("paneKey", "")).startswith("structured-agent-session-")] or agents
+    return max(chats, key=lambda a: a.get("updatedAt") or a.get("stateStartedAt") or 0)
+
+
+def main_stop(a):
+    if a.get("hasLivePty") is False:
+        return "端末が終わった"
+    msg = a.get("lastAssistantMessage") or ""
+    if a.get("state") == "done" and len(msg) <= SHORT:
+        if LIMIT.search(msg):
+            return "利用枠の上限で止まった"
+        if AUTH.search(msg):
+            return "ログインが切れて止まった"
+    if a.get("state") == "done" and (a.get("mainAgent") or {}).get("outcome") == "failure":
+        return "エラーで止まった"
+    return None
+
+
+def check_mains(now, state):
+    res, err, runtime = orca("worktree", "ps", "--limit", "1000")
+    if res is None:
+        return [alert("orca-down", "Orca に繋がらない（%s）。各ワークスペースのメインと worker は Orca が戻るまで止まっている" % err,
+                      confirm=True)]
+    rows = res.get("worktrees") or []
+    out = []
+    # Orca が起動し直すと、作業の途中だったメインも done・success に戻り、手待ちと見分けられない。
+    # 前の回に作業中だったメインが、起動し直したあと動いていなければ知らせる（Orca が止まっていた回は記録を変えない）。
+    restarted = bool(runtime and state.get("runtime") and runtime != state["runtime"])
+    if runtime:
+        state["runtime"] = runtime
+    last = state.get("main_state", {})
+    hits = state.get("restart_hits", {})
+    state["main_state"], state["restart_hits"] = {}, {}
+    for row in rows:
+        root = row.get("path")
+        if not root or not os.path.isfile(os.path.join(root, ".orca", "cockpit.json")):
+            continue
+        name = os.path.basename(root.rstrip("/"))
+        own = row.get("agents") or []
+        m = pick_main(own)
+        if not m:
+            out.append(alert("main-missing:" + root, "「%s」のメインが Orca に見当たらない（チャットか端末が閉じた）" % name, root, confirm=True))
+            continue
+        state["main_state"][root] = m.get("state")
+        if restarted and last.get(root) == "working" and m.get("state") != "working":
+            hits[root] = m.get("stateStartedAt")
+        if root in hits and m.get("state") == "done" and m.get("stateStartedAt") == hits[root]:
+            state["restart_hits"][root] = hits[root]
+            # 再起動のあとに人が動かして終えた場合と見分けられないので、メインは起こさず人に知らせるだけにする。
+            out.append(alert("main-restarted:%s:%s" % (root, hits[root]),
+                             "「%s」のメインが、Orca の再起動のときに作業中だったまま止まっている（続きが要るか確かめる）" % name, root))
+            continue
+        stop = main_stop(m)
+        if stop:
+            out.append(alert("main-dead:" + root, "「%s」のメインが%s" % (name, stop), root))
+            continue
+        if m.get("state") == "working" and now - (m.get("updatedAt") or now) >= STALE_MS:
+            out.append(alert("main-stale:" + root, "「%s」のメインが作業中のまま %d 分動きが無い" % (
+                name, (now - m["updatedAt"]) // 60_000), root, confirm=True))
+            continue
+        if m.get("state") != "done":
+            continue
+        # メインが手を止めたあとに止まった worker。Orca がメインを起こしていれば、メインの stateStartedAt がそれより新しくなる。
+        kids = [r for r in rows if r.get("parentWorktreeId") and r["parentWorktreeId"] == row.get("worktreeId")]
+        workers = [(a, r) for r in kids for a in (r.get("agents") or [])] + [(a, row) for a in own if a is not m]
+        since = m.get("stateStartedAt") or 0
+        for a, r in workers:
+            started = a.get("stateStartedAt") or 0
+            if a.get("state") == "working" or started <= since or now - started < UNHANDLED_MS:
+                continue
+            title = a.get("conversationName") or a.get("displayName") or a.get("taskTitle") or os.path.basename(r.get("path", ""))
+            text = "「%s」の worker「%s」が%sあと、メインが %d 分動いていない" % (
+                name, title, LABEL.get(a.get("state"), a.get("state")), (now - started) // 60_000)
+            body = ("【見張り】worker「%s」（%s）が%sまま %d 分たった。端末を読んで結果を取り込むか、人の判断待ちなら操縦席に出す"
+                    % (title, r.get("path"), LABEL.get(a.get("state"), a.get("state")), (now - started) // 60_000))
+            sid = m.get("orcaSessionId")
+            out.append(alert("main-unhandled:%s:%s:%s" % (root, a.get("paneKey"), started), text, root,
+                             wake=(sid, body) if sid else None))
+    return out
+
+
+def wake_main(session, body):
+    res, err, _ = orca("orchestration", "send", "--to", "orca_session_id:" + session, "--subject", "止まった worker",
+                    "--type", "escalation", "--body", body)
+    return err
+
+
+def check_window(url, log, state, now):
+    out = []
+    for path in ("/", "/window/page.ts"):
+        try:
+            with urllib.request.urlopen(url.rstrip("/") + path, timeout=10) as r:
+                code = r.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        except (OSError, ValueError) as e:
+            code = str(getattr(e, "reason", e))
+        if code != 200:
+            out.append(alert("window-http", "操縦席の窓のサーバー（%s）が %s に %s を返した" % (url, path, code), confirm=True))
+            break
+    if log:
+        errs = new_log_errors(log, state)
+        if len(errs) >= LOG_ERRORS:
+            # Node のエラーは code: 'ENOENT' のような続きの行が多いので、Error: で始まる行があればそれを見せる。
+            shown = next((l for l in reversed(errs) if "Error" in l), errs[-1]).strip()
+            state["log_hit"] = {"at": now, "text": "操縦席の窓のサーバーのログにエラーが続いている（%s）: %s" % (log, shown[:160])}
+        hit = state.get("log_hit")
+        if hit and now - hit["at"] < LOG_STICKY_MS:
+            out.append(alert("window-log", hit["text"]))
+        else:
+            state.pop("log_hit", None)
+    return out
+
+
+def new_log_errors(log, state):
+    """前回読んだところから後のエラーの行。初めての回は位置だけ覚える（入れた直後に済んだ昔のエラーを知らせない）。
+    ログが切り詰められたときは末尾だけを読む。"""
+    offsets = state.setdefault("log_offsets", {})
+    try:
+        size = os.path.getsize(log)
+    except OSError:
+        return []
+    start = offsets.get(log)
+    if start is None:
+        offsets[log] = size
+        return []
+    if start > size:
+        start = max(0, size - LOG_TAIL)
+    with open(log, "rb") as fh:
+        fh.seek(start)
+        text = fh.read().decode("utf-8", "replace")
+    offsets[log] = size
+    return [l for l in text.splitlines() if LOG_ERROR.search(l)]
+
+
+def launchd_info(label):
+    r = subprocess.run(["launchctl", "print", "gui/%d/%s" % (os.getuid(), label)], capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    # 1 段目の字下げ（タブ 1 つ）だけを読む。中の endpoints などにも state = が出る。
+    top = {}
+    for line in r.stdout.splitlines():
+        m = re.match(r"^\t([a-z ]+?) = (.*)$", line)
+        if m and m.group(1) not in top:
+            top[m.group(1)] = m.group(2).strip()
+    return top
+
+
+def last_line(log):
+    try:
+        with open(log, "rb") as fh:
+            fh.seek(max(0, os.path.getsize(log) - 4096))
+            lines = [l for l in fh.read().decode("utf-8", "replace").splitlines() if l.strip()]
+    except OSError:
+        return ""
+    return lines[-1] if lines else ""
+
+
+def check_jobs(jobs, services):
+    out = []
+    for spec, service in [(j, False) for j in jobs] + [(s, True) for s in services]:
+        label, _, log = spec.partition("=")
+        log = os.path.expanduser(log)
+        info = launchd_info(label)
+        if info is None:
+            out.append(alert("job:" + label, "launchd の %s が登録されていない" % label))
+            continue
+        if service:
+            if info.get("state") != "running":
+                out.append(alert("job:" + label, "常駐の %s が動いていない（state = %s）" % (label, info.get("state"))))
+            continue
+        code = info.get("last exit code", "")
+        if re.fullmatch(r"-?\d+", code) and code != "0":
+            out.append(alert("job:" + label, "定時ジョブ %s が終わりのコード %s で失敗した（%s）" % (label, code, log or "ログなし")))
+            continue
+        # launchctl が last exit code = 0 を返しても、ログの最後の実行は失敗していることがある。
+        line = last_line(log) if log else ""
+        if line and JOB_FAILED.search(line):
+            out.append(alert("job:" + label, "定時ジョブ %s のログの最後が失敗: %s" % (label, line[:200])))
+    return out
+
+
+def notify(texts):
+    cmd = os.environ.get("STALLWATCH_NOTIFY")
+    title = "止まっているもの %d 件" % len(texts) if len(texts) > 1 else "止まっているもの"
+    body = " / ".join(texts)[:600]
+    script = "display notification %s with title %s" % (json.dumps(body, ensure_ascii=False), json.dumps(title, ensure_ascii=False))
+    try:
+        r = subprocess.run([cmd, title, body] if cmd else ["osascript", "-e", script], capture_output=True)
+    except OSError:
+        return False
+    return r.returncode == 0
+
+
+def run(a):
+    now = now_ms()
+    state_path = os.path.join(HOME, "state.json")
+    state = load(state_path, {})
+    found = check_mains(now, state) + check_window(a.window, a.window_log, state, now) + check_jobs(a.job, a.service)
+    seen = state.get("seen", {})
+    notified = state.get("notified", {})
+    woken = state.get("woken", {})
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    active, fresh, woke = [], [], []
+    for f in found:
+        first = seen.get(f["id"], stamp)
+        f["since"] = first
+        if f["confirm"] and f["id"] not in seen:
+            continue
+        active.append(f)
+        if f["id"] not in notified:
+            fresh.append(f)
+    sent = bool(fresh) and notify([f["text"] for f in fresh])
+    for f in active:
+        if f["wake"] and f["id"] not in woken:
+            err = wake_main(*f["wake"])
+            woke.append("%s: %s" % (f["id"], err or "送った"))
+            if not err:
+                woken[f["id"]] = stamp
+    # Orca に繋がらない回はメインの様子が分からないので、メインについての記録は解消と見なさずに残す。
+    keep = lambda d: {k: v for k, v in d.items() if k.startswith("main-")} if any(f["id"] == "orca-down" for f in found) else {}
+    state["seen"] = dict(keep(seen), **{f["id"]: f["since"] for f in found})
+    state["notified"] = dict(keep(notified), **{f["id"]: notified.get(f["id"], stamp) for f in active if f["id"] in notified or sent})
+    state["woken"] = dict(keep(woken), **{f["id"]: woken[f["id"]] for f in active if f["id"] in woken})
+    save(state_path, state)
+    save(os.path.join(COCKPIT_DIR, "alerts.json"), {
+        "at": stamp, "alerts": [{"id": f["id"], "text": f["text"], "root": f["root"], "since": f["since"]} for f in active]})
+    for f in active:
+        print("%s %s%s" % (f["since"], f["text"], "（今回知らせた）" if sent and f in fresh else ""))
+    for w in woke:
+        print("メインに送った: " + w)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="stallwatch", description=__doc__.split("\n")[0])
+    ap.add_argument("--window", default="http://127.0.0.1:47231", help="操縦席の窓のサーバー")
+    ap.add_argument("--window-log", help="窓のサーバーのログ。エラーの行が続いたら知らせる")
+    ap.add_argument("--job", action="append", default=[], metavar="LABEL[=LOG]",
+                    help="定時ジョブ。終わりのコードとログの最後の行を見る")
+    ap.add_argument("--service", action="append", default=[], metavar="LABEL",
+                    help="常駐のジョブ。動いているかを見る")
+    a = ap.parse_args()
+    failed = os.path.join(HOME, "failed")
+    try:
+        run(a)
+    except Exception as e:  # launchd は失敗を誰にも見せないので、見張り自身の失敗も通知にする（同じ失敗は 1 回だけ）
+        text = "見張り（stallwatch）自身が失敗した: %r" % e
+        if load(failed, None) != text:
+            notify([text])
+            save(failed, text)
+        raise
+    if os.path.exists(failed):
+        os.remove(failed)
+
+
+if __name__ == "__main__":
+    main()

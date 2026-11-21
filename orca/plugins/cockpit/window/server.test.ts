@@ -199,6 +199,18 @@ test('操縦席のプラグインが承認待ちなら、Orca に合わせた切
   assert.deepEqual(v.errors, ['Orca のプラグインが承認待ちのため、Orca に合わせた切り替えが止まっています'])
 })
 
+test('見張りが alerts.json に書いた止まっているものを上の帯に出し、消えたら下げる', async () => {
+  const { a, rows } = twoWorkspaces()
+  const { s, port, dir } = await start(rows, a)
+  const sse = listen(port, s.token)
+  const file = path.join(dir, 'alerts.json')
+  writeFileSync(file, JSON.stringify({ alerts: [{ id: 'job:x', text: '定時ジョブ x が失敗した' }] }))
+  const v = await sse.until((w) => w.errors.length > 0)
+  assert.deepEqual(v.errors, ['止まっている: 定時ジョブ x が失敗した'])
+  writeFileSync(file, JSON.stringify({ alerts: [] }))
+  await sse.until((w) => w === sse.got.at(-1) && w.errors.length === 0)
+})
+
 test('ファイルの変更が SSE で届く', async () => {
   const { a, rows } = twoWorkspaces()
   const { s, port } = await start(rows, a)
