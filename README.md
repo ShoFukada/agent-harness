@@ -165,22 +165,37 @@ account-failover は、Orca が読んでいる各席の使用量（`orca account
    - ログインが切れている席（Orca の使用量の失敗が `missing-credentials`）。Orca のアカウントの画面でログインし直す
    - claude を対話で起こすと、席で一度だけの確認の画面で止まる席（その席の `.claude.json` で、初回の設定が済んでいないか、`settings.json` の `permissions.defaultMode` が auto 以外なのに「auto mode を既定にするか」に答えた記録 `hasSeenAutoDefaultNudge` が無い）。その席で一度 claude を対話で起こして答えると、記録が残って行き先に戻る
 4. 切り替える前に、前景が Claude の端末をすべて控え、そのうち上限の 1 行が画面に出ている端末と作業中の端末に印を付ける
-5. `orca account select` で切り替える。CLI からの切り替えを、Orca の窓は起動し直しとして扱い、古い席で前景に Claude がいる端末を `claude --resume` で開き直す（Orca の設定「確認する」なら確認を出し、「確認しない」なら黙って開き直す）。同じ枠で開き直すことも、前の会話を同じ worktree の別の端末で開き直すこともある。Bash などの子プロセスが前景の端末は移らない
-6. 控えた端末が起動し直す（最大 90 秒待つ）のを、同じ枠で ptyId が変わったかで見分ける。古い端末が消えて同じ worktree の別の端末に開いたときは、同じ worktree で別の用事に起こした Claude と見分けられないので、起動し直した先とは見なさず「起動し直した先が分からない端末」として知らせる。印を付けた端末が入力待ちになったら「席を切り替えて起動し直した。止まったところから続けて」と送る。ほかの端末は、確認の画面で止まっていないかだけを見る
-7. Orca は起動し直すとき古い端末を閉じるので、そこで動いていた worker の Dispatch は lost（`operator_close`）になる。切り替えでは結び直さず、結び直す相手（Task と Orca が起こし直した端末）を知らせる。worker への続きの依頼には「coordinator が結び直すと同じ Task が新しい Dispatch ID で届く」と添える
-8. 切り替えたことを、通知・窓の帯（30 分）・`~/Library/Application Support/stallwatch/failover-history.jsonl`（`STALLWATCH_HOME`）に、時刻・元の席・先の席・続けさせた端末・移らなかった端末・確認の画面で止まった端末・Dispatch を失った worker・上限で止まっているチャットとして残す
+5. `orca account select` で切り替える。CLI からの切り替えを、Orca の窓は起動し直しとして扱い、古い席で前景に Claude がいる端末を `claude --resume` で開き直す（Orca の設定「確認する」なら確認を出し、「確認しない」なら黙って開き直す）。窓に出ていない端末は、tabId・leafId を `pty:<ptyId>` にして開き直し、元の枠を `recordedPaneKey` に残す（`orca agent list` の paneKey もこちら）ので、端末の枠は `recordedPaneKey` があればそれで、無ければ tabId・leafId で見る。Bash などの子プロセスが前景の端末は移らない
+6. 控えた端末が起動し直す（最大 90 秒待つ）のを、同じ枠で ptyId が変わったかで見分ける。古い端末が消えて別の枠に開いたときは、同じ worktree で別の用事に起こした Claude と見分けられないので、起動し直した先とは見なさず「起動し直した先が分からない端末」として知らせる。印を付けた端末が入力待ちになったら「席を切り替えて起動し直した。止まったところから続けて」と送る。ほかの端末は、確認の画面で止まっていないかだけを見る
+7. Orca は起動し直すとき古い端末を閉じるので、そこで動いていた worker の Dispatch は lost（`operator_close`）になり、Task は ready に戻る。切り替えでは結び直さず、結び直す相手（Task と Orca が起こし直した端末）を知らせる。Orca が起こし直した claude は、orca-launch が付けた `--settings`（worker の設定。sandbox と送る道具の deny）を落とす（Orca の `--plugin-dir <orca-agent-view> --dangerously-skip-permissions --effort high --resume <会話 id>` だけで起きる）ので、失った worker の端末では、続きを頼む前に下の「worker の設定で起こし直す」をする。できなければ、sandbox の外で作業を続けさせないよう続きを頼まず、名指しして知らせる。worker への続きの依頼には「coordinator が結び直すと同じ Task が新しい Dispatch ID で届く」と添える
+8. 切り替えたことを、チャット（窓口・担当）は起動し直らないことと合わせて、通知・窓の帯（30 分）・`~/Library/Application Support/stallwatch/failover-history.jsonl`（`STALLWATCH_HOME`）に、時刻・元の席・先の席・続けさせた端末・移らなかった端末・確認の画面で止まった端末・Dispatch を失った worker・上限で止まっているチャットとして残す
 
 ### 切り替えたあとに worker を結び直す（`account-failover --after-switch`）
 
-Orca は Dispatch の結び直し（`orca orchestration worker-start --task <task> --retry-of <dispatch> --terminal <端末>`）を Run の coordinator にしか許さず、launchd から打つと送り主が決まらず断られます。そこで、自動の切り替えのあとも手で切り替えたあとも、coordinator（窓口・担当）が自分の端末やチャットから `account-failover --after-switch` を打ちます（`--dry-run` で何を結び直すかだけを出す。`--since-min` で見る範囲を変える。既定は 60 分）。
+Orca は Dispatch の結び直し（`orca orchestration worker-start --task <task> --terminal <端末>`）を Run の coordinator にしか許さず、launchd から打つと送り主が決まらず断られます。そこで、自動の切り替えのあとも手で切り替えたあとも、coordinator（窓口・担当）が自分の端末やチャットから `account-failover --after-switch` を打ちます（`--dry-run` で何を結び直すかだけを出す。`--since-min` で見る範囲を変える。既定は 60 分）。
 
 1. 直近に `operator_close` で失った worker の Dispatch を、worktree ごとに最後の 1 件だけ拾う
-2. Orca が起こし直した端末を、同じ枠に開いた端末として探す。同じ worktree の別の端末で起こし直したらしいときは、切り替える前からいた別の Claude と見分けられないので、候補と打つコマンドを出すだけにする
-3. その端末が入力待ちなら、同じ Task を `--retry-of` で結び直す。確認の画面で止まっていれば打たない（指示の文字が画面の選択肢を選ぶため）
-4. 起こし直した端末にもう別の Dispatch があれば（誰かが結び直した）何もしない。同じ worktree で別の worker が今動いていれば、2 つが同じファイルを触らないよう結び直さず、起こし直した端末が残っていれば閉じるか確かめるよう出す（残っていなければ立て直し済みとして黙る）。起こし直した端末が見つからなければ、orca-launch で立て直すよう出す
-5. ほかの Run の Dispatch で断られたら、その Run の coordinator が打つコマンドを出す。詳細を読めなかった Dispatch は「確かめていない」と出す。あわせて、確認の画面で止まっている Claude の端末と上限で止まっているチャットを出す。結び直せないもの・確かめていないもの・止まった端末が残れば終了コード 1
+2. 失ったあとに同じ Task が別の Dispatch で動いた（`orca orchestration task-list --run <run>` で Task が別の Dispatch に dispatched か、worker の一覧に同じ Task の新しい Dispatch がある）なら、「結び直し済み（ctx_…）」と出して飛ばす。Task が completed なら「Task は終わっている」と出して飛ばす。Task の状態を読めなければ結び直さない
+3. Orca が起こし直した端末を、次のどちらかで探す。どちらでもなく同じ worktree に Claude がいるときは、切り替える前からいた別の Claude と見分けられないので、候補と打つコマンドを出すだけにする（別の用事の Claude に Task を打ち込まない）
+   - 同じ枠（上の `recordedPaneKey`）に開いた端末
+   - 同じ worktree で、失った worker の会話を開き直した端末。失った会話 id は、Orca が閉じた端末の最後の画面（`worker-show --full` の terminal.preview）に Claude Code が出す「Resume this session with: … --resume <id>」から、開き直した会話 id は、Orca が新しい端末に打った `claude … --resume <id>` が残る出力の先頭（`orca terminal read --cursor 0`）から読む。出力の先頭がもう残っていなければ確かめられない扱い。同じ会話の端末が 1 つに決まるときだけ使う
+4. その端末が入力待ちなら、同じ Task を結び直す。Orca は `operator_close` で失った Task を ready に戻し、`--retry-of` は failed・blocked の Task にしか受け付けない（ready の Task に付けると `task_not_startable`）ので、Task が failed・blocked のときだけ `--retry-of <失った Dispatch>` を付ける。確認の画面で止まっていれば打たない（指示の文字が画面の選択肢を選ぶため）。結び直す前に、下の「worker の設定で起こし直す」をする。できなければ結び直さず、打つコマンドを出す
+5. 起こし直した端末に、失ったあとの別の Dispatch がある（担当が続き（followUpOf）を送った、誰かが結び直した。終わったものも含む）なら、「結び直し済み（ctx_…）」と出して飛ばす。同じ worktree で別の worker が今動いていれば、2 つが同じファイルを触らないよう結び直さず、起こし直した端末が残っていれば閉じるか確かめるよう出す（残っていなければ立て直し済みとして黙る）。起こし直した端末が見つからなければ、orca-launch で立て直すよう出す
+6. ほかの Run の Dispatch で断られたら、その Run の coordinator が打つコマンドを出す。詳細を読めなかった Dispatch は「確かめていない」と出す。あわせて、確認の画面で止まっている Claude の端末と上限で止まっているチャットを出す。結び直せないもの・確かめていないもの・止まった端末が残れば終了コード 1
 
-- チャット（Orca のチャットのタブ）は切り替えでは起動し直らず、外から「続ける」を押す口も無いので、知らせるだけにする。窓口のチャットは「続ける」で新しい席になる。`orca orchestration worker-start` で立てた担当のチャットは元の席に残るので、作業の状態を確かめて立て直す
+worker の設定で起こし直す（`--after-switch` と自動の切り替えの両方）:
+
+- 起こし直した claude の起動の行は、端末の出力（`orca terminal read --cursor 0`）で最後に claude を起こした行（Orca が打った行か、ここで打った `env … claude …` の行。Claude Code の終わりの案内の行は除く）を読む。出力は打った文字が崩れて積もり（2026-11-21 の本物で、手で打った `env … claude … --settings …` が `clenv '…` と残り、Orca が打った行も画面の幅で切れて `--resume` が残っていなかった）、プロセスの引数は worker の sandbox からは読めない（`ps` が operation not permitted）ので、次のように扱う
+  - Orca が打った行（`orca-agent-view` を含む）は、`--resume` が見えなくても Orca が起こし直した claude と見なす。会話 id は終わりの案内から取る
+  - `orca-agent-view` も `--resume` も無い行は新しい会話の claude と見なし、同じ枠でも当てない
+  - 最後の起動の行のあとに claude が終わった跡（終わりの案内）があり、そのあとの起こし方を拾えなければ、誰かがもう起こし直したと見なして止め、確かめてから打つ結び直しのコマンドを出す。自動の切り替えが起こし直した端末と会話 id は `STALLWATCH_HOME/failover-state.json` の `relaunched` に残し、その組なら設定で動いていると見なして結び直す
+- 失った worker の元の引数（`--model`・`--settings`）は、Orca が閉じた端末の終わりの案内（`Resume this session with: claude --model opus --settings …/settings.worker.json --resume <id>`）から読む。案内に `--settings` が無ければ orca-launch の既定（`$ORCA_WORKER_SETTINGS`、モデルは opus）を使う。起動の行に `--settings` が無いのにどちらも無ければ、名指しして止める
+- 起動の行に `--settings` が無ければ、入力待ちと、今動いている claude の会話が失った worker の会話であることを確かめてから `/exit` を送り、claude が終わりの案内を出すのを待ち（最大 30 秒）、同じ端末で `env CLAUDE_CONFIG_DIR=<今の席の home> claude --model <元のモデル> --settings <worker の設定> --resume <会話 id>` を打ち、入力待ちになるのを待つ。会話 id は起動の行の `--resume`、無ければ終わりの案内から取る
+- 起動の行を読めない（出力の先頭が残っていない）、会話 id が分からない、今の会話が違う、claude が終わらない、起こし直した claude が入力待ちにならない、のどれかなら結び直さず（自動の切り替えでは続きも頼まず）、端末と打つコマンドを名指しする
+- `--after-switch` では、`/exit` を送る前に、打った人が担当する Run（`orca orchestration run-current`）の worker かを確かめる。ほかの Run の worker には何も送らず、その Run の coordinator が打つコマンドを出す（Orca が結び直しを断るのは worker-start のときなので、その前に止める）
+- 自動の切り替えでは、切り替える前に worker が動いていた端末を控え、そこで起こし直した claude には、設定で動いていると確かめたか起こし直せたときだけ続きを頼む。Task や Dispatch を読めず確かめられなければ続きを頼まない（worker の一覧を読めなければ、どの端末にも頼まない）
+
+- チャット（Orca のチャットのタブ。窓口・担当）は切り替えでは起動し直らず、元の席のまま動き続ける（2026-11-21 の本物の切り替えで、窓口と担当のチャットは元の席のまま止まらずに動き、担当のチャットから `account-failover` も打てた）。元の席の上限で止まったチャットは「続ける」を押す（21:18 の観測。外から押す口は無いので、通知と `--after-switch` の出力で知らせるだけにする）
 - 全部の席が上限なら切り替えず、最初に戻る席と時刻を 1 回だけ通知し、窓の帯に出し続ける。どれかの席の枠が戻ると、次に上限に当たったときに優先度の高い席から選び直す。上限に当たっていないときに優先度の高い席へ戻ることはしない（作業中の端末を止めないため）
 - 切り替えたあと 10 分は次の切り替えをしない（Orca が新しい席の使用量を読むのを待つ）。6 時間に 6 回を超えたら往復していると見なして止め、知らせる。使用量の分からない席へ移って 15 分たっても Orca が読めなければ、「上限に当たっても自動では切り替えられない」と帯に出す
 - Orca の設定「ターミナルで Claude を実行中にアカウントを切り替える場合」を「維持」にしていると、端末は起動し直らない。Orca が窓を開かずに動いているときも起動し直らない
