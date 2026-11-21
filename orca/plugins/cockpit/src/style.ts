@@ -48,7 +48,8 @@ body { margin:0; }
 .ck .paneswitch { display:none; gap:4px; flex:1 1 auto; min-width:0; }
 .ck .paneswitch button { flex:1 1 auto; white-space:nowrap; border:1px solid var(--ink3); background:none; border-radius:7px; padding:4px 8px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
 .ck .paneswitch button[aria-selected="true"] { background:var(--ink); color:var(--surface); border-color:var(--ink); }
-.ck .paneswitch b { margin-left:6px; color:inherit; }
+.ck .paneswitch b { color:inherit; }
+.ck.pnl details.more summary { color:var(--focus); font-weight:400; }
 @container (max-width:1180px) { .ck .board { grid-template-columns:200px minmax(0,1fr); } .ck .board .side { grid-column:2; } }
 @container (max-width:760px) { .ck .board { grid-template-columns:minmax(0,1fr); padding:10px 12px 72px; } .ck .board .side { grid-column:auto; }
   /* 狭い幅では、合計を兼ねる「私の番 n」の切り替えと合図を 1 段に並べる（操作の段を重ねない。初見 2 巡目 1）。 */
@@ -126,8 +127,6 @@ body { margin:0; }
 
 /* 開いた票の中身 */
 .ck .body { padding:0 16px 14px 14px; display:grid; gap:12px; min-width:0; }
-.ck .purpose { font-size:var(--fs-s); color:var(--ink2); }
-.ck .purpose b { color:var(--ink); font-weight:600; }
 .ck .fld { display:grid; gap:2px; min-width:0; }
 .ck .fld > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 .ck .fld > div, .ck .fld > p { margin:0; overflow-wrap:anywhere; }

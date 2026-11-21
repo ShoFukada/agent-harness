@@ -301,7 +301,8 @@ function detailsHtml(r: Row, ui: Ui, svg: (raw: string) => string, figures: Reco
 function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, figures: Record<string, string>): string {
   const c = r.card
   const parts: string[] = []
-  if (c.purpose) parts.push(`<div class="purpose"><b>何のため</b>　${note(c.purpose)}</div>`)
+  // 何のためも、ほかの欄と同じ小見出しと値の形にする（Neon 初見 2 巡目の任意）。
+  if (c.purpose) parts.push(fld('何のため', note(c.purpose)))
   switch (c.kind) {
     case 'inbox':
       if (c.from) parts.push(fld('届いた連絡', `<span class="sp">${sp([esc(c.from.who), c.from.via && esc(c.from.via), c.from.at && esc(fmtDate(c.from.at))])}</span>`))
@@ -586,7 +587,7 @@ function paneSwitch(ui: Ui, total: number, n: { talking: number; waiting: number
   const cur = ui.pane ?? 'queue'
   return `<div class="paneswitch" role="tablist" aria-label="出すもの">
     <button type="button" role="tab" data-pane="queue" aria-selected="${cur === 'queue'}">私の番 ${total}</button>
-    <button type="button" role="tab" data-pane="side" aria-selected="${cur === 'side'}">案件の今・待ち ${n.talking + n.waiting}${n.late ? `<b>催促 ${n.late}</b>` : ''}</button></div>`
+    <button type="button" role="tab" data-pane="side" aria-selected="${cur === 'side'}">案件の今・待ち ${n.talking + n.waiting}${n.late ? `・<b>催促 ${n.late}</b>` : ''}</button></div>`
 }
 
 /** パネルで、メインに合図が届いていないとき。 */
