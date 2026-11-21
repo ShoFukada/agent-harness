@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { Cockpit } from '../src/model.ts'
 import { report, type OrcaFacts, type StateReport } from '../src/state.ts'
 import { emptyFiles, loadFiles } from '../src/store.ts'
-import { currentDispatches, orcaAgents, orcaDispatches, pluginProblem, type Chain, type Failure, type PluginRow, type PsRow, type WorkerShow } from './orca-state.ts'
+import { currentDispatches, failuresOf, orcaAgents, orcaDispatches, pluginProblem, type Chain, type Failure, type PluginRow, type PsRow, type WorkerShow } from './orca-state.ts'
 import { orcaCli, TERMINAL_LIMIT } from './server.ts'
 
 /**
@@ -32,7 +32,7 @@ export async function stateOf(root: string, orca = orcaCli(process.env.COCKPIT_O
   if (!files.cockpit) throw new Error(files.errors[0] ?? `${root}/.orca/cockpit.json がありません`)
   // プラグインの状態は毎回見る（Orca に合わせた切り替えが止まったことを、メインが利用者に頼めるように）。読めなければ黙る。
   const [{ facts, state }, plugins] = await Promise.all([
-    orcaFacts(root, files.cockpit, orca.ps, orca.terminals, orca.show, { tasks: orca.runTasks, link: orca.taskLink }, orca.failures),
+    orcaFacts(root, files.cockpit, orca.ps, orca.terminals, orca.show, { tasks: orca.runTasks, link: orca.taskLink }, orca.inbox && (async () => failuresOf(await orca.inbox!()))),
     orca.plugins().catch((): PluginRow[] | undefined => undefined)
   ])
   return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, firstSeen: files.firstSeen, rulings: files.rulings, consults: files.consults, marks: files.marks })

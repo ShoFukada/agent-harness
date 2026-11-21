@@ -2,7 +2,7 @@
 // 窓の常駐のプロセスと CLI（state.ts）が使う。
 import path from 'node:path'
 import type { Cockpit } from '../src/model.ts'
-import type { AgentRow, DispatchFact, StopReason } from '../src/protocol.ts'
+import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from '../src/protocol.ts'
 
 export type PsAgent = {
   paneKey: string
@@ -18,6 +18,11 @@ export type PsAgent = {
   mainAgent?: { outcome?: string } | null
   /** チャット（structured-agent-session）なら Orca のセッション。止まった理由（failureKind）をこれで引く。 */
   orcaSessionId?: string | null
+  /** 最後に呼んだ・許可を待っている道具と、その入力の 1 行（Bash ならコマンド）。AskUserQuestion の問いは入らない（Orca が questions の配列を 1 行にしない）。 */
+  toolName?: string | null
+  toolInput?: string | null
+  /** 端末の画面から読んだ問い（常駐のプロセスが足す）。 */
+  screen?: Ask
 }
 /**
  * Orca が止まったエージェントについて残した理由（orchestration の escalation の payload の failureKind・detail）。
@@ -25,7 +30,10 @@ export type PsAgent = {
  */
 export type Failure = { kind?: string; detail?: string; at: number }
 /** orca orchestration inbox --full の 1 通（使う欄だけ）。payload は JSON の文字列。 */
-export type InboxMessage = { type?: string; payload?: string | null; created_at?: string }
+export type InboxMessage = {
+  id?: string; type?: string; payload?: string | null; created_at?: string
+  from_handle?: string | null; to_handle?: string | null; thread_id?: string | null; subject?: string | null; body?: string | null
+}
 export function failuresOf(messages: InboxMessage[]): Record<string, Failure> {
   const out: Record<string, Failure> = {}
   for (const m of messages) {
@@ -42,6 +50,126 @@ export function failuresOf(messages: InboxMessage[]): Record<string, Failure> {
   }
   return out
 }
+
+/** 答えの無い orchestration の question（どの案件のものかは questionFacts が決める）。 */
+export type OpenQuestion = { id: string; run: string; from: string; dispatch?: string; at: number; line: string; text: string; options?: string[] }
+const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+/**
+ * inbox から、答えを待っている question を拾う。thread に返事が付いたもの、聞いた側がそのあと何か送ったもの（返事を別の送り方で受けて動いた）は除く。
+ * 宛先が Run の受け口（run:…）でないものは、窓口・担当への問いではないので拾わない。
+ */
+export function openQuestions(messages: InboxMessage[]): OpenQuestion[] {
+  const out: OpenQuestion[] = []
+  for (const q of messages) {
+    if (q.type !== 'question' || !q.id || !q.to_handle?.startsWith('run:')) continue
+    const at = Date.parse(q.created_at ?? '')
+    if (Number.isNaN(at)) continue
+    if (messages.some((m) => m.id !== q.id && (m.thread_id === q.id || (!!q.from_handle && m.from_handle === q.from_handle && Date.parse(m.created_at ?? '') > at)))) continue
+    let p: { question?: unknown; options?: unknown; dispatchId?: unknown } = {}
+    try {
+      p = JSON.parse(q.payload || '{}')
+    } catch {
+      // payload の無い send --type question は本文だけで読む。
+    }
+    const text = str(p.question) ?? str(q.body) ?? str(q.subject)
+    if (!text) continue
+    const options = (Array.isArray(p.options) ? p.options : []).map((o: unknown) => str(o) ?? str((o as { label?: unknown } | null)?.label)).filter((o): o is string => !!o)
+    const subject = str(q.subject)
+    const from = q.from_handle ?? ''
+    out.push({
+      id: q.id, run: q.to_handle.slice('run:'.length), from, at, text,
+      line: subject && subject !== 'Question' ? subject : text.split('\n').find((l) => l.trim())!.replace(/^#+\s*/, '').trim(),
+      dispatch: str(p.dispatchId) ?? (from.startsWith('dispatch:') ? from.slice('dispatch:'.length) : undefined),
+      ...(options.length && { options })
+    })
+  }
+  return out
+}
+
+/**
+ * question を案件に結ぶ。窓口の Run（cockpit.json の main.run_id）宛ては窓口宛て。それ以外は担当の Run 宛てで、聞いた worker の worktree が
+ * この案件の本線の子孫にあるものだけを拾う。聞いた Dispatch が終わった・落ちたものは、もう答えを待っていないので除く。
+ * show は Orca に無ければ null を返す（dispatches に無い Dispatch だけを問い合わせる）。
+ */
+export async function questionFacts(
+  c: Cockpit, root: string, ps: PsRow[], questions: OpenQuestion[], dispatches: Record<string, DispatchFact | null>, current: Record<string, string>, owners: OwnerLive[],
+  show: (dispatch: string) => Promise<WorkerShow | null>
+): Promise<QuestionFact[]> {
+  const row = ps.find((r) => r.path === root)
+  if (!row || !questions.length) return []
+  const paths = new Set(descendants(ps, row).map((r) => r.path))
+  // 担当のチャットのある worktree → 担当の仕事。担当の worker は担当の worktree の子に立つので、聞いた worker の先祖をたどって引く。
+  const ownerAt = new Map<string, string>()
+  for (const o of c.owners ?? []) {
+    const wt = o.state !== 'done' && o.stream && o.session ? owners.find((x) => x.session === o.session)?.worktree : undefined
+    if (wt) ownerAt.set(wt, o.stream!)
+  }
+  const out: QuestionFact[] = []
+  for (const q of questions) {
+    const to = q.run === c.main?.run_id ? 'main' : 'owner'
+    // 担当（チャットの worker）は payload を付けずに送るので、送り主の handle を Dispatch の受け口と突き合わせる。
+    const d = q.dispatch ?? Object.entries(dispatches).find(([, f]) => f?.terminal === q.from)?.[0]
+    const f = d ? (d in dispatches ? dispatches[d]! : await show(d).then((r) => (r ? dispatchFact(r) : null), () => undefined)) : undefined
+    if (f === null || f?.settledAt || f?.liveness === 'exited') continue
+    if (to === 'owner' && !(f?.worktree && paths.has(f.worktree))) continue
+    const task = d ? c.tasks.find((t) => t.worker && (current[t.id] ?? t.worker.dispatch_id) === d) : undefined
+    let stream = task?.stream
+    for (let r = ps.find((x) => x.path === f?.worktree); r && !stream; r = ps.find((x) => x.worktreeId === r!.parentWorktreeId)) stream = ownerAt.get(r.path)
+    const byOwner = !!f?.session && !!c.owners?.some((o) => o.session === f.session)
+    const at = f?.worktree ? ps.find((r) => r.path === f.worktree) : undefined
+    out.push({
+      id: q.id, at: q.at, line: q.line, text: q.text, to, ...(q.options && { options: q.options }), ...(task && { task: task.id }), ...(stream && { stream }),
+      ...(byOwner && { byOwner }), ...(at && jobOf(at) && { asker: jobOf(at) })
+    })
+  }
+  return out
+}
+
+const ASK_TOOL = /^(AskUserQuestion|ask_user_question|askUserQuestion|AskUser|ask_user|ask_question)$/
+/** Orca の toolName・toolInput から読める問い。AskUserQuestion は本文が入らないので、画面から読む（screenAsk）。 */
+export function toolAsk(a: Pick<PsAgent, 'state' | 'toolName' | 'toolInput'>): Ask | undefined {
+  if ((a.state !== 'blocked' && a.state !== 'waiting') || !a.toolName) return undefined
+  if (ASK_TOOL.test(a.toolName)) return a.toolInput?.trim() ? { kind: 'question', text: a.toolInput.trim() } : undefined
+  // 返事待ちに残った別の道具の名前は、前に使ったものかもしれないので許可の問いと読まない。
+  if (a.state !== 'blocked') return undefined
+  return { kind: 'permit', text: a.toolInput?.trim() ? `${a.toolName}: ${a.toolInput.trim()}` : a.toolName }
+}
+
+const OPTION = /^\s*(?:[❯›>]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/
+const BORDER = /^[\s─━═│┃╭╮╰╯┌┐└┘├┤☐☒✔·•-]*$/
+// Claude Code が選択肢の下に足す、自由入力と相談の行。選択肢としては出さない。
+const EXTRA = /^(Type something|Chat about this)/i
+/**
+ * 端末の画面の末尾から、選択肢の付いた問いを読む（Claude Code の AskUserQuestion と許可の確認は、問いの文の下に「❯ 1. …」の行が並ぶ）。
+ * 問いは、いちばん下の「1.」の上の、空行か枠で区切られた塊。折り返しは繋ぐ。読めなければ undefined。
+ */
+export function screenAsk(lines: string[], kind: Ask['kind'] = 'question'): Ask | undefined {
+  const tail = lines.slice(-60)
+  let first = -1
+  for (let i = tail.length - 1; i >= 0; i--) if (OPTION.exec(tail[i]!)?.[1] === '1') { first = i; break }
+  if (first < 0) return undefined
+  const options: string[] = []
+  for (let i = first, n = 1; i < tail.length; i++) {
+    const m = OPTION.exec(tail[i]!)
+    if (m && Number(m[1]) === n) {
+      n++
+      if (!EXTRA.test(m[2]!)) options.push(m[2]!.replace(/\s*\(esc\)$/, ''))
+    }
+  }
+  const block: string[] = []
+  for (let i = first - 1; i >= 0 && first - i <= 12; i--) {
+    const l = tail[i]!.replace(/[│┃]/g, '').trim()
+    if (!l || BORDER.test(l)) {
+      if (block.length) break
+      continue
+    }
+    block.unshift(l)
+  }
+  // 英字どうしの折り返しは語の間の空白が落ちるので、空白で繋ぐ。和文はそのまま繋ぐ。
+  const text = block.reduce((s, l) => (s && /[A-Za-z0-9,]$/.test(s) && /^[A-Za-z0-9]/.test(l) ? `${s} ${l}` : s + l), '')
+  return text ? { kind, text, ...(options.length && { options }) } : undefined
+}
+
 export type PsRow = { worktreeId: string; path: string; parentWorktreeId: string | null; displayName?: string | null; comment?: string | null; agents: PsAgent[] }
 // ログイン切れと利用枠は Orca が状態として持たないので、最後の発言の文から推す。
 // 長い発言は作業の報告で、文中の「limit」などを拾わないよう短いものだけを見る。
@@ -100,11 +228,12 @@ function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit 
   const f = failureOf(a, failures)
   const stop = stopReason(a, f)
   const reset = stop === 'limit' ? resetAt(a.lastAssistantMessage) ?? resetAt(f?.detail) : undefined
+  const ask = stop === 'blocked' || stop === 'waiting' ? toolAsk(a) ?? a.screen : undefined
   return {
     terminalId,
     title: a.conversationName ?? a.displayName ?? a.taskTitle ?? path.basename(row.path),
     agent: a.agentType ?? null, state: a.state, since: a.stateStartedAt, stop, worktree: row.path,
-    ...(a.paneKey.startsWith('structured-') && { chat: true }), ...(a.orcaSessionId && { session: a.orcaSessionId }), ...(reset && { reset }),
+    ...(a.paneKey.startsWith('structured-') && { chat: true }), ...(a.orcaSessionId && { session: a.orcaSessionId }), ...(reset && { reset }), ...(ask && { ask }),
     job: task?.title ?? jobOf(row), task: task?.id, where: row.comment?.split('｜').slice(1).join('｜').trim() || undefined
   }
 }
@@ -138,7 +267,8 @@ export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>
 /** orca orchestration worker-show --full の、使う欄だけ。 */
 export type WorkerShow = {
   dispatch?: { completedAt?: string | null; runId?: string | null } | null
-  projection?: { stage?: { worker?: string } | null; liveness?: { verdict?: string } | null } | null
+  /** workspace.id は「リポジトリの id::worktree のパス」。 */
+  projection?: { stage?: { worker?: string } | null; liveness?: { verdict?: string } | null; workspace?: { id?: string | null } | null } | null
   terminal?: { handle?: string | null } | null
   /** チャットの worker は terminal が null で、handle はここにある。 */
   worker?: { agentTerminalHandle?: string | null } | null
@@ -155,7 +285,8 @@ export function dispatchFact(r: WorkerShow): DispatchFact {
     terminal: r.terminal?.handle ?? r.worker?.agentTerminalHandle ?? r.terminalResource?.terminalHandle ?? null,
     session: inc?.startsWith('structured:') ? inc.slice('structured:'.length) : undefined,
     // agentWait が null なら Orca が見て待っていない。欄が無いのは見ていないだけなので、待っている扱いにしない。
-    waiting: !!r.observation?.agentWait, settledAt: Number.isNaN(done) ? undefined : done
+    waiting: !!r.observation?.agentWait, settledAt: Number.isNaN(done) ? undefined : done,
+    worktree: r.projection?.workspace?.id?.split('::').slice(1).join('::') || undefined
   }
 }
 

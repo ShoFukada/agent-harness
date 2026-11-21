@@ -10,9 +10,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chatMain, requestCards, OP_TYPES, overlay, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
-import type { ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
+import type { Ask, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
-import { currentDispatches, descendants, failuresOf, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type Failure, type InboxMessage, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
+import {
+  currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
+  type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow
+} from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { appendOp, appendOpOnce, emptyFiles, loadFiles, notifyMain, readNotified, recordFirstSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
@@ -42,8 +45,10 @@ export type Orca = {
   runTasks(run: string): Promise<RunTask[]>
   /** orchestration dispatch-show --task。タスクの Dispatch と、それが何の続きか。 */
   taskLink(task: string): Promise<TaskLink>
-  /** orchestration inbox の escalation のうち、止まった理由（failureKind・detail）を持つもの。session → いちばん新しいもの。 */
-  failures?(): Promise<Record<string, Failure>>
+  /** orchestration inbox の新しい 300 通。止まった理由（escalation の failureKind）と、答えの無い question を読む。 */
+  inbox?(): Promise<InboxMessage[]>
+  /** 端末の今の画面の行（terminal read --screen）。AskUserQuestion の問いは画面にしか無い。 */
+  screen?(terminal: string): Promise<string[]>
   send(terminal: string, text: string): Promise<void>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
@@ -74,6 +79,7 @@ export function orcaCli(bin = 'orca'): Orca {
           paneKey: a.paneKey, state: a.state, agentType: a.agentType, conversationName: a.conversationName,
           displayName: a.displayName, taskTitle: a.taskTitle, stateStartedAt: a.stateStartedAt, interrupted: a.interrupted,
           hasLivePty: a.hasLivePty, mainAgent: a.mainAgent ? { outcome: a.mainAgent.outcome } : null, orcaSessionId: a.orcaSessionId ?? null,
+          toolName: a.toolName ?? null, toolInput: a.toolInput ? a.toolInput.slice(0, SHORT) : null,
           lastAssistantMessage: (a.lastAssistantMessage ?? '').length <= SHORT ? a.lastAssistantMessage : null
         }))
       })),
@@ -111,7 +117,8 @@ export function orcaCli(bin = 'orca'): Orca {
       const d = (await run(['orchestration', 'dispatch-show', '--task', task])).dispatch as { id?: string; follow_up_of_dispatch_id?: string | null } | null
       return { dispatch: d?.id ?? null, followUpOf: d?.follow_up_of_dispatch_id ?? null }
     },
-    failures: async () => failuresOf(((await run(['orchestration', 'inbox', '--full', '--limit', '300'])).messages ?? []) as InboxMessage[]),
+    inbox: async () => ((await run(['orchestration', 'inbox', '--full', '--limit', '300'])).messages ?? []) as InboxMessage[],
+    screen: async (terminal) => (((await run(['terminal', 'read', '--terminal', terminal, '--screen'])).terminal as { tail?: string[] } | undefined)?.tail ?? []),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
@@ -171,8 +178,13 @@ export function createServer(opts: Options) {
   let owners: OwnerLive[] = []
   /** orca agent list を読めなかった。チャットが「無い」と言い切らないために持つ。 */
   let ownersStale = false
-  /** Orca が止まったチャットに残した理由（orca-state.ts の Failure）。失敗したエージェントがいるときだけ読む。 */
+  /** Orca が止まったチャットに残した理由（orca-state.ts の Failure）。 */
   let failures: Record<string, Failure> = {}
+  /** 答えの無い orchestration の question（全案件）と、案件ごとに結んだもの。 */
+  let questions: OpenQuestion[] = []
+  const asks = new Map<string, QuestionFact[]>()
+  /** 端末の画面から読んだ問い（「handle@止まった時刻」→ 問い）。同じ停止のあいだは読み直さない。 */
+  let screens = new Map<string, Ask>()
   let orcaError: string | undefined
   let pluginNote: string | undefined
   /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
@@ -232,7 +244,7 @@ export function createServer(opts: Options) {
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen,
       terminals: lastRefresh && !orcaError ? [...terms.values()] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
-      consults: consultsFor(files.consults, cockpit, archive)
+      consults: consultsFor(files.consults, cockpit, archive), questions: root ? asks.get(root) : undefined
     }
   }
 
@@ -365,9 +377,13 @@ export function createServer(opts: Options) {
         ownersStale = !ags
         ps = rowsNow
         terms = new Map(tl.map((t) => [`${t.tabId}:${t.leafId}`, t.handle]))
-        // 失敗の理由は inbox にしかないので、失敗で止まったエージェントがいるときだけ読む（読めなければ文から推す）。
-        if (orca.failures && ps.some((r) => r.agents.some((a) => a.mainAgent?.outcome === 'failure')))
-          failures = await orca.failures().catch((e: Error) => (console.error(`inbox: ${e.message}`), failures))
+        // 失敗の理由と答えの無い question は inbox にしかない。読めなければ前のまま（失敗の理由は文から推す）。
+        const inbox = await orca.inbox?.().catch((e: Error) => void console.error(`inbox: ${e.message}`))
+        if (inbox) {
+          failures = failuresOf(inbox)
+          questions = openQuestions(inbox)
+        }
+        await readScreens()
         orcaError = undefined
       } catch (e) {
         orcaError = 'Orca に繋がりません'
@@ -383,6 +399,7 @@ export function createServer(opts: Options) {
             const { current, status } = await currentDispatches(c, { tasks: orca.runTasks, link: orca.taskLink }, links)
             currents.set(ws.root, current)
             facts.set(ws.root, await orcaDispatches(c, orca.show, current, status))
+            asks.set(ws.root, await questionFacts(c, ws.root, ps, questions, facts.get(ws.root)!, current, owners, orca.show))
           } catch (e) {
             console.error(`orchestration: ${(e as Error).message}`)
           }
@@ -391,6 +408,22 @@ export function createServer(opts: Options) {
     })().finally(() => {
       refreshing = undefined
     }))
+  }
+
+  /**
+   * 許可待ち・返事待ちの端末で、Orca の道具の欄から問いを読めないもの（AskUserQuestion）は、画面の末尾から読む。読めた問いは ps の行に足す
+   * （orca-state.ts の toAgent が使う）。チャットは画面を読めないので、読めなかったと出す。
+   */
+  async function readScreens(): Promise<void> {
+    const next = new Map<string, Ask>()
+    for (const a of ps.flatMap((r) => r.agents)) {
+      const handle = terms.get(a.paneKey)
+      if ((a.state !== 'blocked' && a.state !== 'waiting') || !handle || toolAsk(a) || !orca.screen) continue
+      const key = `${handle}@${a.stateStartedAt}`
+      const ask = screens.get(key) ?? screenAsk(await orca.screen(handle).catch(() => []), a.state === 'blocked' ? 'permit' : 'question')
+      if (ask) next.set(key, (a.screen = ask))
+    }
+    screens = next
   }
 
   const background = () => void refreshOrca().catch((e) => console.error(`refresh: ${(e as Error).message}`))

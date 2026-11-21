@@ -4,7 +4,7 @@ import {
   COUNTED, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
   type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
-import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
+import type { AgentRow, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
 
 export const STOP_LABEL: Record<StopReason, string> = {
   blocked: '許可待ち', waiting: '返事待ち', interrupted: '中断', error: 'エラー', dead: '落ちた', auth: 'ログイン切れ', limit: '利用枠の上限'
@@ -93,7 +93,7 @@ export const isHot = (due: string | undefined, now: number) => !!due && !Number.
  * terminals は Orca にある端末の handle（読めていなければ無い。カードの相談のタブの生死に使う）。terminalsPartial は一覧が上限で切れているかもしれない印で、
  * そのときは一覧に無い handle を「閉じた」と言い切らない（一覧にある handle は生きていると使える）。
  */
-export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean }
+export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean; questions?: QuestionFact[] }
 
 /** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
 export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
@@ -219,8 +219,9 @@ export function dismissedStuck(log: UserLog): Set<string> {
  * 直し方。深田さんが押すものを書く。チャットは CLI から続けられない（Orca は自動の続きが切ってあると、人がチャットで続けるまで配達を止める）ので、
  * 開いて「続ける」を押す。
  */
-export function stopUnblock(stop: StopReason, a: Pick<AgentRow, 'chat' | 'reset'>): [boolean, string] {
+export function stopUnblock(stop: StopReason, a: Pick<AgentRow, 'chat' | 'reset' | 'ask'>): [boolean, string] {
   const open = a.chat ? 'チャットを開いて「続ける」を押す' : '端末を開いて「続けて」と送る'
+  if ((stop === 'blocked' || stop === 'waiting') && a.ask) return [true, `${a.chat ? 'チャット' : '端末'}を開いて、${a.ask.kind === 'permit' ? '許可するかを選ぶ' : '選択肢を選ぶか答えを書く'}`]
   if (stop === 'limit') return [false, `${a.reset ? `${a.reset} 以降` : '利用枠が戻ってから'}（アカウントを切り替えたなら今）、${open}`]
   if (stop === 'auth') return [true, `ログインし直してから、${open}`]
   if (stop === 'error' || stop === 'interrupted') return [false, a.chat ? 'チャットを開いて最後の発言を確かめ、「続ける」を押す' : '端末を開いて最後の出力を確かめ、続きを頼む']
@@ -242,12 +243,52 @@ function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, writt
       const ownStream = c.owners?.find((o) => o.terminal && o.terminal === a.terminalId)?.stream
       // 仕事の名前は Orca のサイドバーと同じもの（仕事の題）を先にする。
       const name = c.streams.find((s) => s.id === (task?.stream ?? ownStream))?.title ?? a.job ?? a.title ?? 'worker'
+      // 問いが読めたら、誰が何を聞いているかを 1 行にする（窓を開くだけで答えられるように）。
+      const what = a.ask ? `${a.ask.kind === 'permit' ? 'が許可を求めている' : 'が聞いている'}: ${askLine(a.ask.text)}` : `が${STOP_LABEL[a.stop!]}`
       const card: Card = {
         id: agentCardId(a), rev: a.since, kind: 'stuck', state: 'open',
-        title: `「${name}」が${STOP_LABEL[a.stop!]}`, since: new Date(a.since).toISOString(),
+        title: `「${name}」${what}`, since: new Date(a.since).toISOString(),
         reason: `${STOP_LABEL[a.stop!]}${a.reset ? `（${a.reset} に戻る）` : ''}`, answerable, unblock, stream: task?.stream, tasks: task ? [task.id] : undefined
       }
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: { title: name, how: a.chat ? 'chat' as const : 'terminal' as const, state: a.state, terminal: a.terminalId ?? undefined, session: a.session }, stream: c.streams.find((s) => s.id === task?.stream), agent: a }
+    })
+}
+
+/** 問いの 1 行目を、一覧の行に収まる長さにする（全文は詳細に出す）。 */
+export const askLine = (text: string) => {
+  const line = (text.split('\n').find((l) => l.trim()) ?? '').replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim()
+  return line.length > 120 ? `${line.slice(0, 120)}…` : line
+}
+
+/** 答えの無い orchestration の question を出すまでの猶予。窓口宛ては窓口が自分で答える間、担当宛ては担当が答える間だけ待つ。 */
+export const ASK_GRACE_MS = { main: 5 * 60_000, owner: 30 * 60_000 } as const
+
+/**
+ * 答えの無い orchestration の question を、詰まりの行にする。押すと宛先（窓口か担当）の端末かチャットを前に出す（答えはそこに伝える）。
+ * 窓口が問いのあとに同じタスクのカードを書いていれば、そちらを出す（同じ問いを 2 行にしない）。
+ */
+function questionRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, now: number): Row[] {
+  return (facts?.questions ?? [])
+    .filter((q) => now - q.at >= ASK_GRACE_MS[q.to] && !(q.task && c.cards.some((x) => x.state === 'open' && x.tasks?.includes(q.task!) && timeOf(x.at) >= q.at)))
+    .map((q) => {
+      const task = c.tasks.find((t) => t.id === q.task)
+      const stream = c.streams.find((s) => s.id === (task?.stream ?? q.stream))
+      const who = q.byOwner ? `「${stream?.title ?? q.asker ?? '担当'}」の担当` : `「${task?.title ?? stream?.title ?? q.asker ?? 'worker'}」のworker`
+      const card: Card = {
+        id: `#ask:${q.id}`, rev: q.at, kind: 'stuck', state: 'open', title: `${who}が${q.to === 'main' ? '窓口' : '担当'}に聞いている: ${askLine(q.line)}`,
+        since: new Date(q.at).toISOString(), reason: STOP_LABEL.waiting, answerable: true, stream: stream?.id, tasks: task ? [task.id] : undefined
+      }
+      const owner: OwnerRef = q.to === 'main' ? { title: '窓口', how: 'main', terminal: c.main?.terminal || undefined } : ownerOf(c, card, facts)
+      const live = owner.session ? facts?.owners?.find((x) => x.session === owner.session) : undefined
+      // 開く先は宛先のエージェント。チャットは Orca がタブを前に出せないので、居場所の worktree を開く。
+      const chat = owner.how === 'chat' || !owner.terminal
+      const agent: AgentRow = {
+        terminalId: chat ? null : owner.terminal!, title: owner.title, agent: null, state: 'waiting', since: q.at, stop: 'waiting',
+        worktree: live?.worktree ?? root, ...(chat && { chat: true }), ask: { kind: 'question', text: q.text, ...(q.options && { options: q.options }) }
+      }
+      const to = owner.how === 'main' ? '窓口' : `担当「${owner.title}」`
+      card.unblock = `${to}の${chat ? 'チャット' : '端末'}を開いて答えを伝える（${owner.how === 'main' ? '窓口' : '担当'}が聞いた側に返す）`
+      return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner, stream, agent }
     })
 }
 
@@ -298,7 +339,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   // 同じ停止を端末の行と Dispatch の行で二重に出さない判定は、「済ませた」を当てる前の行で行う（済ませた端末の行の代わりに Dispatch の行が出ないように）。
   const fromAgents = stuckRows(c, root, facts, written)
   const fromDispatch = dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])), dismissed)
-  const queue = [...mine, ...fromAgents.filter((r) => !dismissed.has(`${r.card.id}@${r.card.rev}`)), ...fromDispatch].sort(byUrgency)
+  const queue = [...mine, ...[...fromAgents, ...questionRows(c, root, facts, now)].filter((r) => !dismissed.has(`${r.card.id}@${r.card.rev}`)), ...fromDispatch].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
   for (const r of queue) counts[r.card.kind]++
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)

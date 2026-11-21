@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { currentDispatches, orcaAgents, pluginProblem, type PluginRow, type PsAgent, type PsRow, type TaskLink } from './orca-state.ts'
+import { currentDispatches, openQuestions, orcaAgents, pluginProblem, questionFacts, screenAsk, toolAsk, type PluginRow, type PsAgent, type PsRow, type TaskLink, type WorkerShow } from './orca-state.ts'
 
 const row = (o: Partial<PluginRow>): PluginRow => ({ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false, ...o })
 
@@ -73,4 +73,59 @@ test('今の Dispatch: Run のタスクの Dispatch を follow_up_of でつな�
   asked.length = 0
   await currentDispatches(c as never, chain, cache)
   assert.deepEqual(asked, ['run_1', 'task_new'], 'Dispatch のまだ無いタスクだけ問い合わせ直す')
+})
+
+test('答えの無い orchestration の question だけを拾う（thread の返事・聞いた側のその後の送信・Run 宛てでないものは除く）', async () => {
+  const { sampleInbox } = await import('../fixtures/demo.ts')
+  const now = Date.parse('2026-11-22T01:00:00+09:00')
+  const qs = openQuestions(sampleInbox(now))
+  assert.deepEqual(qs.map((q) => q.id), ['msg_q1', 'msg_q2', 'msg_q4'])
+  assert.deepEqual(qs[0], {
+    id: 'msg_q1', run: 'run_aoba', from: 'dispatch:ctx_aoba_list', dispatch: 'ctx_aoba_list', at: now - 12 * 60_000,
+    line: '一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか', text: '一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか', options: ['配送日の降順にする', '登録順のままにする']
+  })
+  // 担当が payload なしで送った問い（件名が題）。そのあと担当が別の知らせを送っていれば、答えを受けて動いたので拾わない。
+  const fromLead = { id: 'm1', type: 'question', from_handle: 'structworker_x', to_handle: 'run:run_main', subject: '確認: 1 回だけ測ってよいか', body: '# 確認\n\n測り方の案…', created_at: '2026-11-21T14:14:47Z' }
+  assert.deepEqual(openQuestions([fromLead]).map((q) => [q.line, q.dispatch]), [['確認: 1 回だけ測ってよいか', undefined]])
+  assert.deepEqual(openQuestions([fromLead, { id: 'm2', type: 'status', from_handle: 'structworker_x', to_handle: 'run:run_main', created_at: '2026-11-21T14:16:02Z' }]), [])
+  assert.deepEqual(openQuestions([{ ...fromLead, to_handle: 'dispatch:ctx_a' }]), [])
+})
+
+test('Orca の道具の欄から許可の問いを読み、AskUserQuestion は画面から読む。返事待ちに残った別の道具は許可と読まない', () => {
+  assert.deepEqual(toolAsk({ state: 'blocked', toolName: 'Bash', toolInput: 'git push origin main' }), { kind: 'permit', text: 'Bash: git push origin main' })
+  assert.equal(toolAsk({ state: 'waiting', toolName: 'AskUserQuestion', toolInput: null }), undefined)
+  assert.equal(toolAsk({ state: 'waiting', toolName: 'Bash', toolInput: 'ls' }), undefined)
+  assert.equal(toolAsk({ state: 'working', toolName: 'Bash', toolInput: 'ls' }), undefined)
+})
+
+test('端末の画面の末尾から、選択肢の付いた問いを読む（折り返しを繋ぎ、自由入力と相談の行は選択肢にしない）', async () => {
+  const { ASK_SCREEN } = await import('../fixtures/demo.ts')
+  assert.deepEqual(screenAsk(ASK_SCREEN), { kind: 'question', text: 'キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', options: ['キャッシュを入れて直す', '調査報告だけにする'] })
+  // Claude Code の許可の確認。英字の折り返しは空白で繋ぐ。
+  const permit = [' Bash command', '', '   git push origin main', '', ' Do you want to', ' proceed?', ' ❯ 1. Yes', "   2. Yes, and don't ask again for git push", '   3. No, and tell Claude what to do differently (esc)']
+  assert.deepEqual(screenAsk(permit, 'permit'), { kind: 'permit', text: 'Do you want to proceed?', options: ['Yes', "Yes, and don't ask again for git push", 'No, and tell Claude what to do differently'] })
+  assert.equal(screenAsk(['❯ ', '  ctx 17%']), undefined)
+})
+
+test('question を案件に結ぶ: 窓口の Run 宛てと、案件の木の中の担当宛てだけ。終わった Dispatch の問いは除く', async () => {
+  const { sampleInbox } = await import('../fixtures/demo.ts')
+  const now = Date.parse('2026-11-22T01:00:00+09:00')
+  const ps: PsRow[] = [
+    { worktreeId: 'w-main', path: '/w/aoba', parentWorktreeId: null, agents: [] },
+    { worktreeId: 'w-aws', path: '/w/aoba-aws', parentWorktreeId: 'w-main', agents: [] },
+    { worktreeId: 'w-fig', path: '/w/aoba-aws-fig', parentWorktreeId: 'w-aws', displayName: '構成図', agents: [] }
+  ]
+  const c = {
+    main: { run_id: 'run_aoba' }, cards: [], streams: [{ id: 's1', title: '配車画面の改修' }, { id: 's2', title: 'AWS 構成案' }],
+    tasks: [{ id: 't1', stream: 's1', title: '一覧の並べ替えと絞り込み', state: 'run', worker: { task_id: 'x', dispatch_id: 'ctx_aoba_list' } }],
+    owners: [{ id: 'o1', title: 'AWS 構成案', stream: 's2', session: 'sess-aws' }]
+  } as unknown as Parameters<typeof questionFacts>[0]
+  const live = (wt: string): WorkerShow => ({ projection: { stage: { worker: 'dispatched' }, liveness: { verdict: 'live' }, workspace: { id: `r::${wt}` } } })
+  const shows: Record<string, WorkerShow> = { ctx_aws_fig: live('/w/aoba-aws-fig'), ctx_other: live('/elsewhere') }
+  const owners = [{ session: 'sess-aws', kind: 'chat' as const, state: 'working' as const, worktree: '/w/aoba-aws' }]
+  const facts = await questionFacts(c, '/w/aoba', ps, openQuestions(sampleInbox(now)), { ctx_aoba_list: { state: 'dispatched' } }, {}, owners, async (d) => shows[d] ?? null)
+  assert.deepEqual(facts.map((q) => [q.id, q.to, q.task, q.stream, q.asker]), [['msg_q1', 'main', 't1', 's1', undefined], ['msg_q2', 'owner', undefined, 's2', '構成図']])
+  // 聞いた worker が終わっていれば、もう答えを待っていない。
+  const done = await questionFacts(c, '/w/aoba', ps, openQuestions(sampleInbox(now)), { ctx_aoba_list: { state: 'succeeded', settledAt: now } }, {}, owners, async (d) => shows[d] ?? null)
+  assert.deepEqual(done.map((q) => q.id), ['msg_q2'])
 })

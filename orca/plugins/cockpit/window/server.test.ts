@@ -4,7 +4,10 @@ import http from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, test } from 'node:test'
+import { writeSample } from '../fixtures/demo.ts'
 import { sample } from '../fixtures/sample.ts'
+import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
+import { renderWindow, todoGroups } from '../src/window-view.ts'
 import type { OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
 import { createServer, stopReason, type Consult, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
@@ -666,4 +669,34 @@ test('4000 字を超える別の答えは切り詰めずに断り、ちょうど
   const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))
   assert.equal(log.ops.length, 1)
   assert.equal(log.ops[0].text.length, 4000)
+})
+
+test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestion は画面から、許可は道具の欄から、orchestration の question は inbox から（偽の Orca は fixtures/demo.ts）', async () => {
+  const base = tmp('cockpit-asks-')
+  const now = Date.now()
+  const { roots, orca } = writeSample(base, now)
+  const dir = tmp('cockpit-dir-')
+  writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: roots.aoba, at: new Date().toISOString() }))
+  const s = createServer({ port: 0, dir, orca })
+  servers.push(s)
+  const port = await s.listen()
+  const v = await listen(port, s.token).until((x) => !!board(x, roots.aoba!)?.questions?.length)
+  const m = { boards: boardsOf(v.boards, now), focused: roots.aoba, unseen: [], errors: [] }
+  const rows = (b: Board) => todoGroups(b).flatMap(([, xs]) => xs.map((r) => r.card.title))
+  const aoba = m.boards.find((b) => b.root === roots.aoba)!
+  assert.deepEqual(rows(aoba).filter((t) => t.includes('聞いている')), [
+    '「配車画面の改修」が聞いている: キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？',
+    '「一覧の並べ替えと絞り込み」のworkerが窓口に聞いている: 一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか',
+    '「AWS 構成案」のworkerが担当に聞いている: 構成図は PowerPoint と draw.io のどちらで描きますか（森さんが直すのは PowerPoint）'
+  ])
+  // 押すと宛先を前に出す: 地図の worker は自分の端末、窓口宛ては窓口の端末、担当宛ては担当のチャットのある worktree。
+  const row = (t: string) => todoGroups(aoba).flatMap(([, xs]) => xs).find((r) => r.card.title.includes(t))!
+  assert.deepEqual([row('キャッシュ').agent?.terminalId, row('窓口に').agent?.terminalId, row('担当に').agent?.worktree], ['term_aoba_w2', 'term_aoba_main', path.join(base, 'aoba-aws')])
+  // 詳細に問いの本文と選択肢を出す。
+  const h = renderWindow(m, { ...newUi(), sel: keyOf(row('窓口に')) }, now, (x) => x)
+  assert.match(h, /聞かれていること.*配送日の降順にする<\/li><li>登録順のままにする/s)
+  assert.match(h, /窓口の端末を開いて答えを伝える/)
+  // 許可待ちは道具の欄から（ログ集計の見直し）。
+  const harness = m.boards.find((b) => b.root === roots.harness)!
+  assert.ok(rows(harness).includes('「ログ集計の見直し」が許可を求めている: Bash: git push origin feature/log-summary'), rows(harness).join('\n'))
 })

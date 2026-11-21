@@ -3,6 +3,29 @@ import type { Card, Cockpit, ConsultMemo, DraftFormat, Handoff, OpType, UserLog,
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
 
+/** 止まったエージェントが人に出している問い。question: 質問（AskUserQuestion・orchestration の question）、permit: 道具を使ってよいかの確認。 */
+export type Ask = { kind: 'question' | 'permit'; text: string; options?: string[] }
+
+/** Orca の orchestration の question のうち、答えの無いまま待っているもの（window/orca-state.ts の questionFacts）。 */
+export type QuestionFact = {
+  id: string
+  at: number
+  /** 一覧の 1 行に出す題（送り主の件名か、本文の 1 行目）。 */
+  line: string
+  text: string
+  options?: string[]
+  /** main: 窓口の Run 宛て。owner: 担当の Run 宛て（担当が答える）。 */
+  to: 'main' | 'owner'
+  /** 聞いた worker の帳簿のタスク。 */
+  task?: string
+  /** 聞いた側の仕事（タスクが無いときは、担当のチャットのある worktree の下で引いた担当の仕事）。 */
+  stream?: string
+  /** 聞いたのが担当そのもの。 */
+  byOwner?: boolean
+  /** 聞いた側の名前（タスクも仕事も引けないときの worktree の表示名）。 */
+  asker?: string
+}
+
 export type AgentRow = {
   terminalId: string | null
   title: string | null
@@ -24,6 +47,8 @@ export type AgentRow = {
   session?: string
   /** 利用枠の上限で止まったとき、戻る時刻（「22:50」）。読めなければ無い。 */
   reset?: string
+  /** 許可待ち・返事待ちのときの問い。読めなければ無い。 */
+  ask?: Ask
 }
 
 /** Orca の orchestration の Dispatch の様子（orca orchestration worker-show）。 */
@@ -40,6 +65,8 @@ export type DispatchFact = {
   session?: string
   /** 終わった時刻（ミリ秒）。取り込み待ちの猶予に使う。 */
   settledAt?: number
+  /** worker の worktree のパス。orchestration の question をどの案件のものか決めるのに使う。 */
+  worktree?: string
   /** Orca のタスクの状態（task-list の status。completed など）。Run の続きをたどって引いたときだけ。 */
   taskStatus?: string
 }
@@ -83,6 +110,8 @@ export type CockpitView = {
   terminalsPartial?: boolean
   /** カードの相談のメモ。パネルは持たない。 */
   consults?: ConsultMemo[]
+  /** この案件の worker と担当が出した、答えの無い orchestration の question。パネルは持たない。 */
+  questions?: QuestionFact[]
 }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */

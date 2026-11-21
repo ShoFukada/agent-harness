@@ -172,9 +172,17 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
     case 'send':
       // 何への返事かを開かずに分かるよう、相手の発言の原文を本文の上に置く（info-needs 3.5）。
       return fld('相手の発言', c.quote ? `<div class="quote verb">${esc(c.quote)}</div>` : '') + (c.draft ? `<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b>${c.draft.via ? `　経路 ${esc(c.draft.via)}` : ''}</div><div class="msg">${esc(c.draft.text)}</div></div>${optionsHtml(r, ui)}` : optionsHtml(r, ui))
-    case 'stuck':
-      return [fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld('停止日時', esc(fmtDate(c.since))) : '',
+    case 'stuck': {
+      // 返事待ち・許可待ちは問いの本文と選択肢を先に出す（開かずに答えを決められるように）。読めなければ、読めなかったと書く。
+      const a = r.agent
+      const asking = a?.stop === 'waiting' || a?.stop === 'blocked'
+      const ask = a?.ask
+        ? clampQuote(a.ask.text, ui, `ask:${keyOf(r)}`) + (a.ask.options?.length ? `<ol class="rich">${a.ask.options.map((o) => `<li>${esc(o)}</li>`).join('')}</ol>` : '')
+        : asking ? `<p class="mut">${a.chat ? 'チャット' : '端末の画面'}から問いの本文を読めませんでした。開いて確かめてください</p>` : ''
+      return [fld(a?.ask?.kind === 'permit' ? '許可を求めていること' : '聞かれていること', ask),
+        a?.ask ? '' : fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld('停止日時', esc(fmtDate(c.since))) : '',
         fld('直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
+    }
     case 'consult':
       return [fld('論点', note(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)), fld('分かっていること', list(c.known)), fld('決めかねていること', list(c.undecided))].join('')
     case 'report':
