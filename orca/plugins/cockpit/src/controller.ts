@@ -59,6 +59,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   /** 今描いている行（key → 行）。押したボタンから行を引く。 */
   let rows = new Map<string, VRow>()
   let order: string[] = []
+  /** 窓が今描いている案件（前面の案件）。 */
+  let shownRoot: string | undefined
   const svgCache = new Map<string, string>()
   const svg = (raw: string) => {
     let s = svgCache.get(raw)
@@ -81,6 +83,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const m: Model = { boards, focused: feed.focused, unseen: win ? unreadable : [...(feed.unseen ?? []), ...unreadable], live: feed.live, errors: feed.errors ?? [], panel: opts.panel }
     if (win) {
       const b = boardOf(m)
+      shownRoot = b?.root
       order = ui.tab === 'done' ? doneOrder(b) : ui.tab === 'whole' ? taskOrder(b) : todoOrder(b)
       // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
       const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
@@ -268,7 +271,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   /** 今のタブで右に出しているもの（j・k の今の位置）。全体はタスクの id。 */
   const current = () => ({ todo: ui.sel, whole: ui.task, done: ui.doneSel })[tabOf()]
   /** キーで返答・協議する票。全体では開いている受信だけ（要対応で選んだまま隠れた票に返答しない）。 */
-  const cardKey = () => ({ todo: ui.sel, whole: rows.get(ui.sel ?? '')?.card.kind === 'inbox' ? ui.sel : undefined, done: ui.doneSel })[tabOf()]
+  const cardKey = () => ({ todo: ui.sel, whole: openInbox(), done: ui.doneSel })[tabOf()]
+  /** 全体の「届いた連絡」に今出ている受信の票（案件が切り替わった・片付いたあとに前の票へ返答しない）。 */
+  function openInbox(): string | undefined {
+    const r = rows.get(ui.sel ?? '')
+    return r && r.root === shownRoot && r.status === 'mine' && r.card.kind === 'inbox' ? ui.sel : undefined
+  }
 
   function select(k: string | undefined): void {
     const tb = tabOf()
