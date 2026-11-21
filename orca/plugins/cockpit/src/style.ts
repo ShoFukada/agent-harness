@@ -383,6 +383,8 @@ body { margin:0; }
 .ck.win .st { border-bottom:1px solid var(--rule2); }
 .ck.win .st > .sh { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 16px; padding:10px 4px; }
 .ck.win .st .t { font-weight:700; font-size:var(--fs-l); display:flex; gap:10px; align-items:baseline; flex-wrap:nowrap; min-width:0; border:0; background:none; padding:0; text-align:left; }
+.ck.win .st .t::before { content:"＋"; color:var(--ink3); font-weight:400; }
+.ck.win .st .t[aria-expanded="true"]::before { content:"－"; }
 .ck.win .st .t .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .ck.win .st .right { display:flex; align-items:center; gap:10px; }
 /* 次にやることを 2 行まで、工程より濃く読ませる（初見 5）。 */
@@ -394,6 +396,7 @@ body { margin:0; }
 .ck.win .pst.stopped { color:var(--hot); font-weight:700; }
 /* 工程の進み（工程 n/5 と段の名前）。上下の箱で位置がそろうよう幅を決める。 */
 .ck.win .pbar { display:inline-block; min-width:9.5em; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
+.ck.win .pbar .num { margin:0 .3em; }
 .ck.win .prog { display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:1px 9px; white-space:nowrap; }
 .ck.win .pill.mine { background:var(--mine); color:var(--surface); }
@@ -433,6 +436,8 @@ body { margin:0; }
 .ck.win .watch ul { margin:0; padding-left:1.2em; font-size:var(--fs-s); }
 .ck.win .watch p { margin:0; font-size:var(--fs-s); }
 .ck.win .watch .strips { margin:0; background:none; }
+/* 届いた連絡の題は、見張るの見出しより弱くする（見出し → 小見出し → 項目の順）。 */
+.ck.win .watch .strip .title { font-size:var(--fs-m); font-weight:400; }
 
 /* 全体の右: タスクの詳細 */
 .ck.win .wk2 { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
@@ -474,4 +479,6 @@ body { margin:0; }
 .ck.win .sent button.code { border:0; background:none; padding:0; font:inherit; color:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
 .ck.win .sent .sl { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
 .ck.win .sent .tm { font-size:var(--fs-xs); color:var(--ink3); font-variant-numeric:tabular-nums; min-width:8.5em; }
+/* 1366 以下では操作の帯のキーの説明を外し、「次へ」まで 1 行に収める。 */
+@media (max-width:1366px) { .ck.win .dbtn .acts .hint { display:none; } }
 `

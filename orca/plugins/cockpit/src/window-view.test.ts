@@ -41,7 +41,7 @@ test('見てほしい点の「1 …」の番号は一覧の番号にし（二重
   assert.match(h, /<li value="1">一覧の幅<\/li><li value="2">「担当と話す」の位置<\/li><\/ol><p class="mut">6 点ともおすすめなら「これでよい」<\/p>/)
 })
 
-test('全体: 一緒に作る → 任せる → 形の無い仕事 → 見張る の順に置き（仕事を先に）、見張るに届いた連絡を並べる。右に未対応の一覧を出さない（R91）', () => {
+test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中の仕事・形が未設定） → 見張る の順に置き（仕事を先に）、見張るに届いた連絡を並べる。右に未対応の一覧を出さない（R91）', () => {
   const m = aoba((v) => {
     const s = v.cockpit!.streams
     s[0]!.form = 'delegate'
@@ -50,7 +50,7 @@ test('全体: 一緒に作る → 任せる → 形の無い仕事 → 見張る
     v.cockpit!.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '配車画面を直す', tasks: ['t1'], legacy: true }]
   })
   const t = text(page(m, { tab: 'whole' }))
-  const order = ['一緒に作る 話しながら', '任せる 任せている', '形が書かれていない仕事', '見張る 届いたもの'].map((x) => t.indexOf(x))
+  const order = ['一緒に作る 話しながら', '任せる 任せている', '進行中の仕事 1 件・形が未設定', '見張る 届いたもの'].map((x) => t.indexOf(x))
   assert.ok(order.every((n) => n >= 0), t)
   assert.deepEqual([...order].sort((a, b) => a - b), order)
   assert.match(t, /届いた連絡 1 件/)
@@ -82,7 +82,7 @@ test('全体: タスクを押すと右に詳細（工程・状態・goal・next�
   assert.match(side, /<span class="cb" role="img" aria-label="未"><\/span>並べ替えができる/)
   // 番号は一覧の行に出さず、詳細の下に小さく置く（初見 2）。
   assert.doesNotMatch(all, /class="id"/)
-  assert.match(side, /<p class="rid">t1<\/p>/)
+  assert.match(side, /<p class="rid">番号 t1<\/p>/)
   assert.match(t, /出した指示 .*r5 修正を依頼 未反映 幅を 1280 でも崩れないように/)
   assert.doesNotMatch(h, /data-rq=/)
 })
