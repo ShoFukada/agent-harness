@@ -593,7 +593,7 @@ export function createServer(opts: Options) {
           // タブは開いたので、記録できなくても窓口には回さない（版が変わったなど。開いたタブはそのまま使える）。
           return markConsult(ws, c, card, b.item_rev, handle).then(
             () => ({ opened: true, how: '相談のタブ' }),
-            (e: Error) => ({ opened: true, how: '相談のタブ', reason: e.message })
+            (e: Error) => ({ opened: true, how: '相談のタブ', reason: e.message, terminal: handle })
           )
         }
       }

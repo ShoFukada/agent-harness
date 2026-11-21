@@ -351,6 +351,7 @@ test('担当と協議: 相談のタブは報告のカードでも handle を残�
   assert.equal(r.opened, true)
   assert.equal(r.how, '相談のタブ')
   assert.match(r.reason, /書き換えました/)
+  assert.equal(r.terminal, 'term_consult', '記録できなかったタブも呼び出し元が特定できる')
   assert.deepEqual(calls.filter((x) => x[0] === 'switch' || x[0] === 'activate'), [], '窓口に回さない')
   assert.deepEqual(talkOps(a), [['a9', 'talk', 'term_consult']])
 })
