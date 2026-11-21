@@ -2,7 +2,7 @@
 import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, dismissable, permitEffect, permitTarget, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, OwnerLive, TalkResult } from './protocol.ts'
 import {
-  BUCKET_LABEL, bucketOf, byUrgency, countsText, derive, dueAt, fmtDate, hhmm, isHot, localDay, nearDate, routeProblem, upcomingMilestones,
+  BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
   type Bucket, type Derived, type JobView, type OrcaFacts, type OwnerRef, type Row
 } from './state.ts'
 
@@ -161,16 +161,13 @@ export function rich(text: string | undefined, repo?: Repo, keep = false): strin
   return `<div class="rich">${out.join('')}</div>`
 }
 
+/**
+ * 期限。赤は期限切れだけにし、24 時間以内は濃い無彩色にする（塗りの札にしない。R82・R91）。窓とパネルで同じ語と色にする。
+ */
 export function dueHtml(due: string | undefined, now: number): string {
   if (!due) return ''
-  const t = dueAt(due)
-  if (Number.isNaN(t)) return `<span class="due">${esc(due)}</span>`
-  if (isHot(due, now)) {
-    const h = Math.round((t - now) / 3_600_000)
-    const tag = t < now ? '期限切れ' : h < 1 ? '1 時間以内' : `あと ${h} 時間`
-    return `<span class="due hot"><b>${tag}</b><span class="tm">${esc(nearDate(due, now))}</span></span>`
-  }
-  return `<span class="due">${esc(nearDate(due, now))}</span>`
+  if (Number.isNaN(dueAt(due))) return `<span class="due">${esc(due)}</span>`
+  return isOver(due, now) ? `<span class="due dover">期限切れ ${esc(nearDate(due, now))}</span>` : `<span class="due dnext${isHot(due, now) ? ' soon' : ''}">${esc(nearDate(due, now))} まで</span>`
 }
 
 export const ago = (iso: string | undefined, now: number) => {
@@ -185,7 +182,7 @@ export const OWNER_STATE: Record<string, string> = { working: '作業中', block
  * 担当の行。owners を渡す窓では、担当の端末かチャットを前に出すボタンにする（「チャット」「端末」の語だけでは押せるか分からない。Neon 追加 22）。
  * チャットは Orca がタブを前に出せないので、居場所の worktree が分かるときだけボタンにする。
  */
-export function ownerHtml(o: OwnerRef, owners?: OwnerLive[] | false): string {
+export function ownerHtml(o: OwnerRef, owners?: OwnerLive[] | false, same?: string): string {
   // false: 操作の帯に同じ「端末を開く」がある行。ここでは「端末」「チャット」の語を出さない（押せない語を並べない。Neon 追加 23）。
   const where = o.how === 'main' || owners === false ? '' : o.how === 'chat' ? 'チャット' : '端末'
   const wt = o.how === 'chat' && o.session && owners ? owners.find((x) => x.session === o.session)?.worktree : undefined
@@ -193,7 +190,11 @@ export function ownerHtml(o: OwnerRef, owners?: OwnerLive[] | false): string {
     ? `<button type="button" class="act" data-term="${esc(o.how === 'terminal' ? o.terminal : '')}" data-wt="${esc(wt ?? '')}">${where}を開く</button>`
     : where ? `<span>${where}</span>` : ''
   // 役割・名前・状態・操作の順（全体のタスクの進め手の行と同じ。Neon 追加 23）。
-  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${o.state ? `<span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}${open}</span>`
+  // 担当の名前が仕事の名前と同じなら名前を重ねない（初見 2 巡目 3）。
+  const name = o.title === same ? '' : `<b>${esc(o.title)}</b>`
+  const state = o.state ? `<span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''
+  if (!name && !state && !open) return ''
+  return `<span class="owner"><span>担当</span>${name}${state}${open}</span>`
 }
 
 /** 閉じた票に出す 1 行（HTML）。開くまで中身を読まなくても何の票かが分かるように。 */
@@ -285,9 +286,14 @@ export function backgroundParts(r: Row, svg: (raw: string) => string, figures: R
 }
 
 function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<string, string>): string {
-  const parts = backgroundParts(r, svg, figures)
+  const c = r.card
+  // 判断の材料の残り（これは何かは選択肢の前に出したので重ねない）も畳む。開いた票が操作の帯の下に長く続かないように（窓の「詳細」と同じ。Neon 初見 2 巡目）。
+  const ctx = c.kind === 'decide' && c.context && CONTEXT_FIELDS.some(([k]) => k !== 'what' && c.context?.[k])
+    ? `<dl class="ctx">${CONTEXT_FIELDS.filter(([k]) => k !== 'what' && c.context?.[k]).map(([k, l]) => `<dt>${esc(l)}</dt><dd>${rich(c.context![k], c.repo)}</dd>`).join('')}</dl>`
+    : ''
+  const parts = [ctx, ...backgroundParts(r, svg, figures)].filter(Boolean)
   if (!parts.length) return ''
-  return `<details class="more"><summary>背景と比較</summary><div>${parts.join('')}</div></details>`
+  return `<details class="more"><summary>詳細（判断材料・出典）</summary><div>${parts.join('')}</div></details>`
 }
 
 function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, figures: Record<string, string>): string {
@@ -312,9 +318,6 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       if (c.why) parts.push(fld('なぜ今決めるか', rich(c.why, c.repo)))
       parts.push(optionsHtml(r, ui))
       if (c.fallback) parts.push(fld('返事が無いとき', note(c.fallback)))
-      // これは何かは選択肢の前に出したので、ここでは重ねない。
-      if (c.context && CONTEXT_FIELDS.some(([k]) => k !== 'what' && c.context?.[k]))
-        parts.push(`<dl class="ctx">${CONTEXT_FIELDS.filter(([k]) => k !== 'what' && c.context?.[k]).map(([k, l]) => `<dt>${esc(l)}</dt><dd>${rich(c.context![k], c.repo)}</dd>`).join('')}</dl>`)
       if (c.draft) parts.push(`<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b></div><div class="msg">${esc(c.draft.text)}</div></div>`)
       break
     case 'review':
@@ -361,7 +364,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
   ]
   if (links.length) parts.push(`<div class="links">${links.map((l) => linkBtn(l.label, l.href)).join('')}</div>`)
   parts.push(detailsHtml(r, svg, figures))
-  parts.push(`<div>${ownerHtml(r.owner)}</div>`)
+  parts.push(`<div>${ownerHtml(r.owner, undefined, r.stream?.title)}</div>`)
   parts.push(otherHtml(r, ui))
   return parts.filter(Boolean).join('')
 }
@@ -391,7 +394,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   if (r.agent) btns = [b('focus', `${whose}${r.agent.chat ? 'チャット' : '端末'}を開く`, 'pri'), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返信不要'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
-    case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), talk('担当と修正'), b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
+    case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), talk('担当と修正を協議'), b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
     case 'decide': btns = [decideBtn, talk(), other]; break
     case 'review': btns = [b('accept', '承認する', 'pri'), b('other', otherOpen ? '記入をやめる' : '修正点を記入'), ...(otherOpen ? [decideBtn] : []), talk('担当と修正を協議'), ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
     case 'permit': btns = c.manual ? [b('sent', '対応済みにする', 'pri'), talk()]
@@ -523,17 +526,18 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const queue = all('queue').sort(byUrgency)
   const counts = Object.fromEntries(COUNTED.map((k) => [k, shown.reduce((n, b) => n + b.d.counts[k], 0)])) as Record<CardKind, number>
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
-  const inbox = shown.reduce((n, b) => n + b.d.counts.inbox, 0)
   const unseen = unseenList(m, now)
   const signal = m.panel ? signalHtml(shown[0]?.v) : ''
+  const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
+  const sideCount = { talking: all('fixing').length, waiting: all('waiting').length, late }
+  // 種類ごとの件数の帯は出さない。種類は票の語で、急ぎは期限の見出しと文字色で読む（R82・R91）。
+  // 狭い幅では「私の番 n」の切り替えが合計を兼ねるので、合計の数と切り替え・合図を 1 段に並べる。
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
-    <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, consult: 0, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox" title="届いたは私の番の数に入れない">受信 <b>${inbox}</b></span>` : ''}</div>
+    ${paneSwitch(ui, total, sideCount)}
     <div class="flags">${unseen.length ? `<button class="flag warn" type="button" data-act="unseen" aria-expanded="${!!ui.open.unseen}">見ていない ${unseen.length}</button>` : ''}${m.live !== undefined ? `<span class="flag live">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
       ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : '自動'}</button>`).join('')}</span>`}</div>
   </header>`
-  const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
-  const sideCount = { talking: all('fixing').length, waiting: all('waiting').length, late }
   const notes = [...m.errors, ...shown.flatMap((b) => b.v.errors.map((e) => `${b.v.cockpit?.workspace.name ?? ''}: ${e}`))]
   const errs = notes.filter((e) => !isSoft(e))
   const focusBoard = m.boards.find((b) => b.root === (ui.filter ?? m.focused)) ?? (m.panel ? m.boards[0] : undefined)
@@ -555,8 +559,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
         ...shown.flatMap((b) => (b.v.cockpit?.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x)),
         ...(ui.filter ? [] : m.unseen.map((u) => `${u.name}: ${u.why ?? '操縦席がない'}`))
       ], showWs)
-  return `<div class="ck" data-theme="${ui.dark ? 'dark' : 'light'}">${top}
-    ${paneSwitch(ui, total, sideCount)}
+  return `<div class="ck${m.panel ? ' pnl' : ''}" data-theme="${ui.dark ? 'dark' : 'light'}">${top}
     <main class="board${m.panel ? ' panel' : ''}" data-pane="${ui.pane ?? 'queue'}">
       ${errs.length ? `<div class="errs" role="alert">${errs.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}${softHtml(notes.filter(isSoft), ui, 'soft')}
       ${unseen.length && ui.open.unseen ? `<div class="notes warn" role="status"><b>見ていないもの</b>${unseen.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : ''}

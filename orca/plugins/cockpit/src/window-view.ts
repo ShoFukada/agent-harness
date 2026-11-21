@@ -1,8 +1,8 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
-import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type Sent, type StreamForm, type TaskState } from './model.ts'
-import { STOP_LABEL, byUrgency, fmtDate, isHot, isOver, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
+import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
+import { STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, ago, backgroundParts, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
+  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
   type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 
@@ -57,17 +57,22 @@ const recOf = (r: Row) => {
 
 const taskOf = (b: Board, r: Row): TaskView | undefined => b.d.tasks.get(r.card.tasks?.[0] ?? '')
 
-/** 窓の期限。赤は期限切れだけにし、24 時間以内は濃い無彩色（パネルの dueHtml は 24 時間以内も赤のまま）。一覧と詳細で同じ語にする。 */
-const winDue = (due: string | undefined, now: number) =>
-  !due ? '' : isOver(due, now) ? `<span class="dover">期限切れ ${esc(nearDate(due, now))}</span>` : `<span class="dnext${isHot(due, now) ? ' soon' : ''}">${esc(nearDate(due, now))} まで</span>`
+/**
+ * 対応済みの行の右に出す結果の語。「決定: 〜」「許可: 〜」の値は題と詳細の「出した指示」に出るので重ねず（初見 2 巡目 5）、
+ * 判断が決まったことは種類で分かるので「決定」も出さない。承認・却下・担当が完了のような語だけの結果は出す。
+ */
+const outcome = (how: string | undefined) => {
+  const w = (how ?? '').split(/:\s/)[0]!.trim()
+  return w === '決定' ? '' : w
+}
 
 function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed = false): string {
   const c = r.card
   const t = taskOf(b, r)
   // 返した答えは 1 行で切り、全文は詳細で読む（長い別の回答で行が伸びないように）。
   const right = closed
-    ? `<span class="how" title="${esc(r.how ?? '')}">${esc(r.how ?? '')}</span><span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
-    : r.agent?.ask ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : winDue(c.due, now)
+    ? `${outcome(r.how) ? `<span class="how" title="${esc(r.how ?? '')}">${esc(outcome(r.how))}</span>` : ''}<span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
+    : r.agent?.ask ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
   // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。
   const sub = r.agent?.ask?.from ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
@@ -91,7 +96,10 @@ function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
   if (!s) return `<div class="gh"><b>仕事の割り当てなし</b><span class="mut">${n}</span></div>`
   const ts = tasksOf(b, sid)
   const j = b.d.jobs.find((x) => x.id === sid)
-  return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b><span class="mut">${n}</span>${j?.owner ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}<span class="prog">${phaseBar(ts, s.form, j?.state)}</span></div>`
+  // 工程は仕事の名前の横に置き、右の列は行の期限・経過だけにする（右に工程と期限が混ざって右端がずれる。初見 2 巡目 2）。
+  // 担当の名前が仕事の名前と同じなら出さない（初見 2 巡目 3）。
+  const prog = phaseBar(ts, s.form, j?.state)
+  return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b>${prog ? `<span class="prog">${prog}</span>` : ''}<span class="mut">${n}</span>${j?.owner && j.owner.title !== s.title ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}</div>`
 }
 
 /** 帳簿の抜け（窓口が 30 分のうちに直さなかったもの）。R47。 */
@@ -245,7 +253,6 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const t = taskOf(b, r)
   const crumbs = [esc(b.v.cockpit!.workspace.name), esc(s?.title ?? '仕事の割り当てなし'), t && esc(t.task.title)].filter(Boolean) as string[]
   const notes = [
-    closed ? `<div class="note ok"><b>${esc(r.how ?? '')}</b>　${esc(fmtDate(r.when))}${c.resolved_at_inferred ? '（時刻は推定）' : ''}${r.pending ? '・窓口の受け取り待ち' : c.resolved_by === 'user' ? '・深田さんの回答' : ''}${c.closed_without_review ? '・確認の返答なし' : ''}</div>` : '',
     r.talking ? `<div class="note wait"><b>協議中</b>　${esc(fmtDate(r.talking.since))} から・${esc(r.owner.how === 'main' ? '窓口' : `担当（${r.owner.title}）`)}</div>` : '',
     r.status === 'fixing' ? `<div class="note wait"><b>${r.pending ? '修正依頼済み（受領待ち）' : '修正待ち'}</b></div>` : '',
   ].join('')
@@ -256,18 +263,26 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const acts = actsHtml(r, ui, true)
   // 「次へ」は一覧を進む操作なので、答える操作の帯ではなく詳細の上に置く（1280 で帯が折り返さないように）。
   const nextBtn = next ? `<button class="nxl" type="button" data-sel="${esc(next)}">次へ（j）</button>` : ''
-  const sent = sentHtml(sentOps([c], b.v.log, b.v.cockpit!.applied_ops))
+  const ops = sentOps([c], b.v.log, b.v.cockpit!.applied_ops)
+  const sent = sentHtml(ops)
+  // 対応済みの返した答えは「出した指示」の 1 行で読む（囲みの箱で重ねない。初見 2 巡目 5）。閉じる操作の記録が無い閉じ方（担当が完了・協議のあと帳簿に記録など）だけ、結果の 1 行を出す。
+  const result = closed && !ops.some((o) => !OPEN_ONLY.includes(o.op.type))
+    ? `<div class="first">${fld('結果', esc(`${r.how ?? ''}　${fmtDate(r.when)}${c.resolved_at_inferred ? '（時刻は推定）' : ''}${r.pending ? '・窓口の受け取り待ち' : c.resolved_by === 'user' ? '・深田さんの回答' : ''}${c.closed_without_review ? '・確認の返答なし' : ''}`))}</div>`
+    : ''
   const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
     <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}${nextBtn}</div>
-      <div class="kl"><span class="kd">${kindName(c)}</span>${winDue(c.due, now)}</div>
-      <h2>${esc(c.title)}</h2><div>${r.agent?.ask?.from ? `<span class="owner">${esc(r.agent.ask.from)}</span>` : ownerHtml(r.owner, r.agent ? false : b.v.owners)}</div></div>
-    ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
+      <div class="kl"><span class="kd">${kindName(c)}</span>${dueHtml(c.due, now)}</div>
+      <h2>${esc(c.title)}</h2><div>${r.agent?.ask?.from ? `<span class="owner">${esc(r.agent.ask.from)}</span>` : ownerHtml(r.owner, r.agent ? false : b.v.owners, s?.title)}</div></div>
+    ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${result}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
     ${closed ? '' : otherHtml(r, ui)}
     ${c.id.startsWith('#') ? '' : ridHtml(c.id)}
     <div class="dbtn">${acts}</div></div>`
 }
+
+/** 出した指示のうち、カードを閉じない操作（協議の開始・修正の依頼・戻す依頼）。 */
+const OPEN_ONLY: OpType[] = ['talk', 'revert']
 
 /** 番号は一覧に出さず、詳細の下に小さく置く（深田さんが番号で指せるように。R67・初見 2）。 */
 const ridHtml = (id: string) => `<p class="rid">番号<code>${esc(id)}</code></p>`
@@ -318,12 +333,19 @@ export function taskOrder(b: Board | undefined): string[] {
   return [...of(FORM_ORDER.filter((f) => f !== 'watch').flatMap(byForm)), ...of(live.filter((j) => !formOf(b, j.id))), ...looseTasks(b), ...of(byForm('watch'))].map((t) => t.task.id)
 }
 
+/**
+ * 一覧と詳細に出すタスクの状態。帳簿が作業中でも、そのタスクのエージェントが停止（質問・許可待ちなど）で要対応に出ていれば停止と出す
+ * （同じ行に「作業中」と「停止を開く」が並ぶと、止まっているものを読み違える。初見 2 巡目の追加）。
+ */
+const stateOf = (t: TaskView, rows: Row[]): TaskState => (t.state !== 'ok' && rows.some((r) => r.status === 'mine' && r.card.kind === 'stuck') ? 'stop' : t.state)
+
 function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined): string {
+  const st = stateOf(t, todo.get(t.task.id) ?? [])
   const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r.card)}を開く</button>`).join('')
   const sub = t.task.waiting_on ? `待ち: ${t.task.waiting_on}` : t.task.next ? `次: ${t.task.next}` : ''
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
-  return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${t.state}">${TSTATE[t.state]}</span>
+  return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${st}">${TSTATE[st]}</span>
     <span class="tn"><span>${esc(t.task.title)}</span>${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
     <span class="wk">${chips}</span></div>`
 }
@@ -346,7 +368,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
       + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '') + talk
     : ''
   // 一覧の 1 行。状態は語 1 つ（色は要対応と停止だけ）、次にやることを工程より先に読ませる（初見 4・5）。協議は右の詳細から。
-  const who = [j.owner && `担当: ${esc(j.owner.title)}`, working && `worker ${working} 件作業中`].filter(Boolean).join('・')
+  const who = [j.owner && j.owner.title !== j.title && `担当: ${esc(j.owner.title)}`, working && `worker ${working} 件作業中`].filter(Boolean).join('・')
   return `<div class="st f-${s?.form ?? 'none'}"><div class="sh">
     <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="nm">${esc(j.title)}</span><span class="pst ${j.state}">${esc(label)}</span></button>
     <span class="right"><span class="prog">${phaseBar(ts, s?.form, j.state)}</span></span>
@@ -418,7 +440,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui): string {
   const talk = task.stream ? `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(task.stream)}">${owner ? '担当と協議' : '窓口と協議'}</button></div>` : ''
   return `<div class="wdet">
     <div class="dh"><div class="crumbs">${[c.workspace.name, s?.title ?? '仕事の割り当てなし'].map((x) => `<span>${esc(x)}</span>`).join('<i>›</i>')}</div>
-      <div class="kl"><span class="tst s-${t.state}">${TSTATE[t.state]}</span><span class="mut">${esc(st ? `工程 ${STAGES.indexOf(st) + 1}/${STAGES.length} ${st}` : `工程の外（${task.phase}）`)}</span></div>
+      <div class="kl"><span class="tst s-${stateOf(t, asking)}">${TSTATE[stateOf(t, asking)]}</span><span class="mut">${esc(st ? `工程 ${STAGES.indexOf(st) + 1}/${STAGES.length} ${st}` : `工程の外（${task.phase}）`)}</span></div>
       <h2>${esc(task.title)}</h2></div>
     ${first ? `<div class="first facts">${first}</div>` : ''}${sent}${second ? `<div class="first facts">${second}</div>` : ''}
     ${ridHtml(task.id)}
@@ -442,14 +464,14 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const inbox = vrows(b, b.d.queue.filter((r) => r.card.kind === 'inbox'))
   const routes = (c.routes ?? []).map((r) => {
     const p = routeProblem(r, now)
-    return `<li>${esc(r.label)}${p ? `<span class="hotc">　${esc(p.slice(r.label.length + 2))}</span>` : r.read_at ? `<span class="mut">　${esc(nearDate(r.read_at, now))} に読んだ</span>` : ''}</li>`
+    return `<li class="rrow"><span>${esc(r.label)}</span>${p ? `<span class="hotc">${esc(p.slice(r.label.length + 2))}</span>` : r.read_at ? `<span class="mut at">最終確認 ${esc(nearDate(r.read_at, now))}</span>` : ''}</li>`
   })
   const sec = (f: StreamForm, extra = '') => {
     const xs = live.filter((j) => form(j) === f)
     return `<section class="fsec"><h3>${formChip(f)}<span class="mut">${esc(FORM_DESC[f])}</span>${xs.length ? `<span class="mut">${xs.length} 件</span>` : ''}</h3>${xs.map((j) => streamBox(b, j, ui, todo)).join('')}${extra}</section>`
   }
   // 中身の無い欄は出さない（初見 12）。
-  const watchExtra = `<div class="watch">${routes.length ? `<div class="subh">見張っている経路</div><ul>${routes.join('')}</ul>` : ''}
+  const watchExtra = `<div class="watch">${routes.length ? `<div class="subh">見張っている経路</div><ul class="rows">${routes.join('')}</ul>` : ''}
     ${inbox.length ? `<div class="subh">届いた連絡 ${inbox.length} 件</div><div class="strips">${inbox.map((r) => stripHtml(r, ui, now, svg, false)).join('')}</div>` : ''}</div>`
   const noForm = live.filter((j) => !form(j))
   const loose = looseTasks(b)

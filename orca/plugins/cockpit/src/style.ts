@@ -34,13 +34,9 @@ body { margin:0; }
 .ck .tally { display:flex; align-items:baseline; gap:10px; }
 .ck .tally b { font-size:var(--fs-xxl); line-height:1; font-weight:700; letter-spacing:-.01em; }
 .ck .tally span { font-size:var(--fs-s); color:var(--ink2); }
-.ck .kinds { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:var(--fs-s); color:var(--ink2); }
-.ck .kinds .kc { display:inline-flex; align-items:center; gap:5px; }
-.ck .kinds .kc b { color:var(--ink); font-weight:600; }
-.ck .kinds .ref { color:var(--ink3); padding-left:14px; border-left:1px solid var(--rule); }
 .ck .flags { margin-left:auto; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; font-size:var(--fs-s); color:var(--ink2); }
 .ck .flag { display:inline-flex; gap:6px; align-items:center; border:0; background:none; padding:2px 0; color:inherit; }
-.ck .flag.warn { color:var(--k-permit); font-weight:600; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:3px; }
+.ck .flag.warn { color:var(--ink); font-weight:600; text-decoration:underline; text-underline-offset:3px; }
 .ck .flag.err { color:var(--hot); font-weight:600; }
 .ck .seg { display:inline-flex; border:1px solid var(--ink3); border-radius:6px; overflow:hidden; }
 .ck .seg button { border:0; background:none; padding:1px 9px; font-size:var(--fs-xs); color:var(--ink2); }
@@ -49,14 +45,14 @@ body { margin:0; }
 /* ── 3 つの列 ── */
 .ck .board { display:grid; grid-template-columns:248px minmax(0,1fr) 360px; gap:0 20px; padding:16px 20px 80px; max-width:1560px; margin:0 auto; align-items:start; }
 .ck .board.panel { grid-template-columns:minmax(0,1fr); padding:10px 12px 72px; }
-.ck .paneswitch { display:none; position:sticky; top:0; z-index:4; gap:4px; padding:6px 12px; background:var(--bg); border-bottom:1px solid var(--rule); }
-.ck .paneswitch button { flex:1; border:1px solid var(--ink3); background:none; border-radius:7px; padding:4px 8px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
-.ck .paneswitch button[aria-selected="true"] { background:var(--surface); color:var(--ink); border-color:var(--ink3); }
-.ck .paneswitch b { margin-left:6px; color:var(--hot); }
+.ck .paneswitch { display:none; gap:4px; flex:1 1 auto; min-width:0; }
+.ck .paneswitch button { flex:1 1 auto; white-space:nowrap; border:1px solid var(--ink3); background:none; border-radius:7px; padding:4px 8px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
+.ck .paneswitch button[aria-selected="true"] { background:var(--ink); color:var(--surface); border-color:var(--ink); }
+.ck .paneswitch b { margin-left:6px; color:inherit; }
 @container (max-width:1180px) { .ck .board { grid-template-columns:200px minmax(0,1fr); } .ck .board .side { grid-column:2; } }
 @container (max-width:760px) { .ck .board { grid-template-columns:minmax(0,1fr); padding:10px 12px 72px; } .ck .board .side { grid-column:auto; }
-  /* 狭い幅では上の帯を留めない（低い画面で本文の場所を取らないように）。 */
-  .ck .top { position:static; padding:10px 12px; gap:6px 14px; } .ck .tally b { font-size:24px; } .ck .flags { margin-left:0; }
+  /* 狭い幅では、合計を兼ねる「私の番 n」の切り替えと合図を 1 段に並べる（操作の段を重ねない。初見 2 巡目 1）。 */
+  .ck .top { padding:8px 12px; gap:6px 10px; } .ck .tally { display:none; }
   .ck .paneswitch { display:flex; }
   .ck .board[data-pane="queue"] .side, .ck .board[data-pane="side"] .queue { display:none; } }
 
@@ -104,7 +100,7 @@ body { margin:0; }
   .ck .when small { display:inline; margin-left:6px; } .ck .now-line { grid-template-columns:auto minmax(0,1fr); }
   /* 狭い幅で案件名と仕事の名前が並ぶと、どちらも数文字に削られるので、案件名があるときは仕事の名前を出さない。 */
   .ck .strip .meta .ws ~ .jobname { display:none; } .ck .strip .ws { max-width:none; }
-  .ck .due.hot .tm, .ck .flag.live, .ck .acts .hint { display:none; } }
+  .ck .flag.live, .ck .acts .hint { display:none; } }
 
 .ck .strip { position:relative; min-width:0; scroll-margin:84px 0 16px; }
 .ck .strip + .strip { border-top:1px solid var(--rule2); }
@@ -120,9 +116,9 @@ body { margin:0; }
 .ck .strip .kind { display:inline-flex; align-items:center; gap:5px; color:var(--kc); font-weight:700; }
 .ck .strip .ws { color:var(--ink2); font-weight:600; max-width:45%; overflow:hidden; text-overflow:ellipsis; }
 .ck .strip .title { grid-column:1 / -1; font-size:var(--fs-l); font-weight:600; line-height:1.45; color:var(--ink); }
-.ck .strip .due { grid-row:1; grid-column:2; align-self:start; text-align:right; font-size:var(--fs-s); font-weight:600; color:var(--ink2); white-space:nowrap; }
-.ck .due.hot { color:var(--hot); }
-.ck .due.hot b { display:inline-block; background:var(--hot); color:#fff; border-radius:4px; padding:0 6px; margin-right:4px; }
+.ck .strip .due { grid-row:1; grid-column:2; align-self:start; text-align:right; font-size:var(--fs-s); font-weight:400; color:var(--ink2); white-space:nowrap; }
+.ck .due.dover { color:var(--hot); font-weight:600; }
+.ck .due.dnext.soon { color:var(--ink); font-weight:600; }
 .ck .strip .peek { grid-column:1 / -1; font-size:var(--fs-s); color:var(--ink2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ck .strip[aria-expanded="true"] .peek { display:none; }
 .ck .k-inbox { --kc:var(--k-inbox); } .ck .k-send { --kc:var(--k-send); } .ck .k-decide { --kc:var(--k-decide); } .ck .k-review { --kc:var(--k-review); }
@@ -136,7 +132,7 @@ body { margin:0; }
 .ck .fld > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 .ck .fld > div, .ck .fld > p { margin:0; overflow-wrap:anywhere; }
 .ck .ctx { display:grid; grid-template-columns:11em minmax(0,1fr); gap:6px 14px; margin:0; font-size:var(--fs-s); }
-.ck .ctx dt { color:var(--ink3); font-weight:600; }
+.ck .ctx dt { color:var(--ink3); font-weight:600; font-size:var(--fs-xs); }
 .ck .ctx dd { margin:0; overflow-wrap:anywhere; }
 @container (max-width:520px) { .ck .ctx { grid-template-columns:minmax(0,1fr); gap:0; } .ck .ctx dd { margin-bottom:6px; } }
 .ck .rich ul { margin:2px 0; padding-left:1.2em; }
@@ -185,7 +181,7 @@ body { margin:0; }
 .ck .btn.pri { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink3); cursor:default; }
 .ck .btn.talk { border-color:var(--focus); color:var(--focus); }
-.ck .btn.quiet { border-color:transparent; color:var(--ink2); font-weight:400; text-decoration:underline; text-underline-offset:3px; }
+.ck .btn.quiet { border-color:transparent; background:none; padding-inline:4px; color:var(--ink2); font-weight:400; text-decoration:underline; text-underline-offset:3px; }
 /* 枠の無い副の操作も、下線で押せると分かるようにする（Neon 追加 23）。 */
 .ck .acts .hint { margin-left:auto; font-size:var(--fs-xs); color:var(--ink3); }
 .ck kbd { font:inherit; font-size:var(--fs-xs); border:1px solid var(--ink3); border-radius:4px; padding:0 4px; }
@@ -240,7 +236,8 @@ body { margin:0; }
 .ck .notes.warn { background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--k-permit); border-radius:6px; padding:8px 12px; gap:2px; font-size:var(--fs-s); }
 .ck .notes.warn > b { color:var(--k-permit); }
 .ck .notes.warn div { background:none; border:0; padding:0; }
-.ck .flag.repeat { border:1px solid var(--rule); border-radius:6px; padding:1px 9px; font-size:var(--fs-xs); cursor:pointer; }
+/* 切り替えのタブと同じ段に並ぶので、枠を付けずタブと見分ける（押せることは下線で示す。初見 2 巡目の追加）。 */
+.ck .flag.repeat { border:0; padding:1px 0; font-size:var(--fs-xs); color:var(--ink2); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
 .ck .errs { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
 .ck details.soft { grid-column:1 / -1; margin-bottom:8px; font-size:var(--fs-s); color:var(--ink2); }
 .ck details.soft summary { cursor:pointer; }
@@ -266,10 +263,20 @@ body { margin:0; }
  * 強調 1 色（--focus）・危険 1 色（--hot）と、仕事の 3 つの形（--f-delegate・--f-cowork・--f-watch）だけ。カードの種類は色で分けず語と印で示すので、
  * パネルと共有する種類・状態の色の変数を、窓の中では役割の色に寄せる。字の大きさは 12・14・16・20px の 4 段（12px 未満は使わない）。
  */
-.ck.win {
+.ck.win, .ck.pnl {
   --k-inbox:var(--ink2); --k-send:var(--ink2); --k-decide:var(--ink2); --k-review:var(--ink2); --k-permit:var(--ink2); --k-stuck:var(--ink2); --k-talk:var(--ink2); --k-report:var(--ink2); --k-consult:var(--ink2);
   --ok:var(--ink2); --ok-bg:var(--sunk); --amber:var(--ink2); --amber-bg:var(--sunk); --run:var(--focus); --run-bg:var(--sunk); --mine:var(--ink);
-  --fs-xs:12px; --fs-s:14px; --fs-m:14px; --fs-l:16px; --fs-xl:20px;
+  --fs-xs:12px; --fs-s:14px; --fs-m:14px; --fs-l:16px; --fs-xl:20px; }
+/*
+ * パネルも窓と同じ色の役割にし、地は面の色 1 枚にする。開いた票は箱で浮かせず、選んでいる行の強調（薄い地と左の線）にとどめる（R111・初見 2 巡目 1）。
+ * 停止の語だけを危険の色にする（窓の一覧の行と同じ）。
+ */
+.ck.pnl { background:var(--surface); }
+.ck.pnl .top { background:var(--surface); }
+.ck.pnl .strip[aria-expanded="true"] { background:var(--sunk); }
+.ck.pnl .strip .acts { background:var(--sunk); border-radius:0; }
+.ck.pnl .strip.k-stuck .kind { color:var(--hot); }
+.ck.win {
   height:100vh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .ck.win .pad { padding:18px; }
 .ck.win .hotc { color:var(--hot); }
@@ -308,8 +315,10 @@ body { margin:0; }
 .ck.win details.sgrp > summary .gh::before { content:"＋"; color:var(--ink3); }
 .ck.win details.sgrp[open] > summary .gh::before { content:"－"; }
 .ck.win details.sgrp[open] > summary { margin-bottom:4px; }
+/* 開閉の印の付いた見出しの下は、行の左端を見出しの文字にそろえる（全体の仕事の中身と同じ下げ幅。Neon 初見 2 巡目）。 */
+.ck.win details.sgrp > .rows { margin-left:26px; }
 .ck.win .gh { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:var(--fs-s); padding:2px 2px 0; }
-.ck.win .gh .prog { margin-left:auto; }
+.ck.win .gh .pbar { min-width:0; }
 .ck.win .gh b { font-size:var(--fs-m); }
 .ck.win .gh .mut { font-size:var(--fs-xs); }
 .ck.win .subh { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; }
@@ -335,10 +344,8 @@ body { margin:0; }
 .ck.win .cardrow .du { font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; text-align:right; display:grid; justify-items:end; }
 .ck.win .cardrow .du.cl { max-width:240px; }
 .ck.win .cardrow .du .how { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ck.win .dover { color:var(--hot); font-weight:600; }
-.ck.win .dnext.soon { color:var(--ink); font-weight:600; }
-/* 窓の協議は副の操作なので、主のボタンの青と分ける。 */
-.ck.win .btn.talk { border-color:var(--ink3); color:var(--ink); }
+/* 窓とパネルの協議は副の操作なので、主のボタンの青と分ける。 */
+.ck.win .btn.talk, .ck.pnl .btn.talk { border-color:var(--ink3); color:var(--ink); }
 /* 札は語だけ（丸枠・地の色の印を並べない。初見 4・15）。協議中は強調の色、確認なしは危険の色。 */
 .ck.win .tag { display:inline-block; font-size:var(--fs-xs); font-weight:400; color:var(--ink3); white-space:nowrap; }
 .ck.win .tag.wait { color:var(--ink2); }
@@ -349,7 +356,8 @@ body { margin:0; }
 .ck.win .gaps ul { margin:4px 0 0; padding-left:1.2em; }
 
 /* 詳細（要対応・対応済みの右） */
-.ck.win .wdet { display:grid; align-content:start; min-height:100%; }
+/* 縦の flex にして、操作の帯をいつも詳細の下端に置く（短い詳細で本文のすぐ下に上がらないように。初見 2 巡目 4）。 */
+.ck.win .wdet { display:flex; flex-direction:column; min-height:100%; }
 .ck.win .dh { padding:10px 16px 8px; border-bottom:1px solid var(--rule2); display:grid; gap:4px; position:sticky; top:0; background:var(--surface); z-index:1; }
 .ck.win .dh .crumbs { font-size:var(--fs-xs); color:var(--ink3); display:flex; gap:6px; flex-wrap:wrap; }
 .ck.win .dh .crumbs i { font-style:normal; }
@@ -357,7 +365,6 @@ body { margin:0; }
 .ck.win .dh h2 { margin:0; font-size:var(--fs-l); line-height:1.5; }
 .ck.win .note { margin:8px 16px 0; padding:8px 10px; border-radius:6px; background:var(--sunk); font-size:var(--fs-s); }
 .ck.win .note.wait { background:var(--amber-bg); } .ck.win .note.wait b { color:var(--amber); }
-.ck.win .note.ok { background:var(--ok-bg); } .ck.win .note.ok b { color:var(--ok); }
 /* 詳細の塊は囲まず、塊の間を線で区切る（R111。囲みと引用の線が二重にならない。初見 13）。 */
 .ck.win .first { margin:12px 16px 0; padding:0; border:0; display:grid; gap:10px; font-size:var(--fs-s); }
 .ck.win .first + .first, .ck.win .wdet > .first + .sent, .ck.win .wdet > .sent + .first { border-top:1px solid var(--rule2); padding-top:12px; }
@@ -402,7 +409,7 @@ body { margin:0; }
 .ck.win .pst.mine { color:var(--focus); font-weight:700; }
 .ck.win .pst.stopped { color:var(--hot); font-weight:700; }
 /* 工程の進み（工程 n/5 と段の名前）。上下の箱で位置がそろうよう幅を決める。 */
-.ck.win .pbar { display:inline-block; min-width:9.5em; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
+.ck.win .pbar { display:inline-block; min-width:9.5em; text-align:right; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win .pbar .num { margin:0 .3em; }
 .ck.win .prog { display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:1px 9px; white-space:nowrap; }
@@ -441,7 +448,11 @@ body { margin:0; }
 .ck.win .donebox { font-size:var(--fs-xs); color:var(--ink3); padding:4px 0 0; }
 .ck.win .wmore { border:0; background:none; color:var(--focus); font-size:var(--fs-s); padding:2px 0; text-align:left; justify-self:start; }
 .ck.win .watch { display:grid; gap:6px; }
-.ck.win .watch ul { margin:0; padding-left:1.2em; font-size:var(--fs-s); }
+.ck.win .watch .rrow { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; padding:7px 10px; font-size:var(--fs-s); }
+.ck.win .watch .rrow + .rrow { border-top:1px solid var(--rule2); }
+.ck.win .watch ul.rows { margin:0; padding:0; list-style:none; }
+.ck.win .watch .rrow > :last-child { font-size:var(--fs-xs); overflow-wrap:anywhere; }
+.ck.win .watch .rrow > .at { white-space:nowrap; }
 .ck.win .watch p { margin:0; font-size:var(--fs-s); }
 .ck.win .watch .strips { margin:0; background:none; }
 /* 届いた連絡の題は、見張るの見出しより弱くする（見出し → 小見出し → 項目の順）。 */
@@ -451,7 +462,7 @@ body { margin:0; }
 .ck.win .wk2 { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
 .ck.win .lc { display:grid; grid-template-columns:3.4em minmax(0,1fr) auto; gap:8px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
 .ck.win button.lc:hover { background:var(--sunk); }
-.ck.win .lc .ti { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .lc .ti { overflow-wrap:anywhere; }
 .ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis; }
 /* 済んだカードは弱く、要対応・修正待ちだけを目立たせる。 */
 .ck.win .lc.cl, .ck.win .lc.cl .kd { color:var(--ink3); font-weight:400; }

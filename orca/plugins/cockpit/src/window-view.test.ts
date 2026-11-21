@@ -340,7 +340,7 @@ test('追加 22 の Codex: 全体の j・k の順は見張るを最後にした�
   // d21 は 3 時間後、d22 は 2 時間前が期限。赤は期限切れだけで、詳細もパネルの「あと n 時間」の赤い札にしない。
   const d = page(aoba(), { sel: '/ws/aoba#d21' })
   assert.doesNotMatch(d, /due hot/)
-  assert.equal(d.match(/class="dnext soon"/g)?.length, 2, '一覧と詳細の 2 か所')
+  assert.equal(d.match(/class="due dnext soon"/g)?.length, 2, '一覧と詳細の 2 か所')
   assert.match(text(d), /期限切れ 08:00/)
 })
 
@@ -348,9 +348,10 @@ test('詳細の担当の行は、端末・チャットを前に出すボタン�
   const m = aoba((v) => {
     v.owners = [{ session: 'sess-aws', kind: 'chat', state: 'working', worktree: '/ws/aoba-aws' }]
   })
-  assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span><b>AWS.?構成案<\/b>(<span>[^<]*<\/span>)?<button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws">チャットを開く<\/button>/)
+  // 担当の名前が仕事の名前（AWS 構成案）と同じなら名前を重ねない（初見 2 巡目 3）。
+  assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span>(<span>[^<]*<\/span>)?<button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws">チャットを開く<\/button>/)
   assert.match(page(m, { sel: '/ws/aoba#r5' }), /<button type="button" class="act" data-term="term_aoba_w1" data-wt="">端末を開く<\/button>/)
-  assert.match(page(aoba(), { sel: '/ws/aoba#d21' }), /<b>AWS.?構成案<\/b><span>チャット<\/span>/)
+  assert.match(page(aoba(), { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span>(<span>[^<]*<\/span>)?<span>チャット<\/span>/)
 })
 
 test('補助の文字・危険・仕事の形の色は、明暗どちらの地でも WCAG AA（4.5:1）を満たし、押せるものの枠は 3:1 を満たす', () => {
@@ -375,4 +376,54 @@ test('問いの件名が題のときは、詳細に本文も出す', () => {
     v.questions = [{ id: 'q1', at: NOW - 10 * 60_000, line: '仕様確認', text: '端数は切り上げますか？', to: 'main', task: 't1' }]
   })
   assert.match(page(m, { sel: '/ws/aoba##ask:q1' }), /聞かれていること.*端数は切り上げますか？/s)
+})
+
+test('初見 2 巡目: 仕事の見出しは工程を名前の横に置き、右の列は行の期限だけ。担当が仕事と同じ名前なら出さない', () => {
+  const h = page(aoba(), {})
+  const head = h.slice(h.indexOf('<div class="gh f-'), h.indexOf('</div>', h.indexOf('<div class="gh f-')))
+  // 名前 → 工程 → 件数の順（工程が右端に寄らない）。
+  assert.match(head, /<b>[^<]+<\/b><span class="prog"><span class="pbar"[^>]*>[^<]*(工程|タスク完了)/)
+  const all = [...h.matchAll(/<div class="gh f-[^"]*">([\s\S]*?)<\/div>/g)].map((x) => text(x[1]!))
+  assert.ok(all.every((x) => !/担当: (配車画面の改修|AWS 構成案)/.test(x)), all.join('\n'))
+})
+
+test('初見 2 巡目: 対応済みは答えを「出した指示」の 1 行で読み、囲みの箱と行の右の「決定: 〜」を出さない', () => {
+  const h = page(aoba(), { tab: 'done', doneSel: '/ws/aoba#d19' })
+  assert.doesNotMatch(h, /class="note ok"/)
+  const row = h.slice(h.indexOf('data-dsel="/ws/aoba#d19"'), h.indexOf('</button>', h.indexOf('data-dsel="/ws/aoba#d19"')))
+  assert.doesNotMatch(text(row), /決定/)
+  // 畳んだ「詳細」の中（頼んだ選択肢）は数えない。
+  const shown = h.replace(/<details class="more-d"[\s\S]*?<\/details>/, '')
+  assert.equal(text(shown).match(/議題だけテキストで送る/g)?.length, 3, '行の題・詳細の題・出した指示')
+})
+
+test('Codex 初見 2 巡目: 協議の開始だけが記録され、答えは帳簿で閉じたカードは、結果の 1 行で答えを出す', () => {
+  const m = aoba((v) => {
+    v.log.ops = v.log.ops.filter((o) => o.item_id !== 'd19')
+    v.log.ops.push({ op_id: 90, at: new Date(NOW - 40 * 3_600_000).toISOString(), item_id: 'd19', item_rev: 1, type: 'talk' })
+  })
+  const t = text(page(m, { tab: 'done', doneSel: '/ws/aoba#d19' }))
+  assert.match(t, /出した指示 .*協議を開始/)
+  assert.match(t, /結果 決定: 議題だけテキストで送る/)
+})
+
+test('初見 2 巡目: 見張るの経路は線の一覧で「最終確認 hh:mm」。詳細の操作の帯はいつも下端（縦の flex）', () => {
+  const t = text(page(aoba(), { tab: 'whole' }))
+  assert.match(t, /Slack #aoba-dev 最終確認 /)
+  assert.doesNotMatch(t, /に読んだ/)
+  assert.match(CSS, /\.ck\.win \.wdet \{ display:flex; flex-direction:column; min-height:100%; \}/)
+  assert.match(CSS, /\.ck\.win \.dbtn \{ margin-top:auto;/)
+})
+
+test('初見 2 巡目: タスクのエージェントが停止で要対応に出ていれば、全体の行と詳細の状態も停止と出す（作業中と「停止を開く」を並べない）', () => {
+  const m = aoba((v) => {
+    v.questions = [{ id: 'q1', at: NOW - 10 * 60_000, line: '仕様確認', text: '端数は切り上げますか？', to: 'main', task: 't1' }]
+  })
+  const h = page(m, { tab: 'whole', task: 't1' })
+  const row = h.slice(h.indexOf('data-task="t1"'), h.indexOf('</div>', h.indexOf('data-task="t1"')))
+  assert.match(row, /<span class="tst s-stop">停止<\/span>/)
+  assert.match(row, /停止を開く/)
+  assert.match(h, /<div class="kl"><span class="tst s-stop">停止<\/span>/)
+  // 停止の無いときは帳簿のまま。
+  assert.match(page(aoba(), { tab: 'whole', task: 't1' }), /<div class="kl"><span class="tst s-run">作業中<\/span>/)
 })

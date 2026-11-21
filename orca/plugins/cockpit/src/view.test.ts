@@ -17,11 +17,14 @@ const model = (over: Partial<Model> = {}, vs = views()): Model => ({ boards: boa
 const html = (m: Model = model(), ui: Ui = newUi()) => render(m, ui, NOW, svg)
 const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 
-test('上の帯: 全案件の私の番の合計と 5 種類の内訳。届いたは区切りの外に出し、合計に入れない', () => {
+test('上の帯: 私の番の合計だけを出し、種類ごとの件数の帯は出さない（種類は票の語、急ぎは期限の見出しで読む。R82・R91）', () => {
   const t = text(html())
   assert.match(t, /9 全案件の私の番/)
-  assert.match(t, /許可 2 判断 3 送信前 1 確認 2 受信 1/)
-  assert.match(html(), /class="kc ref k-inbox"/)
+  assert.doesNotMatch(t, /許可 2 判断 3/)
+  assert.doesNotMatch(html(), /class="kinds"/)
+  // 狭い幅で合計を兼ねる「私の番 n」の切り替えは、上の帯の中に 1 段で置く。
+  const top = html().slice(0, html().indexOf('</header>'))
+  assert.match(top, /class="paneswitch"/)
 })
 
 test('1 列: 止まっている → 期限切れ → 今の線 → 今日 → 明日 → 今週 → 期限なし の順で、期限切れは今の線より上', () => {
@@ -32,10 +35,11 @@ test('1 列: 止まっている → 期限切れ → 今の線 → 今日 → �
   assert.ok(order.every((n) => n >= 0))
 })
 
-test('朱は期限が 24 時間以内か過ぎた票だけ。文字でも「あと n 時間」「期限切れ」と出す（記号を付けない。R101）', () => {
+test('朱は期限切れの文字だけ。24 時間以内は濃い無彩色の文字で、塗りの札にしない（窓と同じ。初見 2 巡目 1）', () => {
   const h = html()
-  assert.match(h, /due hot"><b>期限切れ<\/b>/)
-  assert.match(h, /due hot"><b>あと 3 時間<\/b>/)
+  assert.match(h, /<span class="due dover">期限切れ 08:00<\/span>/)
+  assert.match(h, /<span class="due dnext soon">13:00 まで<\/span>/)
+  assert.doesNotMatch(h, /due hot/)
   assert.ok(!/k-review hot/.test(h.match(/<article class="strip k-review[^"]*"[^>]*data-strip="\/ws\/harness#r8"/)?.[0] ?? ''))
 })
 
@@ -54,8 +58,10 @@ test('案件で絞ると、その案件の票だけになり、右に案件の�
 test('決める: 何のため → これは何か → なぜ今 → 選択肢 → 返事が無いとき → 決めるための情報の残り → 話す相手。おすすめを選んだ状態で開き「おすすめで決める」、選び直すと「この案で決める」', () => {
   const ui = { ...newUi(), sel: '/ws/aoba#d21' }
   const t = text(html(model(), ui))
-  const order = ['何のため', 'これは何か', 'なぜ今決めるか', '図はこのまま', '返事が無いとき', '失うこと', '担当 AWS 構成案'].map((x) => t.indexOf(x))
+  const order = ['何のため', 'これは何か', 'なぜ今決めるか', '図はこのまま', '返事が無いとき', '失うこと'].map((x) => t.indexOf(x))
   assert.deepEqual([...order].sort((a, b) => a - b), order)
+  // 担当の名前は仕事の名前（AWS 構成案）と同じなので重ねない。
+  assert.doesNotMatch(t, /担当 AWS 構成案/)
   assert.match(html(model(), ui), /data-act="decide"[^>]*\s>推奨案で決定/)
   assert.match(html(model(), ui), /role="radio" aria-checked="true" data-pick="keep"/)
   ui.picked['/ws/aoba#d21'] = 'draw'
@@ -75,9 +81,9 @@ test('今日の見出しの日付は手元の時計で決める（日本時間�
 
 test('期限は、1 列の見出しと重なる日付を省く（今日は時刻だけ、明日は「明日 18:00」）', () => {
   const h = html()
-  assert.match(h, /due hot"><b>あと 3 時間<\/b><span class="tm">13:00<\/span>/)
-  assert.match(h, /<span class="due">明日 18:00<\/span>/)
-  assert.match(h, /<span class="due">11\/24\(火\) 17:00<\/span>/)
+  assert.match(h, /<span class="due dnext soon">13:00 まで<\/span>/)
+  assert.match(h, /<span class="due dnext">明日 18:00 まで<\/span>/)
+  assert.match(h, /<span class="due dnext">11\/24\(火\) 17:00 まで<\/span>/)
 })
 
 test('案件の列は、止まっている・期限切れ・今日・話し中の件数を出す（日時は出さない）', () => {
@@ -147,12 +153,12 @@ test('詰まりの題に仕事の名前があれば、上の行に同じ名前�
   assert.ok(!strip.slice(0, strip.indexOf('</article>')).includes('class="jobname"'))
 })
 
-test('種類ごとの返答: 送る前はコピーしてスレッドを開く・送った・担当と直す・送らない、見ては これでよい・直してほしい、許すは 許す・任せる・止める', () => {
+test('種類ごとの返答: 送る前はコピーしてスレッドを開く・送った・担当と修正を協議（語が切れて見えないように。初見 2 巡目 4）・送らない、見ては これでよい・直してほしい、許すは 許す・任せる・止める', () => {
   const acts = (sel: string) => {
     const h = html(model(), { ...newUi(), sel })
     return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
   }
-  assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送信済みにする', 'talk:担当と修正', 'skip:送信しない'])
+  assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送信済みにする', 'talk:担当と修正を協議', 'skip:送信しない'])
   assert.deepEqual(acts('/ws/aoba#r5'), ['accept:承認する', 'other:修正点を記入', 'talk:担当と修正を協議', 'url:開く'])
   assert.deepEqual(acts('/ws/konan#p7'), ['accept:許可する', 'delegate:この案件の 本番 は一任する', 'skip:却下', 'talk:担当と協議'])
   assert.deepEqual(acts('/ws/aoba#i3'), ['talk:担当と協議', 'skip:返信不要', 'url:元の連絡を開く'])
