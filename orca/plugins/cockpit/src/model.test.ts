@@ -1,196 +1,132 @@
-import { assert, test } from 'orca/testing'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import os from 'node:os'
+import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { nextOp, shownTask, overlay, parseCockpit, unappliedOps, worstState, type Cockpit, type Op, type Task } from './model.ts'
-import { harness } from '../fixtures/harness.ts'
-import { derive } from './state.ts'
+import { test } from 'node:test'
+import { sample } from '../fixtures/sample.ts'
+import { nextOp, overlay, parseCockpit, shownTask, taskOfWorker, unappliedOps, type Cockpit, type Op, type UserLog } from './model.ts'
+import { SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
 
-/** 開いている決める・聞く・見てが指すタスク（state.ts の derive）。 */
-const yourTasks = (c: Cockpit, log: { ops: Op[] }) => new Set(derive(c, log, [], undefined).yours.keys())
+const NOW = Date.parse('2026-11-21T10:00:00+09:00')
+const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
+const op = (o: Partial<Op> & Pick<Op, 'op_id' | 'item_id' | 'type'>): Op => ({ at: new Date(NOW).toISOString(), item_rev: 1, ...o })
+const statusOf = (c: Cockpit, log: UserLog, id: string) => overlay(c, log).find((v) => v.card.id === id)!
 
-const sample = (): Cockpit => parseCockpit(readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8'))
-const op = (o: Partial<Op> & Pick<Op, 'op_id' | 'item_id' | 'type'>): Op => ({ at: '2026-11-16T12:00:00+09:00', item_rev: 1, ...o })
-const viewOf = (c: Cockpit, ops: Op[], id: string) => overlay(c, { ops }).find((x) => x.item.id === id)!
-
-test('操作が無ければ cockpit.json のとおりに残と片付け済みに分かれる', () => {
-  const views = overlay(sample(), { ops: [] })
-  assert.deepEqual(views.filter((x) => !x.closed).map((x) => x.item.id), ['d1', 'd3', 'd4', 'd5', 'v1', 'v2', 'd2', 'a2', 'a3', 'a4'])
-  assert.equal(views.find((x) => x.item.id === 'x1')!.how, 'メインが片付け')
-  assert.equal(views.find((x) => x.item.id === 'x2')!.how, 'あなたが決定「Entra ID」')
+test('操作が無ければ、開いたカードは私の番、話し中のカードは話し中、送ったものは顧客待ち、済んだものは片付いた', () => {
+  const c = aoba()
+  const log = { ops: [] }
+  assert.equal(statusOf(c, log, 'd21').status, 'mine')
+  assert.equal(statusOf(c, log, 'c4').status, 'talking')
+  assert.equal(statusOf(c, log, 'w1').status, 'waiting')
+  assert.equal(statusOf(c, log, 'd19').status, 'closed')
 })
 
-test('未反映の決定は「反映待ち」で片付け済みに入り、反映されると印が消える', () => {
-  const c = sample()
-  const ops = [op({ op_id: 1, item_id: 'd1', type: 'decide', option_id: 'auto' })]
-  const pending = viewOf(c, ops, 'd1')
-  assert.equal(pending.closed, true)
-  assert.equal(pending.how, 'あなたが決定「システムが自動で割り当てる」・反映待ち')
-  assert.equal(pending.reopenOp?.op_id, 1)
-
-  c.applied_ops = [1]
-  Object.assign(c.items.find((i) => i.id === 'd1')!, { state: 'done', resolved_by: 'user', resolved_option: 'auto' })
-  const applied = viewOf(c, ops, 'd1')
-  assert.equal(applied.how, 'あなたが決定「システムが自動で割り当てる」')
-  assert.equal(applied.pending, false)
-})
-
-test('未反映の決定を取り消すと残に戻り、取り消しが反映待ちになる', () => {
-  const ops = [op({ op_id: 1, item_id: 'd1', type: 'decide', option_id: 'auto' }), op({ op_id: 2, item_id: 'd1', type: 'undo', undo_of: 1 })]
-  const v = viewOf(sample(), ops, 'd1')
-  assert.equal(v.closed, false)
+test('決めた操作は担当が受け取るまで「受け取り待ち」で片付いたに入り、受け取ると印が消える', () => {
+  const c = aoba()
+  const log = { ops: [op({ op_id: 2, item_id: 'd21', type: 'decide', option_id: 'keep' })] }
+  const v = statusOf(c, log, 'd21')
+  assert.equal(v.status, 'closed')
   assert.equal(v.pending, true)
-  assert.equal(v.rejudge, false)
+  assert.equal(v.how, '決めた: 図はこのまま、本文で説明する')
+  assert.equal(v.undoOp?.op_id, 2)
+  // 担当が反映すると cockpit.json の state が正になる。
+  c.applied_ops = [1, 2]
+  c.cards.find((x) => x.id === 'd21')!.state = 'done'
+  Object.assign(c.cards.find((x) => x.id === 'd21')!, { resolved_by: 'user', resolved_option: 'keep' })
+  assert.equal(statusOf(c, log, 'd21').pending, false)
 })
 
-test('反映済みの決定を取り消すと、メインの再判断待ちとして残に戻る', () => {
-  const c = sample()
-  c.applied_ops = [1]
-  Object.assign(c.items.find((i) => i.id === 'd1')!, { state: 'done', resolved_by: 'user', resolved_option: 'auto' })
-  const ops = [op({ op_id: 1, item_id: 'd1', type: 'decide', option_id: 'auto' }), op({ op_id: 2, item_id: 'd1', type: 'undo', undo_of: 1 })]
-  const v = viewOf(c, ops, 'd1')
-  assert.equal(v.closed, false)
-  assert.equal(v.rejudge, true)
+test('取り消した操作は効かず、カードは私の番に戻る', () => {
+  const log = { ops: [op({ op_id: 2, item_id: 'd21', type: 'decide', option_id: 'keep' }), op({ op_id: 3, item_id: 'd21', type: 'undo', undo_of: 2 })] }
+  assert.equal(statusOf(aoba(), log, 'd21').status, 'mine')
 })
 
-test('古い版の項目に押した未反映の操作は効かせない（メインが出し直す）', () => {
-  const c = sample()
-  c.items.find((i) => i.id === 'd1')!.rev = 2
-  const v = viewOf(c, [op({ op_id: 1, item_id: 'd1', item_rev: 1, type: 'decide', option_id: 'auto' })], 'd1')
-  assert.equal(v.closed, false)
+test('古い版に押した操作は効かない（担当が書き換えたら、もう一度私の番になる）', () => {
+  const c = aoba()
+  c.cards.find((x) => x.id === 'd21')!.rev = 2
+  const log = { ops: [op({ op_id: 2, item_id: 'd21', type: 'decide', option_id: 'keep' }), op({ op_id: 3, item_id: 'd21', type: 'talk' })] }
+  assert.equal(statusOf(c, log, 'd21').status, 'mine')
 })
 
-test('メインが古い版の決定を却下して出し直した項目は、反映済みの古い操作で閉じない', () => {
-  const c = sample()
-  c.applied_ops = [1]
-  c.items.find((i) => i.id === 'd1')!.rev = 3
-  const v = viewOf(c, [op({ op_id: 1, item_id: 'd1', item_rev: 1, type: 'decide', option_id: 'auto' })], 'd1')
-  assert.equal(v.closed, false)
+test('「担当と話す」を押すと話し中になり、担当が書き換えて版が上がると私の番に戻る', () => {
+  const c = aoba()
+  const log = { ops: [op({ op_id: 2, item_id: 'd21', type: 'talk' })] }
+  const v = statusOf(c, log, 'd21')
+  assert.equal(v.status, 'talking')
+  assert.equal(v.pending, true)
+  c.cards.find((x) => x.id === 'd21')!.rev = 2
+  assert.equal(statusOf(c, log, 'd21').status, 'mine')
 })
 
-test('あなたが決めて反映済みの項目は、反映した操作を残に戻せる', () => {
-  const c = sample()
-  c.applied_ops = [1]
-  Object.assign(c.items.find((i) => i.id === 'd1')!, { state: 'done', resolved_by: 'user', resolved_option: 'auto' })
-  const v = viewOf(c, [op({ op_id: 1, item_id: 'd1', type: 'decide', option_id: 'auto' })], 'd1')
-  assert.equal(v.reopenOp?.op_id, 1)
-  assert.equal(viewOf(c, [], 'x1').reopenOp, undefined)
+test('種類ごとの片付けの言葉: 許すは「許した」、送る前の送ったは「送った」、別の答えは本文', () => {
+  const c = sample(NOW)[1]!.cockpit
+  const log = { ops: [op({ op_id: 1, item_id: 'p7', type: 'accept' }), op({ op_id: 2, item_id: 'k9', type: 'decide', option_id: 'other', text: '情報部に聞いてから' })] }
+  assert.equal(statusOf(c, log, 'p7').how, '許した')
+  assert.equal(statusOf(c, log, 'k9').how, '別の答え: 情報部に聞いてから')
+  const a = aoba()
+  assert.equal(statusOf(a, { ops: [op({ op_id: 2, item_id: 'd22', item_rev: 2, type: 'sent' })] }, 'd22').how, '送った')
 })
 
-test('archive の項目は片付け済みに入る', () => {
-  const c = sample()
-  const archived = { ...c.items[0]!, id: 'old', state: 'done' as const, resolved_by: 'main' as const }
-  const v = overlay(c, { ops: [] }, [archived]).find((x) => x.item.id === 'old')!
-  assert.equal(v.closed, true)
-  assert.equal(v.reopenOp, undefined)
+test('cockpit.json は版 2 だけを読み、版 1 は移し替えの手順を添えて断る', () => {
+  assert.doesNotThrow(() => parseCockpit(JSON.stringify(aoba())))
+  assert.throws(() => parseCockpit(JSON.stringify({ workspace: { name: 'x' }, streams: [], tasks: [], items: [] })), /migrate\.ts/)
+  const bad = { ...aoba(), cards: [{ id: 'x', rev: 1, kind: 'ask', title: 't', state: 'open' }] }
+  assert.throws(() => parseCockpit(JSON.stringify(bad)), /kind が不正/)
+  assert.throws(() => parseCockpit(JSON.stringify({ ...aoba(), owners: [{ title: 'x' }] })), /owners/)
 })
 
 test('未反映の操作と次の op_id', () => {
-  const c = sample()
-  c.applied_ops = [1]
-  const log = { ops: [op({ op_id: 1, item_id: 'd1', type: 'talk' }), op({ op_id: 2, item_id: 'd2', type: 'approve_ask' })] }
-  assert.deepEqual(unappliedOps(c, log).map((o) => o.op_id), [2])
-  assert.equal(nextOp(log, { at: 'x', item_id: 'a2', item_rev: 1, type: 'ack' }).op_id, 3)
+  const c = aoba()
+  const log = { ops: [op({ op_id: 1, item_id: 'd19', type: 'decide' }), op({ op_id: 4, item_id: 'd21', type: 'talk' })] }
+  assert.deepEqual(unappliedOps(c, log).map((o) => o.op_id), [4])
+  assert.equal(nextOp(log, { at: '', item_id: 'x', item_rev: 1, type: 'ack' }).op_id, 5)
 })
 
-test('大タスクの状態は一番手当てが要るタスクの状態で、外部待ちは未着手より先', () => {
-  assert.equal(worstState(['ok', 'idle', 'wait']), 'wait')
-  assert.equal(worstState(['run', 'stop']), 'stop')
-  assert.equal(worstState([]), undefined)
+test('合図の対象: 自分が書いた操作は 10 秒、ほかの画面の操作は 30 秒。未反映の取り消しの組は除く', () => {
+  const c = aoba()
+  const at = (s: number) => new Date(NOW - s * 1000).toISOString()
+  const log = { ops: [
+    { op_id: 2, at: at(12), item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' },
+    { op_id: 3, at: at(12), item_id: 'r5', item_rev: 1, type: 'accept' },
+    { op_id: 4, at: at(11), item_id: 'r5', item_rev: 1, type: 'undo', undo_of: 3 },
+    { op_id: 5, at: at(12), item_id: 'd22', item_rev: 2, type: 'sent' }
+  ] as Op[] }
+  const plan = signalPlan(c, log, 0, NOW, (o) => o.op_id !== 5)
+  assert.deepEqual(plan.due.map((o) => o.op_id), [2])
+  assert.equal(plan.nextAt, Date.parse(at(12)) + 30_000)
 })
 
-test('利用者の番のタスクは、開いている決める・聞く・見てから指されたものだけ。決めたあとは外れる', () => {
-  const c = harness()
-  assert.deepEqual([...yourTasks(c, { ops: [] })], ['調査-wait-0'])
-  assert.deepEqual([...yourTasks(c, { ops: [op({ op_id: 1, item_id: 'd1', type: 'decide', option_id: 'auto' })] })], [])
-})
-
-test('形の違う cockpit.json は例外にする', () => {
-  assert.throws(() => parseCockpit('{"items": []}'))
-  assert.throws(() => parseCockpit('{ broken'))
-  const c = JSON.parse(readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8'))
-  c.tasks[0].state = '"><img src=x onerror=alert(1)>'
-  assert.throws(() => parseCockpit(JSON.stringify(c)), /state が不正/)
-  const old = JSON.parse(readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8'))
-  old.tasks[0].worker = { worktree_id: 'r::w', terminal: 'term_w' }
-  assert.throws(() => parseCockpit(JSON.stringify(old)), /worker の形が不正です.*worktree_id/)
-})
-
-test('合図の対象: 自分が書いた操作は猶予の 10 秒、ほかの画面の操作は 30 秒で。未反映の取り消しの組は除き、話したいも同じ猶予で送る', async () => {
-  const { signalPlan } = await import('./store.ts')
-  const t0 = Date.parse('2026-11-16T12:00:00+09:00')
-  const at = (sec: number) => new Date(t0 + sec * 1000).toISOString()
-  const ops: Op[] = [
-    op({ op_id: 1, item_id: 'd1', type: 'decide', option_id: 'auto', at: at(0) }),
-    op({ op_id: 2, item_id: 'a2', type: 'ack', at: at(0) }),
-    op({ op_id: 3, item_id: 'd3', type: 'talk', text: 'CSV は来期でよいか', at: at(0) }),
-    op({ op_id: 4, item_id: 'd3', type: 'decide', at: at(0) }),
-    op({ op_id: 5, item_id: 'd3', type: 'undo', undo_of: 4, at: at(0) })
-  ]
-  const mine = (o: Op) => o.op_id === 1
-  const plan = (sec: number, notified = 0) => signalPlan(sample(), { ops }, notified, t0 + sec * 1000, mine)
-  assert.deepEqual(plan(5).due, [])
-  assert.equal(plan(5).nextAt, t0 + 10_000)
-  assert.deepEqual(plan(11).due.map((o) => o.op_id), [1])
-  assert.equal(plan(11).nextAt, t0 + 30_000)
-  assert.deepEqual(plan(31).due.map((o) => o.op_id), [1, 2, 3])
-  assert.deepEqual(plan(31, 3).due, [])
+test('合図の 1 行に、担当と話すと別の答えのカードと本文の頭を載せる', () => {
+  assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'decide', option_id: 'keep' })]), SIGNAL)
+  assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'talk' })]), `${SIGNAL}（担当と話す d21）`)
+  assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'decide', option_id: 'other', text: '図は\n描き足す' })]), `${SIGNAL}（別の答え d21: 図は 描き足す）`)
 })
 
 test('同じ瞬間に同じファイルを何度書いても、一時ファイルが取り違えられず全部書ける', async () => {
-  const { writeAtomic } = await import('./store.ts')
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'cockpit-atomic-'))
-  const f = path.join(dir, 'focus.json')
-  const r = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => writeAtomic(f, String(i))))
-  assert.deepEqual(r.filter((x) => x.status === 'rejected'), [])
-  rmSync(dir, { recursive: true, force: true })
+  const file = path.join(mkdtempSync(path.join(tmpdir(), 'cockpit-atomic-')), 'a.json')
+  await Promise.all(Array.from({ length: 20 }, (_, n) => writeAtomic(file, String(n))))
+  assert.match(readFileSync(file, 'utf8'), /^\d+$/)
 })
 
-test('見ては accept で片付き、古い版に押した accept は効かない（成果物を差し替えたら出し直す）', () => {
-  const c = sample()
-  const ok = viewOf(c, [op({ op_id: 1, item_id: 'v1', type: 'accept', item_rev: 2 })], 'v1')
-  assert.equal(ok.closed, true)
-  assert.equal(ok.how, 'あなたが承認・反映待ち')
-  assert.equal(viewOf(c, [op({ op_id: 1, item_id: 'v1', type: 'accept', item_rev: 1 })], 'v1').closed, false)
+test('path:行 をファイルと行に分ける', () => {
+  assert.deepEqual(splitLine('docs/設計.md:12'), { file: 'docs/設計.md', line: 12 })
+  assert.deepEqual(splitLine('docs/a:b.md'), { file: 'docs/a:b.md' })
 })
 
-test('requests の形が違う cockpit.json は読み込みで断る', () => {
-  const text = (requests: unknown) => JSON.stringify({ ...sample(), requests })
-  assert.throws(() => parseCockpit(text({ id: 'r1' })), /requests が配列ではありません/)
-  assert.throws(() => parseCockpit(text([{ id: 'r1', state: 'doing' }])), /requests の形が不正です: r1/)
-  assert.equal(parseCockpit(text(undefined)).requests, undefined)
+test('worker が進めるタスクは、端末の記録 → 同じ worktree の済んでいないもの → 同じ worktree の最後のもの', () => {
+  const t = (id: string, state: 'ok' | 'run', terminal?: string) => ({ id, stream: 's', phase: 'p', title: id, state, worker: { worktree_id: 'w', terminal } })
+  const tasks = [t('a', 'ok', 'term_a'), t('b', 'run'), t('c', 'ok')]
+  assert.equal(taskOfWorker(tasks, 'w', 'term_a')?.id, 'a')
+  assert.equal(taskOfWorker(tasks, 'w', null)?.id, 'b')
+  assert.equal(taskOfWorker([tasks[0]!, tasks[2]!], 'w', null)?.id, 'c')
 })
 
-test('path:行 をファイルと行に分ける', async () => {
-  const { splitLine } = await import('./store.ts')
-  assert.deepEqual(splitLine('docs/一覧画面.md:12'), { file: 'docs/一覧画面.md', line: 12 })
-  assert.deepEqual(splitLine('docs/a.md'), { file: 'docs/a.md' })
-  assert.deepEqual(splitLine('/abs/x:y.md'), { file: '/abs/x:y.md' })
-})
-
-test('合図の 1 行に、話したいの発言の頭を改行を詰めて載せる', async () => {
-  const { signalText, SIGNAL } = await import('./store.ts')
-  assert.equal(signalText([op({ op_id: 1, item_id: 'd1', type: 'decide' })]), SIGNAL)
-  assert.equal(signalText([op({ op_id: 1, item_id: 'd3', type: 'talk', text: 'CSV は\n来期でよいか' })]), `${SIGNAL}（話したい d3: CSV は 来期でよいか）`)
-  assert.equal(signalText([op({ op_id: 1, item_id: 'v1', type: 'talk', to_main: true, text: 'あ'.repeat(70) })]), `${SIGNAL}（メインに渡す v1: ${'あ'.repeat(60)}…）`)
-  assert.equal(signalText([op({ op_id: 1, item_id: 'd1', type: 'need_context' })]), `${SIGNAL}（情報が足りない d1）`)
-  assert.equal(signalText([op({ op_id: 1, item_id: 'd5', type: 'decide', option_id: 'other', text: 'もう手で送った' })]), `${SIGNAL}（別の答え d5: もう手で送った）`)
-  assert.equal(signalText([op({ op_id: 1, item_id: 'd1', type: 'need_context', text: '既存の\n18 社は？' })]), `${SIGNAL}（情報が足りない d1: 既存の 18 社は？）`)
-  assert.equal(signalText([op({ op_id: 1, item_id: '', type: 'repeat' })]), `${SIGNAL}（前にも言った）`)
-})
-
-test('worker の記録があるタスクの状態は Orca の Dispatch から決め、済み・利用者の番・記録の無いタスクはメインの state のまま', () => {
-  const t = (state: Task['state'], worker = true): Task => ({ id: 'x', stream: 's', phase: 'p', title: 'x', state, worker: worker ? { task_id: 'task_1', dispatch_id: 'ctx_1' } : undefined })
-  const none = new Set<string>()
-  const live = { state: 'ready', liveness: 'live' }
-  assert.deepEqual(shownTask(t('ok'), live, none), { state: 'ok', why: 'ok' })
-  assert.deepEqual(shownTask(t('wait'), live, new Set(['x'])), { state: 'wait', why: 'yours' })
-  assert.deepEqual(shownTask(t('run', false), undefined, none), { state: 'run', why: 'record' })
-  assert.deepEqual(shownTask(t('run'), undefined, none), { state: 'run', why: 'record' }, 'パネルは Orca の状態が分からない')
-  assert.deepEqual(shownTask(t('idle'), live, none), { state: 'run', why: 'working' }, 'メインが idle のまま書き忘れても進行中')
-  assert.deepEqual(shownTask(t('run'), { ...live, waiting: true }, none), { state: 'stop', why: 'stopped', stop: 'blocked' })
-  assert.deepEqual(shownTask(t('run'), { state: 'succeeded', liveness: 'unverifiable' }, none), { state: 'wait', why: 'intake' })
-  assert.deepEqual(shownTask(t('run'), { state: 'failed', liveness: 'exited' }, none), { state: 'stop', why: 'stopped', stop: 'dead' })
-  assert.deepEqual(shownTask(t('run'), { state: 'failed', liveness: 'unverifiable' }, none), { state: 'stop', why: 'stopped', stop: 'error' }, '起動できなかった')
-  assert.deepEqual(shownTask(t('run'), null, none), { state: 'stop', why: 'missing' })
+test('worker の記録があるタスクは Orca の状態から、外の相手を待つタスクと記録の無いタスクはメインの state のまま', () => {
+  const t = { id: 't', stream: 's', phase: 'p', title: 't', state: 'idle' as const, worker: { worktree_id: 'w' } }
+  assert.deepEqual(shownTask(t, [{ state: 'working' }], true), { state: 'run', why: 'working' })
+  assert.deepEqual(shownTask(t, [{ state: 'done', stop: 'dead' }], true), { state: 'stop', why: 'stopped', stop: 'dead' })
+  assert.deepEqual(shownTask(t, [], true), { state: 'wait', why: 'intake' })
+  assert.deepEqual(shownTask(t, [], false), { state: 'stop', why: 'missing' })
+  assert.deepEqual(shownTask(t, [], undefined), { state: 'idle', why: 'record' })
+  assert.deepEqual(shownTask({ ...t, state: 'wait' }, [{ state: 'working' }], true), { state: 'wait', why: 'record' })
 })

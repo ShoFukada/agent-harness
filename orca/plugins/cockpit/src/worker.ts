@@ -5,8 +5,9 @@ import { promises as fsp, watch, type FSWatcher } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { chatMain } from './model.ts'
+import { chatMain, COUNTED } from './model.ts'
 import type { AgentRow, CockpitView, NotifyResult } from './protocol.ts'
+import { countsText, derive, isHot, ownerOf } from './state.ts'
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeAtomic, writeNotified, type Files } from './store.ts'
 
 export { SIGNAL } from './store.ts'
@@ -59,16 +60,32 @@ async function view(): Promise<CockpitView> {
     errors: s.errors,
     workers: s.agents.filter((a) => a.terminalId !== main),
     notifiedOp: s.root ? await readNotified(cockpitDir(), s.root) : 0,
-    signal: s.signal,
-    replies: s.replies,
-    handoff: s.handoff
+    signal: s.signal
   })
 }
 
 const structuredJson = <T>(x: T): T => JSON.parse(JSON.stringify(x))
 
 async function publish(): Promise<void> {
-  orca.panels.post('cockpit.changed', await view())
+  const v = await view()
+  orca.panels.post('cockpit.changed', v)
+  await status(v)
+}
+
+/** Orca の下の帯に、前面の案件の私の番を出す。パネルを開いていなくても、急ぐものがあると分かるように。 */
+async function status(v: CockpitView): Promise<void> {
+  try {
+    if (!v.cockpit || !v.root) return void (await orca.host.call('statusBar.update', { id: 'mine', visible: false }))
+    const now = Date.now()
+    const d = derive(v.cockpit, v.log, v.archive, v.root, { workers: v.workers }, now)
+    const hot = d.queue.some((r) => COUNTED.includes(r.card.kind) && isHot(r.card.due, now))
+    await orca.host.call('statusBar.update', {
+      id: 'mine', visible: true, text: d.total ? `私の番 ${d.total}` : '私の番なし',
+      tone: hot ? 'danger' : d.total ? 'warning' : 'neutral', tooltip: `${v.cockpit.workspace.name}: ${countsText(d.counts, d.total)}`
+    })
+  } catch (e) {
+    orca.log(`statusBar.update failed: ${(e as Error).message}`)
+  }
 }
 
 let agentsAt: number | undefined
@@ -221,6 +238,27 @@ export default function activate(api: OrcaWorkerApi): void {
     if (!target) return { opened: false }
     await orca.host.call('editor.open', target)
     return { opened: true }
+  })
+  orca.panels.handle('cockpit.talk', async ({ item_id }) => {
+    await ensure()
+    const st = s
+    const card = st.cockpit?.cards.find((c) => c.id === item_id)
+    if (!st.root || !st.cockpit || !card) throw Object.assign(new Error('カードが見つかりません'), { code: 'conflict' })
+    const talked = st.log.ops.some((o) => o.type === 'talk' && o.item_id === card.id && o.item_rev === card.rev)
+    if (card.state === 'open' && card.kind !== 'talk' && card.kind !== 'report' && !talked) {
+      st.log = await appendOp(st.root, st.cockpit, { root: st.root, item_id: card.id, item_rev: card.rev, type: 'talk' })
+      mine.add(`${st.root}#${st.log.ops.at(-1)!.op_id}`)
+      await autoSignal()
+      await publish()
+    }
+    const o = ownerOf(st.cockpit, card, { workers: st.agents })
+    const name = o.how === 'main' ? '窓口' : o.title
+    if (o.terminal) {
+      const { focused } = await orca.host.call('terminal.focus', { terminalId: o.terminal }).catch(() => ({ focused: false }))
+      if (focused) return { opened: true, how: `${name}の端末` }
+    }
+    // Orca にはチャットを前に出す手段が無い。パネルは前面のワークスペースにいるので、チャットはそのタブにある。
+    return { opened: false, how: `${name}のチャット（このワークスペースのタブ）` }
   })
   orca.panels.handle('cockpit.focus', async ({ terminalId }) => {
     const { focused } = await orca.host.call('terminal.focus', { terminalId })

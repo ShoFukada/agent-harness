@@ -1,146 +1,179 @@
-// .orca/cockpit.json（メインが書く）と .orca/cockpit.user.json（パネルが書く操作ログ）の形と、
-// その 2 つを重ねて表示の状態を作る純粋な関数。worker とパネルの両方が使う。
+// .orca/cockpit.json（メインが書く、形の版 2）と .orca/cockpit.user.json（画面が書く操作ログ）の形と、
+// その 2 つを重ねてカードの今の状態を決める純粋な関数。窓・パネル・hook が使う。
 
-import type { DispatchFact } from './protocol.ts'
+export const VERSION = 2
 
 export type TaskState = 'stop' | 'run' | 'wait' | 'idle' | 'ok'
-/** dec: 決める、ask: 顧客に聞く、rev: 成果物を見て承認する、ack: 読めば済む報告。 */
-export type ItemKind = 'dec' | 'ask' | 'rev' | 'ack'
+/**
+ * カードの種類。利用者の手で進むのは send・decide・review・permit・stuck の 5 種類で、件数はこれだけを数える。
+ * inbox は振り分けが済むまで、talk と report は件数に入れない。
+ */
+export type CardKind = 'inbox' | 'send' | 'decide' | 'review' | 'permit' | 'stuck' | 'talk' | 'report'
+export const KINDS: CardKind[] = ['inbox', 'send', 'decide', 'review', 'permit', 'stuck', 'talk', 'report']
+export const COUNTED: CardKind[] = ['stuck', 'permit', 'decide', 'send', 'review']
+export const KIND_LABEL: Record<CardKind, string> = {
+  inbox: '届いた', send: '送る前', decide: '決める', review: '見て', permit: '許す', stuck: '詰まり', talk: '話し中', report: '報告'
+}
 
 export type Milestone = { date: string; label: string }
 export type Repo = string | Record<string, string>
+export type DoneEntry = string | { text: string; at?: string }
+export const doneText = (d: DoneEntry) => (typeof d === 'string' ? d : d.text)
+
 export type Task = {
   id: string
   stream: string
   phase: string
   title: string
   state: TaskState
-  /** wait で外の相手（顧客・他社）を待つときの相手の名前。利用者を待つタスクには書かない。 */
+  /** wait で外の相手（顧客・他社）を待つときの相手。 */
   waiting_on?: string
-  /** waiting_on の相手を待ち始めた日（ISO 8601）。画面は「（11/17 から）」と出す。 */
   waiting_since?: string
   goal?: string
   next?: string
-  /** 済んだ作業。日時（at）のあるものは大タスクの経過に並ぶ。古い形の文字列だけの行も読む。 */
   done?: DoneEntry[]
-  figure?: string
   sources?: string[]
-  /** 本文の #123 を PR へのリンクにするリポジトリ（owner/name）。前置きごとに分けるなら { "BE": "owner/be" }。 */
   repo?: Repo
-  /**
-   * このタスクを進める担当か worker の、Orca の orchestration の Task と Dispatch（worker-start・send の受け取りの taskId・dispatchId）。
-   * 続きを send して Dispatch が変わったら書き換える。窓はこの Dispatch の様子で状態を出す。
-   */
-  worker?: { task_id: string; dispatch_id: string }
+  /** このタスクを進める worker（Orca の worktree id と端末の handle）。 */
+  worker?: { worktree_id: string; terminal?: string }
 }
-export type DoneEntry = string | { text: string; at?: string }
-export const doneText = (d: DoneEntry) => (typeof d === 'string' ? d : d.text)
-export const doneAt = (d: DoneEntry) => (typeof d === 'string' ? undefined : d.at)
-export type Option = {
+/** 仕事（大タスク）。担当のチャットは仕事ごとに 1 つまで。 */
+export type Stream = { id: string; title: string; summary?: string; sources?: string[] }
+
+/**
+ * 仕事の担当。仕事が終わるまで残る、話し相手のエージェント（Orca のチャットか端末）。
+ * 担当が無い仕事のカードは、案件の窓口（main）と話す。
+ */
+export type Owner = {
   id: string
-  label: string
-  recommended?: boolean
-  body?: string
-  quote?: string
-  /** 選んだら何が起きるかの短い 1 行（例「30 件 → 5 人に 6 件ずつ」）。狭い窓でも選択肢のそばで読めるように。 */
-  example?: string
-}
-export type Item = {
-  id: string
-  rev: number
-  kind: ItemKind
+  /** 仕事の名前。サイドバーと画面にこの名前で出る。 */
   title: string
-  due?: string
-  state: 'open' | 'done'
-  /** "push": ワークスペースの root を push するかの dec（hook が出させる）。 */
-  topic?: string
-  related?: { task: string; effect?: string }[]
-  /** dec: なぜ今決めるか（1〜2 行）。ask・ack: この判断で変わること・報告の本文。 */
-  why?: string
-  /** dec: 決めるための情報。5 欄とも必須（欠けると窓に「決めるための情報が足りません」と出す）。 */
-  context?: DecisionContext
-  quote?: string
-  figure?: string
-  options?: Option[]
-  fallback?: string
-  decided?: { what: string; why?: string; task?: string }[]
-  source?: string
-  /** いきさつ 2〜3 行。原文と日付を添えられる。既定では閉じた詳細の欄に出す。 */
-  background?: Background
-  /** 選択肢ごとの影響の比較。表か、図のパス（figure と同じ書き方）。 */
-  compare?: { columns: string[]; rows: string[][] } | string
-  /** 外に送る文面（Slack・メール・顧客への返信）。送る前に利用者が本文そのものを読めるようにする。 */
-  draft?: { to: string; text: string; href?: string }
-  /** 詳細の上に並べる資料（PR・Drive・設計書など）。 */
-  links?: { label: string; href: string }[]
-  /** 本文の #123 を PR へのリンクにするリポジトリ。task の repo より優先する。 */
-  repo?: Repo
-  /** 成果物へのリンク（完成の報告の ack に付ける。ファイルは .orca の外でもワークスペースの中なら開ける）。 */
-  href?: string
-  /** rev: どの依頼のどの成果物の、どのバージョンを見てほしいか。 */
-  request?: string
-  deliverable?: string
-  deliverable_version?: number
-  /** ask: メインが実際に顧客に聞いた日時。聞き方を承認しただけのあいだは無い。 */
-  asked_at?: string
-  resolved_by?: 'user' | 'main'
-  resolved_at?: string
-  resolved_option?: string
-  /** resolved_option が other のとき、利用者が書いた答えの原文。 */
-  resolved_text?: string
+  /** 担当の仕事（streams の id）。 */
+  stream?: string
+  agent?: string
+  /** Orca のチャットのセッション ID（orca agent list の orcaSessionId）。 */
+  session?: string
+  /** 担当が端末で動くときの handle（term_…）。 */
+  terminal?: string
+  state?: 'open' | 'done'
 }
-/** いきさつ 2〜3 行と、原文・日付。項目と大タスクで同じ形にする。 */
-export type Background = { text: string; quote?: string; date?: string }
-/** 大タスク（元の案件）。summary・background・sources は任意（無ければ画面が依頼の原文と出典を出す）。 */
-export type Stream = {
-  id: string
-  title: string
-  /** 何ができたら終わりか 1〜2 行。 */
-  summary?: string
-  background?: Background
-  sources?: string[]
-}
-/** 決めるための情報。利用者がその話題を初めて聞く前提で書く。どれも文字列（改行と「- 」の箇条を使ってよい）。 */
+
+/** 連絡を拾う経路（Slack・Teams・メール）。見張りが読んだ時刻を書く。止まっていれば画面が「見ていない」と出す。 */
+export type Route = { id: string; label: string; read_at?: string; error?: string; stale_minutes?: number }
+
+export type Option = { id: string; label: string; recommended?: boolean; example?: string; body?: string }
+export type Link = { label: string; href: string }
 export type DecisionContext = { what?: string; now?: string; how?: string; gain?: string; cost?: string }
 export const CONTEXT_FIELDS: [keyof DecisionContext, string][] = [
-  ['what', '概要'], ['now', '現状'], ['how', '対応案'], ['gain', '効果'], ['cost', '懸念点']
+  ['what', 'これは何か'], ['now', '今どうなっているか'], ['how', '入れるならどうするか'], ['gain', '得られること'], ['cost', '失うこと']
 ]
-/** dec で空の欄（dec 以外は空）。 */
-export const missingFields = (i: Item): (keyof DecisionContext)[] =>
-  i.kind !== 'dec' ? [] : CONTEXT_FIELDS.filter(([k]) => !String(i.context?.[k] ?? '').trim()).map(([k]) => k)
-/** dec で空の欄の画面の見出し。 */
-export const missingContext = (i: Item): string[] => missingFields(i).map((k) => CONTEXT_FIELDS.find(([f]) => f === k)![1])
 
-/** 成果物。href はワークスペースからの相対パス（path:行 も可）・子の worktree の絶対パス・http(s) の URL。diff は差分（PR）の URL。 */
-export type Deliverable = { id: string; label: string; href?: string; diff?: string; version?: number; look_for?: string[] }
-/** 利用者からの依頼 1 件。原文のまま残し、タスクと成果物に結ぶ。 */
-export type Request = {
+export type Card = {
   id: string
-  at: string
+  rev: number
+  kind: CardKind
   title: string
-  quote: string
-  /** タスクの無い依頼だけを閉じる。タスクのある依頼の済みはタスクから決める（state.ts の requestStatus）。 */
-  state: 'open' | 'done'
-  done_at?: string
+  /** open: 担当か利用者の手の中、waiting: 送ったあと顧客の返事を待つ、done: 済み。 */
+  state: 'open' | 'waiting' | 'done'
+  /** 出た時刻（ISO 8601）。 */
+  at?: string
+  due?: string
+  /** 仕事（streams の id）。担当と、案件の今の行に結ぶ。 */
+  stream?: string
   tasks?: string[]
-  deliverables?: Deliverable[]
+  /** 担当（owners の id）。無ければ仕事の担当、それも無ければ窓口。 */
+  owner?: string
+  /** 何のため 1 行。 */
+  purpose?: string
+
+  /** inbox: 送り主・場所・時刻と、元の連絡へのリンク。 */
+  from?: { who: string; via?: string; at?: string; href?: string }
+  /** inbox: 聞かれていること 1 行。 */
+  asked?: string
+  /** inbox: 振り分け（どの担当が何を始めたか）。 */
+  routed?: string
+  /** inbox: 返事が要るか。 */
+  reply?: 'needed' | 'none'
+
+  /** send（と、送る文面のある decide）: 宛先と本文。href は元のスレッド。 */
+  draft?: { to: string; via?: string; text: string; href?: string }
+
+  /** decide: なぜ今決めるか。 */
+  why?: string
+  context?: DecisionContext
+  options?: Option[]
+  /** 返事が無いときにどうするか。 */
+  fallback?: string
+  figure?: string
+  compare?: { columns: string[]; rows: string[][] } | string
+  background?: { text: string; quote?: string; date?: string }
+
+  /** review: 依頼の原文。 */
+  request?: string
+  look_for?: string[]
+  /** review: 見れば判断できる証拠（確かめた結果・変わったところ）。 */
+  evidence?: string[]
+  href?: string
+  diff?: string
+
+  /** permit: 許す対象（commit の範囲・送る本文・書き換える行）。 */
+  target?: string
+  effect?: string
+  undo?: string
+  /** permit: 繰り返す許可の種類（push など）。「この案件では任せる」の単位。 */
+  scope?: string
+
+  /** stuck: 止まった理由（原文）と、止まった時刻。 */
+  reason?: string
+  since?: string
+  /** stuck: 私が答えれば進むか。 */
+  answerable?: boolean
+  unblock?: string
+
+  /** talk: 最後のやり取りと、次に待つもの。 */
+  last?: { text: string; at?: string; by?: string }
+  next?: string
+
+  /** report: したこと。理由と戻し方つき。 */
+  done?: { what: string; why?: string; undo?: string; task?: string }[]
+
+  /** waiting: 何の返事を待ち、いつから、返事で何を再開し、いつ催促するか。 */
+  awaiting?: { who: string; what: string; since: string; resumes?: string; remind_at?: string }
+
+  links?: Link[]
+  quote?: string
+  repo?: Repo
+
+  resolved_by?: 'user' | 'owner'
+  resolved_at?: string
+  resolved_option?: string
+  resolved_text?: string
 }
+
+export type Request = { id: string; at: string; title: string; quote: string; state: 'open' | 'done'; tasks?: string[] }
+
 export type Cockpit = {
-  version?: number
+  version: 2
   workspace: { name: string; milestones?: Milestone[] }
   main?: { agent: string; terminal: string }
   phases?: string[]
   streams: Stream[]
   tasks: Task[]
-  items: Item[]
+  owners?: Owner[]
+  routes?: Route[]
+  cards: Card[]
   requests?: Request[]
-  /** メインの作業メモ（チャットを切り替えたときの再開先）。 */
   notes_ref?: string
   applied_ops?: number[]
 }
 
-/** repeat: 窓の「前にも言った」。前に伝えたことをメインが落としたという合図で、item_id は空。メイン側の hook が押下を数え、新しいチャットへの引き継ぎに使う。 */
-export type OpType = 'decide' | 'ack' | 'approve_ask' | 'accept' | 'talk' | 'need_context' | 'undo' | 'revert' | 'repeat'
+/**
+ * 利用者の操作。decide は選択肢（option_id）か別の答え（option_id "other" と text）、accept は見ての「これでよい」、
+ * sent は送った・済ませた、skip は送らない・返事は要らない・止める、delegate は「この案件では任せる」（許したうえで以後を任せる）、
+ * talk は担当と話し始めた（カードは話し中になる）、ack は報告を読んだ、revert は報告の n 番目を戻して、undo は取り消し。
+ */
+export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo'
+export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo']
 export type Op = {
   op_id: number
   at: string
@@ -149,83 +182,50 @@ export type Op = {
   type: OpType
   option_id?: string
   undo_of?: number
-  /** revert: 戻してほしい decided の何番目か（0 始まり）。 */
   target?: number
-  /** talk: 利用者の発言。item_id は項目かタスクの id。need_context: 何が知りたいか（任意）。 */
   text?: string
-  /** talk: アシスタントでは答えられない話を、メインに渡す。 */
-  to_main?: boolean
-  /** talk: 「メインに渡す」で引き継いだ元の発言の op_id。text は元の発言の写し（記録する側が埋める）。 */
-  handoff_of?: number
 }
-/** .orca/cockpit.talk.json の 1 件。talk の op_id への回答。書くのは窓の常駐のプロセス（assistant）とメイン（main）だけ。 */
-export type Reply = { op_id: number; at: string; by: 'assistant' | 'main'; text: string; handoff?: boolean; failed?: boolean }
-export type TalkLog = { replies: Reply[] }
-export const TALK_MAX = 4000
-/** 利用者が書いた文の検証。切り詰めずに断る（末尾の条件が落ちた文を決定として扱わないため）。パネルと窓が同じ関数を使う。 */
+export type UserLog = { ops: Op[] }
+export type Archive = { cards: Card[] }
+
+export const OTHER = 'other'
+export const TEXT_MAX = 4000
+export const UNDO_GRACE_MS = 10_000
+export const DEFAULT_PHASES = ['要件', '設計', '実装', '受入']
+
+/** 利用者が書いた文の検証。切り詰めずに断る（末尾の条件が落ちた文を決定として扱わないため）。 */
 export function textError(text: string | undefined): string | undefined {
   if (text === undefined) return undefined
   if (typeof text !== 'string') return '文の形が違います'
-  if (text.length > TALK_MAX) return `${TALK_MAX} 字までです（今 ${text.length} 字）。分けて送ってください`
+  if (text.length > TEXT_MAX) return `${TEXT_MAX} 字までです（今 ${text.length} 字）。分けて送ってください`
   return undefined
 }
-export type UserLog = { ops: Op[] }
-export type Archive = { items: Item[] }
-/** .orca/cockpit/handoff.json。メイン側の hook が、メインを新しいチャットに引き継いだときに書く。 */
-export type Handoff = { at: string; reason: string }
-export function parseHandoff(text: string): Handoff | undefined {
-  const v = JSON.parse(text) as Partial<Handoff>
-  return typeof v?.at === 'string' && typeof v.reason === 'string' ? { at: v.at, reason: v.reason } : undefined
-}
 
-const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
-const ITEM_KINDS: ItemKind[] = ['dec', 'ask', 'rev', 'ack']
-export const DEFAULT_PHASES = ['要件', '設計', '実装', '受入']
-export const UNDO_GRACE_MS = 10_000
-
-/** メインが Orca のチャットで動いていて、合図を送る端末が無い。Orca の CLI にもチャットへ文を送る手段が無い。 */
+/** メインが Orca のチャットで動いていて、合図を送る端末が無い。 */
 export const chatMain = (c: Cockpit | undefined) => !c?.main?.terminal
 
-/** 「あなたの番」の件数といちばん急ぐ 1 件は、決める・聞く・見てだけで数える。報告（ack）と依頼そのものは数えない。 */
-export const isYours = (i: Item) => i.kind !== 'ack'
+const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-const isObj = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
-
-/** 壊れた JSON や形の違うファイルは例外にし、呼び出し側が前回の表示を保てるようにする。 */
+/** 壊れた JSON・形の違うファイル・古い版は例外にし、呼び出し側が前回の表示を保てるようにする。 */
 export function parseCockpit(text: string): Cockpit {
   const v: unknown = JSON.parse(text)
-  if (!isObj(v) || !isObj(v.workspace) || !Array.isArray(v.items) || !Array.isArray(v.tasks) || !Array.isArray(v.streams))
-    throw new Error('cockpit.json に workspace・streams・tasks・items がありません')
-  // 列挙値はパネルで class 名や印に使うので、知らない値は読み込みの時点で断る。
-  for (const t of v.tasks as Record<string, unknown>[]) {
+  if (!isObj(v)) throw new Error('cockpit.json がオブジェクトではありません')
+  if (v.version !== VERSION)
+    throw new Error(`cockpit.json が古い形（version ${String(v.version ?? 1)}）です。node window/migrate.ts <ワークスペースの root> --write で移し替えてください`)
+  if (!isObj(v.workspace) || !Array.isArray(v.cards) || !Array.isArray(v.tasks) || !Array.isArray(v.streams))
+    throw new Error('cockpit.json に workspace・streams・tasks・cards がありません')
+  for (const t of v.tasks as Record<string, unknown>[])
     if (!TASK_STATES.includes(t?.state as TaskState)) throw new Error(`tasks の state が不正です: ${String(t?.id)}`)
-    const done = t.done
-    if (done !== undefined && (!Array.isArray(done) || done.some((d) => typeof d !== 'string' && !(isObj(d) && typeof d.text === 'string' && (d.at === undefined || typeof d.at === 'string')))))
-      throw new Error(`tasks の done の形が不正です（文字列か { text, at }）: ${String(t.id)}`)
-    const w = t.worker
-    if (w !== undefined && !(isObj(w) && typeof w.task_id === 'string' && typeof w.dispatch_id === 'string'))
-      throw new Error(`tasks の worker の形が不正です（{ task_id, dispatch_id }。workerctl の頃の { worktree_id, terminal } は書き換える）: ${String(t.id)}`)
+  // 列挙値は画面で class 名や印に使うので、知らない値は読み込みの時点で断る。
+  for (const c of v.cards as Record<string, unknown>[]) {
+    if (typeof c?.id !== 'string' || typeof c.title !== 'string' || typeof c.rev !== 'number') throw new Error(`cards の id・title・rev が不正です: ${String(c?.id)}`)
+    if (!KINDS.includes(c.kind as CardKind)) throw new Error(`cards の kind が不正です: ${c.id}`)
+    if (c.state !== 'open' && c.state !== 'waiting' && c.state !== 'done') throw new Error(`cards の state が不正です: ${c.id}`)
   }
-  for (const i of v.items as Record<string, unknown>[]) {
-    if (!ITEM_KINDS.includes(i?.kind as ItemKind)) throw new Error(`items の kind が不正です: ${String(i?.id)}`)
-    if (i.state !== 'open' && i.state !== 'done') throw new Error(`items の state が不正です: ${String(i.id)}`)
-  }
-  // 大タスクの説明は任意。書かれていれば形を確かめる（画面が文字列として描くため）。
-  for (const s of v.streams as Record<string, unknown>[]) {
-    const bg = s?.background as Record<string, unknown> | undefined
-    if (
-      (s?.summary !== undefined && typeof s.summary !== 'string') ||
-      (bg !== undefined && (!isObj(bg) || typeof bg.text !== 'string')) ||
-      (s?.sources !== undefined && (!Array.isArray(s.sources) || s.sources.some((x) => typeof x !== 'string')))
-    )
-      throw new Error(`streams の summary・background・sources の形が不正です: ${String(s?.id)}`)
-  }
-  if (v.requests !== undefined) {
-    if (!Array.isArray(v.requests)) throw new Error('cockpit.json の requests が配列ではありません')
-    for (const r of v.requests as Record<string, unknown>[])
-      if (!isObj(r) || typeof r.id !== 'string' || (r.state !== 'open' && r.state !== 'done')) throw new Error(`requests の形が不正です: ${String(r?.id)}`)
-  }
+  for (const key of ['owners', 'routes', 'requests'] as const)
+    if (v[key] !== undefined && (!Array.isArray(v[key]) || (v[key] as unknown[]).some((x) => !isObj(x) || typeof x.id !== 'string')))
+      throw new Error(`cockpit.json の ${key} の形が不正です`)
   return v as unknown as Cockpit
 }
 
@@ -235,15 +235,9 @@ export function parseUserLog(text: string): UserLog {
   return v as unknown as UserLog
 }
 
-export function parseTalk(text: string): TalkLog {
-  const v: unknown = JSON.parse(text)
-  if (!isObj(v) || !Array.isArray(v.replies)) throw new Error('cockpit.talk.json に replies がありません')
-  return v as unknown as TalkLog
-}
-
 export function parseArchive(text: string): Archive {
   const v: unknown = JSON.parse(text)
-  if (!isObj(v) || !Array.isArray(v.items)) throw new Error('cockpit.archive.json に items がありません')
+  if (!isObj(v) || !Array.isArray(v.cards)) throw new Error('cockpit.archive.json に cards がありません（古い形なら migrate.ts で移し替えてください）')
   return v as unknown as Archive
 }
 
@@ -252,90 +246,77 @@ export function nextOp(log: UserLog, op: Omit<Op, 'op_id'>): Op {
   return { op_id: last + 1, ...op }
 }
 
-export type ItemView = {
-  item: Item
-  /** 片付け済みのタブに入るか。 */
-  closed: boolean
-  /** 片付け済みの理由（「あなたが決定「…」」など）。 */
-  how: string
-  when?: string
-  /** 利用者の操作がまだメインに反映されていない。 */
+/**
+ * カードの今。
+ * - mine: 私の番（件数に数える種類なら数える）
+ * - talking: 担当と話している（件数から外す。担当がカードを書き換えて rev が上がると mine に戻る）
+ * - waiting: 送ったあと顧客の返事を待っている
+ * - closed: 済み。pending は担当がまだ受け取っていない（受け取り待ち）
+ */
+export type Status = 'mine' | 'talking' | 'waiting' | 'closed'
+export type CardView = {
+  card: Card
+  status: Status
+  /** 利用者の操作を担当がまだ受け取っていない。 */
   pending: boolean
-  /** 「要対応に戻す」「元に戻す」で取り消す操作。メインが片付けた項目には無い。 */
-  reopenOp?: Op
-  /** 片付けたあと利用者が取り消し、メインの再判断を待っている。 */
-  rejudge: boolean
-  /** 選んだ選択肢（決定済みのとき）。 */
+  /** 取り消せる操作（10 秒の間と、担当が受け取る前）。 */
+  undoOp?: Op
+  /** 済んだ理由（「決めた: …」）。 */
+  how?: string
+  when?: string
   chosen?: Option
 }
 
-const CLOSING: OpType[] = ['decide', 'ack', 'approve_ask', 'accept']
-/** 選択肢に無い答え。どの種類の項目でも decide・option_id "other"・text で送る。 */
-export const OTHER = 'other'
-/** 項目の種類ごとに、利用者が片付けるときの操作。 */
-export const CLOSE_OP: Record<ItemKind, OpType> = { dec: 'decide', ask: 'approve_ask', rev: 'accept', ack: 'ack' }
+const CLOSING: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'ack']
 
-function closedLabel(type: OpType | 'main', option?: Option): string {
-  if (type === 'decide') return `あなたが決定「${option?.label ?? '?'}」`
-  if (type === 'approve_ask') return 'あなたが聞き方を承認'
-  if (type === 'ack') return 'あなたが確認'
-  if (type === 'accept') return 'あなたが承認'
-  return 'メインが片付け'
-}
-
-function doneLabel(item: Item, chosen?: Option): string {
-  if (item.resolved_option === OTHER) return `あなたの答え: ${item.resolved_text ?? ''}`
-  return item.resolved_by === 'user' ? closedLabel(CLOSE_OP[item.kind], chosen) : closedLabel('main')
+function closedLabel(c: Card, type: OpType | undefined, option?: Option, text?: string): string {
+  if (type === 'decide' && option?.id === OTHER) return `別の答え: ${text ?? ''}`
+  if (type === 'decide' || (!type && option)) return `${c.kind === 'permit' ? '許した' : '決めた'}: ${option?.label ?? text ?? '?'}`
+  if (type === 'accept') return c.kind === 'permit' ? '許した' : 'これでよい'
+  if (type === 'sent') return c.kind === 'send' ? '送った' : '済ませた'
+  if (type === 'skip') return c.kind === 'send' ? '送らない' : c.kind === 'inbox' ? '返事は要らない' : c.kind === 'permit' ? '止めた' : '見送った'
+  if (type === 'delegate') return '許して、以後は任せた'
+  if (type === 'ack') return '読んだ'
+  return '担当が片付けた'
 }
 
 /** cockpit.json の状態に、操作ログのうち効いている操作を重ねる。 */
-export function overlay(c: Cockpit, log: UserLog, archive: Item[] = []): ItemView[] {
+export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardView[] {
   const applied = new Set(c.applied_ops ?? [])
-  const byId = new Map(log.ops.map((o) => [o.op_id, o]))
   const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
-  const views: ItemView[] = []
-
-  for (const item of c.items) {
-    const ops = log.ops.filter((o) => o.item_id === item.id)
-    // 重ねるのは未反映の操作だけで、反映後は cockpit.json を正にする（メインが出し直した項目を古い操作で閉じない）。
-    // 古い版の項目に押した未反映の操作も、メインが出し直すので効かせない。
-    const live = (o: Op) => CLOSING.includes(o.type) && !undone.has(o.op_id)
-    const act = ops.filter((o) => live(o) && !applied.has(o.op_id) && o.item_rev === item.rev).at(-1)
-    const option = (id?: string) => item.options?.find((x) => x.id === id)
-    if (act) {
+  const byCard = new Map<string, Op[]>()
+  for (const o of log.ops) byCard.set(o.item_id, [...(byCard.get(o.item_id) ?? []), o])
+  const out: CardView[] = []
+  for (const card of c.cards) {
+    const ops = (byCard.get(card.id) ?? []).filter((o) => !undone.has(o.op_id) && o.type !== 'undo')
+    const option = (id?: string) => (id === OTHER ? { id: OTHER, label: '別の答え' } : card.options?.find((x) => x.id === id))
+    // 重ねるのは今の版に押した未反映の操作だけ。反映後と、担当が書き換えた後は cockpit.json を正にする。
+    const act = ops.filter((o) => CLOSING.includes(o.type) && o.item_rev === card.rev && !applied.has(o.op_id)).at(-1)
+    if (act && card.state === 'open') {
       const chosen = option(act.option_id)
-      const pending = !applied.has(act.op_id)
-      const how = act.option_id === OTHER
-        ? `送った答え: ${act.text ?? ''}${pending ? '（メインが反映待ち）' : ''}`
-        : closedLabel(act.type, chosen) + (pending ? '・反映待ち' : '')
-      views.push({ item, closed: true, chosen, pending, reopenOp: act, rejudge: false, when: act.at, how })
+      out.push({ card, status: 'closed', pending: true, undoOp: act, how: closedLabel(card, act.type, chosen, act.text), when: act.at, chosen })
       continue
     }
-    const undoOfApplied = ops.some(
-      (o) => o.type === 'undo' && !applied.has(o.op_id) && applied.has(o.undo_of ?? -1) && byId.get(o.undo_of!)?.item_id === item.id
-    )
-    if (item.state === 'done' && !undoOfApplied) {
-      const chosen = option(item.resolved_option)
-      const how = doneLabel(item, chosen)
-      const reopenOp = item.resolved_by === 'user' ? ops.filter((o) => live(o) && applied.has(o.op_id)).at(-1) : undefined
-      views.push({ item, closed: true, how, chosen, reopenOp, pending: false, rejudge: false, when: item.resolved_at })
+    if (card.state === 'done') {
+      const chosen = option(card.resolved_option)
+      const how = card.resolved_by === 'user' ? closedLabel(card, undefined, chosen, card.resolved_text) || '済んだ' : closedLabel(card, undefined)
+      out.push({ card, status: 'closed', pending: false, how: card.resolved_option === OTHER ? `別の答え: ${card.resolved_text ?? ''}` : how, when: card.resolved_at, chosen })
       continue
     }
-    const pendingUndo = ops.some((o) => o.type === 'undo' && !applied.has(o.op_id))
-    views.push({ item, closed: false, how: '', pending: pendingUndo, rejudge: undoOfApplied })
+    if (card.state === 'waiting') {
+      out.push({ card, status: 'waiting', pending: false, when: card.awaiting?.since })
+      continue
+    }
+    const talk = ops.filter((o) => o.type === 'talk' && o.item_rev === card.rev).at(-1)
+    if (card.kind === 'talk' || talk)
+      out.push({ card, status: 'talking', pending: !!talk && !applied.has(talk.op_id), undoOp: talk && !applied.has(talk.op_id) ? talk : undefined, when: talk?.at ?? card.last?.at })
+    else out.push({ card, status: 'mine', pending: false })
   }
-  for (const item of archive) {
-    const chosen = item.options?.find((x) => x.id === item.resolved_option)
-    const how = doneLabel(item, chosen)
-    views.push({ item, closed: true, how, chosen, pending: false, rejudge: false, when: item.resolved_at })
+  for (const card of archive) {
+    const chosen = card.options?.find((x) => x.id === card.resolved_option)
+    out.push({ card, status: 'closed', pending: false, how: closedLabel(card, undefined, chosen, card.resolved_text), when: card.resolved_at, chosen })
   }
-  return views
-}
-
-/** 「情報が足りない」を今の版に押したか（メインが context を埋めて rev を上げると外れる）。 */
-export function contextAsked(i: Item, log: UserLog): boolean {
-  const undone = new Set(log.ops.filter((o) => o.type === 'undo').map((o) => o.undo_of))
-  return log.ops.some((o) => o.type === 'need_context' && o.item_id === i.id && o.item_rev === i.rev && !undone.has(o.op_id))
+  return out
 }
 
 /** メインにまだ反映されていない操作。 */
@@ -345,31 +326,33 @@ export function unappliedOps(c: Cockpit | undefined, log: UserLog): Op[] {
 }
 
 const SEV: Record<TaskState, number> = { stop: 0, run: 1, wait: 2, idle: 3, ok: 4 }
-/** 全体の表の工程のマスと大タスクの状態に出す、一番手当てが要る状態。 */
 export function worstState(states: TaskState[]): TaskState | undefined {
   return [...states].sort((a, b) => SEV[a] - SEV[b])[0]
 }
 
-/** タスクの状態を、どこから決めたか。ラベルの文は画面（view.ts）が持つ。 */
-export type ShownWhy = 'ok' | 'yours' | 'record' | 'working' | 'intake' | 'stopped' | 'missing'
-export type TaskShown = { state: TaskState; why: ShownWhy; stop?: string }
 /**
- * 画面に出すタスクの状態。worker の記録があるタスクは、メインの書いた state ではなく Orca の Dispatch の様子から決める
- * （メインが書き忘れると「worker が作業中なのに動いていない」のような矛盾が出たため、2026-11-16）。
- * 表のマス・一覧・詳しい欄は、すべてこれを通す。fact は undefined なら Orca を読んでいない、null なら Orca に無い。
- * - state が ok なら完了（worker の記録は履歴として残る）
- * - 利用者の番の stop・wait（開いた決める・聞く・見てが指す）は、メインの書いた state のまま
- * - worker_done を返していれば、メインの取り込み待ち
- * - 起動できない・落ちた・端末が消えた・人の確認待ちなら、止まっている
- * - それ以外は進行中（担当が利用者と話している間や worker を待つ間も、Dispatch は開いたまま）
+ * 動いている worker が進めているタスク。① 端末の記録が一致するもの ② 同じ worktree の済んでいないもの ③ 同じ worktree の最後のもの。
+ * 同じ worktree で済んだタスクを先に拾うと、進行中のタスクが「動いていない」と出るため（2026-11-16）。
  */
-export function shownTask(t: Task, fact: DispatchFact | null | undefined, yours: Set<string>): TaskShown {
+export function taskOfWorker(tasks: Task[], worktreeId: string, terminalId: string | null): Task | undefined {
+  const same = tasks.filter((t) => t.worker?.worktree_id === worktreeId)
+  return (terminalId ? tasks.find((t) => t.worker?.terminal === terminalId) : undefined) ?? same.find((t) => t.state !== 'ok') ?? same.at(-1)
+}
+
+export type ShownWhy = 'ok' | 'record' | 'working' | 'intake' | 'stopped' | 'missing'
+export type TaskShown = { state: TaskState; why: ShownWhy; stop?: string }
+export type LiveAgent = { state: string; stop?: string }
+
+/**
+ * 画面に出すタスクの状態。worker の記録があるタスクは、メインの書いた state ではなく Orca の状態から決める
+ * （メインが書き忘れると「worker が作業中なのに動いていない」のような矛盾が出たため、2026-11-16）。
+ */
+export function shownTask(t: Task, linked: LiveAgent[], worktreeAlive: boolean | undefined): TaskShown {
   if (t.state === 'ok') return { state: 'ok', why: 'ok' }
-  if ((t.state === 'stop' || t.state === 'wait') && yours.has(t.id)) return { state: t.state, why: 'yours' }
-  if (!t.worker || fact === undefined) return { state: t.state, why: 'record' }
-  if (fact === null) return { state: 'stop', why: 'missing' }
-  if (fact.state === 'succeeded') return { state: 'wait', why: 'intake' }
-  if (fact.state === 'failed' || fact.liveness === 'exited') return { state: 'stop', why: 'stopped', stop: fact.liveness === 'exited' ? 'dead' : 'error' }
-  if (fact.waiting) return { state: 'stop', why: 'stopped', stop: 'blocked' }
-  return { state: 'run', why: 'working' }
+  if (!t.worker || worktreeAlive === undefined || t.state === 'wait') return { state: t.state, why: 'record' }
+  if (linked.some((a) => a.state === 'working' && !a.stop)) return { state: 'run', why: 'working' }
+  const stopped = linked.find((a) => a.stop && a.stop !== 'waiting')
+  if (stopped) return { state: 'stop', why: 'stopped', stop: stopped.stop }
+  if (linked.length || worktreeAlive) return { state: 'wait', why: 'intake' }
+  return { state: 'stop', why: 'missing' }
 }

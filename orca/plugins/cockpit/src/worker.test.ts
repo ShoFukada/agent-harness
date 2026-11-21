@@ -2,6 +2,7 @@ import { afterEach, assert, mockHost, mountWorker as mountRaw, test } from 'orca
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { sample } from '../fixtures/sample.ts'
 import * as main from './worker.ts'
 import { SIGNAL } from './worker.ts'
 
@@ -20,8 +21,9 @@ afterEach(async () => {
   for (const w of mounted.splice(0)) await w.deactivate()
 })
 
-const SAMPLE = readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8')
-const WIRE = readFileSync(new URL('../fixtures/figures/list-wire.svg', import.meta.url), 'utf8')
+const AOBA = sample()[0]!
+const SAMPLE = JSON.stringify(AOBA.cockpit)
+const WIRE = AOBA.figure!
 
 function workspace(files: Record<string, string> = {}): string {
   const root = mkdtempSync(path.join(tmpdir(), 'cockpit-test-'))
@@ -43,7 +45,8 @@ function host(root: string, terminals = ['term_main']) {
           { terminalId: 'term_w', title: 'notify-draft', agent: 'claude', state: 'blocked', stateStartedAt: 2 }
         ]
       },
-      'terminal.sendText': { accepted: true }
+      'terminal.sendText': { accepted: true },
+      'statusBar.update': { ok: true }
     }
   })
 }
@@ -64,15 +67,15 @@ test('ファイルが無いワークスペースは missing を返す', async ()
 test('cockpit.json・操作ログ・図を読み、メインを worker の数から除く', async () => {
   const root = workspace({
     '.orca/cockpit.json': withMain('term_main'),
-    '.orca/cockpit/figures/list-wire.svg': WIRE,
-    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 1, at: 'x', item_id: 'd1', item_rev: 1, type: 'talk' }] })
+    '.orca/cockpit/figures/entry.svg': WIRE,
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 1, at: 'x', item_id: 'd21', item_rev: 1, type: 'talk' }] })
   })
   const w = await mountWorker(main, { host: host(root) })
   const v = await w.request('cockpit.get')
   assert.equal(v.state, 'ok')
-  assert.equal(v.cockpit?.workspace.name, '問い合わせ管理システム')
+  assert.equal(v.cockpit?.workspace.name, '青葉物流 配車アプリ')
   assert.equal(v.log.ops.length, 1)
-  assert.match(v.figures['.orca/cockpit/figures/list-wire.svg'] ?? '', /<svg/)
+  assert.match(v.figures['.orca/cockpit/figures/entry.svg'] ?? '', /<svg/)
   assert.deepEqual(v.workers.map((a) => a.terminalId), ['term_w'])
   assert.deepEqual(v.errors, [])
 })
@@ -91,8 +94,8 @@ test('決定は版と連番つきで追記し、端末には何も送らない',
   const root = workspace({ '.orca/cockpit.json': SAMPLE })
   const h = host(root)
   const w = await mountWorker(main, { host: h })
-  await w.request('cockpit.op', { root, item_id: 'd1', item_rev: 1, type: 'decide', option_id: 'auto' })
-  const res = await w.request('cockpit.op', { root, item_id: 'd1', item_rev: 1, type: 'undo', undo_of: 1 })
+  await w.request('cockpit.op', { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' })
+  const res = await w.request('cockpit.op', { root, item_id: 'd21', item_rev: 1, type: 'undo', undo_of: 1 })
   const log = JSON.parse(readFileSync(path.join(root, '.orca/cockpit.user.json'), 'utf8'))
   assert.deepEqual(log.ops.map((o: { op_id: number; type: string; item_rev: number }) => [o.op_id, o.type, o.item_rev]), [[1, 'decide', 1], [2, 'undo', 1]])
   assert.equal(log.ops[1].undo_of, 1)
@@ -104,39 +107,54 @@ test('同時に押した操作は連番を分けて両方残す', async () => {
   const root = workspace({ '.orca/cockpit.json': SAMPLE })
   const w = await mountWorker(main, { host: host(root) })
   await Promise.all([
-    w.request('cockpit.op', { root, item_id: 'd1', item_rev: 1, type: 'decide', option_id: 'auto' }),
-    w.request('cockpit.op', { root, item_id: 'a2', item_rev: 1, type: 'ack' })
+    w.request('cockpit.op', { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }),
+    w.request('cockpit.op', { root, item_id: 'r5', item_rev: 1, type: 'accept' })
   ])
   const log = JSON.parse(readFileSync(path.join(root, '.orca/cockpit.user.json'), 'utf8'))
-  assert.deepEqual(log.ops.map((o: { op_id: number; item_id: string }) => [o.op_id, o.item_id]).sort(), [[1, 'd1'], [2, 'a2']].sort())
+  assert.deepEqual(log.ops.map((o: { op_id: number; item_id: string }) => [o.op_id, o.item_id]).sort(), [[1, 'd21'], [2, 'r5']].sort())
 })
 
 test('切り替え前の画面から届いた操作は、いまのワークスペースに記録しない', async () => {
   const root = workspace({ '.orca/cockpit.json': SAMPLE })
   const w = await mountWorker(main, { host: host(root) })
-  const err = await w.request('cockpit.op', { root: '/other', item_id: 'd1', item_rev: 1, type: 'ack' }).then(() => null, (e: Error) => e)
+  const err = await w.request('cockpit.op', { root: '/other', item_id: 'r5', item_rev: 1, type: 'accept' }).then(() => null, (e: Error) => e)
   assert.match(err?.message ?? '', /表示中のワークスペースが変わりました/)
   assert.equal(existsSync(path.join(root, '.orca/cockpit.user.json')), false)
 })
 
-test('記録する版は、パネルが表示していた版', async () => {
+test('担当が書き換えたあとの古い版に押した操作は、記録せずに断る', async () => {
   const root = workspace({ '.orca/cockpit.json': SAMPLE })
   const w = await mountWorker(main, { host: host(root) })
-  await w.request('cockpit.op', { root, item_id: 'd1', item_rev: 0, type: 'ack' })
-  const log = JSON.parse(readFileSync(path.join(root, '.orca/cockpit.user.json'), 'utf8'))
-  assert.equal(log.ops[0].item_rev, 0)
+  await assert.rejects(w.request('cockpit.op', { root, item_id: 'd22', item_rev: 1, type: 'sent' }), /担当が書き換えました/)
+  assert.equal(existsSync(path.join(root, '.orca/cockpit.user.json')), false)
 })
 
-test('知らせるは、メインの端末に合図の 1 行だけを Enter つきで送る。話したいは押した瞬間には送らない', async () => {
+test('担当と話す: カードを話し中にする操作を 1 度だけ記録し、担当の端末を前に出す。押した瞬間にはメインに送らない', async () => {
   const root = workspace({ '.orca/cockpit.json': withMain('term_main') })
   const h = host(root)
+  h.respond('terminal.focus', { focused: true })
   const w = await mountWorker(main, { host: h })
-  const res = await w.request('cockpit.op', { root, item_id: 'd1', item_rev: 1, type: 'talk', text: '自動の割り当ては偏らないか' })
-  assert.equal(res.notify, undefined)
+  assert.deepEqual(await w.request('cockpit.talk', { item_id: 'r5' }), { opened: true, how: '配車画面の改修の端末' })
+  await w.request('cockpit.talk', { item_id: 'r5' })
+  const log = JSON.parse(readFileSync(path.join(root, '.orca/cockpit.user.json'), 'utf8'))
+  assert.deepEqual(log.ops.map((o: { item_id: string; type: string }) => [o.item_id, o.type]), [['r5', 'talk']])
+  assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 'term_aoba_w1' }, { terminalId: 'term_aoba_w1' }])
   assert.deepEqual(h.callsOf('terminal.sendText'), [])
+  // 担当がチャットなら、パネルからは前に出せないので、どこで話すかを返す。
+  assert.deepEqual(await w.request('cockpit.talk', { item_id: 'd21' }), { opened: false, how: 'AWS 構成案のチャット（このワークスペースのタブ）' })
   assert.deepEqual(await w.request('cockpit.notify'), { sent: true })
-  assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 'term_main', text: `${SIGNAL}（話したい d1: 自動の割り当ては偏らないか）`, enter: true }])
-  assert.equal((await w.request('cockpit.get')).notifiedOp, 1)
+  assert.deepEqual(h.callsOf('terminal.sendText').at(-1), { terminalId: 'term_main', text: `${SIGNAL}（担当と話す d21）`, enter: true })
+})
+
+test('Orca の下の帯に、前面の案件の私の番を出す。期限が 24 時間以内のものがあれば danger', async () => {
+  const root = workspace({ '.orca/cockpit.json': SAMPLE })
+  const h = host(root)
+  const w = await mountWorker(main, { host: h })
+  await w.emit('workspace.changed', { context: { workspaceId: 'w1', branch: 'b', displayName: 'w', terminals: [] } })
+  const last = h.callsOf('statusBar.update').at(-1) as { text: string; tone: string; tooltip: string }
+  assert.equal(last.text, '私の番 3')
+  assert.equal(last.tone, 'danger')
+  assert.match(last.tooltip, /青葉物流 配車アプリ: 私の番 3 件（決める 1・送る前 1・見て 1）/)
 })
 
 test('メインの端末がワークスペースに無ければ送らず、理由を返す', async () => {
@@ -208,24 +226,25 @@ async function waitFor<T>(get: () => T, ok: (v: T) => boolean): Promise<T> {
   throw new Error('timed out')
 }
 
-test('メインがチャットなら、話したいは記録だけして端末に送らない', async () => {
+test('メインがチャットなら、別の答えは記録だけして端末に送らない', async () => {
   const c = JSON.parse(SAMPLE)
   c.main = { agent: 'claude', terminal: '' }
   const root = workspace({ '.orca/cockpit.json': JSON.stringify(c) })
   const h = host(root)
   const w = await mountWorker(main, { host: h })
-  const res = await w.request('cockpit.op', { root, item_id: 'd1', item_rev: 1, type: 'talk', text: '偏りは？' })
+  const res = await w.request('cockpit.op', { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'other', text: '偏りは？' })
   assert.equal(res.notify, undefined)
   assert.equal(res.view.log.ops.length, 1)
   assert.equal(h.callsOf('terminal.sendText').length, 0)
 })
 
-test('パネルも窓と同じ検証で、本文の無い話したいと上限を超える別の答えを切らずに断る', async () => {
+test('パネルも窓と同じ検証で、本文の無い別の答え・無い選択肢・上限を超える別の答えを切らずに断る', async () => {
   const root = workspace({ '.orca/cockpit.json': SAMPLE })
   const w = await mountWorker(main, { host: host(root) })
-  await assert.rejects(w.request('cockpit.op', { root, item_id: 'd1', item_rev: 1, type: 'talk' }), /話したいことを書いてください/)
+  await assert.rejects(w.request('cockpit.op', { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'other' }), /別の答えを書いてください/)
+  await assert.rejects(w.request('cockpit.op', { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'nope' }), /選択肢 nope がありません/)
   await assert.rejects(
-    w.request('cockpit.op', { root, item_id: 'd5', item_rev: 1, type: 'decide', option_id: 'other', text: 'あ'.repeat(4001) }),
+    w.request('cockpit.op', { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'other', text: 'あ'.repeat(4001) }),
     /4000 字までです（今 4001 字）/
   )
   assert.equal(existsSync(path.join(root, '.orca/cockpit.user.json')), false)
@@ -235,7 +254,7 @@ test('取り消しの猶予が過ぎた操作は、メインが入力待ちに�
   const old = new Date(Date.now() - 60_000).toISOString()
   const root = workspace({
     '.orca/cockpit.json': withMain('term_main'),
-    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 1, at: old, item_id: 'd1', item_rev: 1, type: 'decide', option_id: 'auto' }] })
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 1, at: old, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }] })
   })
   const h = host(root)
   const agents = (state: string) => ({ agents: [{ terminalId: 'term_main', title: 'main', agent: 'claude', state, stateStartedAt: 1 }] })

@@ -8,17 +8,17 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chatMain, type Op, type OpType } from '../src/model.ts'
-import type { CockpitView, DispatchFact, NotifyResult, OpInput, WindowView, WsRow } from '../src/protocol.ts'
-import { derive } from '../src/state.ts'
-import { orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type WorkerShow } from './orca-state.ts'
+import { chatMain, OP_TYPES, type Card, type OpType } from '../src/model.ts'
+import type { CockpitView, NotifyResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
+import { ownerOf } from '../src/state.ts'
+import { orcaAgents, orcaWorktrees, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
-import { buildPrompt, claudeCli, FAILED_TEXT, parseAnswer, type Ask } from './assistant.ts'
-import { appendOp, appendReply, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
+import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
-const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/nav.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts'])
-const OP_TYPES: OpType[] = ['decide', 'ack', 'approve_ask', 'accept', 'talk', 'need_context', 'undo', 'revert', 'repeat']
+const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts'])
+/** 窓に送る片付いたカードの日数。古いものは cockpit.archive.json に移っている。 */
+const CLOSED_DAYS = 14
 /** ページが表示されている間に Orca の状態を確かめる間隔。プロセスが落ちた worker は Orca から知らせが来ないため。 */
 const POLL_MS = 60_000
 const REFRESH_GAP_MS = 5_000
@@ -29,8 +29,8 @@ export type Orca = {
   ps(): Promise<PsRow[]>
   terminals(): Promise<TerminalRow[]>
   plugins(): Promise<PluginRow[]>
-  /** orchestration worker-show --full。Dispatch が Orca に無ければ null。 */
-  show(dispatch: string): Promise<WorkerShow | null>
+  /** チャットも含めた全エージェント（orca agent list）。担当の今を出す。 */
+  agents(): Promise<OwnerLive[]>
   send(terminal: string, text: string): Promise<void>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
@@ -43,13 +43,13 @@ export function orcaCli(bin = 'orca'): Orca {
   const run = (args: string[]) =>
     new Promise<Record<string, unknown>>((resolve, reject) =>
       execFile(bin, [...args, '--json'], { timeout: 15_000, maxBuffer: 64 << 20 }, (err, out) => {
-        let json: { ok?: boolean; result?: Record<string, unknown>; error?: { message?: string; code?: string } } | undefined
+        let json: { ok?: boolean; result?: Record<string, unknown>; error?: { message?: string } } | undefined
         try {
           json = JSON.parse(out)
         } catch {
           return reject(new Error(err?.message ?? 'orca の出力を読めません'))
         }
-        if (err || json?.ok === false) return reject(Object.assign(new Error(json?.error?.message ?? err?.message ?? 'orca が失敗しました'), { code: json?.error?.code }))
+        if (err || json?.ok === false) return reject(new Error(json?.error?.message ?? err?.message ?? 'orca が失敗しました'))
         resolve(json?.result ?? {})
       })
     )
@@ -64,6 +64,14 @@ export function orcaCli(bin = 'orca'): Orca {
           lastAssistantMessage: (a.lastAssistantMessage ?? '').length <= SHORT ? a.lastAssistantMessage : null
         }))
       })),
+    agents: async () => {
+      type Listed = { orcaSessionId: string; kind: string; state: OwnerLive['state']; title?: string | null; worktreeId?: string; updatedAt?: number }
+      return ((await run(['agent', 'list'])).agents as Listed[]).map((a) => ({
+        session: a.orcaSessionId, kind: a.kind === 'chat' ? 'chat' : 'terminal', state: a.state, title: a.title ?? undefined,
+        // worktreeId は「リポジトリの id::パス」の形。開くのはパス。
+        worktree: a.worktreeId?.split('::').slice(1).join('::') || undefined, updatedAt: a.updatedAt
+      }))
+    },
     terminals: async () =>
       ((await run(['terminal', 'list', '--limit', '500'])).terminals as TerminalRow[]).map(({ handle, tabId, leafId }) => ({ handle, tabId, leafId })),
     plugins: async () => {
@@ -77,14 +85,6 @@ export function orcaCli(bin = 'orca'): Orca {
       if (mine) mine.folderHash = ((await run(['plugin', 'inspect', mine.source!.reference!]).catch(() => ({}))) as { contentHash?: string }).contentHash ?? null
       return rows.map(({ kind: _kind, ...r }) => r)
     },
-    show: (dispatch) =>
-      run(['orchestration', 'worker-show', '--dispatch', dispatch, '--full']).then(
-        (r) => r as WorkerShow,
-        (e: Error & { code?: string }) => {
-          if (e.code === 'dispatch_not_found') return null
-          throw e
-        }
-      ),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
@@ -102,8 +102,6 @@ type Ws = {
   timer?: ReturnType<typeof setTimeout>
   signal?: CockpitView['signal']
   signalTimer?: ReturnType<typeof setTimeout>
-  /** アシスタントが答えている途中の talk の op_id。 */
-  thinking?: Set<number>
 }
 
 type Focus = { path?: string; agents_at?: number }
@@ -115,10 +113,7 @@ class HttpError extends Error {
   }
 }
 
-/** ask: 話したいに答える関数（既定は手元の claude CLI）。null なら答えない。 */
-export type Options = { port: number; dir: string; orca: Orca; host?: string; ask?: Ask | null }
-/** これより古い発言には、起動し直したときに答え直さない（まとめて CLI を何本も起こさない）。 */
-const ANSWER_WINDOW_MS = 10 * 60_000
+export type Options = { port: number; dir: string; orca: Orca; host?: string }
 
 export function createServer(opts: Options) {
   const token = randomBytes(24).toString('base64url')
@@ -127,14 +122,10 @@ export function createServer(opts: Options) {
   const wss = new Map<string, Ws>()
   let ps: PsRow[] = []
   let terms = new Map<string, string>()
-  /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
-  const facts = new Map<string, Record<string, DispatchFact | null>>()
+  let owners: OwnerLive[] = []
   let orcaError: string | undefined
   let pluginNote: string | undefined
-  let alerts: string[] = []
   let focus: Focus = {}
-  let mode: WindowView['mode'] = 'follow'
-  let manual: string | undefined
   /** この常駐のプロセスが書いた操作（root#op_id）。合図は書いた側が先に送る（store.ts の signalPlan）。 */
   const mine = new Set<string>()
   const clients = new Set<http.ServerResponse>()
@@ -158,20 +149,30 @@ export function createServer(opts: Options) {
     const parent = parentId ? ps.find((r) => r.worktreeId === parentId) : undefined
     return parent && hasCockpit(parent.path) ? parent.path : p
   }
-  const selected = () => (mode === 'manual' ? manual : followRoot())
 
-  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root))
+  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit)
   const workersOf = (root: string, files: Files) => agentsOf(root, files).workers
+  const worktreesOf = (root: string) => orcaWorktrees(root, ps)
 
-  async function cockpitView(root: string | undefined): Promise<CockpitView> {
+  async function cockpitView(root: string | undefined, slim = false): Promise<CockpitView> {
     const ws = root ? wss.get(root) : undefined
     const files = ws?.files ?? emptyFiles()
+    const cockpit = slim && files.cockpit ? slimmed(files.cockpit) : files.cockpit
+    const since = Date.now() - CLOSED_DAYS * 86_400_000
     return {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
-      root, cockpit: files.cockpit, log: files.log, archive: files.archive, figures: files.figures, errors: files.errors,
-      workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal,
-      replies: files.replies, thinking: ws?.thinking?.size ? [...ws.thinking] : undefined, handoff: files.handoff
+      root, cockpit, log: files.log, figures: files.figures, errors: files.errors,
+      archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since) : files.archive,
+      workers: root ? workersOf(root, files) : [], worktrees: root ? worktreesOf(root) : [], owners,
+      notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal
     }
+  }
+
+  /** 窓に送る量を減らす。片付いて日のたったカードと、タスクの済んだ作業の記録は画面に出さない。 */
+  function slimmed(c: NonNullable<Files['cockpit']>): NonNullable<Files['cockpit']> {
+    const since = Date.now() - CLOSED_DAYS * 86_400_000
+    const keep = (x: Card) => x.state !== 'done' || !x.resolved_at || Date.parse(x.resolved_at) > since
+    return { ...c, cards: c.cards.filter(keep), tasks: c.tasks.map(({ done: _d, sources: _s, ...t }) => t) }
   }
 
   /**
@@ -194,29 +195,12 @@ export function createServer(opts: Options) {
     ws.signal = r.sent ? undefined : { state: 'failed', reason: r.reason }
   }
 
-  function rows(): WsRow[] {
-    const list: WsRow[] = []
-    for (const ws of wss.values()) {
-      const c = ws.files.cockpit
-      if (!c) continue
-      const workers = workersOf(ws.root, ws.files)
-      const dispatches = facts.get(ws.root)
-      const d = derive(c, ws.files.log, ws.files.archive, dispatches && { workers, dispatches })
-      const next = d.open[0]
-      list.push({
-        root: ws.root, name: c.workspace.name, open: d.open.length, due: next?.due, counts: d.counts,
-        next: next && { id: next.id, title: next.title }, workers: workers.length, stopped: workers.filter((a) => a.stop).length
-      })
-    }
-    const hot = (r: WsRow) => r.open > 0 || r.stopped > 0
-    const due = (r: WsRow) => (r.due ? new Date(r.due).getTime() || Infinity : Infinity)
-    return list.sort((a, b) =>
-      Number(hot(b)) - Number(hot(a)) || (hot(a) ? due(a) - due(b) : 0) || a.name.localeCompare(b.name, 'ja'))
-  }
-
   async function windowView(): Promise<WindowView> {
     const live = ps.flatMap((r) => r.agents).filter((a) => a.hasLivePty === true || (a.hasLivePty !== false && a.state !== 'done')).length
-    return { mode, focused: followRoot(), rows: rows(), live, view: await cockpitView(selected()), errors: [orcaError, pluginNote, ...alerts].filter((e): e is string => !!e) }
+    const boards = await Promise.all([...wss.values()].filter((ws) => ws.files.cockpit || ws.files.errors.length).map((ws) => cockpitView(ws.root, true)))
+    // Orca にある本線のうち、操縦席の無いもの（見ていない案件）。worker の worktree と、操縦席の窓のある本線は除く。
+    const unseen = ps.filter((r) => !r.parentWorktreeId && !hasCockpit(r.path)).map((r) => ({ name: r.displayName?.trim() || path.basename(r.path), path: r.path }))
+    return { focused: followRoot(), boards, unseen, live, errors: [orcaError, pluginNote].filter((e): e is string => !!e) }
   }
 
   function broadcast(): void {
@@ -230,48 +214,6 @@ export function createServer(opts: Options) {
 
   async function reload(ws: Ws): Promise<void> {
     ws.files = await loadFiles(ws.root, ws.files)
-    answerPending(ws)
-  }
-
-  // ── 話したいへの回答 ──
-  const ask = opts.ask === undefined ? claudeCli() : opts.ask
-  /** 1 度答えに行った発言（root#op_id）。失敗しても同じ発言に何度も CLI を起こさない。 */
-  const tried = new Set<string>()
-  /** CLI は 1 本ずつ起こす（メモリを 1 回分に抑える）。 */
-  let asking: Promise<void> = Promise.resolve()
-
-  /** まだ回答の無い、最近の話したいの発言に答える。パネルが書いた発言もここで拾う。 */
-  function answerPending(ws: Ws): void {
-    const c = ws.files.cockpit
-    if (!ask || !c) return
-    const answered = new Set(ws.files.replies.map((r) => r.op_id))
-    for (const o of ws.files.log.ops) {
-      const key = `${ws.root}#${o.op_id}`
-      if (o.type !== 'talk' || !o.text || o.to_main || answered.has(o.op_id) || tried.has(key)) continue
-      if (Date.now() - Date.parse(o.at) > ANSWER_WINDOW_MS) continue
-      tried.add(key)
-      ;(ws.thinking ??= new Set()).add(o.op_id)
-      asking = asking.then(() => answer(ws, o, ask))
-    }
-  }
-
-  async function answer(ws: Ws, o: Op, run: Ask): Promise<void> {
-    broadcast()
-    let reply
-    try {
-      const a = parseAnswer(await run(buildPrompt(ws.files.cockpit!, o, ws.files.log.ops, ws.files.replies), ws.root))
-      reply = { op_id: o.op_id, at: new Date().toISOString(), by: 'assistant' as const, text: a.text, ...(a.handoff ? { handoff: true } : {}) }
-    } catch (e) {
-      console.error(`answer ${ws.root}#${o.op_id}: ${(e as Error).message}`)
-      reply = { op_id: o.op_id, at: new Date().toISOString(), by: 'assistant' as const, text: FAILED_TEXT, failed: true }
-    }
-    try {
-      ws.files = { ...ws.files, replies: await appendReply(ws.root, reply) }
-    } catch (e) {
-      console.error(`reply ${ws.root}#${o.op_id}: ${(e as Error).message}`)
-    }
-    ws.thinking?.delete(o.op_id)
-    broadcast()
   }
 
   function watchWs(ws: Ws): void {
@@ -292,8 +234,6 @@ export function createServer(opts: Options) {
 
   async function sync(): Promise<void> {
     const want = new Set(ps.filter((r) => !r.parentWorktreeId && hasCockpit(r.path)).map((r) => r.path))
-    const sel = selected()
-    if (sel) want.add(sel)
     for (const [root, ws] of wss)
       if (!want.has(root)) {
         ws.watcher?.close()
@@ -308,17 +248,19 @@ export function createServer(opts: Options) {
       wss.set(root, ws)
       watchWs(ws)
       await reload(ws)
+      // 見張り始めた案件にも、猶予の過ぎた未送の操作があれば合図を送る（起動し直したときに取りこぼさない）。
+      void autoSignal(ws).then(broadcast, (e) => console.error(e))
     }))
   }
 
   function refreshOrca(): Promise<void> {
     return (refreshing ??= (async () => {
       try {
-        const [rowsNow, tl, plugins] = await Promise.all([orca.ps(), orca.terminals(), orca.plugins().catch(() => undefined)])
+        const [rowsNow, tl, plugins, ags] = await Promise.all([orca.ps(), orca.terminals(), orca.plugins().catch(() => undefined), orca.agents().catch(() => undefined)])
         pluginNote = plugins && pluginProblem(plugins)
+        if (ags) owners = ags
         ps = rowsNow
         terms = new Map(tl.map((t) => [`${t.tabId}:${t.leafId}`, t.handle]))
-        for (const ws of wss.values()) if (ws.files.cockpit) facts.set(ws.root, await orcaDispatches(ws.files.cockpit, orca.show))
         orcaError = undefined
       } catch (e) {
         orcaError = 'Orca に繋がりません'
@@ -353,30 +295,12 @@ export function createServer(opts: Options) {
     const moved = next.path !== focus.path
     const agents = next.agents_at !== focus.agents_at
     focus = next
-    if (moved) {
-      mode = 'follow'
-      manual = undefined
-      await sync()
-      broadcast()
-    }
+    if (moved) broadcast()
     if (agents) {
       refreshSoon()
       // メインが作業中で合図を待たせていたら、入力待ちになったかを確かめて送る。
       for (const ws of wss.values()) if (ws.signal) void autoSignal(ws).then(broadcast, (e) => console.error(e))
     }
-  }
-
-  async function readAlerts(): Promise<void> {
-    let next: string[] = []
-    try {
-      const d = JSON.parse(await fsp.readFile(path.join(opts.dir, 'alerts.json'), 'utf8')) as { alerts?: { text?: unknown }[] }
-      next = (d.alerts ?? []).map((a) => a.text).filter((t): t is string => typeof t === 'string').map((t) => `止まっている: ${t}`)
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return void console.error(`alerts.json: ${(e as Error).message}`)
-    }
-    if (next.join('\n') === alerts.join('\n')) return
-    alerts = next
-    broadcast()
   }
 
   function startPolling(): void {
@@ -452,17 +376,42 @@ export function createServer(opts: Options) {
       const input: OpInput = {
         root: ws.root, item_id: b.item_id, item_rev: b.item_rev, type: b.type as OpType,
         option_id: str(b.option_id), undo_of: typeof b.undo_of === 'number' ? b.undo_of : undefined,
-        target: typeof b.target === 'number' ? b.target : undefined,
-        text: typeof b.text === 'string' ? b.text : undefined, to_main: b.to_main === true ? true : undefined,
-        handoff_of: typeof b.handoff_of === 'number' ? b.handoff_of : undefined
+        target: typeof b.target === 'number' ? b.target : undefined, text: typeof b.text === 'string' ? b.text : undefined
       }
       const log = await appendOp(ws.root, ws.files.cockpit, input)
       mine.add(`${ws.root}#${log.ops.at(-1)!.op_id}`)
       ws.files = { ...ws.files, log }
-      answerPending(ws)
       broadcast()
       await autoSignal(ws)
-      return { view: await cockpitView(ws.root) }
+      return { view: await cockpitView(ws.root, true) }
+    },
+    /** 担当と話す。カードを話し中にし（件数から外す）、担当の端末かチャットのワークスペースを Orca で前に出す。 */
+    async talk(b): Promise<TalkResult> {
+      const ws = knownWs(b.root)
+      const c = ws.files.cockpit
+      const card = c?.cards.find((x) => x.id === b.item_id)
+      if (!c || !card) throw new HttpError(409, 'カードが見つかりません。読み直してからもう一度押してください')
+      if (card.state === 'open' && card.kind !== 'talk' && card.kind !== 'report' && typeof b.item_rev === 'number' && b.item_rev === card.rev) {
+        const already = ws.files.log.ops.some((o) => o.type === 'talk' && o.item_id === card.id && o.item_rev === card.rev)
+        if (!already) {
+          ws.files = { ...ws.files, log: await appendOp(ws.root, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk' }) }
+          mine.add(`${ws.root}#${ws.files.log.ops.at(-1)!.op_id}`)
+          broadcast()
+          void autoSignal(ws).then(broadcast, (e) => console.error(e))
+        }
+      }
+      if (Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
+      const o = ownerOf(c, card, { workers: workersOf(ws.root, ws.files), owners })
+      const name = o.how === 'main' ? '窓口' : o.title
+      if (o.terminal && [...terms.values()].includes(o.terminal)) {
+        await orca.switchTerminal(o.terminal)
+        return { opened: true, how: `${name}の端末` }
+      }
+      // Orca にはチャットを前に出す手段が無いので、チャットのあるワークスペースを開く（チャットはそのタブにある）。
+      const chat = o.owner?.session ? owners.find((x) => x.session === o.owner!.session) : undefined
+      const where = chat?.worktree && rowOf(chat.worktree) ? chat.worktree : ws.root
+      await orca.activate(where)
+      return { opened: true, how: `${name}のいるワークスペース（${path.basename(where)}）` }
     },
     async notify(b) {
       const ws = knownWs(b.root)
@@ -501,18 +450,6 @@ export function createServer(opts: Options) {
       if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:')) return { opened: false, reason: 'http と https の URL だけ開きます' }
       await orca.openUrl(u.href)
       return { opened: true }
-    },
-    async select(b) {
-      if (b.root === undefined) {
-        mode = 'follow'
-        manual = undefined
-      } else {
-        mode = 'manual'
-        manual = knownWs(b.root).root
-      }
-      await sync()
-      broadcast()
-      return { ok: true }
     },
     async activate(b) {
       const root = str(b.root)
@@ -597,13 +534,13 @@ export function createServer(opts: Options) {
       await fsp.mkdir(opts.dir, { recursive: true })
       // focus.json は rename で置き換わるので、ファイルではなく置き場所を見張る。
       focusWatcher = watch(opts.dir, (_ev, name) => {
-        if (name === 'alerts.json') return void readAlerts()
         if (name !== 'focus.json') return
         clearTimeout(focusTimer)
         focusTimer = setTimeout(() => void readFocus(), 30)
       })
+      // 見張れないとき（ファイルの見張りの上限など）も、常駐のプロセスは落とさず、前面の切り替えだけを止める。
+      focusWatcher.on('error', (e) => console.error(`focus.json を見張れません: ${e.message}`))
       await readFocus()
-      await readAlerts()
       for (const ws of wss.values()) void autoSignal(ws).catch((e) => console.error(e))
       await new Promise<void>((resolve) => server.listen(opts.port, opts.host ?? '127.0.0.1', resolve))
       port = (server.address() as { port: number }).port
@@ -618,7 +555,6 @@ export function createServer(opts: Options) {
         clearTimeout(ws.timer)
         clearTimeout(ws.signalTimer)
       }
-      await asking
       for (const res of clients) res.end()
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }

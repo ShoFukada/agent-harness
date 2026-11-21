@@ -2,49 +2,34 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  OTHER, nextOp, textError, parseArchive, parseCockpit, parseHandoff, parseTalk, parseUserLog, unappliedOps, TALK_MAX, UNDO_GRACE_MS,
-  type Cockpit, type Handoff, type Item, type Op, type Reply, type UserLog
+  KIND_LABEL, OTHER, nextOp, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
+  type Card, type Cockpit, type Op, type UserLog
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
 export const SIGNAL = '【操縦席】未反映の操作があります'
 
-/** 合図の 1 行。話したいの発言があれば、端末のメインが読めるよう本文の頭を載せる（端末に送るので改行は空白にする）。 */
+/** 合図の 1 行。別の答えと「担当と話す」があれば、どのカードかと本文の頭を載せる（端末に送るので改行は空白にする）。 */
 export function signalText(ops: Op[]): string {
-  const talk = ops.filter((o) => (o.type === 'talk' && o.text) || o.type === 'need_context' || o.type === 'repeat' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
-  if (!talk) return SIGNAL
-  const t = (talk.text ?? '').replace(/\s+/g, ' ').trim()
-  const what = talk.type === 'need_context' ? '情報が足りない' : talk.type === 'repeat' ? '前にも言った' : talk.type === 'decide' ? '別の答え' : talk.to_main ? 'メインに渡す' : '話したい'
-  return `${SIGNAL}（${what}${talk.item_id ? ' ' + talk.item_id : ''}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
+  const said = ops.filter((o) => o.type === 'talk' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
+  if (!said) return SIGNAL
+  const t = (said.text ?? '').replace(/\s+/g, ' ').trim()
+  const what = said.type === 'talk' ? '担当と話す' : '別の答え'
+  return `${SIGNAL}（${what} ${said.item_id}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
 }
 
-/** 回答を .orca/cockpit.talk.json に追記する。窓の常駐のプロセスとメインが書くので、操作ログと同じロックで 1 つずつ。 */
-export async function appendReply(root: string, reply: Reply): Promise<Reply[]> {
-  const release = await lock(path.join(root, '.orca', 'cockpit.talk.json.lock'))
-  try {
-    const text = await readInOrca(root, '.orca/cockpit.talk.json')
-    const talk = text === undefined ? { replies: [] } : parseTalk(text)
-    talk.replies.push(reply)
-    await writeAtomic(path.join(root, '.orca', 'cockpit.talk.json'), JSON.stringify(talk, null, 2) + '\n')
-    return talk.replies
-  } finally {
-    await release()
-  }
-}
 const FIGURE_PATH = /^\.orca\/cockpit\/figures\/[\w.-]+\.svg$/
 
 export type Files = {
   cockpit?: Cockpit
   log: UserLog
-  archive: Item[]
+  archive: Card[]
   figures: Record<string, string>
   errors: string[]
   missing: boolean
-  replies: Reply[]
-  handoff?: Handoff
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, replies: [] })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true })
 
 const conflict = (msg: string) => Object.assign(new Error(msg), { code: 'conflict' })
 
@@ -75,7 +60,7 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 
 /** 読めたファイルだけ差し替え、壊れたものは prev の中身を保ってエラーを 1 行残す。 */
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
-  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, replies: prev.replies, handoff: prev.handoff }
+  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing }
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
     try {
@@ -92,16 +77,10 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
     next.log = text === undefined ? { ops: [] } : parseUserLog(text)
   })
   await one('cockpit.archive.json', '', (text) => {
-    next.archive = text === undefined ? [] : parseArchive(text).items
-  })
-  await one('cockpit.talk.json', '', (text) => {
-    next.replies = text === undefined ? [] : parseTalk(text).replies
-  })
-  await one('cockpit/handoff.json', '', (text) => {
-    next.handoff = text === undefined ? undefined : parseHandoff(text)
+    next.archive = text === undefined ? [] : parseArchive(text).cards
   })
   const figures: Record<string, string> = {}
-  const refs = [...(next.cockpit?.tasks ?? []), ...(next.cockpit?.items ?? []), ...next.archive]
+  const refs = [...(next.cockpit?.cards ?? []), ...next.archive]
     .map((x) => x.figure)
     .filter((f): f is string => !!f && FIGURE_PATH.test(f))
   for (const ref of new Set(refs)) {
@@ -129,27 +108,23 @@ export function appendOp(root: string, cockpit: Cockpit | undefined, input: OpIn
 
 async function write(root: string, cockpit: Cockpit | undefined, { root: _root, ...input }: OpInput): Promise<UserLog> {
   if (!cockpit) throw conflict('操縦席がありません')
-  // 話したいはタスクにも書ける。それ以外の操作は項目だけ。
-  // 「前にも言った」はワークスペース全体への合図で、項目を持たない。
-  const known = (input.type === 'repeat' && input.item_id === '') || cockpit.items.some((i) => i.id === input.item_id) || (input.type === 'talk' && cockpit.tasks.some((t) => t.id === input.item_id))
-  if (!known) throw Object.assign(new Error(`項目 ${input.item_id} がありません`), { code: 'invalid_params' })
   const invalid = (msg: string) => Object.assign(new Error(msg), { code: 'invalid_params' })
+  const card = cockpit.cards.find((c) => c.id === input.item_id)
+  if (!card) throw invalid(`カード ${input.item_id} がありません`)
+  // 担当が書き換えたあとの古い画面で押した操作は、新しい版に効かせない。
+  if (input.type !== 'undo' && card.rev !== input.item_rev) throw conflict(`「${card.title}」は担当が書き換えました。読み直してからもう一度押してください`)
   const bad = textError(input.text)
   if (bad) throw invalid(bad)
   if (input.type === 'decide' && input.option_id === OTHER && !input.text?.trim()) throw invalid('別の答えを書いてください')
-  if (input.type === 'talk' && input.handoff_of === undefined && !input.text?.trim()) throw invalid('話したいことを書いてください')
-  if (input.handoff_of !== undefined && (input.type !== 'talk' || !input.to_main)) throw invalid('引き継ぎの形が違います')
+  if (input.type === 'decide' && input.option_id !== OTHER && !card.options?.some((o) => o.id === input.option_id))
+    throw invalid(`${KIND_LABEL[card.kind]}「${card.title}」に選択肢 ${String(input.option_id)} がありません`)
+  if (input.type === 'revert' && (input.target === undefined || !card.done?.[input.target])) throw invalid('戻す項目がありません')
+  if (input.type === 'undo' && input.undo_of === undefined) throw invalid('取り消す操作がありません')
   const release = await lock(path.join(root, '.orca', 'cockpit.user.json.lock'))
   try {
     // 押した瞬間のファイルに追記する（メインが書き換えた直後でも操作を失わない）。
     const text = await readInOrca(root, '.orca/cockpit.user.json')
     const log = text === undefined ? { ops: [] } : parseUserLog(text)
-    if (input.handoff_of !== undefined) {
-      // メインが元の発言を探さずに読めるよう、元の本文を写す。
-      const orig = log.ops.find((o) => o.op_id === input.handoff_of && o.type === 'talk' && o.item_id === input.item_id && o.text && o.handoff_of === undefined)
-      if (!orig) throw invalid(`引き継ぐ発言 ${input.handoff_of} がありません`)
-      input = { ...input, text: orig.text }
-    }
     log.ops.push(nextOp(log, { at: new Date().toISOString(), ...input }))
     await writeAtomic(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify(log, null, 2) + '\n')
     return log
