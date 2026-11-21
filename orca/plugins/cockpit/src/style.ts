@@ -368,7 +368,7 @@ body { margin:0; }
 .ck.win .wdet > .other { margin:8px 16px 0; }
 .ck.win .dbtn { margin-top:auto; position:sticky; bottom:0; background:var(--surface); }
 .ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:10px 16px; }
-.ck.win .dbtn .nx { margin-left:auto; }
+.ck.win .dh .crumbs .nxl { margin-left:auto; border:0; background:none; padding:0 2px; color:var(--focus); font-size:var(--fs-xs); white-space:nowrap; }
 
 /* 全体: 形ごとの置き場所と仕事の箱 */
 .ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }
@@ -385,6 +385,8 @@ body { margin:0; }
 .ck.win .st .t { font-weight:700; font-size:var(--fs-l); display:flex; gap:10px; align-items:baseline; flex-wrap:nowrap; min-width:0; border:0; background:none; padding:0; text-align:left; }
 .ck.win .st .t::before { content:"＋"; color:var(--ink3); font-weight:400; }
 .ck.win .st .t[aria-expanded="true"]::before { content:"－"; }
+/* 次と担当の行を、開閉の印の幅だけ下げて仕事の名前にそろえる。 */
+.ck.win .st > .sh > .nxt, .ck.win .st > .sh > .meta { padding-left:26px; }
 .ck.win .st .t .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .ck.win .st .right { display:flex; align-items:center; gap:10px; }
 /* 次にやることを 2 行まで、工程より濃く読ませる（初見 5）。 */

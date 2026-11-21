@@ -241,11 +241,13 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const first = closed ? '' : firstView(r, ui, svg)
   const more = (closed ? firstView(r, ui, svg) : '') + moreView(r, svg)
   const moreOpen = ui.open['detail-more'] ?? false
-  const acts = actsHtml(r, ui, true).replace('</div>', next ? `<button class="btn quiet nx" type="button" data-sel="${esc(next)}">次へ（j）</button></div>` : '</div>')
+  const acts = actsHtml(r, ui, true)
+  // 「次へ」は一覧を進む操作なので、答える操作の帯ではなく詳細の上に置く（1280 で帯が折り返さないように）。
+  const nextBtn = next ? `<button class="nxl" type="button" data-sel="${esc(next)}">次へ（j）</button>` : ''
   const sent = sentHtml(sentOps([c], b.v.log, b.v.cockpit!.applied_ops))
   const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
-    <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}</div>
+    <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}${nextBtn}</div>
       <div class="kl"><span class="kd">${kindName(c)}</span>${c.id.startsWith('#') ? '<span class="mut">Orca から</span>' : ''}${winDue(c.due, now)}</div>
       <h2>${esc(c.title)}</h2><div>${ownerHtml(r.owner)}</div></div>
     ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
