@@ -1,6 +1,6 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
 import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, dismissable, permitEffect, permitTarget, type Card, type CardKind, type Repo } from './model.ts'
-import type { CockpitView, TalkResult } from './protocol.ts'
+import type { CockpitView, OwnerLive, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, countsText, derive, dueAt, fmtDate, hhmm, isHot, localDay, nearDate, routeProblem, upcomingMilestones,
   type Bucket, type Derived, type JobView, type OrcaFacts, type OwnerRef, type Row
@@ -181,9 +181,17 @@ export const ago = (iso: string | undefined, now: number) => {
 }
 
 export const OWNER_STATE: Record<string, string> = { working: '作業中', blocked: '許可待ち', waiting: '入力待ち', done: '待機' }
-export function ownerHtml(o: OwnerRef): string {
+/**
+ * 担当の行。owners を渡す窓では、担当の端末かチャットを前に出すボタンにする（「チャット」「端末」の語だけでは押せるか分からない。Neon 追加 22）。
+ * チャットは Orca がタブを前に出せないので、居場所の worktree が分かるときだけボタンにする。
+ */
+export function ownerHtml(o: OwnerRef, owners?: OwnerLive[]): string {
   const where = o.how === 'main' ? '' : o.how === 'chat' ? 'チャット' : '端末'
-  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${where ? `<span>${where}</span>` : ''}${o.state ? `<span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
+  const wt = o.how === 'chat' && o.session ? owners?.find((x) => x.session === o.session)?.worktree : undefined
+  const open = owners && (o.how === 'terminal' ? !!o.terminal : !!wt)
+    ? `<button type="button" class="act" data-term="${esc(o.how === 'terminal' ? o.terminal : '')}" data-wt="${esc(wt ?? '')}">${where}を開く</button>`
+    : where ? `<span>${where}</span>` : ''
+  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${open}${o.state ? `<span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
 }
 
 /** 閉じた票に出す 1 行（HTML）。開くまで中身を読まなくても何の票かが分かるように。 */

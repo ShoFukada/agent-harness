@@ -5,6 +5,7 @@ import { parseCockpit, type DraftFormat } from './model.ts'
 import type { ClipResult, CockpitView } from './protocol.ts'
 import { copyDraft, copyMessage } from './controller.ts'
 import { boardsOf, dropRulings, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
+import { CSS } from './style.ts'
 import { renderWindow, taskOrder, todoOrder } from './window-view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -341,4 +342,30 @@ test('追加 22 の Codex: 全体の j・k の順は見張るを最後にした�
   assert.doesNotMatch(d, /due hot/)
   assert.equal(d.match(/class="dnext soon"/g)?.length, 2, '一覧と詳細の 2 か所')
   assert.match(text(d), /期限切れ 08:00/)
+})
+
+test('詳細の担当の行は、端末・チャットを前に出すボタンにする（チャットは居場所の worktree が分かるときだけ）', () => {
+  const m = aoba((v) => {
+    v.owners = [{ session: 'sess-aws', kind: 'chat', state: 'working', worktree: '/ws/aoba-aws' }]
+  })
+  assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span><b>AWS.?構成案<\/b><button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws">チャットを開く<\/button>/)
+  assert.match(page(m, { sel: '/ws/aoba#r5' }), /<button type="button" class="act" data-term="term_aoba_w1" data-wt="">端末を開く<\/button>/)
+  assert.match(page(aoba(), { sel: '/ws/aoba#d21' }), /<b>AWS.?構成案<\/b><span>チャット<\/span>/)
+})
+
+test('補助の文字・危険・仕事の形の色は、明暗どちらの地でも WCAG AA（4.5:1）を満たし、押せるものの枠は 3:1 を満たす', () => {
+  const vars = (sel: string) => Object.fromEntries([...CSS.split(sel)[1]!.split('}')[0]!.matchAll(/--([\w-]+):(#[0-9a-f]{6})/g)].map((m) => [m[1], m[2]]))
+  const light = vars('.ck { color-scheme: light;')
+  const dark = { ...light, ...vars('.ck[data-theme="dark"] { color-scheme: dark;') }
+  const lum = (h: string) => {
+    const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4))
+    return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!
+  }
+  const ratio = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05)
+  for (const t of [light, dark])
+    for (const bg of ['bg', 'surface', 'sunk', 'hot-bg']) {
+      for (const fg of ['ink', 'ink2', 'ink3', 'focus', 'hot', 'f-delegate', 'f-cowork', 'f-watch']) assert.ok(ratio(t[fg]!, t[bg]!) >= 4.5, `${fg} / ${bg}: ${ratio(t[fg]!, t[bg]!).toFixed(2)}`)
+    }
+  assert.match(CSS, /\.ck \.btn \{[^}]*border:1px solid var\(--ink3\)/)
+  assert.match(CSS, /\.ck\.win \.act \{[^}]*border:1px solid var\(--ink3\)/)
 })

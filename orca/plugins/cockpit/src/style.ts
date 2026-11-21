@@ -2,10 +2,10 @@
 // 目立たせるのは左の期限の軸だけにし、ほかは静かに保つ。外部のフォントは読み込まない（パネルは Orca のサンドボックス）。
 export const CSS = `
 .ck { color-scheme: light;
-  --bg:#e9edf0; --surface:#ffffff; --sunk:#f3f5f7; --ink:#15212c; --ink2:#4b5966; --ink3:#7a8692; --rule:#d3dae0; --rule2:#e4e9ed;
-  --focus:#1f5fbf; --hot:#cf3a1c; --hot-bg:#fdeee9; --ok:#2c7a4b;
-  --k-inbox:#0e7c72; --k-send:#6a47c9; --k-decide:#1f3a68; --k-review:#0b6e99; --k-permit:#9a6200; --k-stuck:#39434d; --k-talk:#5a6b7d; --k-report:#6f7a84; --k-consult:#2f6f5e;
-  --f-delegate:#2c56c9; --f-cowork:#a0670f; --f-watch:#0f7a6e; --amber:#9a6200; --amber-bg:#fbf1de; --ok-bg:#e6f3ea; --run:#5fa3e6; --run-bg:#e9f3fc; --mine:#1f3a68;
+  --bg:#e9edf0; --surface:#ffffff; --sunk:#f3f5f7; --ink:#15212c; --ink2:#4b5966; --ink3:#616b76; --rule:#d3dae0; --rule2:#e4e9ed;
+  --focus:#1f5fbf; --hot:#c2361a; --hot-bg:#fdeee9; --ok:#2b7649;
+  --k-inbox:#0d756c; --k-send:#6a47c9; --k-decide:#1f3a68; --k-review:#0b6e99; --k-permit:#925d00; --k-stuck:#39434d; --k-talk:#5a6b7d; --k-report:#616b73; --k-consult:#2f6f5e;
+  --f-delegate:#2c56c9; --f-cowork:#925e0e; --f-watch:#0e756a; --amber:#925d00; --amber-bg:#fbf1de; --ok-bg:#e6f3ea; --run:#5fa3e6; --run-bg:#e9f3fc; --mine:#1f3a68;
   --shadow:0 1px 0 rgba(21,33,44,.06), 0 1px 2px rgba(21,33,44,.06);
   --fs-xs:12px; --fs-s:13px; --fs-m:14px; --fs-l:16px; --fs-xl:20px; --fs-xxl:28px;
   font-family:"IBM Plex Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN",-apple-system,system-ui,sans-serif;
@@ -42,7 +42,7 @@ body { margin:0; }
 .ck .flag { display:inline-flex; gap:6px; align-items:center; border:0; background:none; padding:2px 0; color:inherit; }
 .ck .flag.warn { color:var(--k-permit); font-weight:600; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:3px; }
 .ck .flag.err { color:var(--hot); font-weight:600; }
-.ck .seg { display:inline-flex; border:1px solid var(--rule); border-radius:6px; overflow:hidden; }
+.ck .seg { display:inline-flex; border:1px solid var(--ink3); border-radius:6px; overflow:hidden; }
 .ck .seg button { border:0; background:none; padding:1px 9px; font-size:var(--fs-xs); color:var(--ink2); }
 .ck .seg button[aria-pressed="true"] { background:var(--ink); color:var(--surface); }
 
@@ -50,7 +50,7 @@ body { margin:0; }
 .ck .board { display:grid; grid-template-columns:248px minmax(0,1fr) 360px; gap:0 20px; padding:16px 20px 80px; max-width:1560px; margin:0 auto; align-items:start; }
 .ck .board.panel { grid-template-columns:minmax(0,1fr); padding:10px 12px 72px; }
 .ck .paneswitch { display:none; position:sticky; top:0; z-index:4; gap:4px; padding:6px 12px; background:var(--bg); border-bottom:1px solid var(--rule); }
-.ck .paneswitch button { flex:1; border:1px solid var(--rule); background:none; border-radius:7px; padding:4px 8px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
+.ck .paneswitch button { flex:1; border:1px solid var(--ink3); background:none; border-radius:7px; padding:4px 8px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
 .ck .paneswitch button[aria-selected="true"] { background:var(--surface); color:var(--ink); border-color:var(--ink3); }
 .ck .paneswitch b { margin-left:6px; color:var(--hot); }
 @container (max-width:1180px) { .ck .board { grid-template-columns:200px minmax(0,1fr); } .ck .board .side { grid-column:2; } }
@@ -152,7 +152,7 @@ body { margin:0; }
   border:1px solid var(--rule); border-radius:8px; background:var(--surface); padding:8px 12px 8px 8px; }
 .ck .opt:hover { border-color:var(--ink3); }
 .ck .opt[aria-checked="true"] { border-color:var(--kc); box-shadow:inset 0 0 0 1px var(--kc); }
-.ck .opt .key { font-size:var(--fs-xs); font-weight:700; color:var(--ink3); border:1px solid var(--rule); border-radius:5px; height:22px; display:grid; place-items:center; }
+.ck .opt .key { font-size:var(--fs-xs); font-weight:700; color:var(--ink3); border:1px solid var(--ink3); border-radius:5px; height:22px; display:grid; place-items:center; }
 .ck .opt[aria-checked="true"] .key { background:var(--kc); border-color:var(--kc); color:var(--surface); }
 .ck .opt .lbl { font-weight:600; }
 .ck .opt .rec { font-size:var(--fs-xs); font-weight:600; color:var(--ok); margin-left:6px; }
@@ -165,7 +165,7 @@ body { margin:0; }
 .ck table.cmp th, .ck table.cmp td { border:1px solid var(--rule); padding:4px 8px; text-align:left; vertical-align:top; }
 .ck .tblwrap { overflow-x:auto; }
 .ck .links { display:flex; flex-wrap:wrap; gap:6px; }
-.ck .lk { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--rule); background:var(--surface); border-radius:6px; padding:1px 8px; font-size:var(--fs-s); color:var(--ink); max-width:100%; }
+.ck .lk { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--ink3); background:var(--surface); border-radius:6px; padding:1px 8px; font-size:var(--fs-s); color:var(--ink); max-width:100%; }
 .ck .lk i { font-style:normal; font-size:var(--fs-xs); font-weight:700; color:var(--ink3); }
 .ck .lk span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck a.inl, .ck button.inl { border:0; background:none; padding:0; color:var(--focus); text-decoration:underline; text-underline-offset:2px; }
@@ -180,8 +180,8 @@ body { margin:0; }
 /* 返答の列。低い窓でも見えるよう、開いた票の下に留める。 */
 .ck .acts { position:sticky; bottom:0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:10px 14px; margin:0 -14px -12px -12px;
   background:var(--surface); border-top:1px solid var(--rule2); border-radius:0 0 8px 8px; }
-.ck .btn { white-space:nowrap; border:1px solid var(--rule); background:var(--surface); border-radius:7px; padding:5px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
-.ck .btn:hover { border-color:var(--ink3); }
+.ck .btn { white-space:nowrap; border:1px solid var(--ink3); background:var(--surface); border-radius:7px; padding:5px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
+.ck .btn:hover { border-color:var(--ink); }
 .ck .btn.pri { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink3); cursor:default; }
 .ck .btn.talk { border-color:var(--focus); color:var(--focus); }
@@ -337,7 +337,7 @@ body { margin:0; }
 .ck.win .dover { color:var(--hot); font-weight:600; }
 .ck.win .dnext.soon { color:var(--ink); font-weight:600; }
 /* 窓の協議は副の操作なので、主のボタンの青と分ける。 */
-.ck.win .btn.talk { border-color:var(--rule); color:var(--ink); }
+.ck.win .btn.talk { border-color:var(--ink3); color:var(--ink); }
 /* 札は語だけ（丸枠・地の色の印を並べない。初見 4・15）。協議中は強調の色、確認なしは危険の色。 */
 .ck.win .tag { display:inline-block; font-size:var(--fs-xs); font-weight:400; color:var(--ink3); white-space:nowrap; }
 .ck.win .tag.wait { color:var(--ink2); }
@@ -430,9 +430,9 @@ body { margin:0; }
 .ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:0; padding:0; background:none; color:var(--ink2); white-space:nowrap; }
 .ck.win .chip.live { color:var(--ink); font-weight:600; }
 .ck.win .chip.bad { color:var(--hot); font-weight:600; }
-.ck.win .chip.kc { border:1px solid var(--rule); border-radius:5px; padding:0 6px; color:var(--ink); background:var(--surface); font-weight:600; }
-.ck.win .act { border:1px solid var(--rule); background:var(--surface); border-radius:5px; padding:0 8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; line-height:1.9; }
-.ck.win .act:hover { border-color:var(--ink3); color:var(--ink); }
+.ck.win .chip.kc { border:1px solid var(--ink3); border-radius:5px; padding:0 6px; color:var(--ink); background:var(--surface); font-weight:600; }
+.ck.win .act { border:1px solid var(--ink3); background:var(--surface); border-radius:5px; padding:0 8px; font-size:var(--fs-xs); color:var(--ink); white-space:nowrap; line-height:1.9; }
+.ck.win .act:hover { border-color:var(--ink); }
 .ck.win .act.talk { border-color:var(--focus); color:var(--focus); }
 /* タスクの行の「話す」は、行に触れたときだけ出す（全部の行に同じボタンが並ぶと、読む行の頭が埋もれる）。 */
 .ck.win .task .act.talk { visibility:hidden; }
