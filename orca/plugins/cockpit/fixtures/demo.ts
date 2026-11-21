@@ -48,7 +48,9 @@ export function writeSample(base: string, now = Date.now()): { roots: Record<str
     activate: async (root) => void calls.push(['activate', root]),
     switchTerminal: async (t) => void calls.push(['switch', t]),
     openFile: async (root, abs, line) => void calls.push(['open', root, abs, String(line ?? '')]),
-    openUrl: async (url) => void calls.push(['url', url])
+    openUrl: async (url) => void calls.push(['url', url]),
+    runTasks: async () => [],
+    taskLink: async () => ({ dispatch: null, followUpOf: null })
   }
   return { roots, orca, calls }
 }

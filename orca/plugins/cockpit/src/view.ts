@@ -50,8 +50,8 @@ export function boardsOf(views: CockpitView[], now: number): Board[] {
   return views
     .filter((v): v is CockpitView & { root: string; cockpit: NonNullable<CockpitView['cockpit']> } => !!v.root && !!v.cockpit)
     .map((v) => {
-      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners }
-      return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now) }
+      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, current: v.current }
+      return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now, { utterances: v.utterances, firstSeen: v.firstSeen }) }
     })
 }
 
@@ -63,6 +63,7 @@ const GLYPH: Record<CardKind, string> = {
   review: '<rect x="2" y="2" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2"/>',
   permit: '<path d="M6 1 10.5 2.6V6c0 2.6-2 4.3-4.5 5C3.5 10.3 1.5 8.6 1.5 6V2.6Z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   stuck: '<path d="M4 1h4l3 3v4l-3 3H4L1 8V4Z" fill="currentColor"/>',
+  consult: '<path d="M6 1.5 10.5 6 6 10.5 1.5 6Z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="1.4" fill="currentColor"/>',
   talk: '<path d="M6 1.5a4.5 4.5 0 1 0 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2"/>',
   report: '<path d="M2 3h8M2 6h8M2 9h5" stroke="currentColor" stroke-width="1.8"/>'
 }
@@ -156,6 +157,7 @@ function peek(c: Card, now: number): string {
     case 'review': return esc(c.look_for?.[0] ?? c.purpose ?? '')
     case 'permit': return c.manual?.command ? `<span class="code">${esc(c.manual.command)}</span>` : esc(c.target && c.target !== c.title ? c.target : c.effect ?? '')
     case 'stuck': return sp([esc(c.answerable ? '答えれば進む' : '私では直せない'), c.since && esc(`止まって ${ago(c.since, now)}`)])
+    case 'consult': return esc(c.issue ?? '')
     case 'talk': return esc(c.next ?? c.last?.text ?? '')
     case 'report': return esc(c.done?.map((d) => d.what).join(' / ') ?? '')
   }
@@ -259,6 +261,11 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       parts.push(fld('私が答えれば進むか', `${c.answerable ? '進む' : '私では直せない'}${c.unblock ? `。${esc(c.unblock)}` : ''}`))
       parts.push(optionsHtml(r, ui))
       break
+    case 'consult':
+      parts.push(fld('論点', esc(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)))
+      if (c.known?.length) parts.push(fld('分かっていること', `<ul class="rich">${c.known.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
+      if (c.undecided?.length) parts.push(fld('決めかねていること', `<ul class="rich">${c.undecided.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
+      break
     case 'talk':
       if (c.last) parts.push(fld('最後のやり取り', `<div class="quote">${esc(c.last.text)}</div>${c.last.at ? `<span class="mut">${esc(fmtDate(c.last.at))}</span>` : ''}`))
       parts.push(fld('次', esc(c.next)))
@@ -305,6 +312,7 @@ function actsHtml(r: Row, ui: Ui): string {
     case 'permit': btns = c.manual ? [b('sent', '済ませた', 'pri'), talk()]
       : c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許す', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}任せる`), b('skip', '止める', 'quiet'), talk()]; break
     case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と話す' : '担当を開く'), other]; break
+    case 'consult': btns = [talk()]; break
     case 'talk': btns = [talk('続きを話す')]; break
     case 'report': btns = [b('ack', '読んだ', 'pri'), talk()]; break
   }
@@ -324,7 +332,7 @@ export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => st
     `<span class="kind">${glyph(c.kind)}${KIND_LABEL[c.kind]}</span>`,
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
     r.stream && !c.title.includes(r.stream.title) ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
-    r.status === 'talking' ? `<span>${r.fix ? (r.pending ? '直しを頼んだ（受け取り待ち）' : '直し待ち') : r.pending ? '担当に渡した（受け取り待ち）' : '話し中'}</span>` : ''
+    r.status === 'fixing' ? `<span>${r.pending ? '直し依頼済み（受領待ち）' : '直し待ち'}</span>` : r.talking ? '<span>話し中</span>' : ''
   ].filter(Boolean).join('')
   return `<article class="strip k-${c.kind}${isHot(c.due, now) ? ' hot' : ''}" aria-expanded="${open}" data-strip="${esc(k)}" id="s-${esc(k)}">
     <button class="head" type="button" data-sel="${esc(k)}" aria-label="${esc(KIND_LABEL[c.kind])}: ${esc(c.title)}">
@@ -426,7 +434,7 @@ function miniList(name: string, title: string, rows: VRow[], ui: Ui, now: number
 export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => string): string {
   const shown = ui.filter ? m.boards.filter((b) => b.root === ui.filter) : m.boards
   const showWs = !m.panel && !ui.filter && m.boards.length > 1
-  const all = <K extends 'queue' | 'talking' | 'waiting' | 'reports' | 'closed'>(k: K) => shown.flatMap((b) => b.d[k].map((r) => ({ ...r, v: b.v })))
+  const all = <K extends 'queue' | 'talking' | 'fixing' | 'waiting' | 'reports' | 'closed'>(k: K) => shown.flatMap((b) => b.d[k].map((r) => ({ ...r, v: b.v })))
   const queue = all('queue').sort(byUrgency)
   const counts = Object.fromEntries(COUNTED.map((k) => [k, shown.reduce((n, b) => n + b.d.counts[k], 0)])) as Record<CardKind, number>
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
@@ -435,17 +443,17 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const signal = m.panel ? signalHtml(shown[0]?.v) : ''
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
-    <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${glyph(k)}${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox" title="届いたは私の番の数に入れない">${glyph('inbox')}届いた <b>${inbox}</b></span>` : ''}</div>
+    <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, consult: 0, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${glyph(k)}${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox" title="届いたは私の番の数に入れない">${glyph('inbox')}届いた <b>${inbox}</b></span>` : ''}</div>
     <div class="flags">${unseen.length ? `<button class="flag warn" type="button" data-act="unseen" aria-expanded="${!!ui.open.unseen}">見ていない ${unseen.length}</button>` : ''}${m.live !== undefined ? `<span class="flag live">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
       ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : '自動'}</button>`).join('')}</span>`}</div>
   </header>`
   const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
-  const sideCount = { talking: all('talking').length, waiting: all('waiting').length, late }
+  const sideCount = { talking: all('fixing').length, waiting: all('waiting').length, late }
   const errs = [...m.errors, ...shown.flatMap((b) => b.v.errors.map((e) => `${b.v.cockpit?.workspace.name ?? ''}: ${e}`))]
   const focusBoard = m.boards.find((b) => b.root === (ui.filter ?? m.focused)) ?? (m.panel ? m.boards[0] : undefined)
   const side = [
     focusBoard ? jobsHtml(focusBoard, now, ui.filter ? '案件の今' : m.panel ? '案件の今' : 'Orca で表示中') : '',
-    miniList('talking', '話し中', all('talking'), ui, now, svg, showWs, (r) => `<span class="r${r.pending ? ' pend' : ''}">${r.pending ? '受け取り待ち' : r.card.next ? esc(r.card.next) : ''}</span>`, true),
+    miniList('fixing', '直し待ち', all('fixing'), ui, now, svg, showWs, (r) => `<span class="r${r.pending ? ' pend' : ''}">${r.pending ? '受領待ち' : '直し待ち'}</span>`, true),
     miniList('waiting', '顧客待ち', all('waiting'), ui, now, svg, showWs, (r) => {
       const a = r.card.awaiting
       const late = a?.remind_at && Date.parse(a.remind_at) < now

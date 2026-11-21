@@ -11,9 +11,9 @@ import { fileURLToPath } from 'node:url'
 import { chatMain, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
 import type { CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
-import { orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type WorkerShow } from './orca-state.ts'
+import { currentDispatches, descendants, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
-import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
+import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, recordFirstSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
 const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts'])
@@ -33,6 +33,10 @@ export type Orca = {
   agents(): Promise<OwnerLive[]>
   /** orchestration worker-show --full。Dispatch が Orca に無ければ null。 */
   show(dispatch: string): Promise<WorkerShow | null>
+  /** orchestration task-list --run。Run のタスクと状態。 */
+  runTasks(run: string): Promise<RunTask[]>
+  /** orchestration dispatch-show --task。タスクの Dispatch と、それが何の続きか。 */
+  taskLink(task: string): Promise<TaskLink>
   send(terminal: string, text: string): Promise<void>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
@@ -95,6 +99,11 @@ export function orcaCli(bin = 'orca'): Orca {
           throw e
         }
       ),
+    runTasks: async (runId) => ((await run(['orchestration', 'task-list', '--run', runId])).tasks as RunTask[]).map(({ id, status, dispatchId }) => ({ id, status, dispatchId })),
+    taskLink: async (task) => {
+      const d = (await run(['orchestration', 'dispatch-show', '--task', task])).dispatch as { id?: string; follow_up_of_dispatch_id?: string | null } | null
+      return { dispatch: d?.id ?? null, followUpOf: d?.follow_up_of_dispatch_id ?? null }
+    },
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
@@ -139,6 +148,10 @@ export function createServer(opts: Options) {
   let pluginNote: string | undefined
   /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
   const facts = new Map<string, Record<string, DispatchFact | null>>()
+  /** ワークスペースの root → タスクの id → 今の Dispatch。 */
+  const currents = new Map<string, Record<string, string>>()
+  /** Orca のタスク → その Dispatch と、何の続きか（変わらないので覚えておく）。 */
+  const links = new Map<string, TaskLink>()
   /** stallwatch が書く alerts.json の、Orca の監督の外で止まったもの。 */
   let alerts: string[] = []
   let focus: Focus = {}
@@ -157,16 +170,15 @@ export function createServer(opts: Options) {
   const hasCockpit = (root: string) => !!wss.get(root)?.files.cockpit || existsSync(path.join(root, '.orca', 'cockpit.json'))
   const rowOf = (root: string) => ps.find((r) => r.path === root)
 
-  /** Orca の前面に当たる行。前面が worker の worktree なら、操縦席のある親。 */
+  /** Orca の前面に当たる行。前面が担当や worker の worktree（窓口の子・孫）なら、操縦席のある祖先。 */
   function followRoot(): string | undefined {
     const p = focus.path
     if (!p) return undefined
-    const parentId = rowOf(p)?.parentWorktreeId
-    const parent = parentId ? ps.find((r) => r.worktreeId === parentId) : undefined
-    return parent && hasCockpit(parent.path) ? parent.path : p
+    const owner = ps.find((r) => !r.parentWorktreeId && hasCockpit(r.path) && descendants(ps, r).some((x) => x.path === p))
+    return owner?.path ?? p
   }
 
-  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root))
+  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root), currents.get(root))
   const workersOf = (root: string, files: Files) => agentsOf(root, files).workers
 
   async function cockpitView(root: string | undefined, slim = false): Promise<CockpitView> {
@@ -178,8 +190,10 @@ export function createServer(opts: Options) {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit, log: files.log, figures: files.figures, errors: files.errors,
       archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since) : files.archive,
-      workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, owners,
-      notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff
+      workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, current: root ? currents.get(root) : undefined, owners,
+      notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
+      // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
+      utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen
     }
   }
 
@@ -229,6 +243,8 @@ export function createServer(opts: Options) {
 
   async function reload(ws: Ws): Promise<void> {
     ws.files = await loadFiles(ws.root, ws.files)
+    // at の無い開いたカードは、ここで最初に見つけた時刻を覚え、抜けの 30 分を数える（常駐のプロセスだけが書く）。
+    ws.files.firstSeen = await recordFirstSeen(ws.root, ws.files, Date.now()).catch((e: Error) => (console.error(`firstseen.json: ${e.message}`), ws.files.firstSeen))
   }
 
   function watchWs(ws: Ws): void {
@@ -298,8 +314,17 @@ export function createServer(opts: Options) {
       lastRefresh = Date.now()
       await sync()
       if (!orcaError)
-        for (const ws of wss.values())
-          if (ws.files.cockpit) facts.set(ws.root, await orcaDispatches(ws.files.cockpit, orca.show).catch((e: Error) => (console.error(`orchestration: ${e.message}`), facts.get(ws.root) ?? {})))
+        for (const ws of wss.values()) {
+          const c = ws.files.cockpit
+          if (!c) continue
+          try {
+            const { current, status } = await currentDispatches(c, { tasks: orca.runTasks, link: orca.taskLink }, links)
+            currents.set(ws.root, current)
+            facts.set(ws.root, await orcaDispatches(c, orca.show, current, status))
+          } catch (e) {
+            console.error(`orchestration: ${(e as Error).message}`)
+          }
+        }
       broadcast()
     })().finally(() => {
       refreshing = undefined
@@ -409,7 +434,7 @@ export function createServer(opts: Options) {
    * 担当の無いカードは窓口。開けないときは理由を返す。
    */
   function talkTarget(ws: Ws, c: Cockpit, card: Card): Target {
-    const o = ownerOf(c, card, { workers: workersOf(ws.root, ws.files), dispatches: facts.get(ws.root), owners })
+    const o = ownerOf(c, card, { workers: workersOf(ws.root, ws.files), dispatches: facts.get(ws.root), owners, current: currents.get(ws.root) })
     if (o.how === 'main') {
       // cockpit.json の main が古い（開き直した）ときは、本線に 1 つだけいるエージェントの端末を使う。窓口がチャット（main.terminal が空）なら推さない。
       const t = o.terminal ? [o.terminal, agentsOf(ws.root, ws.files).main?.terminalId].find(liveTerminal) : undefined
@@ -452,7 +477,7 @@ export function createServer(opts: Options) {
       await autoSignal(ws)
       return { view: await cockpitView(ws.root, true) }
     },
-    /** 担当と話す。担当の端末かチャットのワークスペースを Orca で前に出し、開けたらカードを話し中にする（件数から外す）。 */
+    /** 担当と話す。担当の端末かチャットのワークスペースを Orca で前に出し、開けたらカードに話し中の印を付ける（私の番に残す）。 */
     async talk(b): Promise<TalkResult> {
       const ws = knownWs(b.root)
       const c = ws.files.cockpit
@@ -461,7 +486,7 @@ export function createServer(opts: Options) {
       // 読み直しの途中（lastRefresh は Dispatch を読む前に進む）なら終わりを待つ。チャットの担当は Dispatch から引くため。
       if (refreshing || Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
       const to = talkTarget(ws, c, card)
-      // 開けないのに話し中へ移すと、カードが私の番から消えたまま誰とも話せない。
+      // 開けないのに話し中の印を付けると、誰とも話していないのに話し中に見える。
       if ('reason' in to) return { opened: false, how: to.how, reason: to.reason }
       // 前に出せてから記録する（調べた直後に端末が閉じられても、話し中にだけ移らないように）。
       try {
@@ -470,9 +495,9 @@ export function createServer(opts: Options) {
       } catch (e) {
         return { opened: false, how: to.how, reason: `Orca が前に出せませんでした: ${(e as Error).message}` }
       }
-      // 私の番のときだけ話し中にする（取り消したあとにもう一度押したときも記録する）。
-      const status = overlay(c, ws.files.log).find((v) => v.card.id === card.id)?.status
-      if (status === 'mine' && card.kind !== 'report' && typeof b.item_rev === 'number' && b.item_rev === card.rev) {
+      // 私の番で、まだ話し中の印が無いときだけ記録する（取り消したあとにもう一度押したときも記録する）。印が付いてもカードは私の番に残る。
+      const now = overlay(c, ws.files.log).find((v) => v.card.id === card.id)
+      if (now?.status === 'mine' && !now.talking && card.kind !== 'report' && typeof b.item_rev === 'number' && b.item_rev === card.rev) {
         ws.files = { ...ws.files, log: await appendOp(ws.root, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk' }) }
         mine.add(`${ws.root}#${ws.files.log.ops.at(-1)!.op_id}`)
         broadcast()
@@ -492,9 +517,9 @@ export function createServer(opts: Options) {
       const href = str(b.path)
       if (!href) return { opened: false, reason: '開く先がありません' }
       const { file, line } = splitLine(href.startsWith('file://') ? fileURLToPath(href) : href)
-      // 開けるのは、操縦席のある本線と、orca worktree ps で本線の子と分かる worktree の中のファイルだけ。
+      // 開けるのは、操縦席のある本線と、orca worktree ps で本線の子孫（担当とその worker）と分かる worktree の中のファイルだけ。
       const row = rowOf(ws.root)
-      const roots = [ws.root, ...ps.filter((r) => row && r.parentWorktreeId === row.worktreeId).map((r) => r.path)]
+      const roots = row ? descendants(ps, row).map((r) => r.path) : [ws.root]
       const real = await fsp.realpath(path.resolve(ws.root, file)).catch(() => '')
       if (!real) return { opened: false, reason: `ファイルが見つかりません: ${file}` }
       for (const root of roots) {
@@ -505,7 +530,7 @@ export function createServer(opts: Options) {
           return { opened: true }
         }
       }
-      return { opened: false, reason: `ワークスペースとその worker の worktree の外のファイルは開きません: ${file}` }
+      return { opened: false, reason: `ワークスペースと、その担当・worker の worktree の外のファイルは開かない: ${file}` }
     },
     async openurl(b) {
       const url = str(b.url)

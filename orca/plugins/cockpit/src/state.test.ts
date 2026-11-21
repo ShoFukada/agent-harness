@@ -1,21 +1,26 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import type { Cockpit } from './model.ts'
+import { parseCockpit, type Cockpit } from './model.ts'
 import type { AgentRow } from './protocol.ts'
 import { bucketOf, derive, NAME_MAX, ORCA_STATUS, report, routeProblem } from './state.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
-const ws = (n: number) => structuredClone(sample(NOW)[n]!)
+const ws = (n: number) => {
+  const w = structuredClone(sample(NOW)[n]!)
+  w.cockpit = parseCockpit(JSON.stringify(w.cockpit))
+  return w
+}
 const agent = (over: Partial<AgentRow>): AgentRow => ({ terminalId: 'term_x', title: 'x', agent: 'claude', state: 'working', since: NOW - 25 * 60_000, ...over })
 
-test('私の番は期限順の 1 列。件数は送る前・決める・見て・許す・詰まりの 5 種類だけで、届いた・話し中・報告は数えない', () => {
+test('私の番は期限順の 1 列。件数は送る前・決める・見て・許す・詰まりの 5 種類だけで、相談は並べるが数えず、届いた・報告も数えない', () => {
   const w = ws(0)
   const d = derive(w.cockpit, w.log, [], '/a', undefined, NOW)
-  assert.deepEqual(d.queue.map((r) => r.card.id), ['d22', 'd21', 'r5', 'i3'])
+  assert.deepEqual(d.queue.map((r) => r.card.id), ['d22', 'd21', 'r5', 'c4', 'i3'])
   assert.equal(d.total, 3)
+  assert.equal(d.counts.consult, 1)
   assert.equal(d.counts.inbox, 1)
-  assert.deepEqual(d.talking.map((r) => r.card.id), ['c4'])
+  assert.deepEqual(d.talking.map((r) => r.card.id), [])
   assert.deepEqual(d.waiting.map((r) => r.card.id), ['w1'])
   assert.deepEqual(d.closed.map((r) => r.card.id), ['d19'])
 })
@@ -81,12 +86,13 @@ test('hook が読む全体の 1 行と検査: 催促の日を過ぎた顧客待�
   const w = ws(0)
   const c: Cockpit = { ...w.cockpit, streams: [...w.cockpit.streams, { id: 's9', title: 'あ'.repeat(NAME_MAX + 1) }], tasks: [...w.cockpit.tasks, { id: 't9', stream: 's9', phase: '実装', title: 'x', state: 'run' }] }
   const r = report(c, w.log, [], undefined, 'skipped', NOW)
-  assert.equal(r.overview, '全体: 私の番 3 件（決める 1・送る前 1・見て 1）・話し中 1・顧客待ち 1・動いている worker 0')
+  assert.equal(r.overview, '全体: 私の番 3 件（決める 1・送る前 1・見て 1）・話し中 0・顧客待ち 1・動いている worker 0')
   assert.deepEqual(r.checks.remind_due, ['w1'])
   assert.deepEqual(r.checks.long_names, [`s9（${NAME_MAX + 1} 字）`])
   assert.equal(r.next?.id, 'd22')
   assert.deepEqual(r.overdue, ['d22'])
   const h = ws(2)
+  for (const x of h.cockpit.cards) if (x.id !== 'r8') delete x.stream
   const hr = report(h.cockpit, h.log, [], undefined, 'skipped', NOW)
   assert.deepEqual(hr.checks.orphan_cards, ['p9', 'd30', 'd28'])
   assert.equal(hr.checks.push_check, false)
@@ -133,15 +139,17 @@ test('hook が読む検査: 一時フォルダのままの成果物と、どの�
       { id: 'a4', rev: 1, kind: 'review', title: 'a4', state: 'done', stream: 's1', href: '/tmp/old.html' },
       // 送ったあと顧客の返事を待つカードが指すタスクは、外の相手を待っているので名指ししない
       { id: 'w1', rev: 1, kind: 'send', title: 'w1', state: 'waiting', stream: 's1', tasks: ['t6'], awaiting: { who: '森さん', what: '回答', since: '2026-11-20T10:00:00+09:00' } },
-      // 担当と話し始めたカードは私の番から外れるので、それだけが指すタスクは名指しする
+      // 担当と話し始めたカードも私の番に残る（R46）ので、それが指すタスクは名指ししない
       { id: 'd2', rev: 1, kind: 'decide', title: 'd2', state: 'open', stream: 's1', tasks: ['t7'] }
     ]
   }
   const r = report(c, { ops: [{ op_id: 1, at: '2026-11-21T09:00:00+09:00', item_id: 'd2', item_rev: 1, type: 'talk' }] }, [], undefined, 'skipped', NOW)
   assert.deepEqual(r.checks.local_deliverables, ['a1', 'a2'])
-  assert.deepEqual(r.checks.orphan_waits, ['t1', 't4', 't7'])
-  assert.deepEqual(r.mine.map((x) => x.id).sort(), ['a2', 'a3', 'd1'])
-  assert.equal(r.next?.id, r.mine[0].id)
+  assert.deepEqual(r.checks.orphan_waits, ['t1', 't4'])
+  // 必須の欄が欠けたカードは私の番に出さず、窓口に名指しする。
+  assert.deepEqual(r.mine, [])
+  assert.deepEqual(r.checks.incomplete_cards.map((x) => x.id), ['d1', 'a2', 'a3', 'd2'])
+  assert.ok(r.checks.incomplete_cards[0]!.missing.includes('context.what'))
 })
 
 test('checks: 手作業を頼むのに、打つコマンドも手順も書いていない許す（manual）を名指しする', () => {
@@ -151,4 +159,94 @@ test('checks: 手作業を頼むのに、打つコマンドも手順も書いて
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.empty_manual, ['p7'])
   p7.manual = { command: 'sudo darwin-rebuild switch --flake ~/.config/nix-darwin' }
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.empty_manual, [])
+})
+
+test('必須の欄が欠けたカードは要対応に出さず、出てから 30 分たっても欠けたままなら「抜けている」に出す（at が無ければ最初に見つけた時刻）', () => {
+  const h = ws(2)
+  const at = (min: number) => new Date(NOW - min * 60_000).toISOString()
+  for (const x of h.cockpit.cards) delete x.fallback
+  delete h.cockpit.cards.find((x) => x.id === 'r8')!.evidence
+  h.cockpit.cards.find((x) => x.id === 'd28')!.at = at(10)
+  delete h.cockpit.cards.find((x) => x.id === 'p9')!.at
+  const d = derive(h.cockpit, h.log, [], '/h', undefined, NOW, { firstSeen: { p9: at(45) } })
+  assert.deepEqual(d.queue.map((r) => r.card.id), [])
+  assert.deepEqual(d.incomplete.map((g) => g.id).sort(), ['d28', 'd30', 'p9', 'r8'])
+  assert.deepEqual(d.gaps.map((g) => g.id).sort(), ['d30', 'p9', 'r8'])
+  assert.ok(d.gaps.find((g) => g.id === 'r8')!.missing.includes('確かめた結果'))
+})
+
+test('依頼の帳簿: 移し替えの前は全部古い行。古い行は書かれた state、新しい行は済の条件と証拠から 受付・進行中・確認待ち・済 を決める', () => {
+  const w = ws(0)
+  const base = { at: '2026-11-21T09:00:00+09:00', title: '依頼' }
+  w.cockpit.requests = [
+    { id: 'r1', ...base, state: 'done', tasks: ['t4'] },
+    { id: 'r2', ...base, state: 'open', tasks: ['t1'] }
+  ]
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', undefined, NOW).requests.map((r) => [r.req.id, r.state, r.legacy]), [['r1', '済', true], ['r2', '進行中', true]])
+  // 移し替えたあと（intake がある）は、legacy の無い行に発言と済の条件が要る。
+  w.cockpit.intake = { through: '' }
+  const u = [{ id: 'u1', quote: '一覧を直して' }]
+  w.cockpit.requests = [
+    { id: 'r1', ...base, legacy: true, state: 'open' },
+    { id: 'r3', ...base },
+    { id: 'r4', ...base, utterances: u, kind: 'work', done_when: ['PR がマージされる'] },
+    { id: 'r5', ...base, utterances: u, kind: 'work', done_when: ['PR がマージされる'], tasks: ['t1'] },
+    { id: 'r6', ...base, utterances: u, kind: 'work', done_when: ['PR がマージされる'], evidence: [{ when: 0, kind: 'pr', ref: 'https://github.com/x/y/pull/1' }] },
+    { id: 'r7', ...base, utterances: u, kind: 'work', done_when: ['見てもらう'], check: true, evidence: [{ when: 0, kind: 'url', ref: 'https://example.com' }] },
+    { id: 'r8', ...base, utterances: u, kind: 'work', done_when: ['見てもらう'], check: true, evidence: [{ when: 0, kind: 'url', ref: 'https://example.com' }, { when: 0, kind: 'op', ref: '7', card: 'r5', rev: 1 }] },
+    { id: 'r9', ...base, utterances: u, kind: 'question', done_when: ['答える'], evidence: [{ when: 0, kind: 'url', ref: 'https://example.com' }] }
+  ]
+  const log = { ops: [...w.log.ops, { op_id: 7, at: '2026-11-21T09:30:00+09:00', item_id: 'r5', item_rev: 1, type: 'accept' as const }] }
+  const states = () => Object.fromEntries(derive(w.cockpit, log, [], '/a', undefined, NOW).requests.map((r) => [r.req.id, r.state]))
+  assert.deepEqual(states(), { r1: '受付', r3: '受付', r4: '受付', r5: '進行中', r6: '済', r7: '確認待ち', r8: '済', r9: '進行中' })
+  // 成果物を改訂して見てのカードの rev を上げたら、古い版への「これでよい」は効かない。
+  w.cockpit.cards.find((x) => x.id === 'r5')!.rev = 2
+  assert.equal(states().r8, '確認待ち')
+  // 「これでよい」を取り消しても効かない。
+  w.cockpit.cards.find((x) => x.id === 'r5')!.rev = 1
+  log.ops.push({ op_id: 8, at: '2026-11-21T09:31:00+09:00', item_id: 'r5', item_rev: 1, type: 'undo', undo_of: 7 } as never)
+  assert.equal(states().r8, '確認待ち')
+  const r = report(w.cockpit, log, [], undefined, 'skipped', NOW)
+  assert.deepEqual(r.checks.incomplete_requests, [{ id: 'r3', missing: ['発言（utterances）', '済の条件（done_when）', '種類（kind）'] }])
+})
+
+test('発言の仕分け: through より後の発言と、checked_through より後で依頼にも none にも結ばれていない発言を出す。id の無い行は見ない', () => {
+  const w = ws(0)
+  const u = (id: string | undefined, min: number) => ({ id, at: new Date(NOW - min * 60_000).toISOString(), prompt: `発言 ${id}` })
+  const utterances = [u(undefined, 300), u('u1', 120), u('u2', 90), u('u3', 60), u('u4', 5)]
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', undefined, NOW, { utterances }).unsorted, [])
+  w.cockpit.intake = { through: 'u3', none: ['u2'], checked_through: 'u1' }
+  w.cockpit.requests = []
+  const d = derive(w.cockpit, w.log, [], '/a', undefined, NOW, { utterances })
+  assert.deepEqual(d.unsorted.map((g) => g.id), ['u3', 'u4'])
+  // 30 分の猶予を過ぎたもの（u3）だけが「抜けている」に出る。
+  assert.deepEqual(d.gaps.map((g) => g.id), ['u3'])
+  w.cockpit.requests = [{ id: 'q1', at: '', title: '', utterances: [{ id: 'u3', quote: '' }], kind: 'work', done_when: ['x'] }]
+  assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW, undefined, { utterances }).checks.unsorted, ['u4'])
+})
+
+test('タスクの今の Dispatch は Run の続きをたどった先（current）。手書きの run のまま Orca のタスクが終わったもの・仕事の無いもの・工程の外・長い題・形の無い仕事を名指しする', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  c.tasks[0]!.worker = { task_id: 'task_a', run_id: 'run_a' }
+  c.tasks.push({ id: 't8', stream: 'sX', phase: '作る', title: 'あ'.repeat(NAME_MAX + 1), state: 'idle' })
+  c.streams[0]!.form = 'delegate'
+  const facts = { workers: [], dispatches: { ctx_2: { state: 'succeeded', settledAt: NOW - 3_600_000, taskStatus: 'completed' } }, current: { t1: 'ctx_2' } }
+  const r = report(c, w.log, [], facts, 'ok', NOW)
+  assert.equal(r.tasks.find((t) => t.id === 't1')!.from, 'intake')
+  assert.deepEqual(r.checks.stale_tasks, ['t1'])
+  assert.deepEqual(r.checks.loose_tasks, ['t8'])
+  assert.deepEqual(r.checks.unknown_phase, ['t8（作る）'])
+  assert.deepEqual(r.checks.long_names, [`t8（${NAME_MAX + 1} 字）`])
+  assert.deepEqual(r.checks.no_form.sort(), ['s2', 's3', 's4'])
+  // 続きを引けていない（current に無い）run_id だけの記録は、Orca に見つからない扱い。
+  assert.equal(report(c, w.log, [], { workers: [], dispatches: {} }, 'ok', NOW).tasks.find((t) => t.id === 't1')!.from, 'missing')
+})
+
+test('担当と話すを押したカードは私の番に残り、hook の talking に話し相手と押した時刻が出る', () => {
+  const w = ws(0)
+  const log = { ops: [...w.log.ops, { op_id: 5, at: '2026-11-21T09:50:00+09:00', item_id: 'd21', item_rev: 1, type: 'talk' as const }] }
+  const r = report(w.cockpit, log, [], undefined, 'skipped', NOW)
+  assert.ok(r.mine.some((x) => x.id === 'd21'))
+  assert.deepEqual(r.talking, [{ id: 'd21', since: '2026-11-21T09:50:00+09:00', with: 'AWS 構成案' }])
 })

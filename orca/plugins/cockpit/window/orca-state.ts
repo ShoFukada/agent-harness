@@ -55,18 +55,24 @@ function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit 
   }
 }
 
+/** row と、その子孫の worktree（担当の worker は担当の worktree の子＝窓口の孫に立つ）。前面の追従とファイルを開く許可が使う。 */
+export function descendants(ps: PsRow[], row: PsRow): PsRow[] {
+  const tree = [row]
+  for (let i = 0; i < tree.length; i++) tree.push(...ps.filter((r) => r.parentWorktreeId === tree[i]!.worktreeId && !tree.includes(r)))
+  return tree
+}
+
 /** terms は paneKey → 端末の handle。dispatches は worker の記録の Dispatch の様子（タスクと端末を結ぶ）。 */
-export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>, c: Cockpit | undefined, dispatches: Record<string, DispatchFact | null> = {}): { main?: AgentRow; workers: AgentRow[] } {
+export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>, c: Cockpit | undefined, dispatches: Record<string, DispatchFact | null> = {}, current: Record<string, string> = {}): { main?: AgentRow; workers: AgentRow[] } {
   const row = ps.find((r) => r.path === root)
   if (!row) return { workers: [] }
   const byTerminal = new Map<string, string>()
   for (const t of c?.tasks ?? []) {
-    const term = t.worker && dispatches[t.worker.dispatch_id]?.terminal
+    const id = t.worker && (current[t.id] ?? t.worker.dispatch_id)
+    const term = id && dispatches[id]?.terminal
     if (term) byTerminal.set(term, t.id)
   }
-  // 担当の worker は担当の worktree の子（窓口の孫）に立つので、子孫をたどる
-  const tree = [row]
-  for (let i = 0; i < tree.length; i++) tree.push(...ps.filter((r) => r.parentWorktreeId === tree[i].worktreeId && !tree.includes(r)))
+  const tree = descendants(ps, row)
   const all = tree.flatMap((r) => r.agents.map((a) => toAgent(a, r, terms, c, byTerminal)))
   const own = all.filter((a) => a.worktree === root)
   const terminal = c?.main?.terminal
@@ -99,11 +105,53 @@ export function dispatchFact(r: WorkerShow): DispatchFact {
   }
 }
 
-/** 済んでいないタスクの worker の記録の Dispatch を、Orca に問い合わせる。show は Orca に無ければ null を返す。 */
-export async function orcaDispatches(c: Cockpit | undefined, show: (dispatch: string) => Promise<WorkerShow | null>): Promise<Record<string, DispatchFact | null>> {
-  const ids = [...new Set((c?.tasks ?? []).filter((t) => t.worker && t.state !== 'ok').map((t) => t.worker!.dispatch_id))]
+/** orca orchestration task-list --run の 1 行（使う欄だけ）。終わったタスクは dispatchId を持たない。 */
+export type RunTask = { id: string; status: string; dispatchId?: string }
+/** orca orchestration dispatch-show --task の、タスクの Dispatch と、それが何の続きか（follow_up_of_dispatch_id）。どちらも変わらない。 */
+export type TaskLink = { dispatch: string | null; followUpOf: string | null }
+export type Chain = { tasks(run: string): Promise<RunTask[]>; link(task: string): Promise<TaskLink> }
+
+/**
+ * worker の記録（run_id と最初の Task）から、今の Dispatch を引く。Run のタスクの Dispatch を follow_up_of で逆向きにつなぎ、
+ * 最初の Task の Dispatch から最後の続きまでたどる。follow_up_of は変わらないので cache に覚え、新しいタスクだけを問い合わせる。
+ * 返すのは、タスクの id → 今の Dispatch と、Dispatch → Orca のタスクの状態。
+ */
+export async function currentDispatches(c: Cockpit | undefined, chain: Chain, cache: Map<string, TaskLink>): Promise<{ current: Record<string, string>; status: Record<string, string> }> {
+  const live = (c?.tasks ?? []).filter((t) => t.worker?.run_id && t.state !== 'ok')
+  const current: Record<string, string> = {}
+  const status: Record<string, string> = {}
+  for (const run of new Set(live.map((t) => t.worker!.run_id!))) {
+    const rows = await chain.tasks(run)
+    const links = await Promise.all(rows.map(async (r) => {
+      let l = cache.get(r.id)
+      if (!l) {
+        l = await chain.link(r.id)
+        if (l.dispatch) cache.set(r.id, l)
+      }
+      return [r, l] as const
+    }))
+    const next = new Map<string, string>()
+    const ofTask = new Map<string, string>()
+    for (const [r, l] of links) {
+      if (!l.dispatch) continue
+      ofTask.set(r.id, l.dispatch)
+      status[l.dispatch] = r.status
+      if (l.followUpOf) next.set(l.followUpOf, l.dispatch)
+    }
+    for (const t of live.filter((x) => x.worker!.run_id === run)) {
+      let d = ofTask.get(t.worker!.task_id)
+      for (let n = 0; d && next.has(d) && n < 1000; n++) d = next.get(d)
+      if (d) current[t.id] = d
+    }
+  }
+  return { current, status }
+}
+
+/** 済んでいないタスクの今の Dispatch を、Orca に問い合わせる。show は Orca に無ければ null を返す。current が無いタスクは版 2 の dispatch_id を使う。 */
+export async function orcaDispatches(c: Cockpit | undefined, show: (dispatch: string) => Promise<WorkerShow | null>, current: Record<string, string> = {}, status: Record<string, string> = {}): Promise<Record<string, DispatchFact | null>> {
+  const ids = [...new Set((c?.tasks ?? []).filter((t) => t.worker && t.state !== 'ok').map((t) => current[t.id] ?? t.worker!.dispatch_id).filter((x): x is string => !!x))]
   const rows = await Promise.all(ids.map(async (id) => [id, await show(id)] as const))
-  return Object.fromEntries(rows.map(([id, r]) => [id, r ? dispatchFact(r) : null]))
+  return Object.fromEntries(rows.map(([id, r]) => [id, r ? { ...dispatchFact(r), ...(status[id] && { taskStatus: status[id] }) } : null]))
 }
 
 /** orca plugin list の 1 行（使う欄だけ）。 */

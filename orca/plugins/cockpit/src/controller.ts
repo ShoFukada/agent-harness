@@ -1,5 +1,5 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
-import { COUNTED, OTHER, UNDO_GRACE_MS, type OpType } from './model.ts'
+import { OTHER, UNDO_GRACE_MS, type OpType } from './model.ts'
 import { morph } from './morph.ts'
 import type { CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
@@ -60,7 +60,7 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
     const boards = boardsOf(feed.views, now)
     rows = new Map()
     for (const b of boards)
-      for (const k of ['queue', 'talking', 'waiting', 'reports', 'closed'] as const) for (const r of b.d[k]) rows.set(keyOf(r), { ...r, v: b.v })
+      for (const k of ['queue', 'fixing', 'waiting', 'reports', 'closed'] as const) for (const r of b.d[k]) rows.set(keyOf(r), { ...r, v: b.v })
     const shown = ui.filter ? boards.filter((b) => b.root === ui.filter) : boards
     order = shown.flatMap((b) => b.d.queue.map((r) => ({ ...r, v: b.v }))).sort(byUrgency).map(keyOf)
     // 操縦席はあるが読めない案件（版 1 のまま・壊れた JSON）は、黙って外さず「見ていない」に理由つきで出す。
@@ -140,7 +140,6 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
     }
     try {
       const res: TalkResult = r.agent ? focusResult(await t.focusAgent(r.agent.terminalId, r.agent.worktree), r.owner.title) : await t.talk(r.root, r.card.id, r.card.rev)
-      if (res.opened && !r.agent && COUNTED.includes(r.card.kind) && r.status === 'mine') advance(keyOf(r))
       toast(talkMessage(res, copied))
     } catch (e) {
       fail(e)
@@ -303,7 +302,7 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
     if (typing) return
     // 片付いた・顧客待ちの票は読み返すだけ。キーで選んだり決めたりしない。
     const cur = ui.sel ? rows.get(ui.sel) : undefined
-    const sel = cur && (cur.status === 'mine' || cur.status === 'talking') ? cur : undefined
+    const sel = cur && (cur.status === 'mine' || cur.status === 'fixing') ? cur : undefined
     if (e.key === 'j' || e.key === 'k') {
       if (!order.length) return
       const i = ui.sel ? order.indexOf(ui.sel) : -1

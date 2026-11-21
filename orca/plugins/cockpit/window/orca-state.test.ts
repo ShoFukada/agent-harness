@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { orcaAgents, pluginProblem, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
+import { currentDispatches, orcaAgents, pluginProblem, type PluginRow, type PsAgent, type PsRow, type TaskLink } from './orca-state.ts'
 
 const row = (o: Partial<PluginRow>): PluginRow => ({ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false, ...o })
 
@@ -31,4 +31,41 @@ test('窓口の子の担当と、担当の子（窓口の孫）の worker を拾
   const { main, workers } = orcaAgents('/w/main', ps, new Map(), undefined)
   assert.equal(main?.worktree, '/w/main')
   assert.deepEqual(workers.map((w) => w.worktree), ['/w/lead', '/w/w1'])
+})
+
+test('今の Dispatch: Run のタスクの Dispatch を follow_up_of でつなぎ、最初の Task から最後の続きまでたどる。follow_up_of は覚えて問い合わせ直さない', async () => {
+  const c = {
+    version: 2, workspace: { name: 'x' }, streams: [], cards: [],
+    tasks: [
+      { id: 't1', stream: 's', phase: '実装', title: 'a', state: 'run', worker: { run_id: 'run_1', task_id: 'task_a' } },
+      { id: 't2', stream: 's', phase: '実装', title: 'b', state: 'run', worker: { run_id: 'run_1', task_id: 'task_x' } },
+      { id: 't3', stream: 's', phase: '実装', title: 'c', state: 'ok', worker: { run_id: 'run_2', task_id: 'task_z' } }
+    ]
+  } as const
+  const linkOf: Record<string, TaskLink> = {
+    task_a: { dispatch: 'ctx_a', followUpOf: null },
+    task_b: { dispatch: 'ctx_b', followUpOf: 'ctx_a' },
+    task_c: { dispatch: 'ctx_c', followUpOf: 'ctx_b' },
+    task_x: { dispatch: 'ctx_x', followUpOf: null },
+    task_new: { dispatch: null, followUpOf: null }
+  }
+  const asked: string[] = []
+  const chain = {
+    tasks: async (run: string) => {
+      asked.push(run)
+      return ['task_a', 'task_b', 'task_c', 'task_x', 'task_new'].map((id) => ({ id, status: id === 'task_c' ? 'completed' : 'dispatched' }))
+    },
+    link: async (task: string) => {
+      asked.push(task)
+      return linkOf[task]!
+    }
+  }
+  const cache = new Map<string, TaskLink>()
+  const r = await currentDispatches(c as never, chain, cache)
+  assert.deepEqual(r.current, { t1: 'ctx_c', t2: 'ctx_x' })
+  assert.equal(r.status.ctx_c, 'completed')
+  assert.deepEqual(asked, ['run_1', 'task_a', 'task_b', 'task_c', 'task_x', 'task_new'], '済んだタスクの Run は問い合わせない')
+  asked.length = 0
+  await currentDispatches(c as never, chain, cache)
+  assert.deepEqual(asked, ['run_1', 'task_new'], 'Dispatch のまだ無いタスクだけ問い合わせ直す')
 })

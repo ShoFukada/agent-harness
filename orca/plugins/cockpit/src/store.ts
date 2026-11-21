@@ -3,7 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  type Card, type Cockpit, type Handoff, type Op, type UserLog
+  type Card, type Cockpit, type Handoff, type Op, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -28,9 +28,28 @@ export type Files = {
   errors: string[]
   missing: boolean
   handoff?: Handoff
+  /** 発言の記録（.orca/cockpit/utterances.jsonl）のうち id のある行。仕分けの検査に使うので、本文は頭だけ持つ。 */
+  utterances: Utterance[]
+  /** at の無い開いたカードを、窓の常駐のプロセスが最初に見つけた時刻（.orca/cockpit/firstseen.json）。抜けの 30 分を数える。 */
+  firstSeen: Record<string, string>
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {} })
+
+/** 発言の記録の 1 行ずつ。壊れた行は飛ばす（hook が追記の途中で落ちても、ほかの行の仕分けは見る）。 */
+export function parseUtterances(text: string): Utterance[] {
+  const out: Utterance[] = []
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const v = JSON.parse(line) as Partial<Utterance>
+      if (typeof v.id === 'string' && v.id && typeof v.at === 'string') out.push({ id: v.id, at: v.at, prompt: typeof v.prompt === 'string' ? v.prompt.slice(0, 200) : undefined })
+    } catch {
+      // 書きかけの最後の行など。次に読むときに拾う。
+    }
+  }
+  return out
+}
 
 const conflict = (msg: string) => Object.assign(new Error(msg), { code: 'conflict' })
 
@@ -61,7 +80,10 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 
 /** 読めたファイルだけ差し替え、壊れたものは prev の中身を保ってエラーを 1 行残す。 */
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
-  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff }
+  const next: Files = {
+    cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff,
+    utterances: prev.utterances, firstSeen: prev.firstSeen
+  }
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
     try {
@@ -82,6 +104,13 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   })
   await one('cockpit/handoff.json', '', (text) => {
     next.handoff = text === undefined ? undefined : parseHandoff(text)
+  })
+  await one('cockpit/utterances.jsonl', '', (text) => {
+    next.utterances = text === undefined ? [] : parseUtterances(text)
+  })
+  await one('cockpit/firstseen.json', '', (text) => {
+    const v: unknown = text === undefined ? {} : JSON.parse(text)
+    next.firstSeen = typeof v === 'object' && v !== null && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, t]) => typeof t === 'string')) as Record<string, string> : {}
   })
   const figures: Record<string, string> = {}
   const refs = [...(next.cockpit?.cards ?? []), ...next.archive]
@@ -256,4 +285,16 @@ export async function writeNotified(dir: string, root: string, op: number): Prom
 export function splitLine(href: string): { file: string; line?: number } {
   const m = /^(.*\S):(\d+)$/.exec(href)
   return m ? { file: m[1]!, line: Number(m[2]) } : { file: href }
+}
+
+/**
+ * at も created_at も無い開いたカードに、最初に見つけた時刻を付けて .orca/cockpit/firstseen.json に書く（窓の常駐のプロセスだけが呼ぶ）。
+ * 片付いたカードの分は消す。書き足すものが無ければ書かない。
+ */
+export async function recordFirstSeen(root: string, files: Files, now: number): Promise<Record<string, string>> {
+  const open = (files.cockpit?.cards ?? []).filter((c) => c.state === 'open' && !c.at)
+  const next = Object.fromEntries(open.map((c) => [c.id, files.firstSeen[c.id] ?? new Date(now).toISOString()]))
+  const same = Object.keys(next).length === Object.keys(files.firstSeen).length && Object.entries(next).every(([k, v]) => files.firstSeen[k] === v)
+  if (!same) await writeAtomic(path.join(root, '.orca', 'cockpit', 'firstseen.json'), JSON.stringify(next, null, 1) + '\n')
+  return next
 }

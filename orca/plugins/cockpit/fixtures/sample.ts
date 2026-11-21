@@ -64,6 +64,7 @@ export function sample(now = Date.now()): SampleWs[] {
         id: 'd22', rev: 2, kind: 'send', state: 'open', at: iso(now - 26 * H), due: iso(now - 2 * H), stream: 's4',
         title: '議事録の共有をお願いする',
         purpose: '前回の定例で決めたことを、次の定例の前にそろえる',
+        fallback: '今日中に返事が無ければ、定例の冒頭で口頭で確かめる',
         draft: {
           to: '森さん・林さん（Slack #aoba-dev の 11/19 のスレッド）', via: 'Slack',
           text: '@森 @林\nお疲れさまです。先日の定例の議事録の件、お手すきの際に共有いただけますと幸いです。\n次回の定例の前に、決めたことを一度そろえておきたいと考えています。',
@@ -73,6 +74,8 @@ export function sample(now = Date.now()): SampleWs[] {
       {
         id: 'r5', rev: 1, kind: 'review', state: 'open', at: iso(now - 3 * H), due: iso(today(now, 18) + 24 * H), stream: 's1',
         title: '配車画面の一覧（並べ替えと絞り込み）',
+        purpose: '一覧の改修を stg に出し、森さんの受入に回せる',
+        fallback: '明日の定例までに返事が無ければ、stg に出したまま定例で見てもらう',
         request: '一覧で配送日と地区で並べ替え・絞り込みできるようにしてほしい。件数が多い日でも重くならないように',
         look_for: ['配送日の降順が既定になっている', '地区の絞り込みを外すと全件に戻る', '500 件の日でも 1 秒以内に出る'],
         evidence: ['stg の 500 件の日で 0.4 秒', '並べ替えと絞り込みの試験 12 件が通った'],
@@ -89,6 +92,10 @@ export function sample(now = Date.now()): SampleWs[] {
       {
         id: 'c4', rev: 3, kind: 'talk', state: 'open', at: iso(now - 20 * H), stream: 's2',
         title: 'AWS アカウントの分け方（1 つか、分けるか）',
+        purpose: '構成案の前提（アカウントの数）を決め、見積もりを出せる',
+        why: '森さんの回答が明日の午前に来るので、その前に考えをそろえたい',
+        fallback: '話せないまま回答が来たら、担当の今の考えで進めて構成案に書く',
+        quote: 'アカウントは本番と検証で分けたほうがいいですか？',
         last: { text: '森さんに送った内容で、あとは回答次第で決める感じにしよう。', at: iso(now - 19 * H), by: '私' },
         next: '森さんの回答（明日の午前）を待つ'
       },
@@ -131,6 +138,9 @@ export function sample(now = Date.now()): SampleWs[] {
       {
         id: 'p7', rev: 1, kind: 'permit', state: 'open', at: iso(now - 2 * H), due: iso(today(now, 18) > now ? today(now, 18) : now + 5 * H), stream: 'n112',
         title: 'No.112 の修正を本番に出す',
+        purpose: '確定メールの日付の誤りを、今日の夜間の予約が入る前に直す',
+        fallback: '18:00 までに返事が無ければ、明日の朝に出す',
+        links: [{ label: '管理表の No.112', href: 'https://example.sharepoint.com/sites/konan/No112' }],
         target: 'release/2026-11-21（a1b2c3d..e4f5a6b）',
         effect: '予約の確定メールの日付の誤りが直る。止める時間はない',
         undo: '前のタグに戻す（5 分）', scope: '本番'
@@ -138,6 +148,10 @@ export function sample(now = Date.now()): SampleWs[] {
       {
         id: 'k9', rev: 1, kind: 'stuck', state: 'open', at: iso(now - 3 * H), stream: 'n115', tasks: ['k2'],
         title: '担当「No.115 stg の調査」が、stg の DB に入れず止まっている',
+        purpose: 'No.115 の不具合を stg で再現し、原因を確かめる',
+        why: '情報部の返事を待つと、再現が明日以降になる',
+        fallback: '返事が無ければ、情報部の返事を待つ',
+        quote: 'stg の DB に入れません（担当の原文）',
         reason: 'FATAL: password authentication failed for user "app"', since: iso(now - 3 * H),
         answerable: true, unblock: 'stg の DB の鍵を入れ直してよいかを答える',
         options: [{ id: 'reset', label: '鍵を入れ直してよい', recommended: true, example: 'stg だけ。本番の鍵は触らない' }, { id: 'wait', label: '情報部の返事を待つ' }]
@@ -165,10 +179,31 @@ export function sample(now = Date.now()): SampleWs[] {
       { id: 'u2', stream: 'h2', phase: '実装', title: '流れと構成の図', state: 'ok' }
     ],
     cards: [
-      { id: 'p9', rev: 1, kind: 'permit', state: 'open', at: iso(now - 6 * H), title: 'main の未 push の commit 12 件を push する', target: 'ee74e11..9a40551  main → origin/main', effect: '昨日からの窓の直しと hook の整理が入る', undo: 'push のあとは revert の commit で戻す', scope: 'push' },
-      { id: 'r8', rev: 1, kind: 'review', state: 'open', at: iso(now - 8 * H), due: iso(today(now, 17) + 3 * 24 * H), stream: 'h2', title: '設計図のページ（流れと構成）', look_for: ['担当と worker の寿命の分け方が図で読める', '窓・チャット・右の欄の役割が 1 枚に収まる'], href: 'https://claude.ai/code/artifact/example' },
-      { id: 'd30', rev: 1, kind: 'decide', state: 'open', at: iso(now - 7 * H), title: '週次の振り返りを金曜 17:00 に固定するか', purpose: '振り返りの議題を担当が前日に用意できる', options: [{ id: 'fix', label: '金曜 17:00 に固定する', recommended: true }, { id: 'free', label: '週ごとに決める' }] },
-      { id: 'd28', rev: 1, kind: 'decide', state: 'open', at: iso(now - 30 * 60_000), title: 'push の許可を、この案件では任せるか', options: [{ id: 'yes', label: '任せる（報告だけにする）' }, { id: 'no', label: '毎回聞く' }] }
+      {
+        id: 'p9', rev: 1, kind: 'permit', state: 'open', at: iso(now - 6 * H), stream: 'h1', title: 'main の未 push の commit 12 件を push する',
+        purpose: '窓の直しと hook の整理を、ほかの Mac でも使えるようにする', why: '明日の朝にほかの Mac で使うため', fallback: '返事が無ければ push せず、明日の朝にもう一度聞く',
+        links: [{ label: '差分', href: 'https://github.com/example/harness/compare/ee74e11...9a40551' }],
+        target: 'ee74e11..9a40551  main → origin/main', effect: '昨日からの窓の直しと hook の整理が入る', undo: 'push のあとは revert の commit で戻す', scope: 'push'
+      },
+      {
+        id: 'r8', rev: 1, kind: 'review', state: 'open', at: iso(now - 8 * H), due: iso(today(now, 17) + 3 * 24 * H), stream: 'h2', title: '設計図のページ（流れと構成）',
+        purpose: '担当と worker の分け方を 1 枚で説明できるようにする', fallback: '期限までに返事が無ければ、今の版で README から指す',
+        request: '担当と worker の寿命と、窓・チャット・右の欄の役割を 1 枚の図にしてほしい',
+        look_for: ['担当と worker の寿命の分け方が図で読める', '窓・チャット・右の欄の役割が 1 枚に収まる'],
+        evidence: ['1440 幅と 390 幅で撮って、はみ出しが無いことを確かめた'], href: 'https://claude.ai/code/artifact/example'
+      },
+      {
+        id: 'd30', rev: 1, kind: 'decide', state: 'open', at: iso(now - 7 * H), due: iso(now + 4 * 24 * H), stream: 'h1', title: '週次の振り返りを金曜 17:00 に固定するか',
+        purpose: '振り返りの議題を担当が前日に用意できる', fallback: '決まるまで、週ごとに窓口が聞く', quote: '振り返りの時間が毎週ずれるのが面倒',
+        context: { what: '週次の振り返りの時刻', now: '週ごとに窓口が聞いて決めている', how: '固定するなら、木曜の夜に担当が議題を用意する', gain: '毎週聞かれなくなる', cost: '金曜に外せない予定が入る週は動かす手間が出る' },
+        options: [{ id: 'fix', label: '金曜 17:00 に固定する', recommended: true, example: '11/28(金) 17:00 から毎週' }, { id: 'free', label: '週ごとに決める', example: '今のまま、月曜に窓口が聞く' }]
+      },
+      {
+        id: 'd28', rev: 1, kind: 'decide', state: 'open', at: iso(now - 30 * 60_000), stream: 'h1', title: 'push の許可を、この案件では任せるか',
+        purpose: '毎回の push の許可を減らす', why: '今日だけで push の許可を 4 回聞いた', fallback: '決まるまで毎回聞く', quote: 'push くらいは任せてもいいかも',
+        context: { what: 'このハーネスの main への push', now: '毎回「許す」で聞いている', how: '任せるなら、push したあとに報告だけを出す', gain: '許可の手間が無くなる', cost: '誤った commit の push に、あとから気づく' },
+        options: [{ id: 'yes', label: '任せる（報告だけにする）', recommended: true, example: 'push のあとに報告のカードが 1 枚出る' }, { id: 'no', label: '毎回聞く', example: '今のまま「許す」が出る' }]
+      }
     ],
     applied_ops: []
   }

@@ -1,4 +1,4 @@
-import type { Card, Cockpit, Handoff, OpType, UserLog } from './model.ts'
+import type { Card, Cockpit, Handoff, OpType, UserLog, Utterance } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -32,6 +32,8 @@ export type DispatchFact = {
   session?: string
   /** 終わった時刻（ミリ秒）。取り込み待ちの猶予に使う。 */
   settledAt?: number
+  /** Orca のタスクの状態（task-list の status。completed など）。Run の続きをたどって引いたときだけ。 */
+  taskStatus?: string
 }
 
 /** 担当（Orca のチャットか端末のエージェント）の今。orca agent list から取る。 */
@@ -61,6 +63,12 @@ export type CockpitView = {
   signal?: { state: 'waiting' | 'failed'; reason?: string }
   /** メインを新しいチャットに引き継いだ知らせ（.orca/cockpit/handoff.json）。 */
   handoff?: Handoff
+  /** 仕分けの検査に使う、id のある発言（本文は頭だけ）。パネルは持たない。 */
+  utterances?: Utterance[]
+  /** at の無い開いたカードを最初に見つけた時刻。 */
+  firstSeen?: Record<string, string>
+  /** タスクの id → 今の Dispatch（Run の続きをたどった先）。パネルは持たない。 */
+  current?: Record<string, string>
 }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */

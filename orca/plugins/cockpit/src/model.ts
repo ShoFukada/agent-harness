@@ -7,14 +7,16 @@ export const VERSION = 2
 
 export type TaskState = 'stop' | 'run' | 'wait' | 'idle' | 'ok'
 /**
- * カードの種類。利用者の手で進むのは send・decide・review・permit・stuck の 5 種類で、件数はこれだけを数える。
- * inbox は振り分けが済むまで、talk と report は件数に入れない。
+ * カードの種類。件数に数えるのは send・decide・review・permit・stuck の 5 種類。consult（相談）は要対応に並べるが、深田さんに聞くまで数えない（R52・v40）。
+ * inbox は振り分けが済むまで、report は件数に入れない。talk は版 2 の古い種類で、開いたものは読み込みで consult として扱う。
  */
-export type CardKind = 'inbox' | 'send' | 'decide' | 'review' | 'permit' | 'stuck' | 'talk' | 'report'
-export const KINDS: CardKind[] = ['inbox', 'send', 'decide', 'review', 'permit', 'stuck', 'talk', 'report']
+export type CardKind = 'inbox' | 'send' | 'decide' | 'review' | 'permit' | 'stuck' | 'consult' | 'talk' | 'report'
+export const KINDS: CardKind[] = ['inbox', 'send', 'decide', 'review', 'permit', 'stuck', 'consult', 'talk', 'report']
 export const COUNTED: CardKind[] = ['stuck', 'permit', 'decide', 'send', 'review']
+/** 深田さんに返事か相談を頼む種類。必須の欄を検査し、欠けていれば窓に出さない（R46-4）。 */
+export const ASKING: CardKind[] = [...COUNTED, 'consult']
 export const KIND_LABEL: Record<CardKind, string> = {
-  inbox: '届いた', send: '送る前', decide: '決める', review: '見て', permit: '許す', stuck: '詰まり', talk: '話し中', report: '報告'
+  inbox: '届いた', send: '送る前', decide: '決める', review: '見て', permit: '許す', stuck: '詰まり', consult: '相談', talk: '話し中', report: '報告'
 }
 
 export type Milestone = { date: string; label: string }
@@ -37,13 +39,18 @@ export type Task = {
   sources?: string[]
   repo?: Repo
   /**
-   * このタスクを進める担当か worker の、Orca の orchestration の Task と Dispatch（worker-start・send の受け取りの taskId・dispatchId）。
-   * 続きを send して Dispatch が変わったら書き換える。窓はこの Dispatch の様子で状態を出す。
+   * このタスクを進める担当か worker の、Orca の orchestration の Run と最初の Task（worker-start の受け取りの runId・taskId）。
+   * 今の Dispatch は窓が Run の Task の続き（follow_up_of）をたどって引く。dispatch_id は版 2 の古い形で、読むが新しく書かせない。
    */
-  worker?: { task_id: string; dispatch_id: string }
+  worker?: TaskWorker
 }
+export type TaskWorker = { task_id: string; run_id?: string; dispatch_id?: string }
+/** 仕事の形（R51）。delegate: 任せる・cowork: 一緒に作る・watch: 見張る。タスクは仕事の形を引き継ぐ。 */
+export type StreamForm = 'delegate' | 'cowork' | 'watch'
+export const FORMS: StreamForm[] = ['cowork', 'delegate', 'watch']
+export const FORM_LABEL: Record<StreamForm, string> = { delegate: '任せる', cowork: '一緒に作る', watch: '見張る' }
 /** 仕事（大タスク）。担当のチャットは仕事ごとに 1 つまで。 */
-export type Stream = { id: string; title: string; summary?: string; sources?: string[] }
+export type Stream = { id: string; title: string; summary?: string; sources?: string[]; form?: StreamForm }
 
 /**
  * 仕事の担当。仕事が終わるまで残る、話し相手のエージェント（Orca のチャットか端末）。
@@ -84,6 +91,8 @@ export type Card = {
   state: 'open' | 'waiting' | 'done'
   /** 出た時刻（ISO 8601）。 */
   at?: string
+  /** 版 2 の頃に一部のカードが書いた出た時刻。at が無いときに使う（移し替えで at に写す）。 */
+  created_at?: string
   due?: string
   /** 仕事（streams の id）。担当と、案件の今の行に結ぶ。 */
   stream?: string
@@ -142,7 +151,15 @@ export type Card = {
   answerable?: boolean
   unblock?: string
 
-  /** talk: 最後のやり取りと、次に待つもの。 */
+  /** consult: 論点 1 行・担当の今の考え・分かっていること・決めかねていること。 */
+  issue?: string
+  stance?: string
+  known?: string[]
+  undecided?: string[]
+  /** 依頼の帳簿（requests[]）のどの依頼の確認か。request は依頼の原文で、こちらは id。 */
+  request_id?: string
+
+  /** talk（版 2）: 最後のやり取りと、次に待つもの。 */
   last?: { text: string; at?: string; by?: string }
   next?: string
 
@@ -158,12 +175,40 @@ export type Card = {
 
   resolved_by?: 'user' | 'owner'
   resolved_at?: string
+  /** 移し替え（migrate-v3）が resolved_at を操作や作った時刻から推して補った。 */
+  resolved_at_inferred?: boolean
+  /** 見てを、深田さんの操作（これでよい・直し・話す）が無いまま窓口が閉じた（移し替えが付ける）。対応済みに印を出す。 */
+  closed_without_review?: boolean
   resolved_option?: string
   resolved_text?: string
 }
 
-/** deliverables は版 1 から写した成果物の記録。画面は読まない。 */
-export type Request = { id: string; at: string; title: string; quote: string; state: 'open' | 'done'; tasks?: string[]; deliverables?: unknown[] }
+export type RequestKind = 'work' | 'question' | 'decide' | 'send'
+export const REQUEST_KINDS: RequestKind[] = ['work', 'question', 'decide', 'send']
+export type EvidenceKind = 'commit' | 'pr' | 'url' | 'answer' | 'op' | 'post'
+export const EVIDENCE_KINDS: EvidenceKind[] = ['commit', 'pr', 'url', 'answer', 'op', 'post']
+/**
+ * 済の条件（done_when の番号、0 始まり）を満たした証拠。op は「これでよい」「送った」などの操作で、どのカードのどの版に押したかを持つ。
+ * post は見張りが読み取った相手のスレッドへの投稿の URL（送るの済。読み取る仕組みは版 3 ではまだ無い）。
+ */
+export type Evidence = { when: number; kind: EvidenceKind; ref: string; card?: string; rev?: number }
+/**
+ * 依頼の帳簿の 1 行。state は版 2 の古い行だけが持つ（新しい行の状態は state.ts が証拠から決める）。legacy は移し替えの時点にあった行の印で、
+ * 発言と済の条件を検査しない。deliverables は版 1 から写した成果物の記録で、画面は読まない。
+ */
+export type Request = {
+  id: string; at: string; title: string; quote?: string; state?: 'open' | 'done'; tasks?: string[]; deliverables?: unknown[]
+  utterances?: { id: string; quote: string }[]
+  kind?: RequestKind
+  done_when?: string[]
+  evidence?: Evidence[]
+  check?: boolean
+  legacy?: boolean
+}
+/** 発言の仕分けの位置（utterances.jsonl の id）。through までの発言は、依頼に結んだか none に入れてある。 */
+export type Intake = { through?: string; none?: string[]; checked_through?: string }
+/** .orca/cockpit/utterances.jsonl の 1 行（hook が書く）。id の無い古い行は仕分けの検査に入れない。 */
+export type Utterance = { id?: string; at: string; prompt?: string }
 
 export type Cockpit = {
   version: 2
@@ -176,6 +221,7 @@ export type Cockpit = {
   routes?: Route[]
   cards: Card[]
   requests?: Request[]
+  intake?: Intake
   notes_ref?: string
   applied_ops?: number[]
 }
@@ -237,13 +283,14 @@ const obj = (need: string[], opt: string[] = []): Shape => (v) =>
 const list = (one: Shape): Shape => (v) => Array.isArray(v) && v.every(one)
 /** 画面と状態の計算が読むカードの欄の形。種類・状態・id は parseCockpit が先に断る。 */
 const CARD_SHAPE: Record<string, Shape> = {
-  ...Object.fromEntries(['at', 'due', 'stream', 'owner', 'purpose', 'asked', 'routed', 'why', 'fallback', 'figure', 'request', 'href', 'diff', 'target', 'effect', 'undo',
-    'scope', 'reason', 'since', 'unblock', 'next', 'quote', 'resolved_at', 'resolved_option', 'resolved_text'].map((k) => [k, str])),
+  ...Object.fromEntries(['at', 'created_at', 'due', 'stream', 'owner', 'purpose', 'asked', 'routed', 'why', 'fallback', 'figure', 'request', 'request_id', 'href', 'diff', 'target', 'effect', 'undo',
+    'scope', 'reason', 'since', 'unblock', 'next', 'quote', 'issue', 'stance', 'resolved_at', 'resolved_option', 'resolved_text'].map((k) => [k, str])),
   reply: (v) => v === 'needed' || v === 'none',
+  resolved_at_inferred: (v) => typeof v === 'boolean', closed_without_review: (v) => typeof v === 'boolean',
   resolved_by: (v) => v === 'user' || v === 'owner',
   answerable: (v) => typeof v === 'boolean',
   manual: (v) => obj([], ['where', 'command', 'check'])(v) && ((v as Manual).steps === undefined || strs((v as Manual).steps)),
-  tasks: strs, look_for: strs, evidence: strs,
+  tasks: strs, look_for: strs, evidence: strs, known: strs, undecided: strs,
   from: obj(['who'], ['via', 'at', 'href']),
   draft: obj(['to', 'text'], ['via', 'href']),
   context: obj([], CONTEXT_FIELDS.map(([k]) => k)),
@@ -277,7 +324,44 @@ export function dropBadFields(cards: Card[], where: string): string[] {
   return out
 }
 
-/** 壊れた JSON・形の違うファイル・古い版は例外にし、呼び出し側が前回の表示を保てるようにする。problems には外した欄を足す。 */
+/**
+ * 版 2 の古い形を版 3 の読み方にそろえる（読み込みと移し替え migrate-v3 が同じ規則を使う）。
+ * 開いた talk は consult にし、論点に次に待つもの、担当の考えに最後のやり取りを写す。at が無ければ created_at を写す。
+ */
+export function upgradeCard(c: Card): Card {
+  if (c.kind === 'talk' && c.state !== 'done') {
+    c.kind = 'consult'
+    c.issue ??= c.next ?? c.title
+    if (c.last?.text) c.stance ??= c.last.text
+  }
+  if (!c.at && c.created_at) c.at = c.created_at
+  return c
+}
+
+const WORKER_SHAPE: Shape = (w) => isObj(w) && str(w.task_id) && (str(w.run_id) || str(w.dispatch_id)) && [w.run_id, w.dispatch_id].every((x) => x === undefined || str(x))
+const EVIDENCE_SHAPE: Shape = (e) => isObj(e) && Number.isInteger(e.when) && EVIDENCE_KINDS.includes(e.kind as EvidenceKind) && str(e.ref)
+  && (e.card === undefined || str(e.card)) && (e.rev === undefined || Number.isInteger(e.rev))
+/** 依頼の帳簿の欄の形。id は parseCockpit が先に断る。 */
+export const REQUEST_SHAPE: Record<string, Shape> = {
+  at: str, title: str, quote: str, state: (v) => v === 'open' || v === 'done', tasks: strs,
+  utterances: list(obj(['id', 'quote'])), kind: (v) => REQUEST_KINDS.includes(v as RequestKind), done_when: strs, evidence: list(EVIDENCE_SHAPE),
+  check: (v) => typeof v === 'boolean', legacy: (v) => typeof v === 'boolean'
+}
+export const INTAKE_SHAPE: Shape = (v) => obj([], ['through', 'checked_through'])(v) && ((v as Intake).none === undefined || strs((v as Intake).none))
+
+/** カード 1 枚の id・題・版・種類・状態が読めるか。読めなければ理由。画面で class 名や印に使うので、知らない値は断る。 */
+export function cardHeadError(c: unknown): string | undefined {
+  if (!isObj(c) || typeof c.id !== 'string' || typeof c.title !== 'string' || typeof c.rev !== 'number') return 'id・title・rev を読めない'
+  if (!KINDS.includes(c.kind as CardKind)) return `kind が不正: ${String(c.kind)}`
+  if (c.state !== 'open' && c.state !== 'waiting' && c.state !== 'done') return `state が不正: ${String(c.state)}`
+  return undefined
+}
+
+/**
+ * 壊れた JSON・形の違うファイル・古い版は例外にし、呼び出し側が前回の表示を保てるようにする。
+ * 1 枚のカード・1 つのタスクの形の誤りは、その 1 件だけを外して problems に「形の誤り」として名指しし、残りを描く
+ * （帳簿は書く道具を通すが、Bash からの書き換えは止め切れないため）。
+ */
 export function parseCockpit(text: string, problems: string[] = []): Cockpit {
   const v: unknown = JSON.parse(text)
   if (!isObj(v)) throw new Error('cockpit.json がオブジェクトではありません')
@@ -285,25 +369,42 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
     throw new Error(`cockpit.json が古い形（version ${String(v.version ?? 1)}）です。node window/migrate.ts <ワークスペースの root> --write で移し替えてください`)
   if (!isObj(v.workspace) || !Array.isArray(v.cards) || !Array.isArray(v.tasks) || !Array.isArray(v.streams))
     throw new Error('cockpit.json に workspace・streams・tasks・cards がありません')
-  for (const t of v.tasks as Record<string, unknown>[]) {
-    if (!TASK_STATES.includes(t?.state as TaskState)) throw new Error(`tasks の state が不正です: ${String(t?.id)}`)
-    const w = t.worker
-    if (w !== undefined && !(isObj(w) && typeof w.task_id === 'string' && typeof w.dispatch_id === 'string'))
-      throw new Error(`tasks の worker の形が不正です（{ task_id, dispatch_id }。workerctl の頃の { worktree_id, terminal } は書き換える）: ${String(t.id)}`)
+  v.tasks = (v.tasks as Record<string, unknown>[]).filter((t) => {
+    const why = !isObj(t) || typeof t.id !== 'string' ? 'id を読めない'
+      : !TASK_STATES.includes(t.state as TaskState) ? `state が不正: ${String(t.state)}`
+      : t.worker !== undefined && !WORKER_SHAPE(t.worker) ? 'worker の形が不正。{ run_id, task_id } で書く'
+      : undefined
+    if (why) problems.push(`形の誤り: cockpit.json のタスク ${String(t?.id)}（${why}）。このタスクは表示していません`)
+    if (why) return false
     const bad = ['next', 'waiting_on', 'waiting_since'].filter((k) => t[k] != null && !str(t[k]))
     for (const k of bad) delete t[k]
     if (bad.length) problems.push(`cockpit.json のタスク ${String(t.id)} の ${bad.join('・')} の形が違うので、その欄を出さずに表示しています`)
-  }
-  // 列挙値は画面で class 名や印に使うので、知らない値は読み込みの時点で断る。
-  for (const c of v.cards as Record<string, unknown>[]) {
-    if (typeof c?.id !== 'string' || typeof c.title !== 'string' || typeof c.rev !== 'number') throw new Error(`cards の id・title・rev が不正です: ${String(c?.id)}`)
-    if (!KINDS.includes(c.kind as CardKind)) throw new Error(`cards の kind が不正です: ${c.id}`)
-    if (c.state !== 'open' && c.state !== 'waiting' && c.state !== 'done') throw new Error(`cards の state が不正です: ${c.id}`)
-  }
+    return true
+  })
+  v.cards = (v.cards as unknown[]).filter((c) => {
+    const why = cardHeadError(c)
+    if (why) problems.push(`形の誤り: cockpit.json のカード ${String((c as { id?: unknown })?.id)}（${why}）。このカードは表示していません`)
+    return !why
+  })
+  for (const st of v.streams as Record<string, unknown>[])
+    if (isObj(st) && st.form !== undefined && !FORMS.includes(st.form as StreamForm)) {
+      problems.push(`cockpit.json の仕事 ${String(st.id)} の form（${String(st.form)}）が不正なので、形が書かれていない仕事として出しています`)
+      delete st.form
+    }
   for (const key of ['owners', 'routes', 'requests'] as const)
     if (v[key] !== undefined && (!Array.isArray(v[key]) || (v[key] as unknown[]).some((x) => !isObj(x) || typeof x.id !== 'string')))
       throw new Error(`cockpit.json の ${key} の形が不正です`)
+  for (const r of (v.requests ?? []) as Record<string, unknown>[]) {
+    const bad = Object.keys(REQUEST_SHAPE).filter((k) => r[k] !== undefined && !REQUEST_SHAPE[k]!(r[k]))
+    for (const k of bad) delete r[k]
+    if (bad.length) problems.push(`cockpit.json の依頼 ${String(r.id)} の ${bad.join('・')} の形が違うので、その欄を外して読んでいます`)
+  }
+  if (v.intake !== undefined && !INTAKE_SHAPE(v.intake)) {
+    problems.push('cockpit.json の intake の形が違うので、発言の仕分けの検査を止めています')
+    delete v.intake
+  }
   problems.push(...dropBadFields(v.cards as Card[], 'cockpit.json '))
+  for (const c of v.cards as Card[]) upgradeCard(c)
   return v as unknown as Cockpit
 }
 
@@ -330,12 +431,12 @@ export function nextOp(log: UserLog, op: Omit<Op, 'op_id'>): Op {
 
 /**
  * カードの今。
- * - mine: 私の番（件数に数える種類なら数える）
- * - talking: 担当と話している（件数から外す。担当がカードを書き換えて rev が上がると mine に戻る）
+ * - mine: 私の番（件数に数える種類なら数える）。「担当と話す」を押したカードも、同じ版のあいだは talking の印を付けて私の番に残す（R46）
+ * - fixing: 見てで直しを頼んだ（本文つきの talk）。件数から外し、担当が直して rev が上がると mine に戻る
  * - waiting: 送ったあと顧客の返事を待っている
  * - closed: 済み。pending は担当がまだ受け取っていない（受け取り待ち）
  */
-export type Status = 'mine' | 'talking' | 'waiting' | 'closed'
+export type Status = 'mine' | 'fixing' | 'waiting' | 'closed'
 export type CardView = {
   card: Card
   status: Status
@@ -349,6 +450,8 @@ export type CardView = {
   chosen?: Option
   /** 見ての「直してほしいことを書く」で頼んだ直し（本文つきの talk の操作の text）。 */
   fix?: string
+  /** 「担当と話す」を押してから、担当・窓口がカードを書き直すまで（同じ版のあいだ）。since は押した時刻。 */
+  talking?: { since: string }
 }
 
 const CLOSING: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'ack']
@@ -391,10 +494,16 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardVie
       out.push({ card, status: 'waiting', pending: false, when: card.awaiting?.since })
       continue
     }
-    const talk = ops.filter((o) => o.type === 'talk' && o.item_rev === card.rev).at(-1)
-    if (card.kind === 'talk' || talk)
-      out.push({ card, status: 'talking', pending: !!talk && !applied.has(talk.op_id), undoOp: talk && !applied.has(talk.op_id) ? talk : undefined, when: talk?.at ?? card.last?.at, fix: talk?.text })
-    else out.push({ card, status: 'mine', pending: false })
+    const talks = ops.filter((o) => o.type === 'talk' && o.item_rev === card.rev)
+    // 直しの受領は applied_ops に足すだけでカードの中身は変えない。直した版（rev が上がる）が出るまで件数から外す。
+    const fix = talks.filter((o) => o.text?.trim()).at(-1)
+    if (fix) {
+      const pending = !applied.has(fix.op_id)
+      out.push({ card, status: 'fixing', pending, undoOp: pending ? fix : undefined, when: fix.at, fix: fix.text })
+      continue
+    }
+    const talk = talks.at(-1)
+    out.push({ card, status: 'mine', pending: false, ...(talk && { talking: { since: talk.at }, when: talk.at, undoOp: applied.has(talk.op_id) ? undefined : talk }) })
   }
   for (const card of archive) {
     const chosen = card.options?.find((x) => x.id === card.resolved_option)
@@ -434,4 +543,52 @@ export function shownTask(t: Task, fact: DispatchFact | null | undefined): TaskS
   if (fact.state === 'failed' || fact.liveness === 'exited') return { state: 'stop', why: 'stopped', stop: fact.liveness === 'exited' ? 'dead' : 'error' }
   if (fact.waiting) return { state: 'stop', why: 'stopped', stop: 'blocked' }
   return { state: 'run', why: 'working' }
+}
+
+const has = (v: unknown): boolean =>
+  Array.isArray(v) ? v.some(has) : isObj(v) ? Object.values(v).some(has) : typeof v === 'boolean' || typeof v === 'number' || !!String(v ?? '').trim()
+type Need = [key: string, label: string, ok: (c: Card) => boolean]
+const COMMON_NEEDS: Need[] = [
+  ['stream', 'どの仕事の話か', (c) => has(c.stream)],
+  ['purpose', '何のため', (c) => has(c.purpose)],
+  ['why|due', 'なぜ今・期限', (c) => has(c.why) || has(c.due)],
+  ['fallback', '返事が無いとき', (c) => has(c.fallback)],
+  // 出典は、資料・原文・依頼の原文・成果物のほか、送る前の元のスレッド・届いた連絡・いきさつの原文でも足りる。
+  ['links|quote|request|href', '出典', (c) => has(c.links) || has(c.quote) || has(c.request) || has(c.href) || has(c.draft?.href) || has(c.from?.href) || has(c.background?.quote)]
+]
+const KIND_NEEDS: Partial<Record<CardKind, Need[]>> = {
+  decide: [
+    ...CONTEXT_FIELDS.map(([k, l]): Need => [`context.${k}`, l, (c) => has(c.context?.[k])]),
+    ['options', '選択肢 2 つ以上と各案の具体例', (c) => (c.options?.length ?? 0) >= 2 && c.options!.every((o) => has(o.example))],
+    ['options.recommended', 'おすすめ 1 つ', (c) => c.options?.filter((o) => o.recommended).length === 1]
+  ],
+  review: [
+    ['request', '依頼の原文', (c) => has(c.request)], ['href', '成果物', (c) => has(c.href)],
+    ['look_for', '見てほしい点', (c) => has(c.look_for)], ['evidence', '確かめた結果', (c) => has(c.evidence)]
+  ],
+  permit: [
+    ['target|context.what', '対象', (c) => has(c.target) || has(c.context?.what)],
+    ['effect|context.gain', '何が変わるか', (c) => has(c.effect) || has(c.context?.gain)],
+    ['undo', '戻し方', (c) => has(c.undo)]
+  ],
+  send: [['draft.to', '宛先', (c) => has(c.draft?.to)], ['draft.via', '経路', (c) => has(c.draft?.via)], ['draft.text', '本文', (c) => has(c.draft?.text)], ['draft.href', '元のスレッド', (c) => has(c.draft?.href)]],
+  consult: [['issue', '論点', (c) => has(c.issue)], ['stance', '担当の今の考え', (c) => has(c.stance)]],
+  stuck: [['reason', '何で止まっているか', (c) => has(c.reason)], ['unblock', '何をすれば進むか', (c) => has(c.unblock)]]
+}
+/** 手作業の頼みは、何のためと手作業の欄だけで足りる（cards.md「深田の手作業を頼む」）。 */
+const MANUAL_NEEDS: Need[] = [
+  ['purpose', '何のため', (c) => has(c.purpose)],
+  ['manual.where', 'どこで', (c) => has(c.manual?.where)],
+  ['manual.command|steps', 'コマンドか手順', (c) => has(c.manual?.command) || has(c.manual?.steps)],
+  ['manual.check', '済ませたあと窓口が確かめること', (c) => has(c.manual?.check)]
+]
+
+/**
+ * 確認依頼の必須の欄のうち、欠けているもの（R46-4）。深田さんに頼む種類（ASKING）だけを見る。欠けたカードは窓の要対応に出さず、
+ * state.ts の checks.incomplete_cards で窓口に名指しする。key は窓口が直す欄、label は画面に出す名前。
+ */
+export function missingFields(c: Card): { key: string; label: string }[] {
+  if (!ASKING.includes(c.kind)) return []
+  const needs = c.kind === 'permit' && c.manual ? MANUAL_NEEDS : [...COMMON_NEEDS, ...(KIND_NEEDS[c.kind] ?? [])]
+  return needs.filter(([, , ok]) => !ok(c)).map(([key, label]) => ({ key, label }))
 }

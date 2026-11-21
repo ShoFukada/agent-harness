@@ -1,8 +1,8 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, KIND_LABEL, overlay, shownTask, unappliedOps, worstState,
-  type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Stream, type Task, type TaskShown, type TaskState, type UserLog
+  COUNTED, DEFAULT_PHASES, KIND_LABEL, missingFields, overlay, shownTask, unappliedOps, worstState,
+  type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Request, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
 
@@ -85,9 +85,14 @@ export function bucketOf(due: string | undefined, now: number, kind?: CardKind):
 /** 期限まで 24 時間を切ったか過ぎた。朱で出すのはこれだけ。 */
 export const isHot = (due: string | undefined, now: number) => !!due && !Number.isNaN(dueAt(due)) && dueAt(due) - now < DAY
 
-/** Orca から分かること。パネルは worktree の一覧と担当の今を持たない。 */
-/** Orca から分かること。パネルは orchestration を読まないので dispatches が無い（タスクはメインの書いた state のまま）。null は Orca に無い。 */
-export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[] }
+/**
+ * Orca から分かること。パネルは orchestration を読まないので dispatches が無い（タスクはメインの書いた state のまま）。null は Orca に無い。
+ * current はタスクの id → 今の Dispatch（Run の Task の続きをたどった先）。無ければ worker の記録の dispatch_id（版 2）を使う。
+ */
+export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string> }
+
+/** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
+export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
 
 /** カードの話し相手。担当が無い仕事は案件の窓口（main）。 */
 export type OwnerRef = {
@@ -128,11 +133,34 @@ export const agentTitle = (name: string, role: 'worker' | '担当') => `${name}�
 export type JobView = { id: string; title: string; state: JobState; label: string; next?: string; mine: number; owner?: OwnerRef; since?: string }
 
 export type Counts = Record<CardKind, number>
+/** 帳簿の不備（必須の欄が欠けたカード・欄の欠けた依頼・仕分けていない発言）。since は数え始めた時刻。 */
+export type Gap = { kind: 'card' | 'request' | 'utterance'; id: string; title: string; missing: string[]; since?: string }
+export type RequestState = '受付' | '進行中' | '確認待ち' | '済'
+export type RequestView = {
+  req: Request
+  state: RequestState
+  legacy: boolean
+  tasks: TaskView[]
+  /** 結ばれた確認依頼（request_id か、タスクを共有するカード）。 */
+  cards: Card[]
+  streams: string[]
+  /** 欠けた欄（legacy ではない行の utterances・done_when・kind）。 */
+  missing: string[]
+  /** 済の条件ごとに証拠があるか。 */
+  covered: boolean[]
+}
+export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string> }
+/** 帳簿の不備を窓口に直させる猶予。過ぎても欠けたままなら、窓の要対応の上に「抜けている」として出す（R47）。 */
+export const GAP_GRACE_MS = 30 * 60_000
+
 export type Derived = {
   views: CardView[]
-  /** 私の番（届いたも含む）。期限順。 */
+  /** 私の番（届いたも含む）。期限順。必須の欄が欠けたカードは入れない。 */
   queue: Row[]
+  /** 「担当と話す」を押して、同じ版のまま私の番に残っているカード。 */
   talking: Row[]
+  /** 見てで直しを頼んだカード（件数から外す）。 */
+  fixing: Row[]
   waiting: Row[]
   reports: Row[]
   /** 片付いたもの（新しい順）。 */
@@ -142,9 +170,16 @@ export type Derived = {
   total: number
   tasks: Map<string, TaskView>
   jobs: JobView[]
+  /** 必須の欄が欠けて要対応に出していないカード（猶予の内も外も）。 */
+  incomplete: Gap[]
+  /** 仕分けていない発言（intake の位置より後か、どの依頼にも none にも結ばれていない）。 */
+  unsorted: Gap[]
+  requests: RequestView[]
+  /** 猶予の 30 分を過ぎても直っていない帳簿の不備。窓の要対応の上に出す。 */
+  gaps: Gap[]
 }
 
-const RANK: Record<CardKind, number> = { stuck: 0, permit: 1, decide: 2, send: 3, review: 4, inbox: 5, talk: 6, report: 7 }
+const RANK: Record<CardKind, number> = { stuck: 0, permit: 1, decide: 2, send: 3, review: 4, consult: 5, inbox: 6, talk: 7, report: 8 }
 const dueKey = (r: Row) => (r.card.kind === 'stuck' ? -Infinity : r.card.due ? dueAt(r.card.due) || Infinity : Infinity)
 export const byUrgency = (a: Row, b: Row) => dueKey(a) - dueKey(b) || RANK[a.card.kind] - RANK[b.card.kind] || (a.card.at ?? '').localeCompare(b.card.at ?? '')
 
@@ -208,17 +243,25 @@ function dispatchStuck(c: Cockpit, root: string, tasks: Map<string, TaskView>, w
 
 const CLOSED_DAYS = 14
 
-export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, facts: OrcaFacts | undefined, now: number): Derived {
+export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, facts: OrcaFacts | undefined, now: number, opts: DeriveOpts = {}): Derived {
   const views = overlay(c, log, archive)
   const row = (v: CardView): Row => ({ ...v, root, ws: c.workspace.name, owner: ownerOf(c, v.card, facts), stream: c.streams.find((s) => s.id === v.card.stream) })
   const rows = views.map(row)
   const written = new Set(c.cards.filter((x) => x.kind === 'stuck' && x.state === 'open').flatMap((x) => [...(x.tasks ?? []), ...(x.stream ? [x.stream] : [])]))
   const tasks = new Map<string, TaskView>()
   for (const t of c.tasks) {
-    const fact = facts?.dispatches && t.worker ? facts.dispatches[t.worker.dispatch_id] ?? null : undefined
+    const id = currentDispatch(t, facts)
+    const fact = facts?.dispatches && t.worker ? (id ? facts.dispatches[id] ?? null : null) : undefined
     tasks.set(t.id, { ...shownTask(t, fact), task: t, settledAt: fact?.settledAt })
   }
-  const mine = rows.filter((r) => r.status === 'mine' && r.card.kind !== 'report')
+  const incomplete: Gap[] = []
+  const complete = (r: Row) => {
+    if (r.status !== 'mine' || r.card.state !== 'open') return true
+    const miss = missingFields(r.card)
+    if (miss.length) incomplete.push({ kind: 'card', id: r.card.id, title: r.card.title, missing: miss.map((m) => m.label), since: r.card.at ?? opts.firstSeen?.[r.card.id] })
+    return !miss.length
+  }
+  const mine = rows.filter((r) => r.status === 'mine' && r.card.kind !== 'report' && complete(r))
   const fromAgents = stuckRows(c, root, facts, written)
   const queue = [...mine, ...fromAgents, ...dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])))].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
@@ -226,14 +269,71 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const recent = (r: Row) => !r.when || now - Date.parse(r.when) < CLOSED_DAYS * DAY
   const closed = rows.filter((r) => r.status === 'closed' && recent(r)).sort((a, b) => (b.when ?? '').localeCompare(a.when ?? ''))
+  const requests = requestViews(c, log, archive, tasks)
+  const unsorted = unsortedOf(c, opts.utterances ?? [])
+  const late = (g: Gap) => !!g.since && now - Date.parse(g.since) >= GAP_GRACE_MS
+  const reqGaps = requests.filter((r) => r.missing.length).map((r): Gap => ({ kind: 'request', id: r.req.id, title: r.req.title, missing: r.missing, since: r.req.at }))
 
   return {
-    views, queue, counts, total, tasks, closed,
-    talking: rows.filter((r) => r.status === 'talking').sort(byUrgency),
+    views, queue, counts, total, tasks, closed, incomplete, unsorted, requests,
+    talking: queue.filter((r) => r.talking),
+    fixing: rows.filter((r) => r.status === 'fixing').sort(byUrgency),
     waiting: rows.filter((r) => r.status === 'waiting').sort((a, b) => (a.card.awaiting?.since ?? '').localeCompare(b.card.awaiting?.since ?? '')),
     reports: rows.filter((r) => r.status === 'mine' && r.card.kind === 'report').sort((a, b) => (b.card.at ?? '').localeCompare(a.card.at ?? '')),
-    jobs: jobViews(c, tasks, queue, rows, facts)
+    jobs: jobViews(c, tasks, queue, rows, facts),
+    gaps: [...incomplete, ...reqGaps, ...unsorted].filter(late)
   }
+}
+
+/** 移し替え（intake のある帳簿）の前は、どの依頼も古い行として扱う（読み手を入れてから移すまでの間に、25 件を不備と出さないため）。 */
+const isLegacy = (c: Cockpit, r: Request) => r.legacy === true || !c.intake
+
+/**
+ * 依頼の今。済は証拠から決める（R33）: 済の条件ごとに証拠が 1 つ以上あり、check なら、今の版のカードに押した取り消されていない
+ * 「これでよい」の操作が証拠にあるときだけ済。question は回答（answer）の証拠も要る。古い行は書かれた state のまま。
+ */
+export function requestViews(c: Cockpit, log: UserLog, archive: Card[], tasks: Map<string, TaskView>): RequestView[] {
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  const cardById = new Map([...archive, ...c.cards].map((x) => [x.id, x]))
+  const liveOp = (ref: string) => log.ops.find((o) => String(o.op_id) === ref && !undone.has(o.op_id))
+  return (c.requests ?? []).map((r): RequestView => {
+    const legacy = isLegacy(c, r)
+    const ts = (r.tasks ?? []).map((id) => tasks.get(id)).filter((t): t is TaskView => !!t)
+    const cards = c.cards.filter((x) => x.request_id === r.id || (x.tasks ?? []).some((t) => r.tasks?.includes(t)))
+    const streams = [...new Set([...ts.map((t) => t.task.stream), ...cards.map((x) => x.stream).filter((x): x is string => !!x)])]
+    const ev = (r.evidence ?? []).filter((e) => e.kind !== 'op' || !!liveOp(e.ref))
+    const covered = (r.done_when ?? []).map((_, i) => ev.some((e) => e.when === i))
+    if (legacy) {
+      return { req: r, legacy, tasks: ts, cards, streams, missing: [], covered, state: r.state === 'done' ? '済' : ts.length ? '進行中' : '受付' }
+    }
+    const missing = [!r.utterances?.length && '発言（utterances）', !r.done_when?.length && '済の条件（done_when）', !r.kind && '種類（kind）'].filter((x): x is string => !!x)
+    // 「これでよい」は、押した版が今のカードの版と同じときだけ効く（同じ URL を改訂したら rev を上げるので、古い承認は外れる）。
+    const accepted = ev.some((e) => {
+      const o = e.kind === 'op' ? liveOp(e.ref) : undefined
+      const card = o && cardById.get(o.item_id)
+      return !!o && o.type === 'accept' && !!card && o.item_id === (e.card ?? o.item_id) && o.item_rev === card.rev && (e.rev === undefined || e.rev === card.rev)
+    })
+    const all = covered.length > 0 && covered.every(Boolean) && (r.kind !== 'question' || ev.some((e) => e.kind === 'answer'))
+    const reviewing = cards.some((x) => x.kind === 'review' && x.state === 'open')
+    const state: RequestState = all && (!r.check || accepted) ? '済' : (all && r.check) || reviewing ? '確認待ち' : ts.length || ev.length || cards.length ? '進行中' : '受付'
+    return { req: r, legacy, tasks: ts, cards, streams, missing, covered, state }
+  })
+}
+
+/**
+ * 仕分けていない発言。intake の through より後の発言と、checked_through より後で through 以前のうち、どの依頼にも none にも結ばれていないもの。
+ * id の無い行（発言に id を付ける前の記録）は結べないので見ない。intake の無い帳簿（移し替えの前）は検査しない。
+ */
+export function unsortedOf(c: Cockpit, utterances: Utterance[]): Gap[] {
+  if (!c.intake) return []
+  const ids = utterances.filter((u): u is Utterance & { id: string } => !!u.id)
+  const at = (id: string | undefined) => (id ? ids.findIndex((u) => u.id === id) : -1)
+  const through = at(c.intake.through)
+  const checked = at(c.intake.checked_through)
+  const bound = new Set([...(c.intake.none ?? []), ...(c.requests ?? []).flatMap((r) => (r.utterances ?? []).map((u) => u.id))])
+  return ids
+    .filter((u, i) => i > through || (i > checked && !bound.has(u.id)))
+    .map((u) => ({ kind: 'utterance', id: u.id, title: (u.prompt ?? '').replace(/\s+/g, ' ').slice(0, 60), missing: ['仕分け'], since: u.at }))
 }
 
 /** 仕事ごとの今。済んだ仕事は後ろに回す。メインの書いた要約は使わず、タスクとカードから決める。 */
@@ -290,11 +390,16 @@ export type StateReport = {
   /** 私の番のカード（件数に数えるもの）を急ぐ順に。操作を重ね、Orca で止まった worker の詰まりを足したあと。desk の朝の見回りが読む。 */
   mine: { id: string; kind: CardKind; title: string; due?: string }[]
   overdue: string[]
-  talking: string[]
+  /** 「担当と話す」を押して、同じ版のまま私の番に残っているカード（with は話し相手）。 */
+  talking: { id: string; since: string; with: string }[]
+  /** 見てで直しを頼み、直した版を待っているカード。 */
+  fixing: string[]
   waiting: { id: string; who: string; what: string; since: string; remind_at?: string }[]
   /** orca は Orca のサイドバーに出す形（表示名・状態・未読の印）。担当の作業場所に当てる。 */
   jobs: { id: string; title: string; state: JobState; label: string; next?: string; orca: { display_name: string; status: OrcaStatus; unread: boolean } }[]
   tasks: { id: string; title: string; state: TaskState; from: TaskShown['why'] }[]
+  /** 依頼の帳簿の今（受けた順）。state は証拠から決めたもの。 */
+  requests: { id: string; title: string; state: RequestState; legacy: boolean }[]
   workers: { task?: string; job?: string; state: string; stop?: StopReason }[]
   checks: {
     pending_ops: number
@@ -317,8 +422,22 @@ export type StateReport = {
     plugin: string | null
     /** 読めていない経路。 */
     routes: string[]
-    /** サイドバーで切れる長さの仕事・担当の名前（NAME_MAX を超える）。 */
+    /** サイドバーで切れる長さの仕事・担当・タスクの名前（NAME_MAX を超える）。 */
     long_names: string[]
+    /** 必須の欄が欠けて窓に出していない確認依頼（R46-4）。窓口が埋める。30 分を過ぎると窓の「抜けている」に出る。 */
+    incomplete_cards: { id: string; missing: string[] }[]
+    /** 発言と済の条件の欠けた依頼（移し替えのあとに受けた行）。 */
+    incomplete_requests: { id: string; missing: string[] }[]
+    /** 仕分けていない発言の id（R33）。窓口がそのターンのうちに依頼か none に結ぶ。 */
+    unsorted: string[]
+    /** 今の Dispatch が済んで Orca のタスクも終わったのに、手書きの state が run のままのタスク。 */
+    stale_tasks: string[]
+    /** 仕事（streams）に入っていない、済んでいないタスク。 */
+    loose_tasks: string[]
+    /** phases に無い工程名の、済んでいないタスク（「t12（作る）」の形）。 */
+    unknown_phase: string[]
+    /** 形（form: delegate・cowork・watch）の書かれていない、済んでいない仕事（R51）。 */
+    no_form: string[]
   }
   /** 全体の 1 行（hook が発言のたびにメインに流す）。 */
   overview: string
@@ -331,8 +450,8 @@ const PUSH_LATER_MS = 12 * 3_600_000
 const CONTEXT_KEYS = ['what', 'now', 'how', 'gain', 'cost'] as const
 const TMP = /^(file:\/\/)?(\/private)?\/(tmp|var\/folders)\//
 
-export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFacts | undefined, orcaState: StateReport['orca'], now: number, plugin?: string): StateReport {
-  const d = derive(c, log, archive, '', facts, now)
+export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFacts | undefined, orcaState: StateReport['orca'], now: number, plugin?: string, opts: DeriveOpts = {}): StateReport {
+  const d = derive(c, log, archive, '', facts, now, opts)
   const tasks = [...d.tasks.values()]
   const running = tasks.filter((t) => t.why === 'working')
   const names = (xs: string[]) => (xs.length ? `（${xs.join(' / ')}）` : '')
@@ -341,7 +460,9 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
   const intake = tasks.filter((t) => t.why === 'intake' && now - (t.settledAt ?? 0) >= INTAKE_GRACE_MS)
   const pushOpen = c.cards.some((x) => x.kind === 'permit' && x.scope === 'push' && (x.state === 'open' || (x.resolved_option === 'later' && now - Date.parse(x.resolved_at ?? '0') < PUSH_LATER_MS)))
   const open = c.cards.filter((x) => x.state === 'open')
-  const pointed = new Set([...mine, ...d.waiting].flatMap((r) => r.card.tasks ?? []))
+  // 欠けた欄を窓口が埋めている途中のカードも、そのタスクを指している（checks.incomplete_cards と二重に名指ししない）。
+  const pointed = new Set([...mine.map((r) => r.card), ...d.waiting.map((r) => r.card), ...d.incomplete.map((g) => c.cards.find((x) => x.id === g.id)!)].flatMap((x) => x.tasks ?? []))
+  const live = c.tasks.filter((t) => t.state !== 'ok')
   return {
     workspace: c.workspace.name,
     orca: orcaState,
@@ -349,10 +470,12 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
     next: next && { id: next.card.id, kind: next.card.kind, title: next.card.title, due: next.card.due },
     mine: mine.map((r) => ({ id: r.card.id, kind: r.card.kind, title: r.card.title, due: r.card.due })),
     overdue: d.queue.filter((r) => isOver(r.card.due, now)).map((r) => r.card.id),
-    talking: d.talking.map((r) => r.card.id),
+    talking: d.talking.map((r) => ({ id: r.card.id, since: r.talking!.since, with: r.owner.title })),
+    fixing: d.fixing.map((r) => r.card.id),
     waiting: d.waiting.map((r) => ({ id: r.card.id, who: r.card.awaiting?.who ?? '', what: r.card.awaiting?.what ?? r.card.title, since: r.card.awaiting?.since ?? '', remind_at: r.card.awaiting?.remind_at })),
     jobs: d.jobs.map((j) => ({ id: j.id, title: j.title, state: j.state, label: j.label, next: j.next, orca: { display_name: j.title, status: ORCA_STATUS[j.state], unread: j.state === 'mine' } })),
     tasks: tasks.map((t) => ({ id: t.task.id, title: t.task.title, state: t.state, from: t.why })),
+    requests: d.requests.map((r) => ({ id: r.req.id, title: r.req.title, state: r.state, legacy: r.legacy })),
     workers: (facts?.workers ?? []).map((w) => ({ task: w.task, job: w.job, state: w.state, stop: w.stop })),
     checks: {
       pending_ops: unappliedOps(c, log).length,
@@ -367,8 +490,15 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       push_check: !tasks.some((t) => t.state === 'run') && !pushOpen,
       plugin: plugin ?? null,
       routes: (c.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x),
-      long_names: [...c.streams.filter((x) => !d.jobs.find((j) => j.id === x.id && j.state === 'done')), ...(c.owners ?? []).filter((o) => o.state !== 'done')]
-        .filter((x) => [...x.title].length > NAME_MAX).map((x) => `${x.id}（${[...x.title].length} 字）`)
+      long_names: [...c.streams.filter((x) => !d.jobs.find((j) => j.id === x.id && j.state === 'done')), ...(c.owners ?? []).filter((o) => o.state !== 'done'), ...live]
+        .filter((x) => [...x.title].length > NAME_MAX).map((x) => `${x.id}（${[...x.title].length} 字）`),
+      incomplete_cards: d.incomplete.map((g) => ({ id: g.id, missing: missingFields(c.cards.find((x) => x.id === g.id)!).map((m) => m.key) })),
+      incomplete_requests: d.requests.filter((r) => r.missing.length).map((r) => ({ id: r.req.id, missing: r.missing })),
+      unsorted: d.unsorted.map((g) => g.id),
+      stale_tasks: tasks.filter((t) => t.task.state === 'run' && t.why === 'intake' && facts?.dispatches?.[currentDispatch(t.task, facts) ?? '']?.taskStatus === 'completed').map((t) => t.task.id),
+      loose_tasks: live.filter((t) => !c.streams.some((s) => s.id === t.stream)).map((t) => t.id),
+      unknown_phase: live.filter((t) => !(c.phases ?? DEFAULT_PHASES).includes(t.phase)).map((t) => `${t.id}（${t.phase}）`),
+      no_form: d.jobs.filter((j) => j.state !== 'done' && !c.streams.find((s) => s.id === j.id)?.form).map((j) => j.id)
     },
     overview: `全体: ${countsText(d.counts, d.total)}・話し中 ${d.talking.length}・顧客待ち ${d.waiting.length}・動いている worker ${running.length}${names(running.map((t) => t.task.title))}`,
     card: `${countsText(d.counts, d.total)}${next?.card.due ? `・最短 ${fmtDate(next.card.due)}` : ''}`

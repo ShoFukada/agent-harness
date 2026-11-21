@@ -50,7 +50,9 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
     activate: async (root) => void calls.push(['activate', root]),
     switchTerminal: async (t) => void calls.push(['switch', t]),
     openFile: async (root, abs, line) => void calls.push(line ? ['open', root, abs, String(line)] : ['open', root, abs]),
-    openUrl: async (url) => void calls.push(['url', url])
+    openUrl: async (url) => void calls.push(['url', url]),
+    runTasks: async () => [],
+    taskLink: async () => ({ dispatch: null, followUpOf: null })
   }
   return { orca, calls, showCalls }
 }
@@ -472,20 +474,26 @@ test('Orca に無い Dispatch は null で渡して詰まりの票にし、済�
   assert.ok(board(v, a)!.cockpit!.tasks[0]!.worker)
 })
 
-test('開けるのは本線と本線の子の worktree の中のファイルだけ。日本語の名前と path:行 も開く', async () => {
+test('開けるのは本線と、その子孫（担当とその worker）の worktree の中のファイルだけ。日本語の名前と path:行 も開く', async () => {
   const { a, child, rows } = workspaces()
   writeFileSync(path.join(a, '一覧画面.md'), 'x')
   mkdirSync(path.join(a, 'docs'))
   writeFileSync(path.join(child, 'out.md'), 'x')
   const other = rows.find((r) => r.worktreeId === 'r::c-w1')!.path
   writeFileSync(path.join(other, 'secret.md'), 'x')
+  // 担当（窓口の子）の下に立った worker（窓口の孫）の成果物も開く。
+  const grand = workspace('a-w1-w')
+  writeFileSync(path.join(grand, 'diff.md'), 'x')
+  const parent = rows.find((r) => r.path === child)!
+  rows.push({ worktreeId: 'r::a-w1-w', path: grand, parentWorktreeId: parent.worktreeId, agents: [] })
   const { s, port, post, calls } = await start(rows, a)
   await listen(port, s.token).until(ready)
   assert.deepEqual((await post('open', { root: a, path: '一覧画面.md:12' })).body, { opened: true })
   assert.deepEqual((await post('open', { root: a, path: path.join(child, 'out.md') })).body, { opened: true })
+  assert.deepEqual((await post('open', { root: a, path: path.join(grand, 'diff.md') })).body, { opened: true })
   assert.equal((await post('open', { root: a, path: path.join(other, 'secret.md') })).body.opened, false, '別の本線の子は開かない')
   // 開けないときは、画面に出す理由を返す（黙って何も起きないようにしない）。
-  assert.match((await post('open', { root: a, path: path.join(other, 'secret.md') })).body.reason, /外のファイルは開きません/)
+  assert.match((await post('open', { root: a, path: path.join(other, 'secret.md') })).body.reason, /外のファイルは開かない/)
   assert.deepEqual((await post('open', { root: a, path: 'nope.md' })).body, { opened: false, reason: 'ファイルが見つかりません: nope.md' })
   assert.match((await post('open', { root: a, path: 'docs' })).body.reason, /フォルダ/)
   assert.deepEqual((await post('open', { root: a, path: `file://${path.join(a, '一覧画面.md')}` })).body, { opened: true }, 'file:// の URL もパスとして開く')
@@ -493,6 +501,7 @@ test('開けるのは本線と本線の子の worktree の中のファイルだ�
   assert.deepEqual(calls.filter((x) => x[0] === 'open'), [
     ['open', a, real(path.join(a, '一覧画面.md')), '12'],
     ['open', child, real(path.join(child, 'out.md'))],
+    ['open', grand, real(path.join(grand, 'diff.md'))],
     ['open', a, real(path.join(a, '一覧画面.md'))]
   ])
 })

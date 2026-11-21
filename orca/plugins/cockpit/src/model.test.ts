@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { nextOp, overlay, parseCockpit, shownTask, unappliedOps, type Cockpit, type Op, type UserLog } from './model.ts'
+import { missingFields, nextOp, overlay, parseCockpit, shownTask, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
 import { appendOp, SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -12,11 +12,15 @@ const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
 const op = (o: Partial<Op> & Pick<Op, 'op_id' | 'item_id' | 'type'>): Op => ({ at: new Date(NOW).toISOString(), item_rev: 1, ...o })
 const statusOf = (c: Cockpit, log: UserLog, id: string) => overlay(c, log).find((v) => v.card.id === id)!
 
-test('操作が無ければ、開いたカードは私の番、話し中のカードは話し中、送ったものは顧客待ち、済んだものは片付いた', () => {
-  const c = aoba()
+test('操作が無ければ、開いたカードは私の番、開いた話し中（版 2 の talk）は相談として私の番、送ったものは顧客待ち、済んだものは片付いた', () => {
+  const c = parseCockpit(JSON.stringify(aoba()))
   const log = { ops: [] }
   assert.equal(statusOf(c, log, 'd21').status, 'mine')
-  assert.equal(statusOf(c, log, 'c4').status, 'talking')
+  const c4 = statusOf(c, log, 'c4')
+  assert.equal(c4.status, 'mine')
+  assert.equal(c4.card.kind, 'consult')
+  assert.equal(c4.card.issue, '森さんの回答（明日の午前）を待つ')
+  assert.equal(c4.card.stance, '森さんに送った内容で、あとは回答次第で決める感じにしよう。')
   assert.equal(statusOf(c, log, 'w1').status, 'waiting')
   assert.equal(statusOf(c, log, 'd19').status, 'closed')
 })
@@ -48,14 +52,53 @@ test('古い版に押した操作は効かない（担当が書き換えたら�
   assert.equal(statusOf(c, log, 'd21').status, 'mine')
 })
 
-test('「担当と話す」を押すと話し中になり、担当が書き換えて版が上がると私の番に戻る', () => {
+test('「担当と話す」を押しても私の番に残って話し中の印が付き、担当が書き換えて版が上がると印が消える（R46）', () => {
   const c = aoba()
   const log = { ops: [op({ op_id: 2, item_id: 'd21', type: 'talk' })] }
   const v = statusOf(c, log, 'd21')
-  assert.equal(v.status, 'talking')
-  assert.equal(v.pending, true)
+  assert.equal(v.status, 'mine')
+  assert.deepEqual(v.talking, { since: log.ops[0]!.at })
+  // 窓口が受け取っても（applied_ops）、同じ版のあいだは話し中のまま。
+  c.applied_ops = [2]
+  assert.ok(statusOf(c, log, 'd21').talking)
   c.cards.find((x) => x.id === 'd21')!.rev = 2
-  assert.equal(statusOf(c, log, 'd21').status, 'mine')
+  assert.equal(statusOf(c, log, 'd21').talking, undefined)
+})
+
+test('見ての直し（本文つき talk）は件数から外れ、受け取り待ち → 受け取ったら直し待ち → 直した版で私の番に戻る', () => {
+  const c = aoba()
+  const log = { ops: [op({ op_id: 2, item_id: 'r5', type: 'talk', text: '並べ替えの既定を地区にして' })] }
+  const v = statusOf(c, log, 'r5')
+  assert.equal(v.status, 'fixing')
+  assert.equal(v.pending, true)
+  assert.equal(v.fix, '並べ替えの既定を地区にして')
+  // 受領は applied_ops に足すだけ。カードの中身は変えないので、直し待ちのまま。
+  c.applied_ops = [1, 2]
+  assert.equal(statusOf(c, log, 'r5').status, 'fixing')
+  assert.equal(statusOf(c, log, 'r5').pending, false)
+  c.cards.find((x) => x.id === 'r5')!.rev = 2
+  assert.equal(statusOf(c, log, 'r5').status, 'mine')
+})
+
+test('必須の欄: 共通（仕事・何のため・なぜ今か期限・返事が無いとき・出典）と種類ごとの欄。手作業は何のためと手作業の欄だけ', () => {
+  const base: Card = { id: 'x', rev: 1, kind: 'consult', state: 'open', title: 't', stream: 's', purpose: 'p', due: '2026-11-22', fallback: 'f', quote: 'q' }
+  assert.deepEqual(missingFields(base).map((m) => m.key), ['issue', 'stance'])
+  assert.deepEqual(missingFields({ ...base, issue: 'i', stance: 's' }), [])
+  assert.deepEqual(missingFields({ ...base, kind: 'decide', context: { what: 'a', now: 'b', how: 'c', gain: 'd', cost: 'e' }, options: [{ id: 'a', label: 'A', example: 'x', recommended: true }, { id: 'b', label: 'B' }] }).map((m) => m.key), ['options'])
+  assert.deepEqual(missingFields({ ...base, kind: 'decide', context: { what: 'a', now: 'b', how: 'c', gain: 'd', cost: 'e' }, options: [{ id: 'a', label: 'A', example: 'x', recommended: true }, { id: 'b', label: 'B', example: 'y', recommended: true }] }).map((m) => m.key), ['options.recommended'])
+  const manual: Card = { id: 'p', rev: 1, kind: 'permit', state: 'open', title: 't', purpose: 'p', manual: { where: 'ターミナル', command: 'sudo darwin-rebuild switch' } }
+  assert.deepEqual(missingFields(manual).map((m) => m.key), ['manual.check'])
+  assert.deepEqual(missingFields({ ...base, kind: 'report' }), [])
+  // 送る前は元のスレッドの URL が出典になる。
+  assert.deepEqual(missingFields({ ...base, kind: 'send', quote: undefined, draft: { to: 'a', via: 'Slack', text: 't', href: 'https://example.com' } }), [])
+})
+
+test('版 2 の古い形を読む: 開いた talk は相談、at が無ければ created_at、worker は dispatch_id だけでも run_id だけでも読む', () => {
+  assert.equal(upgradeCard({ id: 'c', rev: 1, kind: 'talk', state: 'done', title: 't' }).kind, 'talk')
+  assert.equal(upgradeCard({ id: 'p', rev: 1, kind: 'permit', state: 'open', title: 't', created_at: '2026-11-21T19:31:42+09:00' }).at, '2026-11-21T19:31:42+09:00')
+  const c = aoba()
+  c.tasks[0]!.worker = { task_id: 'task_1', run_id: 'run_1' }
+  assert.deepEqual(parseCockpit(JSON.stringify(c)).tasks[0]!.worker, { task_id: 'task_1', run_id: 'run_1' })
 })
 
 test('種類ごとの片付けの言葉: 許すは「許した」、送る前の送ったは「送った」、別の答えは本文', () => {
@@ -67,11 +110,13 @@ test('種類ごとの片付けの言葉: 許すは「許した」、送る前の
   assert.equal(statusOf(a, { ops: [op({ op_id: 2, item_id: 'd22', item_rev: 2, type: 'sent' })] }, 'd22').how, '送った')
 })
 
-test('cockpit.json は版 2 だけを読み、版 1 は移し替えの手順を添えて断る', () => {
+test('cockpit.json は版 2 だけを読み、版 1 は移し替えの手順を添えて断る。形の誤りのカードはその 1 枚だけ外して名指しする', () => {
   assert.doesNotThrow(() => parseCockpit(JSON.stringify(aoba())))
   assert.throws(() => parseCockpit(JSON.stringify({ workspace: { name: 'x' }, streams: [], tasks: [], items: [] })), /migrate\.ts/)
-  const bad = { ...aoba(), cards: [{ id: 'x', rev: 1, kind: 'ask', title: 't', state: 'open' }] }
-  assert.throws(() => parseCockpit(JSON.stringify(bad)), /kind が不正/)
+  const bad = { ...aoba(), cards: [{ id: 'x', rev: 1, kind: 'ask', title: 't', state: 'open' }, ...aoba().cards] }
+  const problems: string[] = []
+  assert.equal(parseCockpit(JSON.stringify(bad), problems).cards.length, aoba().cards.length)
+  assert.match(problems.join('\n'), /形の誤り: .*カード x（kind が不正: ask）/)
   assert.throws(() => parseCockpit(JSON.stringify({ ...aoba(), owners: [{ title: 'x' }] })), /owners/)
 })
 
@@ -127,10 +172,12 @@ test('worker の記録があるタスクは Dispatch の様子から、外の相
   assert.deepEqual(shownTask({ ...t, state: 'ok' }, null), { state: 'ok', why: 'ok' })
 })
 
-test('tasks[].worker は orchestration の形だけを読み、workerctl の頃の形は書き換えを促して断る', () => {
+test('tasks[].worker は orchestration の形だけを読み、workerctl の頃の形のタスクは外して名指しする', () => {
   const old = aoba() as unknown as { tasks: { worker?: unknown }[] }
   old.tasks[0]!.worker = { worktree_id: 'r::w', terminal: 'term_w' }
-  assert.throws(() => parseCockpit(JSON.stringify(old)), /worker の形が不正です.*worktree_id/)
+  const problems: string[] = []
+  assert.equal(parseCockpit(JSON.stringify(old), problems).tasks.length, aoba().tasks.length - 1)
+  assert.match(problems.join('\n'), /形の誤り: .*タスク t1（worker の形が不正/)
 })
 
 test('操作は押した瞬間のファイルで確かめる: 画面が古くても書き換え後の版には記録せず、片付いたカードと版 1 のファイルにも記録しない', async () => {

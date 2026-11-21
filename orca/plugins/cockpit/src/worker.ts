@@ -263,9 +263,9 @@ export default function activate(api: OrcaWorkerApi): void {
       // Orca にはチャットを前に出す手段が無い。パネルは前面のワークスペースにいるので、チャットはそのタブにある。
       res = { opened: false, how: 'このワークスペース', tab: o.how === 'main' ? '窓口' : agentTitle(o.title, '担当') }
     }
-    // 開けないのに話し中へ移すと、カードが私の番から消えたまま誰とも話せない。
-    const status = overlay(st.cockpit, st.log).find((v) => v.card.id === card.id)?.status
-    if (!res.reason && status === 'mine' && card.kind !== 'report') {
+    // 開けないのに話し中の印を付けると、誰とも話していないのに話し中に見える。
+    const now = overlay(st.cockpit, st.log).find((v) => v.card.id === card.id)
+    if (!res.reason && now?.status === 'mine' && !now.talking && card.kind !== 'report') {
       st.log = await appendOp(st.root, st.cockpit, { root: st.root, item_id: card.id, item_rev: card.rev, type: 'talk' })
       mine.add(`${st.root}#${st.log.ops.at(-1)!.op_id}`)
       await autoSignal()

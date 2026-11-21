@@ -9,7 +9,7 @@ const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const svg = (s: string) => s
 function views(): CockpitView[] {
   return sample(NOW).map((w) => ({
-    state: 'ok', root: `/ws/${w.dir}`, cockpit: structuredClone(w.cockpit), log: structuredClone(w.log), archive: [], figures: w.figure ? { '.orca/cockpit/figures/entry.svg': w.figure } : {},
+    state: 'ok', root: `/ws/${w.dir}`, cockpit: parseCockpit(JSON.stringify(w.cockpit)), log: structuredClone(w.log), archive: [], figures: w.figure ? { '.orca/cockpit/figures/entry.svg': w.figure } : {},
     errors: [], workers: [], notifiedOp: 0
   }))
 }
@@ -61,8 +61,7 @@ test('決める: 何のため → なぜ今 → 選択肢 → 返事が無いと
   ui.picked['/ws/aoba#d21'] = 'draw'
   assert.match(html(model(), ui), /data-act="decide"[^>]*>この案で決める/)
   assert.match(html(model(), ui), /role="radio" aria-checked="true" data-pick="draw"/)
-  // おすすめの無いカードと、戻せない操作を含む詰まり・許すは、選ぶまで押せない。
-  assert.match(html(model(), { ...newUi(), sel: '/ws/harness#d28' }), /data-act="decide"[^>]*disabled>選択肢を選ぶ/)
+  // 戻せない操作を含む詰まり・許すは、選ぶまで押せない（決めるはおすすめが必須の欄なので、おすすめを選んだ状態で開く）。
   assert.match(html(model(), { ...newUi(), sel: '/ws/konan#k9' }), /data-act="decide"[^>]*disabled>選択肢を選ぶ/)
   // 別の答えを開いたら、文が空のうちはおすすめでも決められない。
   const other = { ...newUi(), sel: '/ws/aoba#d21', otherOpen: { '/ws/aoba#d21': true }, other: { '/ws/aoba#d21': '  ' } }
@@ -82,7 +81,9 @@ test('期限は、1 列の見出しと重なる日付を省く（今日は時刻
 })
 
 test('案件の列は、止まっている・期限切れ・今日・話し中の件数を出す（日時は出さない）', () => {
-  const h = html()
+  const vs = views()
+  vs[0]!.log.ops.push({ op_id: 2, at: new Date(NOW).toISOString(), item_id: 'd21', item_rev: 1, type: 'talk' })
+  const h = html(model({}, vs))
   const aoba = text(h.slice(h.indexOf('data-filter="/ws/aoba"'), h.indexOf('</button>', h.indexOf('data-filter="/ws/aoba"'))))
   assert.match(aoba, /期限切れ 1 今日 1 話し中 1/)
   assert.ok(!aoba.includes('最短'))
@@ -112,7 +113,7 @@ test('見て: 「直してほしいことを書く」で書く欄を開き、本
   const m = model({}, vs)
   assert.ok(!m.boards[0]!.d.queue.some((r) => r.card.id === 'r5'), '件数から外れる')
   const h = html(m, { ...newUi(), sel: k })
-  assert.match(h, /<span>直しを頼んだ（受け取り待ち）<\/span>/)
+  assert.match(h, /<span>直し依頼済み（受領待ち）<\/span>/)
   assert.match(text(h), /頼んだ直し 凡例を上に寄せてほしい/)
 })
 
@@ -171,12 +172,13 @@ test('送る前は宛先と改行を保った本文を出す。詰まりは理�
   assert.match(k, /私が答えれば進むか 進む。stg の DB の鍵を入れ直してよいかを答える/)
 })
 
-test('右の列: 話し中・顧客待ち（催促の日を過ぎたら朱）・報告・片付いた（受け取り待ち・受け取った）', () => {
+test('右の列: 直し待ち・顧客待ち（催促の日を過ぎたら朱）・報告・片付いた（受け取り待ち・受け取った）', () => {
   const vs = views()
   vs[0]!.log.ops.push({ op_id: 2, at: new Date(NOW).toISOString(), item_id: 'r5', item_rev: 1, type: 'accept' })
+  vs[0]!.log.ops.push({ op_id: 3, at: new Date(NOW).toISOString(), item_id: 'd21', item_rev: 1, type: 'talk', text: '図を描き足して' })
   const h = html(model({}, vs))
   const t = text(h)
-  assert.match(t, /話し中 1/)
+  assert.match(t, /直し待ち 1/)
   assert.match(t, /顧客待ち 1/)
   assert.match(h, /class="r sp hot"><span class="pt">森さん<\/span><span class="pt">.* から<\/span><span class="pt">催促の日を過ぎた<\/span>/)
   assert.ok(!/class="r[^"]*">[^<]*・/.test(h), '補足を「・」で繋がない')
