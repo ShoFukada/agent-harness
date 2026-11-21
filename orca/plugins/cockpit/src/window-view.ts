@@ -39,10 +39,9 @@ export const doneOrder = (b: Board | undefined): string[] => (b ? closedGroups(b
 const kindName = (c: Card) => (c.manual ? '手作業' : KIND_LABEL[c.kind])
 const tag = (text: string, cls = '') => `<span class="tag${cls ? ` ${cls}` : ''}">${esc(text)}</span>`
 
-/** 行の札。手作業・話し中・直しを頼んだ・直し待ち・件数外（相談）。 */
+/** 行の札。協議中と修正待ち。相談は見出しで別に数えるので札を付けない（初見 12）。 */
 function tags(r: Row): string {
   return [
-    r.card.kind === 'consult' && tag('件数外'),
     r.talking && tag('協議中', 'talk'),
     r.status === 'fixing' && (r.pending ? tag('修正依頼済み（受領待ち）', 'wait') : tag('修正待ち', 'wait'))
   ].filter(Boolean).join('')
@@ -102,7 +101,7 @@ function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
   const list = groups.length
     ? groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>`).join('')
     : '<div class="calm"><b>要対応 0 件</b></div>'
-  const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">報告（参照のみ）${reps.length} 件・件数外</div><div class="rows">${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>` : ''
+  const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">報告（参照のみ）${reps.length} 件</div><div class="rows">${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>` : ''
   const order = todoOrder(b)
   const all = [...groups.flatMap(([, xs]) => xs), ...reps]
   const cur = all.find((r) => keyOf(r) === ui.sel)

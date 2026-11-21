@@ -22,13 +22,13 @@ const page = (m: Model, over: Partial<Ui> = {}) => {
   return renderWindow(m, ui, NOW, (s) => s)
 }
 
-test('要対応: 仕事ごとにまとめ、先頭の詳細を右に開く。届いたは出さず、相談は「件数外」の札で件数に入れない', () => {
+test('要対応: 仕事ごとにまとめ、先頭の詳細を右に開く。届いたは出さず、相談は見出しで別に数え、「件数外」の札は付けない（初見 12）', () => {
   const m = aoba()
   const h = page(m)
   const t = text(h)
   assert.match(h, /data-tab="todo" aria-selected="true">要対応<span class="n">3<\/span>/)
   assert.ok(!/data-sel="\/ws\/aoba#i3"/.test(h), '届いたは要対応に出さない')
-  assert.match(h, /data-sel="\/ws\/aoba#c4"[\s\S]*?件数外/)
+  assert.doesNotMatch(h, /件数外/)
   assert.match(h, /class="wdet k-/)
   assert.match(t, /配車画面の改修|AWS 構成案/)
 })
