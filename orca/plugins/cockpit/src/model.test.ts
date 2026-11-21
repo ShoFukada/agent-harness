@@ -107,7 +107,7 @@ test('種類ごとの片付けの言葉: 許すは「許した」、送る前の
   assert.equal(statusOf(c, log, 'p7').how, '許可')
   assert.equal(statusOf(c, log, 'k9').how, '別の答え: 情報部に聞いてから')
   const a = aoba()
-  assert.equal(statusOf(a, { ops: [op({ op_id: 2, item_id: 'd22', item_rev: 2, type: 'sent' })] }, 'd22').how, '送った')
+  assert.equal(statusOf(a, { ops: [op({ op_id: 2, item_id: 'd22', item_rev: 2, type: 'sent' })] }, 'd22').how, '送信済み')
 })
 
 test('cockpit.json は版 2 だけを読み、版 1 は移し替えの手順を添えて断る。形の誤りのカードはその 1 枚だけ外して名指しする', () => {

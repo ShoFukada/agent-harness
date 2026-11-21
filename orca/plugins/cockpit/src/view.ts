@@ -103,10 +103,11 @@ const GAP = new RegExp(String.raw`(?<=${JA}) (?=[A-Za-z0-9])|(?<=[A-Za-z0-9]) (?
 const VOID = /^(br|hr|img|input|wbr|meta|link|source)$/
 /**
  * 日本語と英数字のあいだの半角の空白 1 つを、表示の HTML の文の部分から除く（R85。帳簿は書き換えない。間隔は CSS の text-autospace が付ける）。
- * pre・code・kbd・textarea と class に code・cmd を持つ要素の中（コマンド・パス・コード・入力中の文）と、タグの属性は触らない。
+ * pre・code・kbd・textarea と class に code・cmd・msg・verb を持つ要素の中（コマンド・パス・コード・送る文面・手作業の場所と手順・入力中の文）と、タグの属性は触らない。
  */
 export function tighten(html: string): string {
-  const parts = html.split(/(<[^>]*>)/)
+  // 属性の値の中の > でタグを切らない（引用符の中は読み飛ばす）。
+  const parts = html.split(/(<(?:[^>"']|"[^"]*"|'[^']*')*>)/)
   const stack: boolean[] = []
   const skip: boolean[] = []
   for (let i = 0; i < parts.length; i++) {
@@ -115,7 +116,7 @@ export function tighten(html: string): string {
       const m = /^<(\/)?([a-zA-Z][\w-]*)/.exec(t)
       if (!m) continue
       if (m[1]) stack.pop()
-      else if (!VOID.test(m[2]!.toLowerCase()) && !t.endsWith('/>')) stack.push(/^(pre|code|kbd|textarea|script|style)$/i.test(m[2]!) || /class="[^"]*\b(code|cmd)\b/.test(t))
+      else if (!VOID.test(m[2]!.toLowerCase()) && !t.endsWith('/>')) stack.push(/^(pre|code|kbd|textarea|script|style)$/i.test(m[2]!) || /class="[^"]*\b(code|cmd|msg|verb)\b/.test(t))
     } else skip[i] = stack.some(Boolean)
   }
   // 境目の判定にはタグをまたいだ前後の 1 文字を使う（「工程 <span>2/5</span> 決める」の空白も詰める）。
@@ -237,9 +238,10 @@ export function otherHtml(r: Row, ui: Ui): string {
 export function manualHtml(r: Row): string {
   const m = r.card.manual!
   return [
-    fld('どこで', esc(m.where)),
+    // どこで・手順は利用者がそのまま打つ・開く値なので、表示で空白を詰めない（verb）。
+    fld('どこで', m.where ? `<div class="verb">${esc(m.where)}</div>` : ''),
     m.command ? `<div class="fld"><span class="lb">打つコマンド</span><div class="cmd"><pre class="msg code">${esc(m.command)}</pre><button class="btn" type="button" data-act="copycmd" data-key="${esc(keyOf(r))}">コピー</button></div></div>` : '',
-    m.steps?.length ? fld('手順', `<ol class="rich">${m.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>`) : '',
+    m.steps?.length ? fld('手順', `<ol class="rich verb">${m.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>`) : '',
     fld('済ませたあと', esc(m.check))
   ].join('')
 }
@@ -335,6 +337,9 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
   return parts.filter(Boolean).join('')
 }
 
+/** 送る前の「送った」のボタンの名前（コピーのあとの知らせもこれを案内する）。 */
+export const SENT_LABEL = '送信済みにする'
+
 /** 種類ごとの返答のボタン。押すと data-act の操作になる（controller.ts）。 */
 export function actsHtml(r: Row, ui: Ui, win = false): string {
   const c = r.card
@@ -355,7 +360,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   if (r.agent) btns = [b('focus', r.agent.chat ? 'チャットを開く' : '端末を開く', 'pri'), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返信不要'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
-    case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', '送信済みにする'), talk('担当と修正'), b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
+    case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), talk('担当と修正'), b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
     case 'decide': btns = [decideBtn, talk(), other]; break
     case 'review': btns = [b('accept', '承認する', 'pri'), b('other', otherOpen ? '記入をやめる' : '修正点を記入'), ...(otherOpen ? [decideBtn] : []), talk('担当と修正を協議'), ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
     case 'permit': btns = c.manual ? [b('sent', '対応済みにする', 'pri'), talk()]

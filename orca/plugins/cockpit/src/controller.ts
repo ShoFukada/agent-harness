@@ -5,7 +5,7 @@ import type { CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkR
 import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
-import { boardsOf, chosenOption, keyOf, newUi, preface, render, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
+import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
 import { boardOf, doneOrder, renderWindow, todoOrder, type Tab } from './window-view.ts'
 
 export type Transport = {
@@ -24,6 +24,12 @@ export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['uns
 const THEME_KEY = 'cockpit.theme'
 
 /** 帯の印（Orca で止まった worker）を開いた結果を、担当と話すと同じ知らせにする。 */
+/** 本文をコピーしたあとの知らせ。スレッドを開けたら、今あるボタンの名前で次の操作を案内する。 */
+export const copyMessage = (res?: OpenResult): string =>
+  !res ? '本文をコピーしました'
+    : res.opened ? `本文をコピーし、スレッドを開きました。送ったら「${SENT_LABEL}」を押してください`
+    : `本文をコピーしましたが、スレッドを開けませんでした${res.reason ? `: ${res.reason}` : ''}`
+
 const focusResult = (x: FocusResult, title: string): TalkResult =>
   x.focused ? { opened: true, how: x.how === '端末' || !x.how ? `${title}の端末` : x.how } : { opened: false, how: `${title}の端末`, reason: `「${title}」の端末も worktree も Orca にありません` }
 
@@ -164,9 +170,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     try {
       await navigator.clipboard.writeText(r.card.draft?.text ?? '')
       const res = r.card.draft?.href ? await t.openUrl(r.card.draft.href) : undefined
-      toast(!res ? '本文をコピーしました'
-        : res.opened ? '本文をコピーし、スレッドを開きました。送ったら「送った」を押してください'
-        : `本文をコピーしましたが、スレッドを開けませんでした${res.reason ? `: ${res.reason}` : ''}`)
+      toast(copyMessage(res))
     } catch (e) {
       fail(e)
     }

@@ -76,7 +76,7 @@ function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
   if (!s) return `<div class="gh"><b>仕事の割り当てなし</b><span class="mut">${n}</span></div>`
   const ts = tasksOf(b, sid)
   const j = b.d.jobs.find((x) => x.id === sid)
-  return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b><span class="mut">${n}</span>${j?.owner ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}<span class="prog">${phaseBar(ts, s.form)}</span></div>`
+  return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b><span class="mut">${n}</span>${j?.owner ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}<span class="prog">${phaseBar(ts, s.form, j?.state)}</span></div>`
 }
 
 /** 帳簿の抜け（窓口が 30 分のうちに直さなかったもの）。R47。 */
@@ -211,16 +211,18 @@ const okOf = (ts: TaskView[]) => `タスク 済 ${ts.filter((t) => t.state === '
 const TSTATE: Record<TaskState, string> = { ok: '完了', run: '作業中', wait: '待機', stop: '停止', idle: '未着手' }
 /**
  * 工程の進み（前の窓の「工程 n/5」の形）。済んでいないタスクのうちいちばん前の段を今の段にし、それより前を済んだ段にする。
- * どの段にも寄せられない工程名だけのときは段を決めない（推測で入れない）。見張る仕事は段を持たない。
+ * 段に寄せられない工程名の未完了タスクがあれば、段も完了の印も決めない（推測で入れない・先の段まで済んだように見せない）。
+ * 「全工程 完了」は仕事そのものが済のときだけ。タスクが全部済でもカードが残る仕事は確認待ちと出す。見張る仕事は段を持たない。
  */
-function phaseBar(ts: TaskView[], form?: StreamForm): string {
+function phaseBar(ts: TaskView[], form?: StreamForm, job?: JobState): string {
   if (form === 'watch') return ''
   if (!ts.length) return '<span class="pbar mut">タスクなし</span>'
-  const idx = ts.filter((t) => t.state !== 'ok').map((t) => stageOf(t.task.phase)).filter((x) => x !== undefined).map((x) => STAGES.indexOf(x))
-  const done = ts.every((t) => t.state === 'ok')
-  const at = done ? STAGES.length : idx.length ? Math.min(...idx) : -1
+  const live = ts.filter((t) => t.state !== 'ok')
+  const unsorted = live.some((t) => !stageOf(t.task.phase))
+  const at = !live.length ? STAGES.length : unsorted ? -1 : Math.min(...live.map((t) => STAGES.indexOf(stageOf(t.task.phase)!)))
   const pips = STAGES.map((st, n) => `<i class="pp${n < at ? ' on' : n === at ? ' cur' : ''}" title="${st}"></i>`).join('')
-  const name = done ? '全工程 完了' : at < 0 ? '工程の外' : `工程 <span class="num">${at + 1}/${STAGES.length}</span> ${STAGES[at]}`
+  const name = live.length ? (unsorted ? '工程 未分類あり' : `工程 <span class="num">${at + 1}/${STAGES.length}</span> ${STAGES[at]}`)
+    : job === 'done' ? '全工程 完了' : job === 'mine' ? 'タスク完了・確認待ち' : job === 'customer' ? 'タスク完了・顧客待ち' : 'タスク完了'
   return `<span class="pbar" title="${STAGES.join(' › ')}"><span class="pps" aria-hidden="true">${pips}</span><span class="ppn">${name}</span></span>`
 }
 
@@ -266,7 +268,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
     : ''
   return `<div class="st f-${s?.form ?? 'none'}"><div class="sh">
     <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="tw">${open ? '▾' : '▸'}</span>${formChip(s?.form)}<span>${esc(j.title)}</span><span class="pill ${j.state}">${esc(label)}</span>${j.owner ? `<span class="tw">担当: ${esc(j.owner.title)}</span>` : ''}</button>
-    <span class="right"><span class="prog">${phaseBar(ts, s?.form)}</span><button type="button" class="act talk" data-talkstream="${esc(j.id)}">${talkLabel}</button></span>
+    <span class="right"><span class="prog">${phaseBar(ts, s?.form, j.state)}</span><button type="button" class="act talk" data-talkstream="${esc(j.id)}">${talkLabel}</button></span>
     <span class="meta">${working ? `<span class="chip live">worker ${working} 作業中</span>` : ''}${j.next && !open ? `<span class="mut nxt">次: ${mono(esc(j.next))}</span>` : ''}</span></div>
     ${open ? `<div class="inner">${inner || '<span class="mut">なし</span>'}</div>` : ''}</div>`
 }

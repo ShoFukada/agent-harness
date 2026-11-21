@@ -519,7 +519,7 @@ function closedLabel(c: Card, type: OpType | undefined, option?: Option, text?: 
   if (type === 'decide' && option?.id === OTHER) return `別の答え: ${text ?? ''}`
   if (type === 'decide' || (!type && option)) return `${c.kind === 'permit' ? '許可' : '決定'}: ${option?.label ?? text ?? '?'}`
   if (type === 'accept') return c.kind === 'permit' ? '許可' : '承認'
-  if (type === 'sent') return c.kind === 'send' ? '送った' : '済ませた'
+  if (type === 'sent') return c.kind === 'send' ? '送信済み' : '対応済み'
   if (type === 'skip') return c.kind === 'send' ? '送らない' : c.kind === 'inbox' ? '返事は要らない' : c.kind === 'permit' ? '止めた' : '見送った'
   if (type === 'delegate') return '許して、以後は任せた'
   if (type === 'ack') return '読んだ'

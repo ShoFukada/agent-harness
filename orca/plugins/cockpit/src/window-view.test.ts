@@ -3,7 +3,8 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
-import { boardsOf, newUi, type Model, type Ui } from './view.ts'
+import { copyMessage } from './controller.ts'
+import { boardsOf, newUi, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
 import { renderWindow, todoOrder } from './window-view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -76,4 +77,42 @@ test('欄の形の違いの知らせは 1 行に畳み、読めない・繋が�
   // 仕事の見出しには工程 n/5（5 段で固定）と今の段の名前を出し、凡例の帯は出さない（R82）。
   assert.match(h, /工程 <span class="num">2\/5<\/span> 決める/)
   assert.doesNotMatch(h, /class="keyline"/)
+})
+
+test('Codex v3 1: 送る文面と手作業の場所・手順は表示でも空白を詰めない（コピーする値と画面を食い違わせない）', () => {
+  const draft = tighten(page(aoba((v) => { v.cockpit!.cards.find((c) => c.id === 'd22')!.draft!.text = 'cd 資料 を 開く' }), { sel: '/ws/aoba#d22' }))
+  assert.match(draft, /<div class="msg">cd 資料 を 開く<\/div>/)
+  const manual = tighten(page(aoba((v) => {
+    v.cockpit!.cards.find((c) => c.id === 'd22')!.manual = { where: '/tmp/資料 A', command: 'cd 資料', steps: ['Finder で 資料 A を開く'], check: '開けた 2 件を確かめる' }
+  }), { sel: '/ws/aoba#d22' }))
+  assert.match(manual, /<div class="verb">\/tmp\/資料 A<\/div>/)
+  assert.match(manual, /<pre class="msg code">cd 資料<\/pre>/)
+  assert.match(manual, /<li>Finder で 資料 A を開く<\/li>/)
+  // 利用者がそのまま使う値でない欄（済ませたあと）は詰める。
+  assert.match(manual, /開けた2件を確かめる/)
+})
+
+test('Codex v3 2: 段に寄せられない工程名の未完了タスクがあれば、段番号も完了の印も出さず「工程 未分類あり」', () => {
+  const h = page(aoba((v) => {
+    v.cockpit!.tasks.push({ id: 't9', stream: 's1', phase: '受入', title: '受け入れ', state: 'run' }, { id: 't10', stream: 's1', phase: 'push', title: '出す', state: 'idle' })
+  }))
+  const head = h.slice(h.indexOf('<b>配車画面の改修</b>'), h.indexOf('</div>', h.indexOf('<b>配車画面の改修</b>')))
+  assert.match(head, /工程 未分類あり/)
+  assert.doesNotMatch(head, /pp on|pp cur|5\/5/)
+})
+
+test('Codex v3 3: タスクが全部済でもカードが残る仕事は「タスク完了・確認待ち」。「全工程 完了」は仕事が済のときだけ', () => {
+  const h = page(aoba())
+  const head = h.slice(h.indexOf('<b>定例と議事録</b>'), h.indexOf('</div>', h.indexOf('<b>定例と議事録</b>')))
+  assert.match(head, /タスク完了・確認待ち/)
+  assert.doesNotMatch(head, /全工程 完了/)
+  const whole = page(aoba((v) => { for (const c of v.cockpit!.cards) if (c.stream === 's4') c.state = 'done' }), { tab: 'whole', open: { done: true } })
+  const box = whole.slice(whole.indexOf('定例と議事録'))
+  assert.match(box.slice(0, box.indexOf('</span></span></span>') + 30), /全工程 完了/)
+})
+
+test('Codex v3 4・5: 属性の値の中の > でタグを切らず、コピーのあとの知らせは今の「送った」ボタンの名前を案内する', () => {
+  assert.equal(tighten('<div title="x > 資料 A">文 A</div>'), '<div title="x > 資料 A">文A</div>')
+  assert.match(page(aoba(), { sel: '/ws/aoba#d22' }), new RegExp(`data-act="sent"[^>]*>${SENT_LABEL}<`))
+  assert.match(copyMessage({ opened: true }), new RegExp(`「${SENT_LABEL}」を押して`))
 })
