@@ -184,12 +184,16 @@ test('送る量を絞る: 14 日より前に片付いたカードと、タスク
   const old = new Date(Date.now() - 20 * 86_400_000).toISOString()
   const c = JSON.parse(cockpit('案件A'))
   c.cards.push({ id: 'old', rev: 1, kind: 'decide', title: '昔の判断', state: 'done', resolved_at: old })
+  // 依頼の証拠の「これでよい」が指すカードは古くても送る（窓の済の判定が版を見るため。Codex 中 7）。
+  c.cards.push({ id: 'proof', rev: 1, kind: 'review', title: '昔の見て', state: 'done', resolved_at: old })
+  c.requests = [{ id: 'q1', at: old, title: '依頼', evidence: [{ when: 1, kind: 'op', ref: '1', card: 'proof' }] }]
   c.tasks[0].done = ['長い作業の記録']
   const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(c) })
   const { s, port } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
   const v = await listen(port, s.token).until((w) => !!board(w, a)?.cockpit)
   const got = board(v, a)!.cockpit!
   assert.ok(!got.cards.some((x) => x.id === 'old'))
+  assert.ok(got.cards.some((x) => x.id === 'proof'))
   assert.ok(got.cards.some((x) => x.id === 'd19'))
   assert.equal(got.tasks[0]!.done, undefined)
 })

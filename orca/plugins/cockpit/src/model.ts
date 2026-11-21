@@ -299,7 +299,7 @@ const obj = (need: string[], opt: string[] = []): Shape => (v) =>
   isObj(v) && need.every((k) => str(v[k])) && opt.every((k) => v[k] === undefined || str(v[k]))
 const list = (one: Shape): Shape => (v) => Array.isArray(v) && v.every(one)
 /** 画面と状態の計算が読むカードの欄の形。種類・状態・id は parseCockpit が先に断る。 */
-const CARD_SHAPE: Record<string, Shape> = {
+export const CARD_SHAPE: Record<string, Shape> = {
   ...Object.fromEntries(['at', 'created_at', 'due', 'stream', 'owner', 'purpose', 'asked', 'routed', 'why', 'fallback', 'figure', 'request', 'request_id', 'href', 'diff', 'target', 'effect', 'undo',
     'scope', 'reason', 'since', 'unblock', 'next', 'quote', 'issue', 'stance', 'resolved_at', 'resolved_option', 'resolved_text'].map((k) => [k, str])),
   reply: (v) => v === 'needed' || v === 'none',
@@ -363,6 +363,18 @@ export function upgradeCard(c: Card): Card {
   return c
 }
 
+/** タスクの省略できる欄の形（id・title・phase・state・worker は parseCockpit が先に断る）。 */
+export const TASK_SHAPE: Record<string, Shape> = {
+  stream: str, next: str, goal: str, waiting_on: str, waiting_since: str, sources: strs, reviewed_for: strs,
+  done: list((d) => str(d) || obj(['text'], ['at'])(d)),
+  repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
+}
+/** 時刻の文字列を比べられる数にする。操作の UTC（Z）と窓口が書いた +09:00 が混ざるので、文字列のまま比べない。読めなければ 0。 */
+export const timeOf = (s: string | undefined): number => {
+  const t = Date.parse(s ?? '')
+  return Number.isNaN(t) ? 0 : t
+}
+
 export const WORKER_SHAPE: Shape = (w) => isObj(w) && str(w.task_id) && (str(w.run_id) || str(w.dispatch_id)) && [w.run_id, w.dispatch_id].every((x) => x === undefined || str(x))
 const EVIDENCE_SHAPE: Shape = (e) => isObj(e) && Number.isInteger(e.when) && EVIDENCE_KINDS.includes(e.kind as EvidenceKind) && str(e.ref)
   && (e.card === undefined || str(e.card)) && (e.rev === undefined || Number.isInteger(e.rev))
@@ -397,12 +409,13 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
     throw new Error('cockpit.json に workspace・streams・tasks・cards がありません')
   v.tasks = (v.tasks as Record<string, unknown>[]).filter((t) => {
     const why = !isObj(t) || typeof t.id !== 'string' ? 'id を読めない'
+      : typeof t.title !== 'string' || typeof t.phase !== 'string' ? 'title・phase を読めない'
       : !TASK_STATES.includes(t.state as TaskState) ? `state が不正: ${String(t.state)}`
       : t.worker !== undefined && !WORKER_SHAPE(t.worker) ? 'worker の形が不正。{ run_id, task_id } で書く'
       : undefined
     if (why) problems.push(`形の誤り: cockpit.json のタスク ${String(t?.id)}（${why}）。このタスクは表示していません`)
     if (why) return false
-    const bad = [...['next', 'waiting_on', 'waiting_since'].filter((k) => t[k] != null && !str(t[k])), ...(t.reviewed_for != null && !strs(t.reviewed_for) ? ['reviewed_for'] : [])]
+    const bad = Object.keys(TASK_SHAPE).filter((k) => t[k] != null && !TASK_SHAPE[k]!(t[k]))
     for (const k of bad) delete t[k]
     if (bad.length) problems.push(`cockpit.json のタスク ${String(t.id)} の ${bad.join('・')} の形が違うので、その欄を出さずに表示しています`)
     return true
@@ -541,6 +554,17 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardVie
     out.push({ card, status: 'closed', pending: false, how: closedLabel(card, undefined, chosen, card.resolved_text), when: card.resolved_at, chosen })
   }
   return out
+}
+
+/** 依頼の証拠の操作が指すカード。済の判定がそのカードの版を見るので、表示の期間を過ぎても窓に送る。 */
+export function evidenceCards(c: Cockpit, log: UserLog): Set<string> {
+  const ids = new Set<string>()
+  for (const e of (c.requests ?? []).flatMap((r) => r.evidence ?? []))
+    if (e.kind === 'op') {
+      const o = log.ops.find((x) => String(x.op_id) === e.ref)
+      for (const id of [e.card, o?.item_id]) if (id) ids.add(id)
+    }
+  return ids
 }
 
 /** メインにまだ反映されていない操作。 */

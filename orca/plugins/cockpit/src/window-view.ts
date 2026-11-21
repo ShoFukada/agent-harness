@@ -1,5 +1,5 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
-import { COUNTED, DEFAULT_PHASES, FORMS, FORM_LABEL, KIND_LABEL, type Card, type CardKind, type Cockpit, type StreamForm, type TaskState } from './model.ts'
+import { COUNTED, DEFAULT_PHASES, FORMS, FORM_LABEL, KIND_LABEL, timeOf, type Card, type CardKind, type Cockpit, type StreamForm, type TaskState } from './model.ts'
 import { STOP_LABEL, byUrgency, fmtDate, isHot, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type RequestView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, backgroundParts, dueHtml, esc, fld, glyph, keyOf, linkBtn, manualHtml, mono, optionsHtml, otherHtml, ownerHtml, rich, stripHtml, toastsHtml,
@@ -27,7 +27,7 @@ export const todoOrder = (b: Board | undefined): string[] => (b ? todoGroups(b).
 function closedGroups(b: Board): [string, VRow[]][] {
   const m = new Map<string, VRow[]>()
   for (const r of vrows(b, b.d.closed)) m.set(r.card.stream ?? '', [...(m.get(r.card.stream ?? '') ?? []), r])
-  return [...m.entries()].sort((a, b2) => (Date.parse(b2[1][0]!.when ?? '') || 0) - (Date.parse(a[1][0]!.when ?? '') || 0))
+  return [...m.entries()].sort((a, b2) => timeOf(b2[1][0]!.when) - timeOf(a[1][0]!.when))
 }
 export const doneOrder = (b: Board | undefined): string[] => (b ? closedGroups(b).flatMap(([, xs]) => xs.map(keyOf)) : [])
 
@@ -262,7 +262,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
 
 function requestsHtml(b: Board, ui: Ui, now: number): string {
   const c = b.v.cockpit!
-  const open = b.d.requests.filter((r) => r.state !== '済').sort((x, y) => (x.req.at ?? '').localeCompare(y.req.at ?? ''))
+  const open = b.d.requests.filter((r) => r.state !== '済').sort((x, y) => timeOf(x.req.at) - timeOf(y.req.at))
   const row = (r: RequestView) => {
     const ts = r.tasks
     const on = ui.rq === r.req.id

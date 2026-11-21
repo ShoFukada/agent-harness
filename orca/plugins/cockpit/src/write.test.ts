@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { migrate, write } from '../window/write.ts'
-import type { Card, Cockpit, Request } from './model.ts'
+import { parseCockpit, type Card, type Cockpit, type Request } from './model.ts'
 import { applyChange, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -32,7 +32,7 @@ test('書く道具: 中身を変えたら rev を 1 上げる。片付けるだ�
   assert.ok(applyChange(c, { cards: [{ ...edited, rev: 2 }] }).next)
   const closed: Card = { ...card(c, 'd21'), state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T10:00:00+09:00', resolved_option: 'keep', why: '結果: 図はこのまま送った' }
   assert.ok(applyChange(c, { cards: [closed] }).next)
-  assert.match(applyChange(c, { cards: [{ ...closed, rev: 2 }] }).errors[0]!, /片付けるだけなら rev は 1 のまま/)
+  assert.match(applyChange(c, { cards: [{ ...closed, rev: 2 }] }).errors[0]!, /片付けるときは rev を 1 のまま/)
   // 話し中を終えるために、開いたまま rev だけ上げるのは受ける。
   assert.ok(applyChange(c, { cards: [{ ...card(c, 'd21'), rev: 2 }] }).next)
 })
@@ -40,7 +40,8 @@ test('書く道具: 中身を変えたら rev を 1 上げる。片付けるだ�
 test('書く道具: 必須の欄が欠けたカードは書くが名指しする。op の消し込みとカードの更新を 1 回で書く', () => {
   const c = aoba()
   const thin: Card = { id: 'd40', rev: 1, kind: 'decide', state: 'open', title: '新しい判断', stream: 's1' }
-  const r = applyChange(c, { cards: [thin], applied_ops: [7, 8] })
+  const log = { ops: [7, 8].map((op_id) => ({ op_id, at: '2026-11-21T01:00:00.000Z', item_id: 'd21', item_rev: 1, type: 'talk' as const })) }
+  const r = applyChange(c, { cards: [thin], applied_ops: [7, 8] }, [], log)
   assert.ok(r.next)
   assert.match(r.warnings.join('\n'), /カード d40: 必須の欄が欠けている.*purpose/)
   assert.deepEqual(r.next!.applied_ops, [1, 7, 8])
@@ -90,7 +91,9 @@ test('migrate-v3: 話し中 → 相談、run_id の補い、依頼に legacy と
   ] }
   const r = migrateV3(c, log, utter, { ctx_aoba_list: 'run_aoba' }, NOW)
   const n = r.next
-  assert.equal(n.cards.find((x) => x.id === 'c4')!.kind, 'consult')
+  // 開いた talk は帳簿では talk のまま（版 2 のパネルが読める）。読み込みで相談になる。
+  assert.equal(n.cards.find((x) => x.id === 'c4')!.kind, 'talk')
+  assert.equal(parseCockpit(JSON.stringify(n)).cards.find((x) => x.id === 'c4')!.kind, 'consult')
   assert.deepEqual(n.tasks[0]!.worker, { run_id: 'run_aoba', task_id: 'task_aoba_list', dispatch_id: 'ctx_aoba_list' })
   assert.ok(n.requests!.every((x) => x.legacy))
   assert.equal(n.requests!.find((x) => x.id === 'r1')!.state, 'done')
@@ -115,6 +118,7 @@ test('cockpit-write の CLI: 書く前と同じ形の誤りは邪魔せず、ロ
   c.cards.push({ id: 'bad', rev: 1, kind: 'ask', title: 'x', state: 'open' })
   writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(c))
   writeFileSync(path.join(root, '.orca', 'cockpit', 'utterances.jsonl'), utter.map((u) => JSON.stringify(u)).join('\n') + '\n')
+  writeFileSync(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify({ ops: [5, 6].map((op_id) => ({ op_id, at: '2026-11-21T01:00:00.000Z', item_id: 'd21', item_rev: 1, type: 'talk' })) }))
   const r = await write(root, { applied_ops: [5] })
   assert.deepEqual(r.errors, [])
   assert.match(r.warnings.join('\n'), /書く前からある: 形の誤り: .*カード bad/)
@@ -127,4 +131,82 @@ test('cockpit-write の CLI: 書く前と同じ形の誤りは邪魔せず、ロ
   assert.match(m.summary.join('\n'), /worker に run_id を補った: t1/)
   assert.ok(existsSync(path.join(root, '.orca', 'cockpit.v2.json')))
   await assert.rejects(migrate(root, async () => undefined, true, NOW), /すでに版 3/)
+})
+
+// 版 2 のパネル（main 3ee7c74 の model.ts）が帳簿全体を断る条件。移し替えのあとも、入れ直す前のパネルが読めるようにする（Codex 高 1）。
+const V2_KINDS = ['inbox', 'send', 'decide', 'review', 'permit', 'stuck', 'talk', 'report']
+test('migrate-v3 のあとの帳簿は、版 2 のパネルが断る形（consult・dispatch_id の無い worker）を作らない', () => {
+  const c = aoba()
+  const n = migrateV3(c, { ops: [] }, utter, { ctx_aoba_list: 'run_aoba' }, NOW).next
+  assert.deepEqual(n.cards.filter((x) => !V2_KINDS.includes(x.kind)).map((x) => x.id), [])
+  assert.ok(n.tasks.every((t) => !t.worker || typeof t.worker.dispatch_id === 'string'))
+  // 移したあとの talk を書く道具で閉じるとき、読み込みの consult と同じ中身として比べる（rev を上げずに閉じられる）。
+  const talk = n.cards.find((x) => x.id === 'c4')!
+  const r = applyChange(n, { cards: [{ ...talk, state: 'done', resolved_by: 'owner', resolved_at: '2026-11-21T10:00:00+09:00' }] })
+  assert.deepEqual(r.errors, [])
+})
+
+test('書く道具: 開いたカードを閉じるときに中身を変える・rev を上げるのを断る（Codex 中 6）', () => {
+  const c = aoba()
+  const closing: Card = { ...card(c, 'd21'), title: '図を描き足すか（直した）', state: 'done', rev: 2, resolved_by: 'owner', resolved_at: '2026-11-21T10:00:00+09:00' }
+  assert.match(applyChange(c, { cards: [closing] }).errors.join('\n'), /カード d21: 片付けるときは rev を 1 のまま、中身を変えない（中身を直すなら/)
+  assert.match(applyChange(c, { cards: [{ ...closing, rev: 1 }] }).errors.join('\n'), /片付けるときは rev を 1 のまま/)
+})
+
+test('書く道具: 無い op を applied_ops に書かない（あとで押された操作がその番号で消し込まれるため。Codex 高 4）', () => {
+  const c = aoba()
+  assert.match(applyChange(c, { applied_ops: [1] }).errors[0]!, /applied_ops の 1 は cockpit.user.json に無い操作/)
+})
+
+test('書く道具: 入れ子の知らない欄と、形の違うタスクの欄を断る（Codex 中 8）', () => {
+  const c = { ...aoba(), intake: { through: '', none: [] } }
+  assert.match(applyChange(c, { intake: { throug: 'u1' } as never }, utter).errors.join('\n'), /intake: 書けない欄 throug/)
+  assert.match(applyChange(c, { tasks: [{ ...c.tasks[0]!, done: 3 as never }] }).errors.join('\n'), /タスク t1: done の形が違う/)
+  assert.match(applyChange(c, { tasks: [{ ...c.tasks[0]!, owner: 'o1' } as never] }).errors.join('\n'), /タスク t1: 書けない欄 owner/)
+  const d = card(c, 'd21')
+  assert.match(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', cc: 'c' } as never }] }).errors.join('\n'), /カード d21: 書けない欄 draft.cc/)
+  assert.match(applyChange(c, { cards: [{ ...d, rev: 2, options: [{ id: 'a', label: 'A', recomended: true } as never] }] }).errors.join('\n'), /options\[0\]\.recomended/)
+  assert.match(applyChange(c, { requests: [{ id: 'q1', at: '', title: 't', utterances: [{ id: 'u1', quote: '' }], kind: 'work', done_when: ['a'], evidence: [{ when: 1, kind: 'pr', ref: 'x', note: 'y' } as never] }] }, utter).errors.join('\n'), /依頼 q1: 書けない欄 evidence\[0\]\.note/)
+  // 行に元からある欄（版 2 の仕事の background など）は書き戻せる。足すのは断る。
+  const s1 = { ...c.streams[0]!, background: '経緯' } as never
+  const withBg = { ...c, streams: [s1, ...c.streams.slice(1)] }
+  assert.deepEqual(applyChange(withBg, { streams: [{ ...(s1 as object), title: '新しい題' } as never] }).errors, [])
+  assert.match(applyChange(c, { streams: [s1] }).errors.join('\n'), /仕事 s1: 書けない欄 background/)
+})
+
+test('書く道具: 依頼の済の条件を減らして、既にあるカードの行き先（r1#2）を宙に浮かせない（Codex 中 9）', () => {
+  const c = aoba()
+  c.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '一覧', utterances: [{ id: 'u1', quote: 'x' }], kind: 'work', done_when: ['a', 'b'] }]
+  c.cards.push({ id: 'v9', rev: 1, kind: 'review', state: 'done', title: '見て', elements: [{ n: 1, text: 'x' }], element_map: [{ n: 1, request: 'r1#2' }] })
+  const r = applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['a'] }] }, utter)
+  assert.match(r.errors.join('\n'), /カード v9: 要素 1 の行き先 r1#2 に当たる済の条件が無い（依頼の書き換えで外れる）/)
+  assert.deepEqual(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['a', 'b2'] }] }, utter).errors, [])
+})
+
+test('migrate-v3: 書かない（--dry-run）ときはロックを取らない。Orca への問い合わせはロックの外で済ませ、その間の書き込みを消さない（Codex 高 5・中 10）', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-mig-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(aoba()))
+  writeFileSync(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify({ ops: [{ op_id: 9, at: '2026-11-21T01:00:00.000Z', item_id: 'd21', item_rev: 1, type: 'talk' }] }))
+  // 別のプロセスがロックを持っていても、書かない移し替えは待たずに終わる。
+  writeFileSync(path.join(root, '.orca', 'cockpit.json.lock'), '')
+  const t0 = Date.now()
+  await migrate(root, async () => 'run_x', false, NOW)
+  assert.ok(Date.now() - t0 < 1000, '書かない移し替えはロックを待たない')
+  rmSync(path.join(root, '.orca', 'cockpit.json.lock'))
+  // 問い合わせの最中に書いた変更は、移し替えの書き込みで消えない。
+  await migrate(root, async () => {
+    assert.deepEqual((await write(root, { applied_ops: [9] })).errors, [])
+    return 'run_x'
+  }, true, NOW)
+  const saved = JSON.parse(readFileSync(path.join(root, '.orca', 'cockpit.json'), 'utf8')) as Cockpit
+  assert.deepEqual(saved.applied_ops, [1, 9])
+  assert.equal(saved.tasks[0]!.worker!.run_id, 'run_x')
+})
+
+test('migrate-v3: 仕分けの一覧の最後の更新は時刻で比べる（+09:00 と Z が混ざっても。Codex 中 11）', () => {
+  const c = aoba()
+  c.tasks[0]!.done = [{ text: 'a', at: '2026-11-21T10:00:00+09:00' }, { text: 'b', at: '2026-11-21T02:00:00Z' }]
+  c.requests = [{ id: 'r1', at: '', title: '進行中', state: 'open', tasks: ['t1'] }]
+  assert.equal(migrateV3(c, { ops: [] }, [], {}, NOW).sort[0]!.last, '2026-11-21T02:00:00Z')
 })

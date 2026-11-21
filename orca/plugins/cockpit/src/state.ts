@@ -1,7 +1,7 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, DEFAULT_PHASES, KIND_LABEL, missingFields, overlay, shownTask, unappliedOps, unmappedElements, worstState,
+  COUNTED, DEFAULT_PHASES, KIND_LABEL, missingFields, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
   type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
@@ -181,7 +181,7 @@ export type Derived = {
 
 const RANK: Record<CardKind, number> = { stuck: 0, permit: 1, decide: 2, send: 3, review: 4, consult: 5, inbox: 6, talk: 7, report: 8 }
 const dueKey = (r: Row) => (r.card.kind === 'stuck' ? -Infinity : r.card.due ? dueAt(r.card.due) || Infinity : Infinity)
-export const byUrgency = (a: Row, b: Row) => dueKey(a) - dueKey(b) || RANK[a.card.kind] - RANK[b.card.kind] || (a.card.at ?? '').localeCompare(b.card.at ?? '')
+export const byUrgency = (a: Row, b: Row) => dueKey(a) - dueKey(b) || RANK[a.card.kind] - RANK[b.card.kind] || timeOf(a.card.at) - timeOf(b.card.at)
 
 export function ownerOf(c: Cockpit, card: Pick<Card, 'owner' | 'stream'>, facts?: OrcaFacts): OwnerRef {
   const own = c.owners?.find((o) => o.id === card.owner) ?? c.owners?.find((o) => o.stream && o.stream === card.stream && o.state !== 'done')
@@ -269,7 +269,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const recent = (r: Row) => !r.when || now - Date.parse(r.when) < CLOSED_DAYS * DAY
   // when は操作の時刻（UTC の Z）と窓口が書いた時刻（+09:00）が混ざるので、文字列ではなく時刻で比べる。
-  const closed = rows.filter((r) => r.status === 'closed' && recent(r)).sort((a, b) => (Date.parse(b.when ?? '') || 0) - (Date.parse(a.when ?? '') || 0))
+  const closed = rows.filter((r) => r.status === 'closed' && recent(r)).sort((a, b) => timeOf(b.when) - timeOf(a.when))
   const requests = requestViews(c, log, archive, tasks)
   const unsorted = unsortedOf(c, opts.utterances ?? [])
   const late = (g: Gap) => !!g.since && now - Date.parse(g.since) >= GAP_GRACE_MS
@@ -279,8 +279,8 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
     views, queue, counts, total, tasks, closed, incomplete, unsorted, requests,
     talking: queue.filter((r) => r.talking),
     fixing: rows.filter((r) => r.status === 'fixing').sort(byUrgency),
-    waiting: rows.filter((r) => r.status === 'waiting').sort((a, b) => (a.card.awaiting?.since ?? '').localeCompare(b.card.awaiting?.since ?? '')),
-    reports: rows.filter((r) => r.status === 'mine' && r.card.kind === 'report').sort((a, b) => (b.card.at ?? '').localeCompare(a.card.at ?? '')),
+    waiting: rows.filter((r) => r.status === 'waiting').sort((a, b) => timeOf(a.card.awaiting?.since) - timeOf(b.card.awaiting?.since)),
+    reports: rows.filter((r) => r.status === 'mine' && r.card.kind === 'report').sort((a, b) => timeOf(b.card.at) - timeOf(a.card.at)),
     jobs: jobViews(c, tasks, queue, rows, facts),
     gaps: [...incomplete, ...reqGaps, ...unsorted].filter(late)
   }
@@ -302,19 +302,23 @@ export function requestViews(c: Cockpit, log: UserLog, archive: Card[], tasks: M
     const ts = (r.tasks ?? []).map((id) => tasks.get(id)).filter((t): t is TaskView => !!t)
     const cards = c.cards.filter((x) => x.request_id === r.id || (x.tasks ?? []).some((t) => r.tasks?.includes(t)))
     const streams = [...new Set([...ts.map((t) => t.task.stream), ...cards.map((x) => x.stream).filter((x): x is string => !!x)])]
-    const ev = (r.evidence ?? []).filter((e) => e.kind !== 'op' || !!liveOp(e.ref))
+    // 操作の証拠は取り消されていないものだけ。「これでよい」は、押した版が今のカードの版と同じときだけ効く
+    // （同じ URL を改訂したら rev を上げるので、古い承認は外れる）。済の条件を埋める段で照合し、古い承認で条件を埋めない。
+    const ev = (r.evidence ?? []).filter((e) => {
+      if (e.kind !== 'op') return true
+      const o = liveOp(e.ref)
+      if (!o || (e.card !== undefined && o.item_id !== e.card)) return false
+      if (o.type !== 'accept') return true
+      const card = cardById.get(o.item_id)
+      return !!card && o.item_rev === card.rev && (e.rev === undefined || e.rev === card.rev)
+    })
     // 済の条件の番号（evidence の when・element_map の「r30#2」）は、人がカードで読む番号と同じ 1 始まり。
     const covered = (r.done_when ?? []).map((_, i) => ev.some((e) => e.when === i + 1))
     if (legacy) {
       return { req: r, legacy, tasks: ts, cards, streams, missing: [], covered, state: r.state === 'done' ? '済' : ts.length ? '進行中' : '受付' }
     }
     const missing = [!r.utterances?.length && !r.source && '発言（utterances）か出典（source）', !r.done_when?.length && '済の条件（done_when）', !r.kind && '種類（kind）'].filter((x): x is string => !!x)
-    // 「これでよい」は、押した版が今のカードの版と同じときだけ効く（同じ URL を改訂したら rev を上げるので、古い承認は外れる）。
-    const accepted = ev.some((e) => {
-      const o = e.kind === 'op' ? liveOp(e.ref) : undefined
-      const card = o && cardById.get(o.item_id)
-      return !!o && o.type === 'accept' && !!card && o.item_id === (e.card ?? o.item_id) && o.item_rev === card.rev && (e.rev === undefined || e.rev === card.rev)
-    })
+    const accepted = ev.some((e) => e.kind === 'op' && liveOp(e.ref)?.type === 'accept')
     const all = covered.length > 0 && covered.every(Boolean) && (r.kind !== 'question' || ev.some((e) => e.kind === 'answer'))
     const reviewing = cards.some((x) => x.kind === 'review' && x.state === 'open')
     const state: RequestState = all && (!r.check || accepted) ? '済' : (all && r.check) || reviewing ? '確認待ち' : ts.length || ev.length || cards.length ? '進行中' : '受付'

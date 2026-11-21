@@ -8,7 +8,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chatMain, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
+import { chatMain, evidenceCards, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
 import type { CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
 import { currentDispatches, descendants, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
@@ -184,12 +184,15 @@ export function createServer(opts: Options) {
   async function cockpitView(root: string | undefined, slim = false): Promise<CockpitView> {
     const ws = root ? wss.get(root) : undefined
     const files = ws?.files ?? emptyFiles()
-    const cockpit = slim && files.cockpit ? slimmed(files.cockpit) : files.cockpit
     const since = Date.now() - CLOSED_DAYS * 86_400_000
+    // 依頼の済は証拠の「これでよい」が指すカードの版で決めるので、表示の期間を過ぎてもそのカードは送る（CLI と窓で済が食い違わないように）。
+    const proof = files.cockpit ? evidenceCards(files.cockpit, files.log) : new Set<string>()
+    const keep = (x: Card) => x.state !== 'done' || !x.resolved_at || Date.parse(x.resolved_at) > since || proof.has(x.id)
+    const cockpit = slim && files.cockpit ? slimmed(files.cockpit, keep) : files.cockpit
     return {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit, log: files.log, figures: files.figures, errors: files.errors,
-      archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since) : files.archive,
+      archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since || proof.has(c.id)) : files.archive,
       workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, current: root ? currents.get(root) : undefined, owners,
       notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
@@ -198,9 +201,7 @@ export function createServer(opts: Options) {
   }
 
   /** 窓に送る量を減らす。片付いて日のたったカードと、タスクの済んだ作業の記録は画面に出さない。 */
-  function slimmed(c: NonNullable<Files['cockpit']>): NonNullable<Files['cockpit']> {
-    const since = Date.now() - CLOSED_DAYS * 86_400_000
-    const keep = (x: Card) => x.state !== 'done' || !x.resolved_at || Date.parse(x.resolved_at) > since
+  function slimmed(c: NonNullable<Files['cockpit']>, keep: (x: Card) => boolean): NonNullable<Files['cockpit']> {
     return { ...c, cards: c.cards.filter(keep), tasks: c.tasks.map(({ done: _d, sources: _s, ...t }) => t) }
   }
 

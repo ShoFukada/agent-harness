@@ -39,18 +39,22 @@ export async function write(root: string, change: unknown, check = false): Promi
   }
 }
 
-/** 版 3 へ移す。write なら元を cockpit.v2.json に控えて書く（控えが既にあれば上書きしない）。 */
+/**
+ * 版 3 へ移す。write なら元を cockpit.v2.json に控えて書く（控えが既にあれば上書きしない）。書かないときはロックも取らない。
+ * Orca への問い合わせ（worker ごとに数秒）はロックの外で先に済ませる。ロックは 10 秒で外れるので、中で待つと
+ * 並んで書いた変更を古い中身で上書きしうる。
+ */
 export async function migrate(root: string, runOf: (dispatch: string) => Promise<string | undefined>, doWrite = false, now = Date.now()): Promise<MigrateV3> {
-  const release = await lockCockpit(root)
+  const runs: Record<string, string> = {}
+  for (const t of (await readLedger(root)).raw.tasks)
+    if (t.worker?.dispatch_id && !t.worker.run_id) {
+      const run = await runOf(t.worker.dispatch_id).catch(() => undefined)
+      if (run) runs[t.worker.dispatch_id] = run
+    }
+  const release = doWrite ? await lockCockpit(root) : async () => {}
   try {
     const { raw, log, utterances } = await readLedger(root)
     if (raw.intake) throw new Error('すでに版 3 の形（intake がある）')
-    const runs: Record<string, string> = {}
-    for (const t of raw.tasks)
-      if (t.worker?.dispatch_id && !t.worker.run_id) {
-        const run = await runOf(t.worker.dispatch_id).catch(() => undefined)
-        if (run) runs[t.worker.dispatch_id] = run
-      }
     const r = migrateV3(raw, log, utterances, runs, now)
     const problems: string[] = []
     parseCockpit(JSON.stringify(r.next), problems)
@@ -85,11 +89,16 @@ if (import.meta.main) {
     process.exit(1)
   }
   if (plain[0] === 'migrate-v3' && plain.length <= 2) {
+    const doWrite = args.includes('--write')
+    if (doWrite && dry) {
+      console.error('--write と --dry-run は一緒に使えない（書かずに確かめるなら --write を外す）')
+      process.exit(2)
+    }
     const orca = orcaCli(process.env.COCKPIT_ORCA ?? 'orca')
-    migrate(path.resolve(plain[1] ?? '.'),async (d) => (await orca.show(d))?.dispatch?.runId ?? undefined, args.includes('--write')).then((r) => {
+    migrate(path.resolve(plain[1] ?? '.'), async (d) => (await orca.show(d))?.dispatch?.runId ?? undefined, doWrite).then((r) => {
       console.log(r.summary.join('\n'))
       if (r.sort.length) console.log(`\n窓口が仕分ける古い依頼（id・題・タスク・最後の更新）:\n${r.sort.map((x) => `  ${x.id} ${x.title}｜${x.tasks}｜${x.last ?? '—'}`).join('\n')}`)
-      console.log(args.includes('--write') ? '\n書き換えた。元は .orca/cockpit.v2.json' : '\n（書き換えていない。--write で書き換える）')
+      console.log(doWrite ? '\n書き換えた。元は .orca/cockpit.v2.json' : '\n（書き換えていない。--write で書き換える）')
     }, fail)
   } else if (plain.length === 1 || plain.length === 2) {
     readChange(plain[1] ?? '-').then((ch) => write(path.resolve(plain[0]!), ch, dry)).then((r) => {

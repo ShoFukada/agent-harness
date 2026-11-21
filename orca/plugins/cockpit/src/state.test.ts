@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit, type Cockpit } from './model.ts'
+import { evidenceCards, parseCockpit, type Card, type Cockpit } from './model.ts'
 import type { AgentRow } from './protocol.ts'
-import { bucketOf, derive, NAME_MAX, ORCA_STATUS, report, routeProblem } from './state.ts'
+import { bucketOf, byUrgency, derive, NAME_MAX, ORCA_STATUS, report, routeProblem, type Row } from './state.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const ws = (n: number) => {
@@ -261,4 +261,58 @@ test('片付いたものは時刻で新しい順に並べる（操作の UTC の
   const d = derive(c, log, [], '', undefined, NOW)
   const ids = d.closed.map((r) => r.card.id)
   assert.ok(ids.indexOf('d21') < ids.indexOf('v7'), ids.join())
+})
+
+test('題の無いタスク 1 件で CLI 全体を落とさない。そのタスクだけ外して名指しする（Codex 高 2）', () => {
+  const w = ws(0)
+  const raw = structuredClone(sample(NOW)[0]!.cockpit) as unknown as { tasks: unknown[] }
+  raw.tasks.push({ id: 't', state: 'run' }, { id: 't8', stream: 's1', phase: '実装', title: 'x', state: 'run', done: 3 })
+  const problems: string[] = []
+  const c = parseCockpit(JSON.stringify(raw), problems)
+  assert.ok(!c.tasks.some((t) => t.id === 't'))
+  assert.equal(c.tasks.find((t) => t.id === 't8')!.done, undefined)
+  assert.match(problems.join('\n'), /タスク t（title・phase を読めない）/)
+  assert.match(problems.join('\n'), /タスク t8 の done の形が違う/)
+  assert.ok(report(c, w.log, [], undefined, 'skipped', NOW).checks)
+})
+
+test('依頼の済: 古い版への「これでよい」は済の条件を埋めない。check があれば今の版の承認が要る（Codex 高 3）', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  c.intake = { through: '', none: [] }
+  const v = c.cards.find((x) => x.id === 'r5')!
+  v.rev = 2
+  const log = { ops: [...w.log.ops, { op_id: 50, at: '2026-11-21T00:30:00.000Z', item_id: 'r5', item_rev: 1, type: 'accept' as const }] }
+  const req = { id: 'q1', at: '2026-11-21T09:00:00+09:00', title: '一覧', utterances: [{ id: 'u1', quote: 'x' }], kind: 'work' as const, done_when: ['見てで承認'] }
+  c.requests = [{ ...req, evidence: [{ when: 1, kind: 'op', ref: '50' }] }]
+  const old = derive(c, log, [], '/a', undefined, NOW).requests[0]!
+  assert.deepEqual(old.covered, [false])
+  assert.notEqual(old.state, '済')
+  // check: true で、別の条件に今の版の承認が 1 つあっても、古い承認で残りの条件を埋めない。
+  log.ops.push({ op_id: 51, at: '2026-11-21T00:40:00.000Z', item_id: 'r5', item_rev: 2, type: 'accept' })
+  c.requests = [{ ...req, check: true, done_when: ['a', 'b'], evidence: [{ when: 1, kind: 'op', ref: '51' }, { when: 2, kind: 'op', ref: '50' }] }]
+  const r = derive(c, log, [], '/a', undefined, NOW).requests[0]!
+  assert.deepEqual(r.covered, [true, false])
+  assert.notEqual(r.state, '済')
+  c.requests = [{ ...req, evidence: [{ when: 1, kind: 'op', ref: '51' }] }]
+  assert.equal(derive(c, log, [], '/a', undefined, NOW).requests[0]!.state, '済')
+})
+
+test('依頼の証拠の操作が指すカードは、表示の期間（14 日）を過ぎても窓に送る（窓と CLI の済が食い違わない。Codex 中 7）', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  c.requests = [{ id: 'q1', at: '', title: 't', evidence: [{ when: 1, kind: 'op', ref: '50', card: 'v0' }, { when: 1, kind: 'op', ref: '1' }, { when: 1, kind: 'pr', ref: 'x' }] }]
+  assert.deepEqual([...evidenceCards(c, w.log)].sort(), [...new Set(['v0', ...w.log.ops.filter((o) => o.op_id === 1).map((o) => o.item_id)])].sort())
+})
+
+test('同じ順位の要対応・顧客待ち・報告は時刻で並べる（+09:00 と Z が混ざっても。Codex 中 11）', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  const mk = (id: string, at: string): Card => ({ id, rev: 1, kind: 'report', state: 'open', title: id, at, done: [{ what: 'x' }] })
+  // 10:00+09:00 は 01:00Z。02:00Z より前。
+  c.cards.push(mk('ra', '2026-11-21T10:00:00+09:00'), mk('rb', '2026-11-21T02:00:00Z'))
+  assert.deepEqual(derive(c, w.log, [], '/a', undefined, NOW).reports.filter((r) => r.card.id.startsWith('r') && r.card.id.length === 2).map((r) => r.card.id), ['rb', 'ra'])
+  const a = { card: mk('x', '2026-11-21T10:00:00+09:00') } as Row
+  const b = { card: mk('y', '2026-11-21T02:00:00Z') } as Row
+  assert.ok(byUrgency(a, b) < 0)
 })

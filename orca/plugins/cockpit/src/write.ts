@@ -1,7 +1,7 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  badFields, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, TASK_STATES, unmappedElements, upgradeCard, WORKER_SHAPE,
+  badFields, CARD_SHAPE, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
   type Card, type Cockpit, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 
@@ -28,6 +28,50 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const CLOSING_FIELDS = new Set(['state', 'resolved_by', 'resolved_at', 'resolved_option', 'resolved_text', 'resolved_at_inferred', 'closed_without_review', 'awaiting', 'why', 'element_map'])
 /** 承認を取り込むときに書く要素の行き先。承認した版の中身ではないので、開いたままでも rev を上げずに書ける（上げると承認が外れる）。 */
 const INTAKE_FIELDS = new Set(['element_map'])
+
+/**
+ * 書ける欄の名前。読み込みは知らない欄を読み飛ばすので、書き間違い（through を throug と書くなど）は黙って効かなくなる。書く道具は変更の行だけを検査し、
+ * 既にある行はそのまま保つ。nested は入れ子のオブジェクト（配列ならその要素）の欄。
+ */
+type Keys = { top: string[]; nested: Record<string, string[]> }
+const CARD_KEYS: Keys = {
+  top: ['id', 'rev', 'kind', 'title', 'state', ...Object.keys(CARD_SHAPE)],
+  nested: {
+    from: ['who', 'via', 'at', 'href'], draft: ['to', 'via', 'text', 'href'], context: ['what', 'now', 'how', 'gain', 'cost'],
+    options: ['id', 'label', 'recommended', 'example', 'body'], compare: ['columns', 'rows'], background: ['text', 'quote', 'date'],
+    last: ['text', 'at', 'by'], done: ['what', 'why', 'undo', 'task'], awaiting: ['who', 'what', 'since', 'resumes', 'remind_at'],
+    links: ['label', 'href'], manual: ['where', 'command', 'steps', 'check'], elements: ['n', 'text'], element_map: ['n', 'task', 'request', 'skip']
+  }
+}
+const TASK_KEYS: Keys = { top: ['id', 'title', 'phase', 'state', 'worker', ...Object.keys(TASK_SHAPE)], nested: { worker: ['task_id', 'run_id', 'dispatch_id'], done: ['text', 'at'] } }
+const REQUEST_KEYS: Keys = {
+  top: ['id', 'deliverables', ...Object.keys(REQUEST_SHAPE)],
+  nested: { utterances: ['id', 'quote'], evidence: ['when', 'kind', 'ref', 'card', 'rev'], source: ['session', 'at', 'quote'] }
+}
+const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'sources', 'form'], nested: {} }
+const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'state'], nested: {} }
+const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through'], nested: {} }
+
+function strayKeys(row: object, spec: Keys): string[] {
+  const rec = row as Record<string, unknown>
+  const out = Object.keys(rec).filter((k) => !spec.top.includes(k))
+  for (const [k, keys] of Object.entries(spec.nested)) {
+    const v = rec[k]
+    const items: [string, unknown][] = Array.isArray(v) ? v.map((x, i) => [`${k}[${i}]`, x]) : [[k, v]]
+    for (const [at, x] of items) if (isObj(x)) out.push(...Object.keys(x).filter((j) => !keys.includes(j)).map((j) => `${at}.${j}`))
+  }
+  return out
+}
+
+/** 版 2 の talk と、読み込みで直した consult を同じ中身として比べる（移し替えはディスクの talk を残すため）。 */
+function canon(y: Card): Card {
+  const z = structuredClone(y)
+  const state = z.state
+  z.state = 'open'
+  upgradeCard(z)
+  z.state = state
+  return z
+}
 
 function upsert<T extends { id: string }>(rows: T[], incoming: T[]): T[] {
   const out = [...rows]
@@ -57,6 +101,20 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   if (change.intake !== undefined && !INTAKE_SHAPE(change.intake)) errors.push('intake は { through, none, checked_through } の形で渡す（none は発言の id の配列）')
   if (errors.length) return { errors, warnings }
   const ch = change as Change
+  const NAMES = { cards: ['カード', CARD_KEYS], tasks: ['タスク', TASK_KEYS], requests: ['依頼', REQUEST_KEYS], streams: ['仕事', STREAM_KEYS], owners: ['担当', OWNER_KEYS] } as const
+  for (const [k, [name, spec]] of Object.entries(NAMES))
+    for (const row of (ch[k as keyof typeof NAMES] ?? []) as { id: string }[]) {
+      // その行に元からある欄（版 2 の仕事の background・担当の note など）は書き戻してよい。新しく足す知らない欄だけを断る。
+      const old = ((c as unknown as Record<string, { id: string }[] | undefined>)[k] ?? []).find((x) => x.id === row.id)
+      const had = new Set(old ? strayKeys(old, spec) : [])
+      const stray = strayKeys(row, spec).filter((x) => !had.has(x))
+      if (stray.length) errors.push(`${name} ${row.id}: 書けない欄 ${stray.join('・')}`)
+    }
+  if (ch.intake) {
+    const stray = strayKeys(ch.intake, INTAKE_KEYS).filter((x) => !(c.intake && strayKeys(c.intake, INTAKE_KEYS).includes(x)))
+    if (stray.length) errors.push(`intake: 書けない欄 ${stray.join('・')}`)
+  }
+  if (errors.length) return { errors, warnings }
 
   const streams = upsert(c.streams, ch.streams ?? [])
   const owners = upsert(c.owners ?? [], ch.owners ?? [])
@@ -67,11 +125,15 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
 
   for (const s of ch.streams ?? []) {
     if (typeof s.title !== 'string' || !s.title.trim()) errors.push(`仕事 ${s.id}: title が無い`)
+    if ((s.summary !== undefined && typeof s.summary !== 'string') || (s.sources !== undefined && !(Array.isArray(s.sources) && s.sources.every((x) => typeof x === 'string'))))
+      errors.push(`仕事 ${s.id}: summary は文字列、sources は文字列の配列`)
     if (s.form !== undefined && !FORMS.includes(s.form as StreamForm)) errors.push(`仕事 ${s.id}: form は ${FORMS.join('・')} のどれか`)
     if (s.form === undefined) warnings.push(`仕事 ${s.id}: form（delegate・cowork・watch）が無い`)
   }
   for (const o of ch.owners ?? []) {
     if (typeof o.title !== 'string' || !o.title.trim()) errors.push(`担当 ${o.id}: title が無い`)
+    if (['stream', 'agent', 'session', 'terminal'].some((k) => o[k as keyof Owner] !== undefined && typeof o[k as keyof Owner] !== 'string') || (o.state !== undefined && o.state !== 'open' && o.state !== 'done'))
+      errors.push(`担当 ${o.id}: stream・agent・session・terminal は文字列、state は open か done`)
     if (!has(streams, o.stream)) errors.push(`担当 ${o.id}: 仕事 ${o.stream} が無い`)
   }
   for (const t of ch.tasks ?? []) {
@@ -79,8 +141,9 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (typeof t.title !== 'string' || !t.title.trim() || typeof t.phase !== 'string') errors.push(`タスク ${t.id}: title・phase が無い`)
     if (!TASK_STATES.includes(t.state as TaskState)) errors.push(`タスク ${t.id}: state は ${TASK_STATES.join('・')} のどれか`)
     if (!has(streams, t.stream)) errors.push(`タスク ${t.id}: 仕事 ${t.stream} が無い`)
-    for (const k of ['next', 'goal', 'waiting_on', 'waiting_since'] as const) if (t[k] !== undefined && typeof t[k] !== 'string') errors.push(`タスク ${t.id}: ${k} は文字列`)
-    if (t.reviewed_for !== undefined && !(Array.isArray(t.reviewed_for) && t.reviewed_for.every((x) => typeof x === 'string'))) errors.push(`タスク ${t.id}: reviewed_for は判断の id の配列`)
+    const rec = t as unknown as Record<string, unknown>
+    const bad = Object.keys(TASK_SHAPE).filter((k) => rec[k] != null && !TASK_SHAPE[k]!(rec[k]))
+    if (bad.length) errors.push(`タスク ${t.id}: ${bad.join('・')} の形が違う（done は文字列か { text, at } の配列、reviewed_for・sources は文字列の配列、ほかは文字列）`)
     if (t.worker !== undefined) {
       if (!WORKER_SHAPE(t.worker)) errors.push(`タスク ${t.id}: worker は { run_id, task_id }`)
       // 今の Dispatch は窓が Run の続きから引く。dispatch_id は版 2 の記録をそのまま持ち越すときだけ受ける。
@@ -112,6 +175,25 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       }
     }
   }
+  /** 要素の行き先（element_map）が、書いたあとの帳簿のタスク・依頼の済の条件を指しているか。 */
+  const mapErrors = (card: Card): string[] => (card.element_map ?? []).flatMap((m) => {
+    const out: string[] = []
+    if (!card.elements?.some((e) => e.n === m.n)) out.push(`カード ${card.id}: element_map の ${m.n} に当たる要素が無い`)
+    if (m.task !== undefined && !has(tasks, m.task)) out.push(`カード ${card.id}: 要素 ${m.n} の行き先のタスク ${m.task} が無い`)
+    if (m.request !== undefined) {
+      const [rid, w] = m.request.split('#')
+      const req = requests.find((x) => x.id === rid)
+      if (!req) out.push(`カード ${card.id}: 要素 ${m.n} の行き先の依頼 ${rid} が無い`)
+      else if (w !== undefined && !(Number.isInteger(Number(w)) && Number(w) >= 1 && Number(w) <= (req.done_when?.length ?? 0))) out.push(`カード ${card.id}: 要素 ${m.n} の行き先 ${m.request} に当たる済の条件が無い`)
+    }
+    return out
+  })
+  // 依頼を書き換えたら、その依頼を指す既にあるカードの行き先も確かめる（済の条件を減らして「r1#2」を宙に浮かせない）。
+  const touched = new Set((ch.requests ?? []).map((r) => r.id))
+  const incomingCards = new Set((ch.cards ?? []).map((x) => x.id))
+  for (const x of c.cards)
+    if (!incomingCards.has(x.id) && Array.isArray(x.element_map) && x.element_map.some((m) => touched.has(String(m?.request ?? '').split('#')[0]!)))
+      errors.push(...mapErrors(x).map((e) => `${e}（依頼の書き換えで外れる）`))
   for (const x of ch.cards ?? []) {
     const head = cardHeadError(x)
     if (head) {
@@ -126,24 +208,20 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (!has(owners, card.owner)) errors.push(`カード ${card.id}: 担当 ${card.owner} が無い`)
     if (!has(requests, card.request_id)) errors.push(`カード ${card.id}: 依頼 ${card.request_id} が無い`)
     for (const e of card.elements ?? []) if (e.n < 1) errors.push(`カード ${card.id}: 要素の番号は 1 から（${e.n}）`)
-    for (const m of card.element_map ?? []) {
-      if (!card.elements?.some((e) => e.n === m.n)) errors.push(`カード ${card.id}: element_map の ${m.n} に当たる要素が無い`)
-      if (m.task !== undefined && !has(tasks, m.task)) errors.push(`カード ${card.id}: 要素 ${m.n} の行き先のタスク ${m.task} が無い`)
-      if (m.request !== undefined) {
-        const [rid, w] = m.request.split('#')
-        const req = requests.find((x) => x.id === rid)
-        if (!req) errors.push(`カード ${card.id}: 要素 ${m.n} の行き先の依頼 ${rid} が無い`)
-        else if (w !== undefined && !(Number.isInteger(Number(w)) && Number(w) >= 1 && Number(w) <= (req.done_when?.length ?? 0))) errors.push(`カード ${card.id}: 要素 ${m.n} の行き先 ${m.request} に当たる済の条件が無い`)
-      }
-    }
-    const old = c.cards.find((y) => y.id === card.id)
-    if (!old && card.rev < 1) errors.push(`カード ${card.id}: rev は 1 から`)
-    if (old) {
+    errors.push(...mapErrors(card))
+    const raw = c.cards.find((y) => y.id === card.id)
+    if (!raw && card.rev < 1) errors.push(`カード ${card.id}: rev は 1 から`)
+    if (raw) {
+      const old = canon(raw)
+      const now = canon(card)
       const strip = (y: Card) => Object.fromEntries(Object.entries(y).filter(([k]) => k !== 'rev' && !CLOSING_FIELDS.has(k)))
       // 開いたままなら全部の欄、片付ける・顧客待ちにするなら片付けで動く欄の外が「中身」。
       const body = (y: Card) => Object.fromEntries(Object.entries(y).filter(([k]) => k !== 'rev' && !INTAKE_FIELDS.has(k)))
-      const changed = card.state === 'open' ? !same(body(old), body(card)) : !same(strip(old), strip(card))
+      const changed = card.state === 'open' ? !same(body(old), body(now)) : !same(strip(old), strip(now))
       if (card.rev < old.rev) errors.push(`カード ${card.id}: rev を下げない（今 ${old.rev}）`)
+      // 開いたカードを閉じるときは版を動かさない（承認した版のまま閉じる）。中身も直すなら、先に rev を上げて書き、別に閉じる。
+      else if (old.state === 'open' && card.state !== 'open' && (changed || card.rev !== old.rev))
+        errors.push(`カード ${card.id}: 片付けるときは rev を ${old.rev} のまま、中身を変えない${changed ? '（中身を直すなら、開いたまま rev を上げて書いてから片付ける）' : '（上げると「これでよい」の版の照合から外れる）'}`)
       else if (changed && card.rev !== old.rev + 1) errors.push(`カード ${card.id}: 中身を変えたら rev を ${old.rev + 1} にする（古い版に押された操作を効かせないため）`)
       else if (!changed && card.rev > old.rev + 1) errors.push(`カード ${card.id}: rev は 1 ずつ上げる（今 ${old.rev}）`)
       else if (!changed && card.rev !== old.rev && card.state !== 'open') errors.push(`カード ${card.id}: 片付けるだけなら rev は ${old.rev} のまま（上げると「これでよい」の版の照合から外れる）`)
@@ -157,6 +235,11 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   // 要素のあるカードへの「これでよい」は、全部の要素に行き先を書いてから取り込む（一部だけタスクにして通るのを防ぐ。9.2）。
   for (const id of ch.applied_ops ?? []) {
     const o = log.ops.find((x) => x.op_id === id)
+    // 無い op を先に消し込むと、あとで押された操作にその番号が付き、未反映の知らせから消える。
+    if (!o) {
+      errors.push(`applied_ops の ${id} は cockpit.user.json に無い操作`)
+      continue
+    }
     const card = o?.type === 'accept' ? cards.find((x) => x.id === o.item_id) : undefined
     const miss = card ? unmappedElements(card) : []
     if (miss.length) errors.push(`カード ${card!.id}: 「これでよい」の op ${id} を取り込む前に、要素 ${miss.join('・')} の行き先を element_map に書く（task・request・skip のどれか）`)
@@ -194,7 +277,7 @@ const ANSWER = new Set(['decide', 'accept', 'sent', 'delegate'])
 
 /**
  * 版 2 の帳簿を版 3 の形に移す（migrate-v3）。runOf は Dispatch → Run（Orca の worker-show で引いたもの）。
- * - 開いた talk を consult に、at の無いカードに created_at を写す（読み込みと同じ upgradeCard）
+ * - at の無いカードに created_at を写す。開いた talk は書き換えない（読み込みが consult として扱う。版 2 のパネルが読めるように）
  * - worker に run_id を補う（dispatch_id は残す。古いパネルが移し替えのあとも読めるように）
  * - 今ある依頼に legacy: true。結ばれたタスクが全部済で、結ばれたカードも全部閉じ、そのうち 1 枚以上に深田さんの返答
  *   （これでよい・決めた・済ませた・許して任せた、か resolved_by: user）が残るものだけ state を done にする（照合できたものだけ）。
@@ -207,10 +290,12 @@ const ANSWER = new Set(['decide', 'accept', 'sent', 'delegate'])
 export function migrateV3(raw: Cockpit, log: UserLog, utterances: Utterance[], runOf: Record<string, string>, now: number): MigrateV3 {
   const c = structuredClone(raw)
   const summary: string[] = []
+  // 開いた talk はディスクでは talk のまま残し、読み込み（upgradeCard）で相談として扱う。版 2 のパネルは consult を知らず、
+  // 1 枚あるだけで帳簿全体を読めなくなるため（入れ直す前のパネルが残っていても読めるように）。
   const talk = c.cards.filter((x) => x.kind === 'talk' && x.state !== 'done').map((x) => x.id)
-  const noAt = c.cards.filter((x) => !x.at && x.created_at).map((x) => x.id)
-  for (const x of c.cards) upgradeCard(x)
-  summary.push(`開いた話し中 → 相談: ${talk.join('・') || 'なし'}`, `at を created_at から補った: ${noAt.join('・') || 'なし'}`)
+  const noAt = c.cards.filter((x) => !x.at && x.created_at)
+  for (const x of noAt) x.at = x.created_at
+  summary.push(`開いた話し中（読み込みで相談として扱う。帳簿は talk のまま）: ${talk.join('・') || 'なし'}`, `at を created_at から補った: ${noAt.map((x) => x.id).join('・') || 'なし'}`)
 
   const filled: string[] = []
   const missingRun: string[] = []
@@ -242,8 +327,9 @@ export function migrateV3(raw: Cockpit, log: UserLog, utterances: Utterance[], r
       closedNow.push(r.id)
       continue
     }
-    const last = [...ts.flatMap((t) => (t.done ?? []).map((d) => (typeof d === 'string' ? undefined : d.at))), ...cards.map((x) => x.resolved_at ?? x.at)]
-      .filter((x): x is string => !!x).sort().at(-1)
+    // 移し替えは読み込みを通す前の中身を扱うので、Bash で書かれた形の違う done（数など）も通す。
+    const last = [...ts.flatMap((t) => (Array.isArray(t.done) ? t.done : []).map((d) => (typeof d === 'string' ? undefined : d?.at))), ...cards.map((x) => x.resolved_at ?? x.at)]
+      .filter((x): x is string => !!x).sort((a, b) => timeOf(a) - timeOf(b)).at(-1)
     sort.push({ id: r.id, title: r.title, tasks: ts.map((t) => `${t.id} ${t.state}`).join('・') || 'タスクなし', last })
   }
   summary.push(`依頼 ${(c.requests ?? []).length} 件に legacy を付けた。タスクとカードが全部済で深田さんの返答が残るので済にした: ${closedNow.join('・') || 'なし'}。窓口が仕分ける: ${sort.length} 件`)
