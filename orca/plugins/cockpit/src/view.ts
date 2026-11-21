@@ -1,5 +1,5 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, type Card, type CardKind, type Repo } from './model.ts'
+import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, isSynthetic, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, countsText, derive, dueAt, fmtDate, hhmm, isHot, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -316,7 +316,9 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   const decideBtn = c.options?.length || otherOpen ? b('decide', decideLabel, 'pri', ready ? '' : 'disabled') : ''
   const other = b('other', otherOpen ? '別の答えを閉じる' : '別の答え', 'quiet')
   let btns: string[]
-  if (r.agent) btns = [b('focus', '端末を開く', 'pri')]
+  // Orca から作った詰まり: 開いて直し、直したら「済ませた」で隠す（同じ失敗のあいだ。次に止まればまた出る）。
+  const dismiss = isSynthetic(c.id) ? [b('dismiss', '済ませた')] : []
+  if (r.agent) btns = [b('focus', r.agent.chat ? 'チャットを開く' : '端末を開く', 'pri'), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返事は要らない'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
     case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', '送った'), talk('担当と直す'), b('skip', '送らない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
@@ -324,7 +326,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
     case 'review': btns = [b('accept', 'これでよい', 'pri'), b('other', otherOpen ? '書くのをやめる' : '直してほしいことを書く'), ...(otherOpen ? [decideBtn] : []), talk('直してほしい（担当と話す）'), ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
     case 'permit': btns = c.manual ? [b('sent', '済ませた', 'pri'), talk()]
       : c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許す', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}任せる`), b('skip', '止める', 'quiet'), talk()]; break
-    case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と話す' : '担当を開く'), other]; break
+    case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と話す' : '担当を開く'), ...dismiss, ...(dismiss.length ? [] : [other])]; break
     case 'consult': btns = [talk()]; break
     case 'talk': btns = [talk('続きを話す')]; break
     case 'report': btns = [b('ack', '読んだ', 'pri'), talk()]; break

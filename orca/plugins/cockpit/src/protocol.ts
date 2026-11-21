@@ -18,6 +18,12 @@ export type AgentRow = {
   task?: string
   /** worktree の comment の「｜」より後ろ（worker が書く今していること）。 */
   where?: string
+  /** Orca のチャット（端末ではない）。開くボタンはチャットのある worktree を開く。 */
+  chat?: boolean
+  /** チャットの Orca のセッション。詰まりの行の id に使う。 */
+  session?: string
+  /** 利用枠の上限で止まったとき、戻る時刻（「22:50」）。読めなければ無い。 */
+  reset?: string
 }
 
 /** Orca の orchestration の Dispatch の様子（orca orchestration worker-show）。 */

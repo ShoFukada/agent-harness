@@ -1,5 +1,5 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
-import { COUNTED, DEFAULT_PHASES, FORMS, FORM_LABEL, KIND_LABEL, timeOf, type Card, type CardKind, type Cockpit, type StreamForm, type TaskState } from './model.ts'
+import { COUNTED, DEFAULT_PHASES, FORMS, FORM_LABEL, KIND_LABEL, isSynthetic, timeOf, type Card, type CardKind, type Cockpit, type StreamForm, type TaskState } from './model.ts'
 import { STOP_LABEL, byUrgency, fmtDate, isHot, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type RequestView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, backgroundParts, dueHtml, esc, fld, glyph, keyOf, linkBtn, manualHtml, mono, optionsHtml, otherHtml, ownerHtml, rich, stripHtml, toastsHtml,
@@ -132,7 +132,8 @@ function firstOfKind(r: VRow, ui: Ui, list: (xs: string[] | undefined, ordered?:
       return c.draft ? `<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b>${c.draft.via ? `　経路 ${esc(c.draft.via)}` : ''}</div><div class="msg">${esc(c.draft.text)}</div></div>${optionsHtml(r, ui)}` : optionsHtml(r, ui)
     case 'stuck':
       return [fld('止まっている理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld('止まってから', esc(fmtDate(c.since))) : '',
-        fld('答えれば進むか', `${c.answerable ? '進む' : '答えても進まない'}${c.unblock ? `。${esc(c.unblock)}` : ''}`), optionsHtml(r, ui)].join('')
+        fld('直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))),
+        isSynthetic(c.id) ? '<p class="mut">直したら「済ませた」を押します。同じ失敗のあいだは出さず、次に止まったときはまた出します。</p>' : '', optionsHtml(r, ui)].join('')
     case 'consult':
       return [fld('論点', esc(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)), fld('分かっていること', list(c.known)), fld('決めかねていること', list(c.undecided))].join('')
     case 'report':

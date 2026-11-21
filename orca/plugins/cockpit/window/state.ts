@@ -4,18 +4,20 @@ import path from 'node:path'
 import type { Cockpit } from '../src/model.ts'
 import { report, type OrcaFacts, type StateReport } from '../src/state.ts'
 import { emptyFiles, loadFiles } from '../src/store.ts'
-import { currentDispatches, orcaAgents, orcaDispatches, pluginProblem, type Chain, type PluginRow, type PsRow, type WorkerShow } from './orca-state.ts'
+import { currentDispatches, orcaAgents, orcaDispatches, pluginProblem, type Chain, type Failure, type PluginRow, type PsRow, type WorkerShow } from './orca-state.ts'
 import { orcaCli } from './server.ts'
 
 /** worker の記録がある済んでいないタスクがあるときだけ Orca を呼ぶ（hook は発言のたびに走るので、要らない呼び出しを省く）。 */
-export async function orcaFacts(root: string, c: Cockpit, ps: () => Promise<PsRow[]>, terminals: () => Promise<{ handle: string; leafId: string; tabId: string }[]>, show: (dispatch: string) => Promise<WorkerShow | null>, chain?: Chain): Promise<{ facts?: OrcaFacts; state: StateReport['orca'] }> {
+export async function orcaFacts(root: string, c: Cockpit, ps: () => Promise<PsRow[]>, terminals: () => Promise<{ handle: string; leafId: string; tabId: string }[]>, show: (dispatch: string) => Promise<WorkerShow | null>, chain?: Chain, failures?: () => Promise<Record<string, Failure>>): Promise<{ facts?: OrcaFacts; state: StateReport['orca'] }> {
   if (!c.tasks.some((t) => t.worker && t.state !== 'ok')) return { state: 'skipped' }
   try {
     const { current, status } = chain ? await currentDispatches(c, chain, new Map()) : { current: {}, status: {} }
     const [rows, terms, dispatches] = await Promise.all([ps(), terminals(), orcaDispatches(c, show, current, status)])
     const byPane = new Map<string, string>()
     for (const t of terms) byPane.set(`${t.tabId}:${t.leafId}`, t.handle)
-    const { workers } = orcaAgents(root, rows, byPane, c, dispatches, current)
+    // 失敗の理由（利用枠・ログイン切れ）は inbox にしかないので、失敗で止まったエージェントがいるときだけ読む（窓と同じ）。
+    const fails = failures && rows.some((r) => r.agents.some((a) => a.mainAgent?.outcome === 'failure')) ? await failures().catch(() => ({})) : {}
+    const { workers } = orcaAgents(root, rows, byPane, c, dispatches, current, fails)
     return { facts: { workers, dispatches, current }, state: 'ok' }
   } catch {
     return { state: 'error' }
@@ -27,7 +29,7 @@ export async function stateOf(root: string, orca = orcaCli(process.env.COCKPIT_O
   if (!files.cockpit) throw new Error(files.errors[0] ?? `${root}/.orca/cockpit.json がありません`)
   // プラグインの状態は毎回見る（Orca に合わせた切り替えが止まったことを、メインが利用者に頼めるように）。読めなければ黙る。
   const [{ facts, state }, plugins] = await Promise.all([
-    orcaFacts(root, files.cockpit, orca.ps, orca.terminals, orca.show, { tasks: orca.runTasks, link: orca.taskLink }),
+    orcaFacts(root, files.cockpit, orca.ps, orca.terminals, orca.show, { tasks: orca.runTasks, link: orca.taskLink }, orca.failures),
     orca.plugins().catch((): PluginRow[] | undefined => undefined)
   ])
   return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, firstSeen: files.firstSeen, rulings: files.rulings })

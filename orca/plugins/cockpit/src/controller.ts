@@ -233,6 +233,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
         return
       }
       case 'revert': return void act('revert', r, { target: Number(el.dataset.target) }, '戻すよう頼みました')
+      case 'dismiss': return void act('dismiss', r, {}, '済ませたと記録しました。次に止まったときはまた出します')
       case 'accept': case 'sent': case 'skip': case 'delegate': case 'ack':
         return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許しました' : r.card.manual && name === 'sent' ? '済ませたと記録しました' : LABEL[name]!)
     }

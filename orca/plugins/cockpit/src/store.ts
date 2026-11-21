@@ -2,7 +2,7 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
+  isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
   type Card, type Cockpit, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
@@ -197,6 +197,13 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
     if (input.item_id !== '') throw invalid('「前にも言った」はカードに付けません')
     return
   }
+  // Orca から作った詰まりは帳簿に無い。受けるのは「済ませた」（版は止まった時刻）と、その取り消しだけ。
+  if (isSynthetic(input.item_id)) {
+    if (input.type === 'dismiss' && Number.isInteger(input.item_rev) && input.item_rev >= 0) return
+    if (input.type === 'undo' && log.ops.some((o) => o.op_id === input.undo_of && o.type === 'dismiss' && o.item_id === input.item_id)) return
+    throw invalid('Orca から作った詰まりに返せるのは「済ませた」だけです')
+  }
+  if (input.type === 'dismiss') throw invalid('「済ませた」で隠せるのは Orca から作った詰まりだけです')
   const card = cockpit.cards.find((c) => c.id === input.item_id)
   if (!card) throw invalid(`カード ${input.item_id} がありません`)
   // 担当が書き換えたあとの古い画面で押した操作は、新しい版に効かせない。

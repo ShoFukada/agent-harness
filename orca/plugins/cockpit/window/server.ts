@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { chatMain, evidenceCards, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
 import type { CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
-import { currentDispatches, descendants, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
+import { currentDispatches, descendants, failuresOf, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type Failure, type InboxMessage, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, recordFirstSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
@@ -37,6 +37,8 @@ export type Orca = {
   runTasks(run: string): Promise<RunTask[]>
   /** orchestration dispatch-show --task。タスクの Dispatch と、それが何の続きか。 */
   taskLink(task: string): Promise<TaskLink>
+  /** orchestration inbox の escalation のうち、止まった理由（failureKind・detail）を持つもの。session → いちばん新しいもの。 */
+  failures?(): Promise<Record<string, Failure>>
   send(terminal: string, text: string): Promise<void>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
@@ -66,7 +68,7 @@ export function orcaCli(bin = 'orca'): Orca {
         agents: r.agents.map((a) => ({
           paneKey: a.paneKey, state: a.state, agentType: a.agentType, conversationName: a.conversationName,
           displayName: a.displayName, taskTitle: a.taskTitle, stateStartedAt: a.stateStartedAt, interrupted: a.interrupted,
-          hasLivePty: a.hasLivePty, mainAgent: a.mainAgent ? { outcome: a.mainAgent.outcome } : null,
+          hasLivePty: a.hasLivePty, mainAgent: a.mainAgent ? { outcome: a.mainAgent.outcome } : null, orcaSessionId: a.orcaSessionId ?? null,
           lastAssistantMessage: (a.lastAssistantMessage ?? '').length <= SHORT ? a.lastAssistantMessage : null
         }))
       })),
@@ -104,6 +106,7 @@ export function orcaCli(bin = 'orca'): Orca {
       const d = (await run(['orchestration', 'dispatch-show', '--task', task])).dispatch as { id?: string; follow_up_of_dispatch_id?: string | null } | null
       return { dispatch: d?.id ?? null, followUpOf: d?.follow_up_of_dispatch_id ?? null }
     },
+    failures: async () => failuresOf(((await run(['orchestration', 'inbox', '--full', '--limit', '300'])).messages ?? []) as InboxMessage[]),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
@@ -144,6 +147,8 @@ export function createServer(opts: Options) {
   let owners: OwnerLive[] = []
   /** orca agent list を読めなかった。チャットが「無い」と言い切らないために持つ。 */
   let ownersStale = false
+  /** Orca が止まったチャットに残した理由（orca-state.ts の Failure）。失敗したエージェントがいるときだけ読む。 */
+  let failures: Record<string, Failure> = {}
   let orcaError: string | undefined
   let pluginNote: string | undefined
   /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
@@ -178,7 +183,7 @@ export function createServer(opts: Options) {
     return owner?.path ?? p
   }
 
-  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root), currents.get(root))
+  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root), currents.get(root), failures)
   const workersOf = (root: string, files: Files) => agentsOf(root, files).workers
 
   async function cockpitView(root: string | undefined, slim = false): Promise<CockpitView> {
@@ -307,6 +312,9 @@ export function createServer(opts: Options) {
         ownersStale = !ags
         ps = rowsNow
         terms = new Map(tl.map((t) => [`${t.tabId}:${t.leafId}`, t.handle]))
+        // 失敗の理由は inbox にしかないので、失敗で止まったエージェントがいるときだけ読む（読めなければ文から推す）。
+        if (orca.failures && ps.some((r) => r.agents.some((a) => a.mainAgent?.outcome === 'failure')))
+          failures = await orca.failures().catch((e: Error) => (console.error(`inbox: ${e.message}`), failures))
         orcaError = undefined
       } catch (e) {
         orcaError = 'Orca に繋がりません'

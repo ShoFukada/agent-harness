@@ -16,6 +16,31 @@ export type PsAgent = {
   hasLivePty?: boolean
   lastAssistantMessage?: string | null
   mainAgent?: { outcome?: string } | null
+  /** チャット（structured-agent-session）なら Orca のセッション。止まった理由（failureKind）をこれで引く。 */
+  orcaSessionId?: string | null
+}
+/**
+ * Orca が止まったエージェントについて残した理由（orchestration の escalation の payload の failureKind・detail）。
+ * worktree ps・worker-show・dispatch-show には無く、inbox の知らせにだけある（2026-11-21 に確かめた）。session → いちばん新しいもの。
+ */
+export type Failure = { kind?: string; detail?: string; at: number }
+/** orca orchestration inbox --full の 1 通（使う欄だけ）。payload は JSON の文字列。 */
+export type InboxMessage = { type?: string; payload?: string | null; created_at?: string }
+export function failuresOf(messages: InboxMessage[]): Record<string, Failure> {
+  const out: Record<string, Failure> = {}
+  for (const m of messages) {
+    if (m.type !== 'escalation' || !m.payload?.includes('failureKind')) continue
+    let p: { sessionId?: unknown; failureKind?: unknown; detail?: unknown }
+    try {
+      p = JSON.parse(m.payload)
+    } catch {
+      continue
+    }
+    const at = Date.parse(m.created_at ?? '')
+    if (typeof p.sessionId !== 'string' || Number.isNaN(at) || at <= (out[p.sessionId]?.at ?? 0)) continue
+    out[p.sessionId] = { kind: typeof p.failureKind === 'string' ? p.failureKind : undefined, detail: typeof p.detail === 'string' ? p.detail : undefined, at }
+  }
+  return out
 }
 export type PsRow = { worktreeId: string; path: string; parentWorktreeId: string | null; displayName?: string | null; comment?: string | null; agents: PsAgent[] }
 // ログイン切れと利用枠は Orca が状態として持たないので、最後の発言の文から推す。
@@ -25,14 +50,24 @@ export const SHORT = 400
 const LIMIT = /usage limit|rate limit|limit reached|out of extra usage|上限に達|hit your [\w -]*limit|reached your [\w -]*limit/i
 const AUTH = /\/login|not logged in|authentication_error|oauth token|invalid api key|\b401\b/i
 
-export function stopReason(a: PsAgent): StopReason | undefined {
+/** 止まった失敗に当たる Orca の知らせ。知らせは失敗のすぐあとに出るので、失敗が始まった時刻の 5 分前より新しいものだけを使う。 */
+export const failureOf = (a: PsAgent, failures: Record<string, Failure> = {}): Failure | undefined => {
+  const f = a.orcaSessionId ? failures[a.orcaSessionId] : undefined
+  return f && f.at >= a.stateStartedAt - 5 * 60_000 ? f : undefined
+}
+
+export function stopReason(a: PsAgent, f?: Failure): StopReason | undefined {
   const outcome = a.mainAgent?.outcome
   if (a.hasLivePty === false && (a.state !== 'done' || outcome !== 'success')) return 'dead'
   if (a.state === 'blocked' || a.state === 'waiting') return a.state
   if (a.state !== 'done') return undefined
-  const msg = a.lastAssistantMessage ?? ''
-  if (msg.length <= SHORT && LIMIT.test(msg)) return 'limit'
-  if (msg.length <= SHORT && AUTH.test(msg)) return 'auth'
+  // Orca の failureKind（usageLimitReached など）を先に見て、無ければ最後の発言と知らせの detail の文から推す。
+  if (outcome === 'failure' && f?.kind && /limit/i.test(f.kind)) return 'limit'
+  if (outcome === 'failure' && f?.kind && /auth|login|credential|unauthori/i.test(f.kind)) return 'auth'
+  for (const msg of [a.lastAssistantMessage ?? '', outcome === 'failure' ? f?.detail ?? '' : '']) {
+    if (msg.length <= SHORT && LIMIT.test(msg)) return 'limit'
+    if (msg.length <= SHORT && AUTH.test(msg)) return 'auth'
+  }
   if (outcome === 'failure') return 'error'
   if (a.interrupted || outcome === 'interruption') return 'interrupted'
   return undefined
@@ -43,15 +78,33 @@ export function jobOf(row: PsRow): string | undefined {
   const name = row.displayName?.split('｜').slice(1).join('｜').trim() || row.displayName?.trim()
   return name || row.comment?.trim() || undefined
 }
-function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit | undefined, byTerminal: Map<string, string>): AgentRow {
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+/**
+ * 上限の 1 行の「resets 10:50pm (Asia/Tokyo)」「resets Nov 23 at 4am」から、戻る時刻を 24 時間制で返す（「22:50」「11/23 04:00」）。
+ * 読めなければ undefined（時刻を出さない）。
+ */
+export function resetAt(text: string | null | undefined): string | undefined {
+  const m = /resets\s+(?:([A-Za-z]{3})[a-z]*\s+(\d{1,2})\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(text ?? '')
+  if (!m) return undefined
+  const h = (Number(m[3]) % 12) + (m[5]!.toLowerCase() === 'pm' ? 12 : 0)
+  const mon = m[1] ? MONTHS.indexOf(m[1].toLowerCase()) + 1 : 0
+  const time = `${String(h).padStart(2, '0')}:${m[4] ?? '00'}`
+  return mon ? `${mon}/${Number(m[2])} ${time}` : time
+}
+
+function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit | undefined, byTerminal: Map<string, string>, failures?: Record<string, Failure>): AgentRow {
   // どの task の worker かは、メインが記録した Dispatch の端末で引く。記録が無ければ表示名・コメント。
   const terminalId = terms.get(a.paneKey) ?? null
   const taskId = terminalId ? byTerminal.get(terminalId) : undefined
   const task = taskId ? c?.tasks.find((t) => t.id === taskId) : undefined
+  const f = failureOf(a, failures)
+  const stop = stopReason(a, f)
+  const reset = stop === 'limit' ? resetAt(a.lastAssistantMessage) ?? resetAt(f?.detail) : undefined
   return {
     terminalId,
     title: a.conversationName ?? a.displayName ?? a.taskTitle ?? path.basename(row.path),
-    agent: a.agentType ?? null, state: a.state, since: a.stateStartedAt, stop: stopReason(a), worktree: row.path,
+    agent: a.agentType ?? null, state: a.state, since: a.stateStartedAt, stop, worktree: row.path,
+    ...(a.paneKey.startsWith('structured-') && { chat: true }), ...(a.orcaSessionId && { session: a.orcaSessionId }), ...(reset && { reset }),
     job: task?.title ?? jobOf(row), task: task?.id, where: row.comment?.split('｜').slice(1).join('｜').trim() || undefined
   }
 }
@@ -64,7 +117,7 @@ export function descendants(ps: PsRow[], row: PsRow): PsRow[] {
 }
 
 /** terms は paneKey → 端末の handle。dispatches は worker の記録の Dispatch の様子（タスクと端末を結ぶ）。 */
-export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>, c: Cockpit | undefined, dispatches: Record<string, DispatchFact | null> = {}, current: Record<string, string> = {}): { main?: AgentRow; workers: AgentRow[] } {
+export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>, c: Cockpit | undefined, dispatches: Record<string, DispatchFact | null> = {}, current: Record<string, string> = {}, failures: Record<string, Failure> = {}): { main?: AgentRow; workers: AgentRow[] } {
   const row = ps.find((r) => r.path === root)
   if (!row) return { workers: [] }
   const byTerminal = new Map<string, string>()
@@ -74,7 +127,7 @@ export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>
     if (term) byTerminal.set(term, t.id)
   }
   const tree = descendants(ps, row)
-  const all = tree.flatMap((r) => r.agents.map((a) => toAgent(a, r, terms, c, byTerminal)))
+  const all = tree.flatMap((r) => r.agents.map((a) => toAgent(a, r, terms, c, byTerminal, failures)))
   const own = all.filter((a) => a.worktree === root)
   const terminal = c?.main?.terminal
   // メインが端末を開き直して cockpit.json の main が古いときも、本線に 1 つだけいるエージェントはメインと見なす。

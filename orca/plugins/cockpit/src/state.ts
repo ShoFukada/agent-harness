@@ -7,7 +7,7 @@ import {
 import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
 
 export const STOP_LABEL: Record<StopReason, string> = {
-  blocked: '許可待ち', waiting: '返事待ち', interrupted: '中断', error: 'エラー', dead: '落ちた', auth: 'ログイン切れ', limit: '利用枠切れ'
+  blocked: '許可待ち', waiting: '返事待ち', interrupted: '中断', error: 'エラー', dead: '落ちた', auth: 'ログイン切れ', limit: '利用枠の上限'
 }
 /** 私が答えれば進むか。進まないものは私では直せない（立て直し・待つ）。 */
 const STOP_UNBLOCK: Record<StopReason, [boolean, string]> = {
@@ -93,6 +93,9 @@ export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, Dispa
 
 /** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
 export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
+
+/** Orca から作った詰まりの行の id。チャットはセッション、端末は handle で引く（同じ worktree の別のチャットと混ぜない）。 */
+export const agentCardId = (a: Pick<AgentRow, 'session' | 'terminalId' | 'worktree' | 'title'>) => `#agent:${a.session ?? a.terminalId ?? a.worktree ?? a.title}`
 
 /** カードの話し相手。担当が無い仕事は案件の窓口（main）。 */
 export type OwnerRef = {
@@ -197,25 +200,46 @@ export function ownerOf(c: Cockpit, card: Pick<Card, 'owner' | 'stream'>, facts?
   return { title: '窓口', how: 'main', terminal: c.main?.terminal || undefined }
 }
 
-/** Orca で止まっている worker を、詰まりの行にする。メインが同じタスクの詰まりを書いていれば、そちらを出す。 */
-function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, written: Set<string>): Row[] {
+/**
+ * 深田さんが直し方の「済ませた」を押した、Orca から作った詰まり（「id@版」）。版はその失敗が始まった時刻なので、
+ * 同じ失敗のあいだは出さず、新しい失敗（時刻が変わる）でまた出す（追加 7）。
+ */
+export function dismissedStuck(log: UserLog): Set<string> {
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  return new Set(log.ops.filter((o) => o.type === 'dismiss' && !undone.has(o.op_id)).map((o) => `${o.item_id}@${o.item_rev}`))
+}
+
+/**
+ * 直し方。深田さんが押すものを書く。チャットは CLI から続けられない（Orca は自動の続きが切ってあると、人がチャットで続けるまで配達を止める）ので、
+ * 開いて「続ける」を押す。
+ */
+export function stopUnblock(stop: StopReason, a: Pick<AgentRow, 'chat' | 'reset'>): [boolean, string] {
+  const open = a.chat ? 'チャットを開いて「続ける」を押す' : '端末を開いて「続けて」と送る'
+  if (stop === 'limit') return [false, `${a.reset ? `${a.reset} 以降` : '利用枠が戻ってから'}（アカウントを切り替えたなら今）、${open}`]
+  if (stop === 'auth') return [true, `ログインし直してから、${open}`]
+  if (stop === 'error' || stop === 'interrupted') return [false, a.chat ? 'チャットを開いて最後の発言を確かめ、「続ける」を押す' : '端末を開いて最後の出力を確かめ、続きを頼む']
+  return STOP_UNBLOCK[stop]
+}
+
+/** Orca で止まっている worker を、詰まりの行にする。メインが同じタスクの詰まりを書いていれば、そちらを出す。版（rev）は止まった時刻。 */
+function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, written: Set<string>, dismissed: Set<string>): Row[] {
   return (facts?.workers ?? [])
     .filter((a) => {
-      if (!a.stop) return false
+      if (!a.stop || dismissed.has(`${agentCardId(a)}@${a.since}`)) return false
       // メインが書いた詰まりと同じ仕事（タスクか、担当の端末で引く）なら、そちらを出す。
       const stream = c.tasks.find((t) => t.id === a.task)?.stream ?? c.owners?.find((o) => o.terminal && o.terminal === a.terminalId)?.stream
       return !(a.task && written.has(a.task)) && !(stream && written.has(stream))
     })
     .map((a) => {
-      const [answerable, unblock] = STOP_UNBLOCK[a.stop!]
+      const [answerable, unblock] = stopUnblock(a.stop!, a)
       const task = c.tasks.find((t) => t.id === a.task)
       const ownStream = c.owners?.find((o) => o.terminal && o.terminal === a.terminalId)?.stream
       // 仕事の名前は Orca のサイドバーと同じもの（仕事の題）を先にする。
       const name = c.streams.find((s) => s.id === (task?.stream ?? ownStream))?.title ?? a.job ?? a.title ?? 'worker'
       const card: Card = {
-        id: `#agent:${a.terminalId ?? a.worktree ?? a.title}`, rev: 0, kind: 'stuck', state: 'open',
+        id: agentCardId(a), rev: a.since, kind: 'stuck', state: 'open',
         title: `「${name}」が${STOP_LABEL[a.stop!]}`, since: new Date(a.since).toISOString(),
-        reason: STOP_LABEL[a.stop!], answerable, unblock, stream: task?.stream, tasks: task ? [task.id] : undefined
+        reason: `${STOP_LABEL[a.stop!]}${a.reset ? `（${a.reset} に戻る）` : ''}`, answerable, unblock, stream: task?.stream, tasks: task ? [task.id] : undefined
       }
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: { title: name, how: 'terminal' as const, state: a.state, terminal: a.terminalId ?? undefined }, stream: c.streams.find((s) => s.id === task?.stream), agent: a }
     })
@@ -225,16 +249,17 @@ function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, writt
  * Dispatch で止まった・Orca に見つからないタスクのうち、端末のエージェントからは詰まりの行にならなかったもの
  * （落ちて端末が消えた worker は worktree ps に出ないため）。
  */
-function dispatchStuck(c: Cockpit, root: string, tasks: Map<string, TaskView>, written: Set<string>, covered: Set<string>): Row[] {
+function dispatchStuck(c: Cockpit, root: string, tasks: Map<string, TaskView>, written: Set<string>, covered: Set<string>, dismissed: Set<string>): Row[] {
   return [...tasks.values()]
-    .filter((t) => (t.why === 'stopped' || t.why === 'missing') && !covered.has(t.task.id) && !written.has(t.task.id) && !written.has(t.task.stream))
+    .filter((t) => (t.why === 'stopped' || t.why === 'missing') && !covered.has(t.task.id) && !written.has(t.task.id) && !written.has(t.task.stream)
+      && !dismissed.has(`#dispatch:${t.task.id}@${t.settledAt ?? 0}`))
     .map((t) => {
       const stop = (t.stop ?? 'dead') as StopReason
       const [answerable, unblock] = t.why === 'missing' ? [false, '窓口が立て直すか、記録を直す'] as const : STOP_UNBLOCK[stop]
       const reason = t.why === 'missing' ? 'Orca に見つからない' : STOP_LABEL[stop]
       const name = c.streams.find((s) => s.id === t.task.stream)?.title ?? t.task.title
       const card: Card = {
-        id: `#dispatch:${t.task.id}`, rev: 0, kind: 'stuck', state: 'open', title: `「${name}」が${t.why === 'missing' ? ' ' : ''}${reason}`,
+        id: `#dispatch:${t.task.id}`, rev: t.settledAt ?? 0, kind: 'stuck', state: 'open', title: `「${name}」が${t.why === 'missing' ? ' ' : ''}${reason}`,
         since: t.settledAt ? new Date(t.settledAt).toISOString() : undefined, reason, answerable, unblock, stream: t.task.stream, tasks: [t.task.id]
       }
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: ownerOf(c, card), stream: c.streams.find((s) => s.id === t.task.stream) }
@@ -262,8 +287,9 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
     return !miss.length
   }
   const mine = rows.filter((r) => r.status === 'mine' && r.card.kind !== 'report' && complete(r))
-  const fromAgents = stuckRows(c, root, facts, written)
-  const queue = [...mine, ...fromAgents, ...dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])))].sort(byUrgency)
+  const dismissed = dismissedStuck(log)
+  const fromAgents = stuckRows(c, root, facts, written, dismissed)
+  const queue = [...mine, ...fromAgents, ...dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])), dismissed)].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
   for (const r of queue) counts[r.card.kind]++
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)

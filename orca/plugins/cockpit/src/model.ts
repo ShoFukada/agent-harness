@@ -250,8 +250,14 @@ export type Cockpit = {
  * talk は担当と話し始めた（カードは話し中になる）、ack は報告を読んだ、revert は報告の n 番目を戻して、undo は取り消し。
  */
 /** repeat: 「前にも言った」。前に伝えたことをメインが落としたという合図で、item_id は空。メイン側の hook が押下を数え、新しいチャットへの引き継ぎに使う。 */
-export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat'
-export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat']
+/**
+ * dismiss: Orca から作った詰まり（item_id は「#agent:…」「#dispatch:…」、item_rev は止まった時刻の ms）の「済ませた」。
+ * 帳簿に無い行への返答で、窓口が反映するものは無い（未反映の操作に数えない）。同じ失敗のあいだだけその行を出さない。
+ */
+export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss'
+export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss']
+/** Orca から作った詰まりの行の id（帳簿に無い）。 */
+export const isSynthetic = (id: string) => id.startsWith('#agent:') || id.startsWith('#dispatch:')
 export type Op = {
   op_id: number
   at: string
@@ -570,7 +576,8 @@ export function evidenceCards(c: Cockpit, log: UserLog): Set<string> {
 /** メインにまだ反映されていない操作。 */
 export function unappliedOps(c: Cockpit | undefined, log: UserLog): Op[] {
   const applied = new Set(c?.applied_ops ?? [])
-  return log.ops.filter((o) => !applied.has(o.op_id))
+  // 詰まりの「済ませた」とその取り消しは窓だけの記録で、窓口に反映させるものが無い。
+  return log.ops.filter((o) => !applied.has(o.op_id) && !isSynthetic(o.item_id))
 }
 
 const SEV: Record<TaskState, number> = { stop: 0, run: 1, wait: 2, idle: 3, ok: 4 }

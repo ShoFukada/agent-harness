@@ -2,9 +2,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit, type Card, type Cockpit, type UserLog } from './model.ts'
-import { report } from './state.ts'
-import { parseRulings } from './store.ts'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { failureOf, failuresOf, orcaAgents, resetAt, stopReason, type PsRow } from '../window/orca-state.ts'
+import { parseCockpit, unappliedOps, type Card, type Cockpit, type UserLog } from './model.ts'
+import { derive, report } from './state.ts'
+import { appendOp, parseRulings } from './store.ts'
 import { applyChange } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T19:00:00+09:00')
@@ -73,4 +77,57 @@ test('R39 と t50: R39 の affects に挙がった t50 に reviewed_for が無�
   assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW, undefined, { rulings }).checks.affected_tasks, [{ ruling: 'R39', task: 't50' }, { ruling: 'R39', task: 't51' }])
   c.tasks.find((t) => t.id === 't51')!.reviewed_for = ['R39']
   assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW, undefined, { rulings }).checks.affected_tasks, [{ ruling: 'R39', task: 't50' }])
+})
+
+// 追加 7（11/21 21:11 の深田さんの指摘）: 担当のチャットが 5 時間の利用枠で止まり、直したあとも詰まりのカードが消えなかった。
+test('追加 7: 今夜の担当（outcome failure・usageLimitReached）は「利用枠の上限（22:50 に戻る）」の詰まりになり、「済ませた」で消え、次の失敗でまた出る', async () => {
+  const { c, log } = base()
+  const failedAt = Date.parse('2026-11-21T21:05:00+09:00')
+  const session = '8b03c250-2555-4b88-9253-aa8ab539e0a1'
+  // orca orchestration inbox --full の escalation（payload は実物の写し）。
+  const failures = failuresOf([{
+    type: 'escalation', created_at: '2026-11-21T12:04:59Z',
+    payload: JSON.stringify({ taskId: 'task_069cde9db38c', dispatchId: 'ctx_4afbfcc248e3', sessionId: session, agent: 'claude', turnOutcome: 'failure', failureKind: 'usageLimitReached', error: 'Claude hit its session limit.', detail: "You've hit your 5-hour limit · resets 10:50pm (Asia/Tokyo)" })
+  }, { type: 'status', created_at: '2026-11-21T12:05:30Z', payload: null }])
+  const lead = (since: number): PsRow => ({
+    worktreeId: 'r::lead', path: '/ws/lead', parentWorktreeId: 'r::main', displayName: '窓の版 3（担当）',
+    agents: [{ paneKey: `structured-agent-session-${session}:x`, orcaSessionId: session, state: 'done', stateStartedAt: since, lastAssistantMessage: null, mainAgent: { outcome: 'failure' } }]
+  })
+  const rows = (since: number): PsRow[] => [{ worktreeId: 'r::main', path: '/ws/main', parentWorktreeId: null, agents: [] }, lead(since)]
+  const stuckOf = (since: number, l: UserLog) => {
+    const { workers } = orcaAgents('/ws/main', rows(since), new Map(), c, {}, {}, failures)
+    return derive(c, l, [], '/ws/main', { workers }, NOW).queue.filter((r) => r.card.kind === 'stuck')
+  }
+  const [row] = stuckOf(failedAt, log)
+  assert.ok(row)
+  assert.equal(row.card.title, '「窓の版 3（担当）」が利用枠の上限')
+  assert.equal(row.card.reason, '利用枠の上限（22:50 に戻る）')
+  assert.match(row.card.unblock!, /22:50 以降（アカウントを切り替えたなら今）、チャットを開いて「続ける」を押す/)
+  assert.equal(row.card.rev, failedAt)
+  // 「済ませた」は Orca から作った詰まりにだけ記録できる（帳簿の行が無いので、版は止まった時刻）。
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-dismiss-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(c))
+  const after = await appendOp(root, c, { root, item_id: row.card.id, item_rev: row.card.rev, type: 'dismiss' })
+  await assert.rejects(appendOp(root, c, { root, item_id: c.cards[0]!.id, item_rev: c.cards[0]!.rev, type: 'dismiss' }), /Orca から作った詰まりだけ/)
+  assert.deepEqual(unappliedOps(c, after), [], '窓口に反映させるものは無い')
+  assert.deepEqual(stuckOf(failedAt, after), [])
+  // 新しい失敗（止まった時刻が変わる）でまた出る。
+  assert.equal(stuckOf(failedAt + 3_600_000, after).length, 1)
+  // 取り消せば同じ失敗でもまた出る。
+  const undo = await appendOp(root, c, { root, item_id: row.card.id, item_rev: row.card.rev, type: 'undo', undo_of: after.ops.at(-1)!.op_id })
+  assert.equal(stuckOf(failedAt, undo).length, 1)
+})
+
+test('追加 7: 戻る時刻は 24 時間制で出し、読めなければ出さない。ログイン切れは failureKind か文で分かる', () => {
+  assert.equal(resetAt("You've hit your 5-hour limit · resets 10:50pm (Asia/Tokyo)"), '22:50')
+  assert.equal(resetAt("You've hit your weekly limit · resets Nov 23 at 4am"), '11/23 04:00')
+  assert.equal(resetAt("You've hit your 5-hour limit · resets 12am"), '00:00')
+  assert.equal(resetAt("You've reached your Fable limit."), undefined)
+  const a = { paneKey: 'structured-agent-session-s:x', orcaSessionId: 's', state: 'done' as const, stateStartedAt: 0, mainAgent: { outcome: 'failure' } }
+  assert.equal(stopReason(a, { kind: 'authenticationFailed', at: 0 }), 'auth')
+  assert.equal(stopReason(a, { detail: 'Please run /login', at: 0 }), 'auth')
+  assert.equal(stopReason(a), 'error')
+  // 前の失敗の知らせ（止まった時刻より 5 分以上前）は使わない。
+  assert.equal(failureOf({ ...a, stateStartedAt: 10 * 60_000 }, { s: { kind: 'usageLimitReached', at: 0 } }), undefined)
 })
