@@ -55,15 +55,13 @@ class StallwatchTest(unittest.TestCase):
         self.launchd = os.path.join(self.tmp, "launchd")
         os.makedirs(self.launchd)
         self.runtime = os.path.join(self.tmp, "runtime")
-        self.send_fail = os.path.join(self.tmp, "send-fail")
         self.set_runtime("rt1")
         self.script("orca", """#!/bin/sh
 echo "$*" >> {calls}
 case "$1 $2" in
   "worktree ps") if [ -f {ps} ]; then printf '{{"ok":true,"result":'; cat {ps}; printf ',"_meta":{{"runtimeId":"%s"}}}}' "$(cat {rt})"; else echo 'connect ECONNREFUSED' >&2; exit 1; fi ;;
-  "orchestration send") if [ -f {fail} ]; then echo '{{"ok":false,"error":{{"message":"runtime unavailable"}}}}'; exit 1; fi; echo '{{"ok":true,"result":{{}}}}' ;;
 esac
-""".format(calls=self.calls, ps=self.ps_file, rt=self.runtime, fail=self.send_fail))
+""".format(calls=self.calls, ps=self.ps_file, rt=self.runtime))
         self.script("launchctl", """#!/bin/sh
 f=%s/$(basename "$2")
 [ -f "$f" ] || exit 113
@@ -134,7 +132,7 @@ cat "$f"
         self.assertEqual(self.notes_lines(), [])
         self.assertEqual(self.alerts(), {})
 
-    def test_worker_stopped_and_main_idle_wakes_main_once(self):
+    def test_worker_stopped_and_main_idle_notifies_once_without_mailing_main(self):
         self.ps([self.main_agent()],
                 kids=[{"paneKey": "w", "state": "done", "stateStartedAt": now_ms() - 20 * MIN, "conversationName": "W1"}])
         self.run_watch()
@@ -144,22 +142,16 @@ cat "$f"
         self.assertIn("W1", notes[0])
         (a,) = self.alerts().values()
         self.assertEqual(a["root"], self.root)
-        sends = [c for c in self.orca_calls() if c.startswith("orchestration send")]
-        self.assertEqual(len(sends), 1, "メインには 1 回だけ送る")
-        self.assertIn("--to orca_session_id:s1", sends[0])
+        self.assertFalse([c for c in self.orca_calls() if c.startswith("orchestration")], "会話の中へは送らない（起こすのは Orca）")
 
-    def test_failed_wake_and_notification_are_retried(self):
+    def test_failed_notification_is_retried(self):
         self.ps([self.main_agent()],
                 kids=[{"paneKey": "w", "state": "done", "stateStartedAt": now_ms() - 20 * MIN}])
-        open(self.send_fail, "w").close()
         self.script("notify", "#!/bin/sh\nexit 1\n")
         self.run_watch()
-        os.remove(self.send_fail)
         self.script("notify", "#!/bin/sh\nprintf '%%s\\t%%s\\n' \"$1\" \"$2\" >> %s\n" % self.notes)
         self.run_watch()
         self.run_watch()
-        sends = [c for c in self.orca_calls() if c.startswith("orchestration send")]
-        self.assertEqual(len(sends), 2, "送れなかった分を 1 回だけ送り直す")
         self.assertEqual(len(self.notes_lines()), 1, "出せなかった通知を 1 回だけ出し直す")
 
     def test_main_stopped_mid_work_by_an_orca_restart(self):

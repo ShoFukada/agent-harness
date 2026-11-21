@@ -3,22 +3,21 @@
 Orca で複数のコーディングエージェントを並べて動かすときの、人とエージェントのやり取りの仕組み。いまは次の 3 つが入っている。
 
 - **操縦席**（`orca/plugins/cockpit`）: 各ワークスペースのメインのエージェントが書く `.orca/cockpit.json` を、人が決めること・顧客に聞くこと・見て承認する成果物に絞って出す画面。Orca の右のサイドバーのパネルと、別のディスプレイに置くブラウザの窓の 2 か所に出す。押した操作は `.orca/cockpit.user.json` に残り、メインが読んで反映する
-- **workerctl**（`bin/workerctl`）: メインが worker（別の worktree の端末で動く Claude Code や Codex）を立てて指示を送り、止まった・質問した・許可を待っている・端末が消えた、を知らせとして受け取るコマンド。Claude Code の hook からも呼ばれ、未処理の知らせをメインに差し込む
+- **orca-launch**（`bin/orca-launch`）: worker（別の worktree の端末で動く Claude Code や Codex）を、呼んだエージェントと同じアカウントと worker 用の設定で立て、brief を Orca の orchestration の Task として渡すコマンド。完了・質問・停止の知らせは Orca が coordinator を起こして届ける
 - **stallwatch**（`bin/stallwatch`）: Orca の監督の外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓のサーバー・launchd の定時ジョブ）を launchd から数分おきに見て、macOS の通知と窓の上の帯に出す見張り。モデルは呼ばない
 
 ## 2 枚のディスプレイでの使い方
 
 ![2 枚のディスプレイでの使い方](docs/two-displays.svg)
 
-主のディスプレイに Orca を置き、メインのエージェントが worker を立てて作業を進める。左のディスプレイの上半分に操縦席の窓を置き、操縦席のある全ワークスペースの判断待ちを 1 か所で見る。窓は Orca の前面のワークスペースに合わせて切り替わる。人が窓で決めると、その操作がメインの端末に 1 行の合図として届き、メインが `cockpit.json` に反映する。
+主のディスプレイに Orca を置き、メインのエージェントが worker を立てて作業を進める。左のディスプレイの上半分に操縦席の窓を置き、操縦席のある全ワークスペースの判断待ちを 1 か所で見る。窓は Orca の前面のワークスペースに合わせて切り替わる。人が窓で決めると、その操作がメインに 1 行の合図として届き（端末のメインには入力として、チャットのメインには Orca mail で）、メインが `cockpit.json` に反映する。
 
 ## 入っているもの
 
 | 場所 | 中身 |
 |---|---|
 | `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐のプロセス（`window/server.ts`）。仕組みは同じ場所の README、画面が満たすことは `docs/user-stories.md` |
-| `bin/workerctl` | worker の一覧と知らせの記録。置き場所は `~/Library/Application Support/orca-worker-watch/`（`WORKERCTL_HOME` で差し替え） |
-| `bin/workerctl_test.py` | workerctl のテスト |
+| `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認の画面の検出・Task の受け渡し・サイドバーの表示名と状態）とそのテスト |
 | `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものは窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
 
 ## 入れ方
@@ -29,9 +28,10 @@ macOS、Orca 1.4.248 以降、Node 24 以降、Python 3.9 以降を前提にす�
    ```sh
    git clone https://github.com/<owner>/agent-harness ~/.config/agent-harness
    ```
-2. `workerctl` を PATH に通す
+2. `orca-launch` を PATH に通し、worker に付ける Claude Code の設定のパスを `ORCA_WORKER_SETTINGS` に入れる（無ければ設定を付けずに起動する）
    ```sh
-   ln -s ~/.config/agent-harness/bin/workerctl ~/.local/bin/workerctl
+   ln -s ~/.config/agent-harness/bin/orca-launch ~/.local/bin/orca-launch
+   export ORCA_WORKER_SETTINGS=~/.claude/settings.worker.json
    ```
 3. 操縦席のプラグインをフォルダから入れる。権限の確認が出たら、表示された `--approve <fingerprint>` を付けて打ち直す
    ```sh
@@ -68,8 +68,7 @@ macOS、Orca 1.4.248 以降、Node 24 以降、Python 3.9 以降を前提にす�
    </array>
    <key>StartInterval</key><integer>300</integer>
    ```
-   `--job` は終わりのコードとログの最後の行（失敗した実行のあとでも launchctl が終わりのコード 0 を返したことがあるので、ログにだけ残った失敗も拾う）、`--service` は動いているかを見る。メインは、worker が止まったあとメインが 10 分動いていないと、`orca orchestration send` で起こす。メインそのものが止まっているときは通知だけにする
-5. Claude Code の hook に workerctl をつなぐ。メインの settings.json には `workerctl hook main-pretool`（PreToolUse）・`main-context`（UserPromptSubmit と SessionStart）・`main-stop`（Stop）を、worker の settings.json には `workerctl hook worker`（Stop・UserPromptSubmit・PreToolUse の AskUserQuestion・Notification）を登録する
+   `--job` は終わりのコードとログの最後の行（失敗した実行のあとでも launchctl が終わりのコード 0 を返したことがあるので、ログにだけ残った失敗も拾う）、`--service` は動いているかを見る。知らせは通知と窓の上の帯だけに出し、会話の中へは送らない（worker の完了と停止でメインを起こすのは Orca の orchestration。launchd から `orca orchestration send` を打つと送り主が決まらず断られる）
 
 ### 設定のリポジトリから参照するとき
 
@@ -86,8 +85,8 @@ home.activation.agentHarness = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     ${pkgs.git}/bin/git clone https://github.com/<owner>/agent-harness "$HOME/.config/agent-harness" || true
   fi
 '';
-home.file.".local/bin/workerctl".source =
-  config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.config/agent-harness/bin/workerctl";
+home.file.".local/bin/orca-launch".source =
+  config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.config/agent-harness/bin/orca-launch";
 ```
 
 ## 操縦席の JSON の形
@@ -103,7 +102,7 @@ home.file.".local/bin/workerctl".source =
   "streams": [{ "id": "s1", "title": "一覧画面", "summary": "担当者が自分の残りを一覧で見られる" }],
   "tasks": [
     { "id": "t1", "stream": "s1", "phase": "設計", "title": "一覧画面の設計", "state": "stop",
-      "worker": { "worktree_id": "wt_123", "terminal": "term_def" } }
+      "worker": { "task_id": "task_123", "dispatch_id": "ctx_456" } }
   ],
   "items": [
     { "id": "d1", "rev": 1, "kind": "dec", "title": "担当者の割り当て方を決める", "state": "open",
@@ -127,7 +126,7 @@ home.file.".local/bin/workerctl".source =
 | 欄 | 中身 |
 |---|---|
 | `streams` | 大タスク（元の案件）。全体のタブの最上層に並ぶ |
-| `tasks` | 大タスクの下の作業。`state` は `stop`・`run`・`wait`・`idle`・`ok`。`worker` があれば状態は Orca から取る |
+| `tasks` | 大タスクの下の作業。`state` は `stop`・`run`・`wait`・`idle`・`ok`。`worker`（Orca の orchestration の Task と Dispatch の id）があれば、状態は Orca の Dispatch の様子（`orca orchestration worker-show`）から取る |
 | `items` | 人に返してほしいもの。`kind` は `dec`（決める）・`ask`（顧客に聞く）・`rev`（成果物を見て承認する）・`ack`（読めば済む報告） |
 | `requests` | 人からの依頼の原文。タスクと成果物に結ぶ |
 | `applied_ops` | メインが反映し終えた操作の `op_id` |
@@ -138,7 +137,7 @@ home.file.".local/bin/workerctl".source =
 
 ```sh
 (cd orca/plugins/cockpit && orca plugin test .)
-python3 bin/workerctl_test.py
+python3 bin/orca_launch_test.py
 python3 bin/stallwatch_test.py
 ```
 

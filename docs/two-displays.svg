@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 510" font-family="'IBM Plex Sans JP','Hiragino Sans',sans-serif" role="img" aria-label="2 枚のディスプレイでの操縦席と workerctl の使い方">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 510" font-family="'IBM Plex Sans JP','Hiragino Sans',sans-serif" role="img" aria-label="2 枚のディスプレイでの操縦席と worker の使い方">
   <style>
     .t{font-size:14px;fill:#1f2328}
     .s{font-size:12px;fill:#57606a}
@@ -58,7 +58,7 @@
   <path class="ln2 flow" d="M384 196 C 450 196, 480 170, 528 170" marker-end="url(#b)"/>
   <text class="s" x="410" y="238">cockpit.</text><text class="s" x="410" y="254">user.json</text>
   
-  <text class="s" x="542" y="166">↓ workerctl start / send / wait</text>
+  <text class="s" x="542" y="166">↓ orca-launch・orchestration send（Orca が起こす）</text>
 
   <!-- 凡例 -->
   <line x1="40" y1="422" x2="80" y2="422" class="ln"/>

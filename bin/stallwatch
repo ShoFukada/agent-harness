@@ -2,7 +2,8 @@
 """Orca の監督の外で止まったもの（各ワークスペースのメイン・操縦席の窓のサーバー・launchd の定時ジョブ）を見つけて知らせる。
 
 launchd が数分おきに 1 回ずつ起こす。Orca や Claude の会話の中に置くと、Orca の更新や会話の終わりと一緒に止まるため外に置く。モデルは呼ばない。
-worker の生死は Orca の orchestration（worker-start の監督）が見るので、ここでは見ない。
+worker の生死は Orca の orchestration（worker-start の監督）が見て、worker_done・escalation でその coordinator を起こすので、ここでは見ない。
+ここから会話の中へは送らない（launchd から orchestration send を打つと送り主が決まらず断られる）。知らせは通知と窓の上の帯だけに出す。
 """
 
 import argparse
@@ -53,9 +54,9 @@ def save(path, data):
     os.replace(tmp, path)
 
 
-def alert(aid, text, root=None, confirm=False, wake=None):
-    """confirm: 2 回続けて見えたら出す（Orca の更新や再起動の途中の一瞬を知らせない）。wake: メインに送る (session, 本文)。"""
-    return {"id": aid, "text": text, "root": root, "confirm": confirm, "wake": wake}
+def alert(aid, text, root=None, confirm=False):
+    """confirm: 2 回続けて見えたら出す（Orca の更新や再起動の途中の一瞬を知らせない）。"""
+    return {"id": aid, "text": text, "root": root, "confirm": confirm}
 
 
 def orca(*args):
@@ -152,18 +153,8 @@ def check_mains(now, state):
             title = a.get("conversationName") or a.get("displayName") or a.get("taskTitle") or os.path.basename(r.get("path", ""))
             text = "「%s」の worker「%s」が%sあと、メインが %d 分動いていない" % (
                 name, title, LABEL.get(a.get("state"), a.get("state")), (now - started) // 60_000)
-            body = ("【見張り】worker「%s」（%s）が%sまま %d 分たった。端末を読んで結果を取り込むか、人の判断待ちなら操縦席に出す"
-                    % (title, r.get("path"), LABEL.get(a.get("state"), a.get("state")), (now - started) // 60_000))
-            sid = m.get("orcaSessionId")
-            out.append(alert("main-unhandled:%s:%s:%s" % (root, a.get("paneKey"), started), text, root,
-                             wake=(sid, body) if sid else None))
+            out.append(alert("main-unhandled:%s:%s:%s" % (root, a.get("paneKey"), started), text, root))
     return out
-
-
-def wake_main(session, body):
-    res, err, _ = orca("orchestration", "send", "--to", "orca_session_id:" + session, "--subject", "止まった worker",
-                    "--type", "escalation", "--body", body)
-    return err
 
 
 def check_window(url, log, state, now):
@@ -280,9 +271,8 @@ def run(a):
     found = check_mains(now, state) + check_window(a.window, a.window_log, state, now) + check_jobs(a.job, a.service)
     seen = state.get("seen", {})
     notified = state.get("notified", {})
-    woken = state.get("woken", {})
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    active, fresh, woke = [], [], []
+    active, fresh = [], []
     for f in found:
         first = seen.get(f["id"], stamp)
         f["since"] = first
@@ -292,24 +282,15 @@ def run(a):
         if f["id"] not in notified:
             fresh.append(f)
     sent = bool(fresh) and notify([f["text"] for f in fresh])
-    for f in active:
-        if f["wake"] and f["id"] not in woken:
-            err = wake_main(*f["wake"])
-            woke.append("%s: %s" % (f["id"], err or "送った"))
-            if not err:
-                woken[f["id"]] = stamp
     # Orca に繋がらない回はメインの様子が分からないので、メインについての記録は解消と見なさずに残す。
     keep = lambda d: {k: v for k, v in d.items() if k.startswith("main-")} if any(f["id"] == "orca-down" for f in found) else {}
     state["seen"] = dict(keep(seen), **{f["id"]: f["since"] for f in found})
     state["notified"] = dict(keep(notified), **{f["id"]: notified.get(f["id"], stamp) for f in active if f["id"] in notified or sent})
-    state["woken"] = dict(keep(woken), **{f["id"]: woken[f["id"]] for f in active if f["id"] in woken})
     save(state_path, state)
     save(os.path.join(COCKPIT_DIR, "alerts.json"), {
         "at": stamp, "alerts": [{"id": f["id"], "text": f["text"], "root": f["root"], "since": f["since"]} for f in active]})
     for f in active:
         print("%s %s%s" % (f["since"], f["text"], "（今回知らせた）" if sent and f in fresh else ""))
-    for w in woke:
-        print("メインに送った: " + w)
 
 
 def main():

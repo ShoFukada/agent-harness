@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Orca の worker を、呼んだ側と同じアカウントの端末で立てて、brief を Orca の Task として渡す。
+
+orca orchestration worker-start --agent は起動コマンドを指定できず、worker 用の設定（sandbox）を付けられない。
+そこで low-level の形（terminal create → terminal wait → worker-start --terminal）を 1 つにまとめる。
+worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator）に知らせる。
+
+  orca-launch --worktree <selector> --title <短い題> --spec-file <brief> [--keep-open] [--run <run_id>] [-- <追加の引数>]
+
+claude は CLAUDE_CONFIG_DIR（呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動する。
+確認の画面（初めてのリポジトリで出る「フォルダを信頼するか」など）で止まったら、Task を渡さずに止めて知らせる
+（渡すと指示の文字が「No, exit」を選ぶことがある）。信頼を設定ファイル（.claude.json）に先に書くことはしない。
+動いている claude も同じファイルを書き換え、排他の手段が無いので、競合するとほかの項目の更新を消す。
+Orca のサイドバーにいつも同じ形で出るよう、端末の題を「<短い題>（worker）」にし、worker の作業場所の表示名を <短い題>・状態を in-progress にする
+（呼んだ側と同じ作業場所に立てるときは、その作業場所の表示は変えない）。
+"""
+
+import argparse
+import json
+import os
+import shlex
+import subprocess
+import sys
+
+WAIT_MS = 90000
+
+
+def orca(*args):
+    r = subprocess.run([os.environ.get("ORCA_CLI_COMMAND") or "orca", *args, "--json"], capture_output=True, text=True)
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        d = {}
+    if not d.get("ok"):
+        sys.stderr.write(r.stdout + r.stderr)
+    return d
+
+
+def command(a):
+    if a.agent == "codex":
+        return shlex.join(["codex", *a.extra])
+    argv = ["claude", "--model", a.model]
+    settings = a.settings or os.environ.get("ORCA_WORKER_SETTINGS")
+    if settings:
+        argv += ["--settings", os.path.expanduser(settings)]
+    env = ["env", "CLAUDE_CONFIG_DIR=" + os.environ["CLAUDE_CONFIG_DIR"]] if os.environ.get("CLAUDE_CONFIG_DIR") else []
+    return shlex.join(env + argv + a.extra)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="orca-launch", description=__doc__.split("\n")[0])
+    ap.add_argument("--worktree", required=True, help="worker を置く worktree（orca の selector。先に orca worktree create で作る）")
+    ap.add_argument("--title", required=True, help="仕事の短い日本語名（サイドバーは 20 文字ほどで切れるので、何の仕事かを先頭に）")
+    ap.add_argument("--spec-file", required=True, help="brief のファイル")
+    ap.add_argument("--task-title")
+    ap.add_argument("--agent", choices=("claude", "codex"), default="claude")
+    ap.add_argument("--model", default="opus")
+    ap.add_argument("--settings", help="既定は $ORCA_WORKER_SETTINGS")
+    ap.add_argument("--keep-open", action="store_true")
+    ap.add_argument("--run")
+    ap.add_argument("extra", nargs=argparse.REMAINDER, help="-- のあとは起動コマンドに足す")
+    a = ap.parse_args()
+    a.extra = a.extra[1:] if a.extra[:1] == ["--"] else a.extra
+    if not os.path.isfile(a.spec_file):
+        sys.exit("orca-launch: brief が無い: %s" % a.spec_file)
+
+    wt = (orca("worktree", "show", "--worktree", a.worktree).get("result") or {}).get("worktree") or {}
+    if not wt.get("path"):
+        sys.exit("orca-launch: worktree %s が Orca に無い" % a.worktree)
+    if wt.get("id") and wt["id"] != os.environ.get("ORCA_WORKTREE_ID"):
+        orca("worktree", "set", "--worktree", a.worktree, "--display-name", a.title, "--workspace-status", "in-progress")
+    created = orca("terminal", "create", "--worktree", a.worktree, "--title", "%s（worker）" % a.title, "--command", command(a))
+    handle = ((created.get("result") or {}).get("terminal") or {}).get("handle")
+    if not handle:
+        sys.exit("orca-launch: 端末を作れなかった")
+    args = ["orchestration", "worker-start", "--spec-file", a.spec_file, "--terminal", handle]
+    args += ["--task-title", a.task_title] if a.task_title else []
+    args += ["--keep-open"] if a.keep_open else []
+    args += ["--run", a.run] if a.run else []
+    retry = shlex.join(["orca", *args])
+    wait = ((orca("terminal", "wait", "--terminal", handle, "--for", "tui-idle", "--timeout-ms", str(WAIT_MS))
+             .get("result") or {}).get("wait") or {})
+    if wait.get("blockedReason"):
+        print(json.dumps({"terminal": handle, "blockedReason": wait["blockedReason"]}, ensure_ascii=False))
+        sys.exit("orca-launch: %s が確認の画面（%s）で止まっているので Task を渡していない。"
+                 "答えてから %s で渡す（渡さないなら orca terminal close --terminal %s で閉じる）"
+                 % (handle, wait["blockedReason"], retry, handle))
+    if not wait.get("satisfied"):
+        sys.exit("orca-launch: %s が %d 秒で入力待ちにならなかった（%s）。orca terminal read --terminal %s --screen で見て、"
+                 "入力待ちになったら %s で渡す（渡さないなら orca terminal close --terminal %s で閉じる）"
+                 % (handle, WAIT_MS // 1000, wait.get("status"), handle, retry, handle))
+
+    started = orca(*args)
+    r = started.get("result") or {}
+    print(json.dumps({k: r.get(k) for k in ("runId", "taskId", "dispatchId", "terminal", "state", "failedStage", "lastError")
+                      if r.get(k)}, ensure_ascii=False))
+    sys.exit(0 if started.get("ok") else 1)
+
+
+if __name__ == "__main__":
+    main()
