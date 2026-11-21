@@ -10,6 +10,8 @@ export const CSS = `
   --fs-xs:12px; --fs-s:13px; --fs-m:14px; --fs-l:16px; --fs-xl:20px; --fs-xxl:28px;
   font-family:"IBM Plex Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN",-apple-system,system-ui,sans-serif;
   font-size:var(--fs-m); line-height:1.65; font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased;
+  /* 和欧の間隔は文字の空白でなく組版で付ける（R85。文の空白は tighten() が除く）。 */
+  text-autospace:normal;
   background:var(--bg); color:var(--ink); min-height:100vh; container-type:inline-size; }
 .ck[data-theme="dark"] { color-scheme: dark;
   --bg:#0e141a; --surface:#172029; --sunk:#121a21; --ink:#e4eaef; --ink2:#b1bdc8; --ink3:#94a1ad; --rule:#2a3641; --rule2:#212c36;

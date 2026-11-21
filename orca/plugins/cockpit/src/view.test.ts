@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
-import { boardsOf, linkKind, newUi, preface, render, rich, talkMessage, type Model, type Ui } from './view.ts'
+import { boardsOf, linkKind, newUi, preface, render, rich, talkMessage, tighten, type Model, type Ui } from './view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const svg = (s: string) => s
@@ -249,4 +249,20 @@ test('コミット・ブランチ・識別子・ID は等幅にし、URL のボ�
   const r = rich('release/2026-11-21（a1b2c3d..e4f5a6b） fk_unresolved ADR-0002 `claude auth login` https://example.com/a_b/c1', 'example/repo')
   for (const x of ['release/2026-11-21', 'a1b2c3d..e4f5a6b', 'fk_unresolved', 'ADR-0002', 'claude auth login']) assert.ok(r.includes(`<span class="code">${x}</span>`), x)
   assert.match(r, /data-url="https:\/\/example.com\/a_b\/c1"/)
+})
+
+test('R85: 表示のときに日本語と英数字のあいだの半角の空白を文から除き、コマンド・コード・入力中の文・属性は残す', () => {
+  const html = '<div title="窓 v3 の版">担当が worker A を立て直した（ctx_1 の後）。工程 <span class="num">2/5</span> 決める・停止中 1 件</div>'
+    + '<pre class="msg code">git commit -m "版 3 を入れる"</pre><div class="cmd">cd ~/x の中</div><textarea>v91 を 見る</textarea><code>a の b</code>'
+    + '<p>src/state.ts が 証拠 から 決める。<span class="code">v91</span> を見る</p><svg><path d="M1 1"/></svg><p>Neon で 2 巡</p>'
+  const t = tighten(html)
+  assert.match(t, /担当がworker Aを立て直した（ctx_1の後）。工程<span class="num">2\/5<\/span>決める・停止中1件/)
+  assert.match(t, /title="窓 v3 の版"/)
+  assert.match(t, /<pre class="msg code">git commit -m "版 3 を入れる"<\/pre>/)
+  assert.match(t, /<div class="cmd">cd ~\/x の中<\/div>/)
+  assert.match(t, /<textarea>v91 を 見る<\/textarea>/)
+  assert.match(t, /<code>a の b<\/code>/)
+  // 日本語どうしの空白は残す（英数字とのあいだだけを詰める）。
+  assert.match(t, /src\/state.tsが 証拠 から 決める。<span class="code">v91<\/span>を見る/)
+  assert.match(t, /<p>Neonで2巡<\/p>/)
 })

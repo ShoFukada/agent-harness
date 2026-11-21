@@ -98,6 +98,40 @@ const monoPart = (m: string, tag?: string, quoted?: string) => (tag ? tag : `<sp
 /** HTML の中のコミット・ブランチ・識別子・ID を等幅にする（タグの中は触らない）。 */
 export const mono = (html: string) => html.replace(CODE, monoPart)
 
+const JA = String.raw`[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}ー々〆、。「」『』（）・：？！…]`
+const GAP = new RegExp(String.raw`(?<=${JA}) (?=[A-Za-z0-9])|(?<=[A-Za-z0-9]) (?=${JA})`, 'gu')
+const VOID = /^(br|hr|img|input|wbr|meta|link|source)$/
+/**
+ * 日本語と英数字のあいだの半角の空白 1 つを、表示の HTML の文の部分から除く（R85。帳簿は書き換えない。間隔は CSS の text-autospace が付ける）。
+ * pre・code・kbd・textarea と class に code・cmd を持つ要素の中（コマンド・パス・コード・入力中の文）と、タグの属性は触らない。
+ */
+export function tighten(html: string): string {
+  const parts = html.split(/(<[^>]*>)/)
+  const stack: boolean[] = []
+  const skip: boolean[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const t = parts[i]!
+    if (i % 2 === 1) {
+      const m = /^<(\/)?([a-zA-Z][\w-]*)/.exec(t)
+      if (!m) continue
+      if (m[1]) stack.pop()
+      else if (!VOID.test(m[2]!.toLowerCase()) && !t.endsWith('/>')) stack.push(/^(pre|code|kbd|textarea|script|style)$/i.test(m[2]!) || /class="[^"]*\b(code|cmd)\b/.test(t))
+    } else skip[i] = stack.some(Boolean)
+  }
+  // 境目の判定にはタグをまたいだ前後の 1 文字を使う（「工程 <span>2/5</span> 決める」の空白も詰める）。
+  const chars = (i: number, dir: 1 | -1): string => {
+    for (let j = i + 2 * dir; j >= 0 && j < parts.length; j += 2 * dir) if (parts[j]) return dir === 1 ? parts[j]![0]! : parts[j]!.slice(-1)
+    return ''
+  }
+  for (let i = 0; i < parts.length; i += 2) {
+    if (skip[i] || !parts[i]!.includes(' ')) continue
+    const prev = chars(i, -1)
+    const next = chars(i, 1)
+    parts[i] = (prev + parts[i] + next).replace(GAP, '').slice(prev.length, next ? -next.length : undefined)
+  }
+  return parts.join('')
+}
+
 export function rich(text: string | undefined, repo?: Repo): string {
   if (!text) return ''
   const inline = (s: string) =>
