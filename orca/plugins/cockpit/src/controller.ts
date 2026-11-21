@@ -6,6 +6,7 @@ import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, talkMessage, type Model, type Theme, type Ui, type VRow } from './view.ts'
+import { boardOf, doneOrder, renderWindow, todoOrder, type Tab } from './window-view.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -15,6 +16,8 @@ export type Transport = {
   open(root: string, path: string): Promise<OpenResult>
   openUrl(url: string): Promise<OpenResult>
   focusAgent(terminalId: string | null, worktree?: string): Promise<FocusResult>
+  /** 仕事の担当（無ければ窓口）を開く。窓の全体のタブが使う。カードが無いので話し中の印は付けない。 */
+  talkStream?(root: string, stream: string): Promise<TalkResult>
 }
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
 
@@ -24,7 +27,8 @@ const THEME_KEY = 'cockpit.theme'
 const focusResult = (x: FocusResult, title: string): TalkResult =>
   x.focused ? { opened: true, how: x.how === '端末' || !x.how ? `${title}の端末` : x.how } : { opened: false, how: `${title}の端末`, reason: `「${title}」の端末も worktree も Orca にありません` }
 
-export function mount(t: Transport, opts: { panel?: boolean } = {}) {
+export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } = {}) {
+  const win = !!opts.window
   const style = document.createElement('style')
   style.textContent = `${CSS}\nhtml,body{margin:0}`
   document.head.append(style)
@@ -67,13 +71,23 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
     const unreadable = feed.views
       .filter((v) => v.root && !v.cockpit && v.state === 'ok')
       .map((v) => ({ name: v.root!.split('/').pop() ?? v.root!, path: v.root!, why: v.errors[0] ?? '操縦席が読めません' }))
-    return { boards, focused: feed.focused, unseen: [...(feed.unseen ?? []), ...unreadable], live: feed.live, errors: feed.errors ?? [], panel: opts.panel }
+    // 窓は 1 案件だけを描き、操縦席の無いワークスペースは並べない（R39）。読めない操縦席だけ理由つきで出す。
+    const m: Model = { boards, focused: feed.focused, unseen: win ? unreadable : [...(feed.unseen ?? []), ...unreadable], live: feed.live, errors: feed.errors ?? [], panel: opts.panel }
+    if (win) {
+      const b = boardOf(m)
+      order = ui.tab === 'done' ? doneOrder(b) : todoOrder(b)
+      // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
+      const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
+      if ((ui.tab ?? 'todo') === 'todo' && !(ui.sel && (order.includes(ui.sel) || reports.includes(ui.sel)))) ui.sel = order[0] ?? reports[0]
+      if (ui.tab === 'done' && !(ui.doneSel && order.includes(ui.doneSel))) ui.doneSel = order[0]
+    }
+    return m
   }
 
   function draw(): void {
     const now = Date.now()
     if (ui.filter && !feed.views.some((v) => v.root === ui.filter)) ui.filter = undefined
-    const html = render(model(now), ui, now, svg)
+    const html = win ? renderWindow(model(now), ui, now, svg) : render(model(now), ui, now, svg)
     const tpl = document.createElement('template')
     tpl.innerHTML = html
     morph(app, tpl.content, document.activeElement)
@@ -244,14 +258,48 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
   }
 
   function select(k: string | undefined): void {
-    ui.sel = ui.sel === k ? undefined : k
+    if (win && ui.tab === 'done') ui.doneSel = k
+    // 窓の要対応は詳細を常に開くので、押し直しても閉じない。
+    else ui.sel = win && (ui.tab ?? 'todo') === 'todo' ? k : ui.sel === k ? undefined : k
     draw()
-    if (ui.sel) app.querySelector(`[data-strip="${CSS_ESC(ui.sel)}"]`)?.scrollIntoView({ block: 'nearest' })
+    if (ui.sel) app.querySelector(`[data-strip="${CSS_ESC(ui.sel)}"],[data-sel="${CSS_ESC(ui.sel)}"].cardrow`)?.scrollIntoView({ block: 'nearest' })
+  }
+
+  async function talkStream(root: string, stream: string): Promise<void> {
+    if (!t.talkStream) return
+    try {
+      toast(talkMessage(await t.talkStream(root, stream), false))
+    } catch (e) {
+      fail(e)
+    }
+  }
+
+  /** 窓だけの操作（タブ・畳み・依頼の開閉・要対応へ移る・worker の端末・仕事の担当）。扱ったら true。 */
+  function onWindow(el: HTMLElement): boolean {
+    const d = el.dataset
+    const root = boardOf(model(Date.now()))?.root
+    if (d.tab !== undefined) ui.tab = d.tab as Tab
+    else if (d.toggle !== undefined) ui.open[d.toggle] = el.getAttribute('aria-expanded') !== 'true'
+    else if (d.rq !== undefined) ui.rq = ui.rq === d.rq ? undefined : d.rq
+    else if (d.jump !== undefined) {
+      ui.tab = 'todo'
+      ui.sel = d.jump
+    } else if (d.dsel !== undefined) ui.doneSel = d.dsel
+    else if (d.term !== undefined) {
+      void t.focusAgent(d.term || null, d.wt || undefined).then((x) => toast(x.focused ? `${x.how ?? '端末'}を前に出しました` : '端末も worktree も Orca にありません'), fail)
+      return true
+    } else if (d.talkstream !== undefined) {
+      if (root) void talkStream(root, d.talkstream)
+      return true
+    } else return false
+    draw()
+    return true
   }
 
   app.addEventListener('click', (e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-rq],[data-jump],[data-dsel],[data-term],[data-talkstream]')
     if (!el || !app.contains(el)) return
+    if (win && onWindow(el)) return
     if (el.dataset.sel !== undefined) return select(el.dataset.sel)
     if (el.dataset.pane !== undefined) {
       ui.pane = el.dataset.pane === 'side' ? 'side' : 'queue'

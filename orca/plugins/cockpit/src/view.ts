@@ -36,6 +36,12 @@ export type Ui = {
   undos: { root: string; opId: number; itemId: string; rev: number; text: string; until: number }[]
   /** 狭い幅で出す側（私の番か、案件の今と待ち）。広い幅では両方出す。 */
   pane?: 'queue' | 'side'
+  /** 窓のタブ（要対応・全体・対応済み）。 */
+  tab?: 'todo' | 'whole' | 'done'
+  /** 窓の対応済みで開いている票（root#id）。要対応の sel と分けて持つ。 */
+  doneSel?: string
+  /** 窓の全体で開いている依頼の id。 */
+  rq?: string
   theme: Theme
   dark: boolean
 }
@@ -81,7 +87,7 @@ export function linkKind(href: string): string {
   return 'ページ'
 }
 export const isWebUrl = (s: string) => /^https?:\/\//.test(s)
-const linkBtn = (label: string, href: string) =>
+export const linkBtn = (label: string, href: string) =>
   `<button class="lk" type="button" ${isWebUrl(href) ? `data-url="${esc(href)}"` : `data-file="${esc(href)}"`}><i>${esc(linkKind(href))}</i><span>${esc(label)}</span></button>`
 
 /** 本文の URL と #123（リポジトリが 1 つのとき）を押せる形にし、「- 」の行を箇条にする。 */
@@ -90,7 +96,7 @@ const CODE = /(<[^>]+>)|`([^`<]+)`|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?:\.\.[0-9a-f
 
 const monoPart = (m: string, tag?: string, quoted?: string) => (tag ? tag : `<span class="code">${quoted ?? m}</span>`)
 /** HTML の中のコミット・ブランチ・識別子・ID を等幅にする（タグの中は触らない）。 */
-const mono = (html: string) => html.replace(CODE, monoPart)
+export const mono = (html: string) => html.replace(CODE, monoPart)
 
 export function rich(text: string | undefined, repo?: Repo): string {
   if (!text) return ''
@@ -131,15 +137,15 @@ export function dueHtml(due: string | undefined, now: number): string {
   return `<span class="due">${esc(nearDate(due, now))}</span>`
 }
 
-const ago = (iso: string | undefined, now: number) => {
+export const ago = (iso: string | undefined, now: number) => {
   const t = iso ? Date.parse(iso) : NaN
   if (Number.isNaN(t)) return ''
   const m = Math.max(0, Math.round((now - t) / 60_000))
   return m < 60 ? `${m} 分` : m < 60 * 48 ? `${Math.round(m / 60)} 時間` : `${Math.round(m / 1440)} 日`
 }
 
-const OWNER_STATE: Record<string, string> = { working: '作業中', blocked: '許可待ち', waiting: '入力待ち', done: '手が空いている' }
-function ownerHtml(o: OwnerRef): string {
+export const OWNER_STATE: Record<string, string> = { working: '作業中', blocked: '許可待ち', waiting: '入力待ち', done: '手が空いている' }
+export function ownerHtml(o: OwnerRef): string {
   const where = o.how === 'main' ? '案件の窓口' : o.how === 'chat' ? 'チャット' : '端末'
   return `<span class="owner"><span>話す相手</span><b>${esc(o.title)}</b><span>${where}</span>${o.state ? `<span class="dot ${esc(o.state)}"></span><span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
 }
@@ -164,15 +170,15 @@ function peek(c: Card, now: number): string {
 }
 
 /** 補足の並び。「・」で繋がず、余白で区切る（html を受ける）。 */
-const sp = (xs: (string | false | undefined)[]) => xs.filter(Boolean).map((x) => `<span class="pt">${x}</span>`).join('')
+export const sp = (xs: (string | false | undefined)[]) => xs.filter(Boolean).map((x) => `<span class="pt">${x}</span>`).join('')
 
-const fld = (label: string, html: string) => (html ? `<div class="fld"><span class="lb">${esc(label)}</span><div>${html}</div></div>` : '')
+export const fld = (label: string, html: string) => (html ? `<div class="fld"><span class="lb">${esc(label)}</span><div>${html}</div></div>` : '')
 
 // 先に選んでおくのは決めるだけ。許す・詰まりは戻せない操作を含むので、利用者が選ぶまで押せない。
 export const chosenOption = (r: Row, ui: Ui): string | undefined =>
   ui.picked[keyOf(r)] ?? (r.card.kind === 'decide' ? r.card.options?.find((o) => o.recommended)?.id : undefined)
 
-function optionsHtml(r: Row, ui: Ui): string {
+export function optionsHtml(r: Row, ui: Ui): string {
   const c = r.card
   if (!c.options?.length) return ''
   const cur = chosenOption(r, ui)
@@ -183,7 +189,7 @@ function optionsHtml(r: Row, ui: Ui): string {
   ).join('')}</div>`
 }
 
-function otherHtml(r: Row, ui: Ui): string {
+export function otherHtml(r: Row, ui: Ui): string {
   const k = keyOf(r)
   if (!ui.otherOpen[k]) return ''
   const text = ui.other[k] ?? ''
@@ -194,7 +200,7 @@ function otherHtml(r: Row, ui: Ui): string {
 }
 
 /** 手作業の頼み。どこで → 打つコマンド（写すボタンつき）→ 手順 → 済ませたあと窓口が確かめること。 */
-function manualHtml(r: Row): string {
+export function manualHtml(r: Row): string {
   const m = r.card.manual!
   return [
     fld('どこで', esc(m.where)),
@@ -204,7 +210,8 @@ function manualHtml(r: Row): string {
   ].join('')
 }
 
-function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<string, string>): string {
+/** いきさつ・比較・図・原文。パネルは「背景と比較」に畳み、窓は「詳しく」に入れる。 */
+export function backgroundParts(r: Row, svg: (raw: string) => string, figures: Record<string, string>): string[] {
   const c = r.card
   const parts: string[] = []
   if (c.background) parts.push(fld('いきさつ', `${rich(c.background.text, c.repo)}${c.background.quote ? `<div class="quote">${esc(c.background.quote)}${c.background.date ? `（${esc(fmtDate(c.background.date))}）` : ''}</div>` : ''}`))
@@ -213,6 +220,11 @@ function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<strin
   const fig = c.figure ?? (typeof c.compare === 'string' ? c.compare : undefined)
   if (fig && figures[fig]) parts.push(`<div class="fig">${svg(figures[fig]!)}</div>`)
   if (c.quote) parts.push(fld('原文', `<div class="quote">${esc(c.quote)}</div>`))
+  return parts
+}
+
+function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<string, string>): string {
+  const parts = backgroundParts(r, svg, figures)
   if (!parts.length) return ''
   return `<details class="more"><summary>背景と比較</summary><div>${parts.join('')}</div></details>`
 }
@@ -290,11 +302,12 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
 }
 
 /** 種類ごとの返答のボタン。押すと data-act の操作になる（controller.ts）。 */
-function actsHtml(r: Row, ui: Ui): string {
+export function actsHtml(r: Row, ui: Ui, win = false): string {
   const c = r.card
   const k = esc(keyOf(r))
   const b = (act: string, label: string, cls = '', extra = '') => `<button class="btn ${cls}" type="button" data-act="${act}" data-key="${k}" ${extra}>${esc(label)}</button>`
-  const talk = (label = '担当と話す') => b('talk', label, 'talk')
+  // 窓は話す相手で名前を変える（担当の無い仕事のカードは窓口と話す）。
+  const talk = (label = win && r.owner.how === 'main' ? '窓口と話す' : '担当と話す') => b('talk', label, 'talk')
   const picked = chosenOption(r, ui)
   const otherOpen = ui.otherOpen[keyOf(r)]
   const otherText = otherOpen && (ui.other[keyOf(r)] ?? '').trim()
@@ -462,12 +475,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
     miniList('reports', '報告', all('reports'), ui, now, svg, showWs, (r) => `<span class="r">${esc(nearDate(r.card.at, now))}</span>`, false),
     miniList('closed', '片付いた', all('closed').slice(0, 40), ui, now, svg, showWs, (r) => `<span class="r ${r.pending ? 'pend' : 'recv'}">${r.pending ? '受け取り待ち' : '受け取った'}</span><small class="sp">${sp([esc(r.how), r.when && esc(nearDate(r.when, now))])}</small>`, false)
   ].join('')
-  const msg = ui.toast && ui.toast.until > now ? `<div class="toast" role="status"><span>${esc(ui.toast.text)}</span></div>` : ''
-  const undo = ui.undos
-    .filter((u) => u.until > now)
-    .map((u) => `<div class="toast undo" role="status"><span>${esc(u.text)}。担当に届けます</span><button type="button" data-act="undo" data-op="${u.opId}" data-root="${esc(u.root)}">元に戻す（${Math.max(1, Math.ceil((u.until - now) / 1000))}）</button></div>`)
-    .join('')
-  const toast = msg || undo ? `<div class="toasts">${msg}${undo}</div>` : ''
+  const toast = toastsHtml(ui, now)
   const empty = !m.boards.length && !m.unseen.length
     ? `<div class="calm${m.panel ? '' : ' warn'}"><b>${m.panel ? 'この案件には操縦席がありません' : '操縦席のある案件がありません'}</b><p>メインに「操縦席を作って」と頼むと、ここに私の番が並びます。</p></div>`
     : queueHtml(queue, m, ui, now, svg, [
@@ -484,6 +492,15 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
       <div class="queue" aria-label="私の番">${empty}</div>
       <aside class="side">${side}</aside>
     </main>${toast}</div>`
+}
+
+export function toastsHtml(ui: Ui, now: number): string {
+  const msg = ui.toast && ui.toast.until > now ? `<div class="toast" role="status"><span>${esc(ui.toast.text)}</span></div>` : ''
+  const undo = ui.undos
+    .filter((u) => u.until > now)
+    .map((u) => `<div class="toast undo" role="status"><span>${esc(u.text)}。担当に届けます</span><button type="button" data-act="undo" data-op="${u.opId}" data-root="${esc(u.root)}">元に戻す（${Math.max(1, Math.ceil((u.until - now) / 1000))}）</button></div>`)
+    .join('')
+  return msg || undo ? `<div class="toasts">${msg}${undo}</div>` : ''
 }
 
 /** 狭い幅で、私の番と「案件の今・待ち」を切り替える。広い幅では CSS で隠す。 */

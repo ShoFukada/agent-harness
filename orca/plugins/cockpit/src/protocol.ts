@@ -16,6 +16,8 @@ export type AgentRow = {
   job?: string
   /** 操縦席の task.worker に記録された worker なら、その task の id。 */
   task?: string
+  /** worktree の comment の「｜」より後ろ（worker が書く今していること）。 */
+  where?: string
 }
 
 /** Orca の orchestration の Dispatch の様子（orca orchestration worker-show）。 */

@@ -16,7 +16,7 @@ export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './o
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, recordFirstSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
-const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts'])
+const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts'])
 /** 窓に送る片付いたカードの日数。古いものは cockpit.archive.json に移っている。 */
 const CLOSED_DAYS = 14
 /** ページが表示されている間に Orca の状態を確かめる間隔。プロセスが落ちた worker は Orca から知らせが来ないため。 */
@@ -481,8 +481,11 @@ export function createServer(opts: Options) {
     async talk(b): Promise<TalkResult> {
       const ws = knownWs(b.root)
       const c = ws.files.cockpit
-      const card = c?.cards.find((x) => x.id === b.item_id)
-      if (!c || !card) throw new HttpError(409, 'カードが見つかりません。読み直してからもう一度押してください')
+      // 全体のタブの「担当と話す」は仕事（stream）で頼む。カードが無いので話し中の印は付けない。
+      const card: Card | undefined = typeof b.stream === 'string'
+        ? (c?.streams.some((x) => x.id === b.stream) ? { id: '', rev: 0, kind: 'consult', state: 'open', title: '', stream: b.stream } : undefined)
+        : c?.cards.find((x) => x.id === b.item_id)
+      if (!c || !card) throw new HttpError(409, typeof b.stream === 'string' ? '仕事が見つかりません。読み直してからもう一度押してください' : 'カードが見つかりません。読み直してからもう一度押してください')
       // 読み直しの途中（lastRefresh は Dispatch を読む前に進む）なら終わりを待つ。チャットの担当は Dispatch から引くため。
       if (refreshing || Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
       const to = talkTarget(ws, c, card)

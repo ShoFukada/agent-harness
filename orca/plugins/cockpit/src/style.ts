@@ -4,7 +4,8 @@ export const CSS = `
 .ck { color-scheme: light;
   --bg:#e9edf0; --surface:#ffffff; --sunk:#f3f5f7; --ink:#15212c; --ink2:#4b5966; --ink3:#7a8692; --rule:#d3dae0; --rule2:#e4e9ed;
   --focus:#1f5fbf; --hot:#cf3a1c; --hot-bg:#fdeee9; --ok:#2c7a4b;
-  --k-inbox:#0e7c72; --k-send:#6a47c9; --k-decide:#1f3a68; --k-review:#0b6e99; --k-permit:#9a6200; --k-stuck:#39434d; --k-talk:#5a6b7d; --k-report:#6f7a84;
+  --k-inbox:#0e7c72; --k-send:#6a47c9; --k-decide:#1f3a68; --k-review:#0b6e99; --k-permit:#9a6200; --k-stuck:#39434d; --k-talk:#5a6b7d; --k-report:#6f7a84; --k-consult:#2f6f5e;
+  --f-delegate:#2c56c9; --f-cowork:#a0670f; --f-watch:#0f7a6e; --amber:#9a6200; --amber-bg:#fbf1de; --ok-bg:#e6f3ea; --run:#5fa3e6; --run-bg:#e9f3fc; --mine:#1f3a68;
   --shadow:0 1px 0 rgba(21,33,44,.06), 0 1px 2px rgba(21,33,44,.06);
   --fs-xs:12px; --fs-s:13px; --fs-m:14px; --fs-l:16px; --fs-xl:20px; --fs-xxl:28px;
   font-family:"IBM Plex Sans JP","Hiragino Sans","Hiragino Kaku Gothic ProN",-apple-system,system-ui,sans-serif;
@@ -13,7 +14,8 @@ export const CSS = `
 .ck[data-theme="dark"] { color-scheme: dark;
   --bg:#0e141a; --surface:#172029; --sunk:#121a21; --ink:#e4eaef; --ink2:#b1bdc8; --ink3:#94a1ad; --rule:#2a3641; --rule2:#212c36;
   --focus:#7fb0ff; --hot:#ff7a56; --hot-bg:#3a1d15; --ok:#6cc58f;
-  --k-inbox:#3fc1b3; --k-send:#a68bff; --k-decide:#8fb0e8; --k-review:#4fb6e3; --k-permit:#e0a640; --k-stuck:#d3dbe3; --k-talk:#9fb0c2; --k-report:#98a3ad;
+  --k-inbox:#3fc1b3; --k-send:#a68bff; --k-decide:#8fb0e8; --k-review:#4fb6e3; --k-permit:#e0a640; --k-stuck:#d3dbe3; --k-talk:#9fb0c2; --k-report:#98a3ad; --k-consult:#77bfb0;
+  --f-delegate:#7d9cf0; --f-cowork:#e0a94a; --f-watch:#4fc3b2; --amber:#e0a640; --amber-bg:#3a2d14; --ok-bg:#183424; --run:#4f8fd0; --run-bg:#16283a; --mine:#a9c1ef;
   --shadow:0 1px 0 rgba(0,0,0,.3); }
 body { margin:0; }
 .ck * { box-sizing:border-box; }
@@ -120,7 +122,7 @@ body { margin:0; }
 .ck .strip .peek { grid-column:1 / -1; font-size:var(--fs-s); color:var(--ink2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ck .strip[aria-expanded="true"] .peek { display:none; }
 .ck .k-inbox { --kc:var(--k-inbox); } .ck .k-send { --kc:var(--k-send); } .ck .k-decide { --kc:var(--k-decide); } .ck .k-review { --kc:var(--k-review); }
-.ck .k-permit { --kc:var(--k-permit); } .ck .k-stuck { --kc:var(--k-stuck); } .ck .k-talk { --kc:var(--k-talk); } .ck .k-report { --kc:var(--k-report); }
+.ck .k-permit { --kc:var(--k-permit); } .ck .k-stuck { --kc:var(--k-stuck); } .ck .k-talk { --kc:var(--k-talk); } .ck .k-report { --kc:var(--k-report); } .ck .k-consult { --kc:var(--k-consult); }
 .ck .glyph { width:12px; height:12px; flex:none; color:var(--kc); }
 
 /* 開いた票の中身 */
@@ -249,4 +251,158 @@ body { margin:0; }
   @keyframes ck-up { from { transform:translateY(8px); opacity:0; } }
 }
 .ck svg text { font-family:inherit; }
+
+/* ══ 窓の 3 タブ（window-view.ts）。パネルの部品（.fld・.opt・.btn・.acts）は上の決まりを使う ══ */
+.ck.win { height:100vh; min-height:0; display:grid; grid-template-rows:auto auto auto minmax(0,1fr); overflow:hidden; }
+.ck.win .pad { padding:18px; }
+.ck.win .hotc { color:var(--hot); }
+.ck.win .wtop { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; padding:10px 18px 0; border-bottom:1px solid var(--rule); background:var(--bg); }
+.ck.win .pj { font-weight:700; font-size:var(--fs-l); padding-bottom:10px; }
+.ck.win .tabs { display:flex; gap:2px; align-self:end; }
+.ck.win .tabs button { border:0; background:none; padding:7px 14px 9px; font-size:var(--fs-m); color:var(--ink2); border-bottom:3px solid transparent; display:flex; gap:7px; align-items:center; }
+.ck.win .tabs button[aria-selected="true"] { color:var(--ink); font-weight:700; border-bottom-color:var(--ink); }
+.ck.win .tabs .n { font-size:var(--fs-xs); min-width:20px; text-align:center; border-radius:999px; padding:0 6px; background:var(--ink); color:var(--surface); font-weight:600; }
+.ck.win .tabs .n.z { background:none; color:var(--ink3); font-weight:400; }
+.ck.win .flags { padding-bottom:10px; }
+.ck.win .flags .err { color:var(--hot); font-weight:600; }
+.ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
+.ck.win .keyline { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; padding:6px 18px; border-bottom:1px solid var(--rule); background:var(--surface); font-size:var(--fs-xs); color:var(--ink2); min-height:34px; }
+.ck.win .keyline .cap { color:var(--ink3); font-weight:600; letter-spacing:.04em; }
+.ck.win .keyline .k { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+.ck.win .keyline .k .sw { width:4px; height:14px; border-radius:2px; background:var(--kc); }
+.ck.win .keyline .sep { width:1px; height:16px; background:var(--rule); }
+.ck.win .wbody { display:grid; min-height:0; }
+.ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
+.ck.win .wbody.whole { grid-template-columns:minmax(0,1fr) 360px; }
+.ck.win .wpane { overflow-y:auto; padding:14px 18px 80px; display:grid; align-content:start; gap:14px; min-height:0; min-width:0; }
+.ck.win .wside { overflow-y:auto; border-left:1px solid var(--rule); background:var(--surface); min-height:0; min-width:0; }
+.ck.win .wpane > p { margin:0; font-size:var(--fs-s); }
+.ck.win .calm { padding:24px 4px; }
+@media (max-width:900px) {
+  .ck.win { height:auto; overflow:visible; }
+  .ck.win .wbody.split, .ck.win .wbody.whole { grid-template-columns:minmax(0,1fr); }
+  .ck.win .wside { border-left:0; border-top:1px solid var(--rule); }
+  .ck.win .wpane { padding-bottom:20px; } }
+
+/* 要対応・対応済み: 仕事のまとまりと行 */
+.ck.win .sgrp { display:grid; gap:6px; }
+.ck.win .gh { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:var(--fs-s); padding:2px 2px 0; }
+.ck.win .gh b { font-size:var(--fs-m); }
+.ck.win .gh .mut { font-size:var(--fs-xs); }
+.ck.win .subh { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; }
+.ck.win .cardrow { display:grid; grid-template-columns:92px minmax(0,1fr) auto; gap:10px; align-items:center; border:1px solid var(--rule); border-left:4px solid var(--kc); border-radius:6px; padding:7px 10px; background:var(--surface); text-align:left; width:100%; }
+.ck.win .cardrow:hover { border-color:var(--ink3); border-left-color:var(--kc); }
+.ck.win .cardrow[aria-current="true"] { background:var(--sunk); outline:2px solid var(--kc); outline-offset:-1px; }
+.ck.win .kd { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--kc); white-space:nowrap; }
+.ck.win .cardrow .kd { display:grid; grid-template-columns:auto 1fr; }
+.ck.win .cardrow .kd small { grid-column:1 / -1; font-weight:400; color:var(--ink3); }
+.ck.win .cardrow .tt { min-width:0; }
+.ck.win .cardrow .tl { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .cardrow .tl .tag { margin-left:6px; }
+.ck.win .cardrow .crumb { display:block; font-size:var(--fs-xs); color:var(--ink3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .cardrow .du { font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; text-align:right; display:grid; justify-items:end; }
+.ck.win .cardrow .du.cl { white-space:normal; max-width:220px; }
+.ck.win .cardrow .du .hot { color:var(--hot); font-weight:600; }
+.ck.win .tag { display:inline-block; font-size:var(--fs-xs); font-weight:400; padding:0 6px; border-radius:4px; background:var(--sunk); color:var(--ink2); border:1px solid var(--rule2); white-space:nowrap; }
+.ck.win .tag.wait { background:var(--amber-bg); color:var(--amber); border-color:transparent; }
+.ck.win .tag.talk { background:var(--focus); color:var(--surface); border-color:transparent; }
+.ck.win .tag.miss { background:var(--hot-bg); color:var(--hot); border-color:transparent; }
+.ck.win .gaps { border:1px solid var(--hot); border-radius:8px; background:var(--surface); padding:8px 12px; font-size:var(--fs-s); display:grid; gap:2px; }
+.ck.win .gaps b { color:var(--hot); }
+.ck.win .gaps ul { margin:4px 0 0; padding-left:1.2em; }
+
+/* 詳細（要対応・対応済みの右） */
+.ck.win .wdet { display:grid; align-content:start; min-height:100%; }
+.ck.win .dh { padding:14px 18px 12px; border-bottom:1px solid var(--rule2); display:grid; gap:6px; position:sticky; top:0; background:var(--surface); z-index:1; }
+.ck.win .dh .crumbs { font-size:var(--fs-xs); color:var(--ink3); display:flex; gap:6px; flex-wrap:wrap; }
+.ck.win .dh .crumbs i { font-style:normal; }
+.ck.win .dh .kl { display:flex; gap:10px; align-items:center; font-size:var(--fs-xs); flex-wrap:wrap; }
+.ck.win .dh h2 { margin:0; font-size:var(--fs-l); line-height:1.5; }
+.ck.win .note { margin:10px 18px 0; padding:8px 10px; border-radius:6px; background:var(--sunk); font-size:var(--fs-s); }
+.ck.win .note.wait { background:var(--amber-bg); } .ck.win .note.wait b { color:var(--amber); }
+.ck.win .note.ok { background:var(--ok-bg); } .ck.win .note.ok b { color:var(--ok); }
+.ck.win .first { margin:12px 18px 0; padding:12px; border:1px solid var(--kc); border-radius:8px; display:grid; gap:12px; font-size:var(--fs-s); }
+.ck.win .first ol.rich, .ck.win .first ul.rich { margin:0; padding-left:1.4em; }
+.ck.win details.more-d { margin:8px 18px 0; }
+.ck.win details.more-d summary { cursor:pointer; font-size:var(--fs-s); color:var(--focus); padding:6px 0; }
+.ck.win details.more-d .slots { display:grid; gap:10px; padding:4px 0 8px; font-size:var(--fs-s); }
+.ck.win .wdet > .other { margin:8px 18px 0; }
+.ck.win .dbtn { margin-top:auto; position:sticky; bottom:0; background:var(--surface); }
+.ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:12px 18px; }
+.ck.win .dbtn .nx { margin-left:auto; }
+
+/* 全体: 形ごとの置き場所と仕事の箱 */
+.ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }
+.ck.win .fm { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--fc); white-space:nowrap; }
+.ck.win .fm::before { content:""; width:10px; height:10px; border-radius:2px; background:var(--fc); }
+.ck.win .fsec { display:grid; gap:10px; }
+.ck.win .fsec > h3 { margin:6px 0 0; font-size:var(--fs-m); display:flex; gap:10px; align-items:baseline; }
+.ck.win .fsec > h3 .mut { font-weight:400; font-size:var(--fs-xs); }
+.ck.win .fsec > p { margin:0; font-size:var(--fs-s); }
+.ck.win .st { background:var(--surface); border:1px solid var(--rule); border-left:5px solid var(--fc, var(--rule)); border-radius:8px; }
+.ck.win .st > .sh { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 16px; padding:11px 14px; }
+.ck.win .st .t { font-weight:600; font-size:var(--fs-l); display:flex; gap:10px; align-items:center; flex-wrap:wrap; border:0; background:none; padding:0; text-align:left; }
+.ck.win .st .tw { font-size:var(--fs-xs); color:var(--ink3); font-weight:400; }
+.ck.win .st .right { display:flex; align-items:center; gap:10px; }
+.ck.win .st .meta { grid-column:1 / -1; display:flex; gap:6px 16px; flex-wrap:wrap; font-size:var(--fs-s); color:var(--ink2); align-items:center; }
+.ck.win .st .nxt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60ch; }
+.ck.win .steps { display:inline-flex; align-items:center; gap:3px; font-size:var(--fs-xs); white-space:nowrap; flex-wrap:wrap; }
+.ck.win .steps .s { border:1px solid var(--rule); border-radius:4px; padding:0 7px; color:var(--ink3); background:var(--surface); }
+.ck.win .steps .s.done { color:var(--ok); border-color:transparent; background:var(--ok-bg); }
+.ck.win .steps .s.now { color:var(--surface); background:var(--ink); border-color:var(--ink); font-weight:700; }
+.ck.win .steps .s.out { color:var(--amber); border-color:var(--amber); border-style:dashed; }
+.ck.win .steps .ar { color:var(--ink3); }
+.ck.win .steps .pos { color:var(--ink2); margin-left:6px; }
+.ck.win .bar { display:inline-flex; height:8px; width:120px; border-radius:4px; overflow:hidden; background:var(--rule2); flex:none; }
+.ck.win .bar i { display:block; height:100%; }
+.ck.win .s-ok { background:var(--ok); } .ck.win .s-run { background:var(--run); } .ck.win .s-wait { background:var(--amber); } .ck.win .s-stop { background:var(--hot); }
+.ck.win .s-idle { background:none; }
+.ck.win .bar .s-idle { background:var(--ink3); opacity:.45; }
+.ck.win .prog { display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
+.ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:1px 9px; white-space:nowrap; }
+.ck.win .pill.mine { background:var(--mine); color:var(--surface); }
+.ck.win .pill.stopped { background:var(--hot); color:#fff; }
+.ck.win .pill.working { background:var(--run-bg); color:var(--focus); border:1px solid var(--run); }
+.ck.win .pill.customer { background:var(--amber-bg); color:var(--amber); }
+.ck.win .pill.idle { background:var(--sunk); color:var(--ink2); border:1px solid var(--rule); }
+.ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
+.ck.win .st .inner { border-top:1px solid var(--rule2); padding:4px 14px 12px; display:grid; gap:2px; }
+.ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:8px 0 2px; display:flex; gap:8px; align-items:center; }
+.ck.win .task { display:grid; grid-template-columns:14px minmax(0,1fr) auto; gap:8px; align-items:start; padding:3px 0; font-size:var(--fs-s); }
+.ck.win .tdot { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:-1px; }
+.ck.win .task .tdot { margin-top:6px; }
+.ck.win .tdot.s-idle { border:1.5px solid var(--ink3); }
+.ck.win .task .tn { display:grid; min-width:0; }
+.ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
+.ck.win .task .nx { color:var(--ink3); font-size:var(--fs-xs); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+.ck.win .wrow { grid-column:2 / -1; display:flex; gap:8px; align-items:center; font-size:var(--fs-xs); color:var(--ink2); border-left:2px solid var(--run); padding:2px 0 2px 10px; margin:2px 0 4px; flex-wrap:wrap; }
+.ck.win .wrow .wn { font-weight:600; color:var(--ink); }
+.ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:1px solid var(--rule); border-radius:5px; padding:0 6px; background:var(--sunk); color:var(--ink2); white-space:nowrap; }
+.ck.win .chip.live { border-color:var(--run); color:var(--focus); background:var(--run-bg); }
+.ck.win .chip.bad { border-color:var(--hot); color:var(--hot); background:var(--hot-bg); }
+.ck.win .chip.kc { border-color:var(--kc); color:var(--kc); background:var(--surface); font-weight:700; }
+.ck.win .act { border:1px solid var(--rule); background:var(--surface); border-radius:5px; padding:0 8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; line-height:1.9; }
+.ck.win .act:hover { border-color:var(--ink3); color:var(--ink); }
+.ck.win .act.talk { border-color:var(--focus); color:var(--focus); }
+.ck.win .donebox { font-size:var(--fs-xs); color:var(--ink3); padding:4px 0 0 22px; }
+.ck.win .wmore { border:0; background:none; color:var(--focus); font-size:var(--fs-s); padding:2px 0; text-align:left; justify-self:start; }
+.ck.win .watch { display:grid; gap:6px; }
+.ck.win .watch ul { margin:0; padding-left:1.2em; font-size:var(--fs-s); }
+.ck.win .watch p { margin:0; font-size:var(--fs-s); }
+.ck.win .watch .strips { margin:0; }
+
+/* 全体の右: まだ済んでいない依頼 */
+.ck.win .wside > h3 { margin:0; font-size:var(--fs-s); padding:12px 14px 6px; display:flex; gap:8px; align-items:baseline; }
+.ck.win .wside > h3 .mut { font-weight:400; font-size:var(--fs-xs); }
+.ck.win .wside > .note { font-size:var(--fs-xs); color:var(--ink3); padding:0 14px 8px; margin:0; background:none; }
+.ck.win .rq { border-top:1px solid var(--rule2); }
+.ck.win .rq > button { display:grid; grid-template-columns:40px minmax(0,1fr); gap:6px; width:100%; text-align:left; border:0; background:none; padding:8px 14px; font-size:var(--fs-s); }
+.ck.win .rq > button:hover { background:var(--sunk); }
+.ck.win .rq .rid { color:var(--ink3); font-size:var(--fs-xs); padding-top:2px; }
+.ck.win .rq .rt { overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.ck.win .rq .rs { grid-column:2; font-size:var(--fs-xs); color:var(--ink3); display:flex; gap:6px; flex-wrap:wrap; }
+.ck.win .trace { padding:2px 14px 12px 60px; display:grid; gap:4px; font-size:var(--fs-xs); }
+.ck.win .trace .q { white-space:pre-line; color:var(--ink2); border-left:2px solid var(--rule); padding-left:8px; overflow-wrap:anywhere; }
+.ck.win .trace .l { color:var(--ink3); font-weight:600; margin-top:4px; }
 `

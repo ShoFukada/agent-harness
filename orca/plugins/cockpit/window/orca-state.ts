@@ -52,7 +52,7 @@ function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit 
     terminalId,
     title: a.conversationName ?? a.displayName ?? a.taskTitle ?? path.basename(row.path),
     agent: a.agentType ?? null, state: a.state, since: a.stateStartedAt, stop: stopReason(a), worktree: row.path,
-    job: task?.title ?? jobOf(row), task: task?.id
+    job: task?.title ?? jobOf(row), task: task?.id, where: row.comment?.split('｜').slice(1).join('｜').trim() || undefined
   }
 }
 

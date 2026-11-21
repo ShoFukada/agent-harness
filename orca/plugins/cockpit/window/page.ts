@@ -23,8 +23,9 @@ const ctl = mount({
   notify: (root) => post('/api/notify', { root }),
   open: (root, path) => post('/api/open', { root, path }),
   openUrl: (url) => post('/api/openurl', { url }),
-  focusAgent: (terminalId, worktree) => post('/api/focus', { terminalId, worktree })
-})
+  focusAgent: (terminalId, worktree) => post('/api/focus', { terminalId, worktree }),
+  talkStream: (root, stream) => post('/api/talk', { root, stream })
+}, { window: true })
 
 function show(): void {
   if (!last) return
