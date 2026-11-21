@@ -45,7 +45,7 @@ test('A006: 要素に「Teams の見張り」を持つ v40 へのこれでよい
   assert.deepEqual(ok.errors, [])
   assert.deepEqual(applyChange(c, { cards: [{ ...v40, element_map: mapped.element_map }] }, [], log).errors, [], '開いたまま行き先だけ書くのも rev は 1 のまま')
   // 行き先の参照も検査する。
-  assert.match(applyChange(c, { cards: [{ ...v40, rev: 2, element_map: [{ n: 3, request: 'r99#0' }] }] }, [], log).errors.join('\n'), /依頼 r99 が無い/)
+  assert.match(applyChange(c, { cards: [{ ...v40, rev: 2, element_map: [{ n: 3, request: 'r99#1' }] }] }, [], log).errors.join('\n'), /依頼 r99 が無い/)
 })
 
 test('B025: t65 に結んだ依頼の done_when に証拠が無いままタスクが済になったら checks.unproven が名指しする', () => {
@@ -57,8 +57,8 @@ test('B025: t65 に結んだ依頼の done_when に証拠が無いままタス�
     source: { at: '2026-11-21T18:32:00+09:00', quote: '窓の側にも同じ判定の漏れがあり、利用枠の上限の文言に当たりません' },
     done_when: ['orca-state.ts の LIMIT が 3 行の上限の文言に当たる']
   }]
-  assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW).checks.unproven, [{ request: 'r30', when: [0] }])
-  c.requests[0]!.evidence = [{ when: 0, kind: 'commit', ref: '10628d2' }]
+  assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW).checks.unproven, [{ request: 'r30', when: [1] }])
+  c.requests[0]!.evidence = [{ when: 1, kind: 'commit', ref: '10628d2' }]
   assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW).checks.unproven, [])
   // source だけの依頼も検査の対象（legacy にしない）。発言も出典も無ければ欠けとして出す。
   delete c.requests[0]!.source

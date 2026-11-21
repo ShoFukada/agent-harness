@@ -184,7 +184,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     if (o) return act('decide', r, { option_id: o.id }, `${r.card.kind === 'permit' ? '許しました' : '決めました'}「${o.label}」`)
   }
 
-  const LABEL: Partial<Record<OpType, string>> = { accept: '承りました', sent: '送ったと記録しました', skip: '見送りました', delegate: '許して、以後は任せました', ack: '読みました' }
+  const LABEL: Partial<Record<OpType, string>> = { accept: 'これでよいと返しました', sent: '送ったと記録しました', skip: '見送りました', delegate: '許して、以後は任せました', ack: '読みました' }
 
   function onAct(name: string, r: VRow | undefined, el: HTMLElement): void {
     if (name === 'undo') {

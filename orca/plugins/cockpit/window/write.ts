@@ -20,7 +20,8 @@ const save = (root: string, c: Cockpit) => writeAtomic(path.join(root, '.orca', 
 
 /** 変更を検査して書く。check なら書かない。書いた中身が読み込みで新しい形の誤りを出すなら書かない。 */
 export async function write(root: string, change: unknown, check = false): Promise<WriteResult> {
-  const release = await lockCockpit(root)
+  // 検査だけ（--dry-run）はロックファイルも作らない（実データの .orca に何も書かずに通せるように）。
+  const release = check ? async () => {} : await lockCockpit(root)
   try {
     const { raw, log, utterances } = await readLedger(root)
     const before: string[] = []

@@ -303,7 +303,8 @@ export function requestViews(c: Cockpit, log: UserLog, archive: Card[], tasks: M
     const cards = c.cards.filter((x) => x.request_id === r.id || (x.tasks ?? []).some((t) => r.tasks?.includes(t)))
     const streams = [...new Set([...ts.map((t) => t.task.stream), ...cards.map((x) => x.stream).filter((x): x is string => !!x)])]
     const ev = (r.evidence ?? []).filter((e) => e.kind !== 'op' || !!liveOp(e.ref))
-    const covered = (r.done_when ?? []).map((_, i) => ev.some((e) => e.when === i))
+    // 済の条件の番号（evidence の when・element_map の「r30#2」）は、人がカードで読む番号と同じ 1 始まり。
+    const covered = (r.done_when ?? []).map((_, i) => ev.some((e) => e.when === i + 1))
     if (legacy) {
       return { req: r, legacy, tasks: ts, cards, streams, missing: [], covered, state: r.state === 'done' ? '済' : ts.length ? '進行中' : '受付' }
     }
@@ -442,7 +443,7 @@ export type StateReport = {
     no_form: string[]
     /** 「これでよい」の op が来ているのに、要素（elements）の行き先（element_map）が欠けたカードと欠けた番号（9.2）。 */
     unmapped_elements: { card: string; missing: number[] }[]
-    /** 結ばれたタスクが全部済なのに、証拠の無い済の条件（done_when の番号、0 始まり）が残る依頼（9.4）。 */
+    /** 結ばれたタスクが全部済なのに、証拠の無い済の条件（done_when の番号、1 始まり）が残る依頼（9.4）。 */
     unproven: { request: string; when: number[] }[]
     /** 判断（rulings.jsonl）の affects に挙がったのに、reviewed_for にその判断の無いタスク（9.5）。 */
     affected_tasks: { ruling: string; task: string }[]
@@ -514,7 +515,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
         .filter((x) => x.missing.length),
       unproven: d.requests
         .filter((r) => r.state !== '済' && r.tasks.length && r.tasks.every((t) => t.task.state === 'ok') && r.covered.some((x) => !x))
-        .map((r) => ({ request: r.req.id, when: r.covered.flatMap((x, i) => (x ? [] : [i])) })),
+        .map((r) => ({ request: r.req.id, when: r.covered.flatMap((x, i) => (x ? [] : [i + 1])) })),
       affected_tasks: (opts.rulings ?? []).flatMap((ru) => (ru.affects ?? [])
         .filter((id) => c.tasks.some((t) => t.id === id && !t.reviewed_for?.includes(ru.id)))
         .map((task) => ({ ruling: ru.id, task })))

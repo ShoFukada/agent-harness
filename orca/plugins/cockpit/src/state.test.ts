@@ -191,10 +191,10 @@ test('依頼の帳簿: 移し替えの前は全部古い行。古い行は書か
     { id: 'r3', ...base },
     { id: 'r4', ...base, utterances: u, kind: 'work', done_when: ['PR がマージされる'] },
     { id: 'r5', ...base, utterances: u, kind: 'work', done_when: ['PR がマージされる'], tasks: ['t1'] },
-    { id: 'r6', ...base, utterances: u, kind: 'work', done_when: ['PR がマージされる'], evidence: [{ when: 0, kind: 'pr', ref: 'https://github.com/x/y/pull/1' }] },
-    { id: 'r7', ...base, utterances: u, kind: 'work', done_when: ['見てもらう'], check: true, evidence: [{ when: 0, kind: 'url', ref: 'https://example.com' }] },
-    { id: 'r8', ...base, utterances: u, kind: 'work', done_when: ['見てもらう'], check: true, evidence: [{ when: 0, kind: 'url', ref: 'https://example.com' }, { when: 0, kind: 'op', ref: '7', card: 'r5', rev: 1 }] },
-    { id: 'r9', ...base, utterances: u, kind: 'question', done_when: ['答える'], evidence: [{ when: 0, kind: 'url', ref: 'https://example.com' }] }
+    { id: 'r6', ...base, utterances: u, kind: 'work', done_when: ['PR がマージされる'], evidence: [{ when: 1, kind: 'pr', ref: 'https://github.com/x/y/pull/1' }] },
+    { id: 'r7', ...base, utterances: u, kind: 'work', done_when: ['見てもらう'], check: true, evidence: [{ when: 1, kind: 'url', ref: 'https://example.com' }] },
+    { id: 'r8', ...base, utterances: u, kind: 'work', done_when: ['見てもらう'], check: true, evidence: [{ when: 1, kind: 'url', ref: 'https://example.com' }, { when: 1, kind: 'op', ref: '7', card: 'r5', rev: 1 }] },
+    { id: 'r9', ...base, utterances: u, kind: 'question', done_when: ['答える'], evidence: [{ when: 1, kind: 'url', ref: 'https://example.com' }] }
   ]
   const log = { ops: [...w.log.ops, { op_id: 7, at: '2026-11-21T09:30:00+09:00', item_id: 'r5', item_rev: 1, type: 'accept' as const }] }
   const states = () => Object.fromEntries(derive(w.cockpit, log, [], '/a', undefined, NOW).requests.map((r) => [r.req.id, r.state]))

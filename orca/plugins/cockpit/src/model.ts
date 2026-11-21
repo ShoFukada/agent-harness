@@ -202,7 +202,7 @@ export const EVIDENCE_KINDS: EvidenceKind[] = ['commit', 'pr', 'url', 'answer', 
  * 済の条件（done_when の番号、0 始まり）を満たした証拠。op は「これでよい」「送った」などの操作で、どのカードのどの版に押したかを持つ。
  * post は見張りが読み取った相手のスレッドへの投稿の URL（送るの済。読み取る仕組みは版 3 ではまだ無い）。
  */
-export type Evidence = { when: number; kind: EvidenceKind; ref: string; card?: string; rev?: number }
+export type Evidence = { /** 済の条件の番号（1 始まり）。 */ when: number; kind: EvidenceKind; ref: string; card?: string; rev?: number }
 /**
  * 依頼の帳簿の 1 行。state は版 2 の古い行だけが持つ（新しい行の状態は state.ts が証拠から決める）。legacy は移し替えの時点にあった行の印で、
  * 発言と済の条件を検査しない。deliverables は版 1 から写した成果物の記録で、画面は読まない。

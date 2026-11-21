@@ -75,7 +75,7 @@ function gapsHtml(b: Board): string {
   const gs = b.d.gaps
   if (!gs.length) return ''
   const what = { card: 'カード', request: '依頼', utterance: '発言' } as const
-  return `<div class="gaps" role="status"><b>抜けている ${gs.length} 件</b><span class="mut">窓口が 30 分以内に埋めなかったものです。窓口と話して埋めさせてください</span>
+  return `<div class="gaps" role="status"><b>帳簿の抜け ${gs.length} 件</b><span class="mut">窓口が 30 分以内に埋めていない欄です。窓口と話して埋めさせてください</span>
     <ul>${gs.map((g) => `<li>${esc(what[g.kind])} <span class="code">${esc(g.id)}</span> ${esc(g.title)}<span class="mut">（欠け: ${esc(g.missing.join('・'))}）</span></li>`).join('')}</ul></div>`
 }
 
@@ -85,12 +85,12 @@ function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
   const list = groups.length
     ? groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs.length)}${xs.map((r) => cardRow(b, r, ui.sel, now)).join('')}</section>`).join('')
     : '<div class="calm"><b>要対応 0 件</b></div>'
-  const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">読むだけ（報告）${reps.length} 件・件数に入れない</div>${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</section>` : ''
+  const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">読むだけ（報告）${reps.length} 件・件数外</div>${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</section>` : ''
   const order = todoOrder(b)
   const all = [...groups.flatMap(([, xs]) => xs), ...reps]
   const cur = all.find((r) => keyOf(r) === ui.sel)
   const next = cur ? order[order.indexOf(keyOf(cur)) + 1] : undefined
-  return `<div class="wpane" aria-label="要対応">${gapsHtml(b)}${list}${rd}</div><aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, next) : '<p class="mut pad">左の行を押すと、ここに中身が出ます。</p>'}</aside>`
+  return `<div class="wpane" aria-label="要対応">${gapsHtml(b)}${list}${rd}</div><aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, next) : '<p class="mut pad">左の行を選ぶと、ここに詳細を表示します。</p>'}</aside>`
 }
 
 /** 種類ごとの「最初に見える部分」。決めるのに要るものだけを出し、残りは「詳しく」に畳む。 */
@@ -269,7 +269,7 @@ function requestsHtml(b: Board, ui: Ui, now: number): string {
     const quote = r.req.utterances?.map((u) => u.quote).join('\n') || r.req.quote || ''
     const trace = on ? `<div class="trace">
       <span class="l">原文</span><div class="q">${esc(quote.length > 300 ? `${quote.slice(0, 300)}…` : quote) || '—'}</div>
-      ${r.req.done_when?.length ? `<span class="l">済の条件</span><div>${r.req.done_when.map((w, i) => `<div>${r.covered[i] ? '✓' : '・'} ${esc(w)}</div>`).join('')}</div>` : ''}
+      ${r.req.done_when?.length ? `<span class="l">済の条件</span><div>${r.req.done_when.map((w, i) => `<div>${r.covered[i] ? '✓' : '・'} ${i + 1}. ${esc(w)}</div>`).join('')}</div>` : ''}
       <span class="l">仕事</span><div>${r.streams.map((x) => esc(c.streams.find((s) => s.id === x)?.title ?? x)).join('・') || '—'}</div>
       <span class="l">タスク</span><div>${ts.map((t) => `<div><span class="tdot s-${t.state}"></span> ${esc(t.task.id)} ${esc(t.task.title)}（${TSTATE[t.state]}）</div>`).join('') || '—'}</div>
       <span class="l">確認依頼</span><div>${r.cards.map((x) => `<div class="k-${x.kind}"><span class="kd">${glyph(x.kind)}</span> ${esc(x.id)} ${esc(x.title)}${x.state === 'done' ? '（済）' : ''}</div>`).join('') || '—'}</div></div>` : ''
@@ -300,7 +300,7 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
       ${xs.length ? xs.map((j) => streamBox(b, j, ui, todo)).join('') : `<p class="mut">進行中の仕事はありません${nDone ? `（済んだ仕事 ${nDone} 件は下に畳んであります）` : ''}</p>`}${extra}</section>`
   }
   const watchExtra = `<div class="watch"><div class="subh">見張っている経路</div>${routes.length ? `<ul>${routes.join('')}</ul>` : '<p class="mut">登録がありません（routes）</p>'}
-    <div class="subh">届いた連絡 ${inbox.length} 件・件数に入れない</div>${inbox.length ? `<div class="strips">${inbox.map((r) => stripHtml(r, ui, now, svg, false)).join('')}</div>` : '<p class="mut">ありません</p>'}</div>`
+    <div class="subh">届いた連絡 ${inbox.length} 件・件数外</div>${inbox.length ? `<div class="strips">${inbox.map((r) => stripHtml(r, ui, now, svg, false)).join('')}</div>` : '<p class="mut">ありません</p>'}</div>`
   const noForm = live.filter((j) => !form(j))
   const loose = [...b.d.tasks.values()].filter((t) => t.state !== 'ok' && !c.streams.some((s) => s.id === t.task.stream))
   const main = FORM_ORDER.map((f) => sec(f, f === 'watch' ? watchExtra : '')).join('')
@@ -315,15 +315,15 @@ function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {
   const list = groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs.length)}${xs.map((r) => cardRow(b, r, ui.doneSel, now, true)).join('')}</section>`).join('')
   const cur = groups.flatMap(([, xs]) => xs).find((r) => keyOf(r) === ui.doneSel)
   return `<div class="wpane" aria-label="対応済み"><p class="mut">直近 14 日・新しい順。仕事ごとにまとめています。</p>${list || '<div class="calm"><b>対応済み 0 件</b></div>'}</div>
-    <aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, undefined, true) : '<p class="mut pad">左の行を押すと、ここに中身が出ます。</p>'}</aside>`
+    <aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, undefined, true) : '<p class="mut pad">左の行を選ぶと、ここに詳細を表示します。</p>'}</aside>`
 }
 
 const LEGEND_KINDS: CardKind[] = ['stuck', 'permit', 'decide', 'send', 'review', 'consult']
 function keyline(tab: Tab): string {
   const k = (kind: CardKind) => `<span class="k k-${kind}"><span class="sw"></span>${glyph(kind)}${esc(KIND_LABEL[kind])}</span>`
   const kinds = LEGEND_KINDS.map(k).join('') + `<span class="k k-permit"><span class="sw"></span>${MANUAL_GLYPH}手作業</span>`
-  if (tab === 'todo') return `<span class="cap">種類</span>${kinds}<span class="sep"></span><span class="k">期限が 1 日を切ったものは赤</span><span class="k">相談は件数に入れない</span>`
-  if (tab === 'done') return `<span class="cap">種類</span>${kinds}${k('report')}<span class="sep"></span><span class="k">右に返した答えと片付けた人。確認の返答が無いまま閉じたものに印</span>`
+  if (tab === 'todo') return `<span class="cap">種類</span>${kinds}<span class="sep"></span><span class="k">赤字: 期限まで 1 日未満</span><span class="k">件数外: 相談</span>`
+  if (tab === 'done') return `<span class="cap">種類</span>${kinds}${k('report')}<span class="sep"></span><span class="k">右: 返した答えと片付けた人</span><span class="k">赤い札: 確認の返答なしで閉じたもの</span>`
   const dot = (s: TaskState) => `<span class="k"><span class="tdot s-${s}"></span>${TSTATE[s]}</span>`
   return `<span class="cap">形</span>${FORM_ORDER.map(formChip).join('')}<span class="sep"></span><span class="cap">工程</span><span class="steps"><span class="s done">済んだ</span><span class="s now">今</span><span class="s">まだ</span><span class="s out">工程の外</span></span>
     <span class="sep"></span><span class="cap">タスク</span>${STATES.map(dot).join('')}`
@@ -350,9 +350,9 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
     <div class="wtop"><span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
       <div class="tabs" role="tablist">${tabBtn('todo', '要対応', total)}${tabBtn('whole', '全体')}${tabBtn('done', '対応済み', b.d.closed.length)}</div>
       <div class="flags"><span class="${stuck ? 'err' : 'mut'}">止まっている ${stuck}</span>${m.live !== undefined ? `<span class="mut">稼働中のエージェント ${m.live}</span>` : ''}
-        <button class="flag repeat" type="button" data-act="repeat" data-root="${esc(b.root)}" title="前に伝えたことを窓口が落としたときに押します。窓口が記録を読み直し、2 回押されると新しいチャットへ引き継ぎます">前にも言った</button>${theme}</div></div>
+        <button class="flag repeat" type="button" data-act="repeat" data-root="${esc(b.root)}" title="前に伝えたことを窓口が落としたときに押します。窓口が記録を読み直し、2 回押されると新しいチャットへ引き継ぎます">読み直させる</button>${theme}</div></div>
     ${hard.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
-    ${soft.length ? `<details class="wnotes" data-fold="soft"${ui.open.soft ? ' open' : ''}><summary>帳簿の欄の形の違い ${soft.length} 件（その欄を外して表示しています。窓口に直させてください）</summary>${soft.map((e) => `<div>${esc(e)}</div>`).join('')}</details>` : ''}
+    ${soft.length ? `<details class="wnotes" data-fold="soft"${ui.open.soft ? ' open' : ''}><summary>帳簿の欄の形の違い ${soft.length} 件。該当の欄を外して表示しています。窓口に直させてください</summary>${soft.map((e) => `<div>${esc(e)}</div>`).join('')}</details>` : ''}
     <div class="keyline" aria-label="凡例">${keyline(tab)}</div>
     <main class="wbody ${tab === 'whole' ? 'whole' : 'split'}">${body}</main>${toastsHtml(ui, now)}</div>`
 }

@@ -104,7 +104,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (!r.kind) errors.push(`依頼 ${r.id}: kind（work・question・decide・send）が無い`)
     for (const u of r.utterances ?? []) if (ids.length && !ids.includes(u.id)) errors.push(`依頼 ${r.id}: 発言 ${u.id} が発言の記録に無い`)
     for (const e of r.evidence ?? []) {
-      if (e.when >= (r.done_when?.length ?? 0)) errors.push(`依頼 ${r.id}: 証拠の when ${e.when} に当たる済の条件が無い`)
+      if (e.when < 1 || e.when > (r.done_when?.length ?? 0)) errors.push(`依頼 ${r.id}: 証拠の when ${e.when} に当たる済の条件が無い（番号は 1 から）`)
       if (e.kind === 'op') {
         const o: Op | undefined = log.ops.find((x) => String(x.op_id) === e.ref)
         if (!o) errors.push(`依頼 ${r.id}: 証拠の操作 ${e.ref} が cockpit.user.json に無い`)
@@ -125,6 +125,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     for (const t of card.tasks ?? []) if (!has(tasks, t)) errors.push(`カード ${card.id}: タスク ${t} が無い`)
     if (!has(owners, card.owner)) errors.push(`カード ${card.id}: 担当 ${card.owner} が無い`)
     if (!has(requests, card.request_id)) errors.push(`カード ${card.id}: 依頼 ${card.request_id} が無い`)
+    for (const e of card.elements ?? []) if (e.n < 1) errors.push(`カード ${card.id}: 要素の番号は 1 から（${e.n}）`)
     for (const m of card.element_map ?? []) {
       if (!card.elements?.some((e) => e.n === m.n)) errors.push(`カード ${card.id}: element_map の ${m.n} に当たる要素が無い`)
       if (m.task !== undefined && !has(tasks, m.task)) errors.push(`カード ${card.id}: 要素 ${m.n} の行き先のタスク ${m.task} が無い`)
@@ -132,7 +133,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
         const [rid, w] = m.request.split('#')
         const req = requests.find((x) => x.id === rid)
         if (!req) errors.push(`カード ${card.id}: 要素 ${m.n} の行き先の依頼 ${rid} が無い`)
-        else if (w !== undefined && !(Number.isInteger(Number(w)) && Number(w) >= 0 && Number(w) < (req.done_when?.length ?? 0))) errors.push(`カード ${card.id}: 要素 ${m.n} の行き先 ${m.request} に当たる済の条件が無い`)
+        else if (w !== undefined && !(Number.isInteger(Number(w)) && Number(w) >= 1 && Number(w) <= (req.done_when?.length ?? 0))) errors.push(`カード ${card.id}: 要素 ${m.n} の行き先 ${m.request} に当たる済の条件が無い`)
       }
     }
     const old = c.cards.find((y) => y.id === card.id)

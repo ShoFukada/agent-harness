@@ -121,7 +121,7 @@ class LaunchTest(unittest.TestCase):
         with open(self.log + ".spec") as fh:
             spec = fh.read()
         self.assertTrue(spec.startswith("brief"))
-        self.assertIn("- r30#0: LIMIT が 3 行の上限の文言に当たる", spec)
+        self.assertIn("- r30#1: LIMIT が 3 行の上限の文言に当たる", spec)
         self.assertNotIn("r31", spec)
         with open(os.path.join(root, ".orca", "cockpit.json")) as fh:
             self.assertIn("t65", fh.read())

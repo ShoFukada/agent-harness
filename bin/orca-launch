@@ -104,7 +104,7 @@ def cockpit_plan(a):
     for r in c.get("requests") or []:
         if a.cockpit_task in (r.get("tasks") or []):
             for i, w in enumerate(r.get("done_when") or []):
-                lines.append("- %s#%d: %s" % (r["id"], i, w))
+                lines.append("- %s#%d: %s" % (r["id"], i + 1, w))
     spec = a.spec_file
     if lines:
         with open(a.spec_file) as fh:
