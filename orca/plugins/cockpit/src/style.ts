@@ -97,7 +97,9 @@ body { margin:0; }
 .ck .now-line span { text-align:right; font-size:var(--fs-xs); font-weight:700; color:var(--focus); }
 .ck .now-line i { height:2px; background:var(--focus); opacity:.55; border-radius:1px; }
 /* 票は区切り線で並べ、囲みの箱にしない（R111）。 */
-.ck .strips { display:grid; margin:6px 0; min-width:0; background:var(--surface); border-block:1px solid var(--rule2); }
+.ck .strips { display:grid; margin:6px 0; min-width:0; border-block:1px solid var(--rule); }
+/* 票は地の上に線で区切って並べ、開いた票だけ面の色で浮かせる（白い箱を並べない。追加 22）。 */
+.ck .strip[aria-expanded="true"] { background:var(--surface); }
 @container (max-width:520px) { .ck .lane { grid-template-columns:minmax(0,1fr); } .ck .when { text-align:left; padding:10px 0 0; } .ck .when::after { display:none; }
   .ck .when small { display:inline; margin-left:6px; } .ck .now-line { grid-template-columns:auto minmax(0,1fr); }
   /* 狭い幅で案件名と仕事の名前が並ぶと、どちらも数文字に削られるので、案件名があるときは仕事の名前を出さない。 */
