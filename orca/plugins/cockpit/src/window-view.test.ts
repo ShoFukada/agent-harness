@@ -197,4 +197,5 @@ test('Codex 13-4・5: 出した指示の本文は空白を詰めず、古い版�
 test('info-needs Q1・Q2: 判断の一覧の 1 行におすすめの案を出し、本文の判断の記録の番号の括弧は表示から除く', () => {
   assert.match(page(aoba()), /<span class="ti">構成案の本番の図に、社内向けの入口を描き足すか<\/span><span class="recm">おすすめ: 図はこのまま、本文で説明する<\/span>/)
   assert.equal(dropRulings('<p>窓の版 3（R46・R47、R83）を入れる（2 件）</p>'), '<p>窓の版 3を入れる（2 件）</p>')
+  assert.equal(dropRulings('止めないため（21:40 の依頼、R79）。（R12、11/20）'), '止めないため（21:40 の依頼）。（11/20）')
 })

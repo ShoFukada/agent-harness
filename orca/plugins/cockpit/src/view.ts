@@ -122,7 +122,10 @@ export function tighten(html: string): string {
 
 const RULINGS = /[（(]\s*R\d+(?:\s*[・、,，]\s*R\d+)*\s*[）)]/g
 /** 本文の判断の記録の番号の括弧（「（R46・R47）」）を表示から除く。窓から開けない場所を指すため（info-needs Q2）。帳簿は書き換えない。 */
-export const dropRulings = (html: string) => html.replace(RULINGS, '')
+// 括弧の中で他の語と並んだ番号（「（21:40 の依頼、R79）」「（R79、21:40）」）は番号だけを除く。
+const RULING_TAIL = /\s*[・、,，]\s*R\d+(?:\s*[・、,，]\s*R\d+)*(?=\s*[）)])/g
+const RULING_HEAD = /(?<=[（(])\s*R\d+(?:\s*[・、,，]\s*R\d+)*\s*[・、,，]\s*/g
+export const dropRulings = (html: string) => html.replace(RULINGS, '').replace(RULING_TAIL, '').replace(RULING_HEAD, '')
 
 export function rich(text: string | undefined, repo?: Repo): string {
   if (!text) return ''
