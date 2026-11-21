@@ -111,3 +111,35 @@ test('Dispatch で落ちた・Orca に見つからない worker は、端末が�
   assert.equal(done.tasks.get('t1')!.why, 'intake')
   assert.ok(!done.queue.some((r) => r.card.kind === 'stuck'))
 })
+
+test('hook が読む検査: 一時フォルダのままの成果物と、どのカードも外の相手も指さない止まったタスク', () => {
+  const c: Cockpit = {
+    version: 2, workspace: { name: 'x' }, streams: [{ id: 's1', title: '仕事' }],
+    tasks: [
+      { id: 't1', stream: 's1', phase: '実装', title: 'a', state: 'stop' },
+      { id: 't2', stream: 's1', phase: '実装', title: 'b', state: 'stop' },
+      { id: 't3', stream: 's1', phase: '実装', title: 'c', state: 'wait', waiting_on: '顧客' },
+      { id: 't4', stream: 's1', phase: '実装', title: 'd', state: 'wait' },
+      { id: 't5', stream: 's1', phase: '実装', title: 'e', state: 'run' },
+      { id: 't6', stream: 's1', phase: '実装', title: 'f', state: 'wait' },
+      { id: 't7', stream: 's1', phase: '実装', title: 'g', state: 'stop' }
+    ],
+    cards: [
+      { id: 'd1', rev: 1, kind: 'decide', title: 'd1', state: 'open', stream: 's1', tasks: ['t2'] },
+      { id: 'd0', rev: 1, kind: 'decide', title: 'd0', state: 'done', stream: 's1', tasks: ['t1'] },
+      { id: 'a1', rev: 1, kind: 'report', title: 'a1', state: 'open', stream: 's1', tasks: ['t4'], href: '/private/tmp/claude-501/x/page.html' },
+      { id: 'a2', rev: 1, kind: 'review', title: 'a2', state: 'open', stream: 's1', links: [{ label: '比較', href: 'file:///tmp/cmp.html' }] },
+      { id: 'a3', rev: 1, kind: 'review', title: 'a3', state: 'open', stream: 's1', href: 'https://claude.ai/artifact/abc' },
+      { id: 'a4', rev: 1, kind: 'review', title: 'a4', state: 'done', stream: 's1', href: '/tmp/old.html' },
+      // 送ったあと顧客の返事を待つカードが指すタスクは、外の相手を待っているので名指ししない
+      { id: 'w1', rev: 1, kind: 'send', title: 'w1', state: 'waiting', stream: 's1', tasks: ['t6'], awaiting: { who: '森さん', what: '回答', since: '2026-11-20T10:00:00+09:00' } },
+      // 担当と話し始めたカードは私の番から外れるので、それだけが指すタスクは名指しする
+      { id: 'd2', rev: 1, kind: 'decide', title: 'd2', state: 'open', stream: 's1', tasks: ['t7'] }
+    ]
+  }
+  const r = report(c, { ops: [{ op_id: 1, at: '2026-11-21T09:00:00+09:00', item_id: 'd2', item_rev: 1, type: 'talk' }] }, [], undefined, 'skipped', NOW)
+  assert.deepEqual(r.checks.local_deliverables, ['a1', 'a2'])
+  assert.deepEqual(r.checks.orphan_waits, ['t1', 't4', 't7'])
+  assert.deepEqual(r.mine.map((x) => x.id).sort(), ['a2', 'a3', 'd1'])
+  assert.equal(r.next?.id, r.mine[0].id)
+})

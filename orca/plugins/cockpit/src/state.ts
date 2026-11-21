@@ -265,6 +265,8 @@ export type StateReport = {
   orca: 'ok' | 'skipped' | 'error'
   counts: Counts & { total: number }
   next?: { id: string; kind: CardKind; title: string; due?: string }
+  /** 私の番のカード（件数に数えるもの）を急ぐ順に。操作を重ね、Orca で止まった worker の詰まりを足したあと。desk の朝の見回りが読む。 */
+  mine: { id: string; kind: CardKind; title: string; due?: string }[]
   overdue: string[]
   talking: string[]
   waiting: { id: string; who: string; what: string; since: string; remind_at?: string }[]
@@ -280,6 +282,10 @@ export type StateReport = {
     remind_due: string[]
     /** 仕事にも担当にもつながらない開いたカード。 */
     orphan_cards: string[]
+    /** 成果物（href・links）が一時フォルダのファイルのままの、開いた見て・報告（artifact にして URL で渡す）。 */
+    local_deliverables: string[]
+    /** 手書きの state が止まっている・待っているのに、外の相手（waiting_on）も、私の番のカードも、顧客待ちのカードも指していないタスク。 */
+    orphan_waits: string[]
     intake: string[]
     missing_workers: string[]
     /** 進行中のタスクが無く、push の許すも開いていない（hook が git を見て、残りがあれば push を聞かせる）。 */
@@ -299,21 +305,25 @@ export type StateReport = {
 const INTAKE_GRACE_MS = 10 * 60_000
 const PUSH_LATER_MS = 12 * 3_600_000
 const CONTEXT_KEYS = ['what', 'now', 'how', 'gain', 'cost'] as const
+const TMP = /^(file:\/\/)?(\/private)?\/(tmp|var\/folders)\//
 
 export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFacts | undefined, orcaState: StateReport['orca'], now: number, plugin?: string): StateReport {
   const d = derive(c, log, archive, '', facts, now)
   const tasks = [...d.tasks.values()]
   const running = tasks.filter((t) => t.why === 'working')
   const names = (xs: string[]) => (xs.length ? `（${xs.join(' / ')}）` : '')
-  const next = d.queue.find((r) => COUNTED.includes(r.card.kind))
+  const mine = d.queue.filter((r) => COUNTED.includes(r.card.kind))
+  const next = mine[0]
   const intake = tasks.filter((t) => t.why === 'intake' && now - (t.settledAt ?? 0) >= INTAKE_GRACE_MS)
   const pushOpen = c.cards.some((x) => x.kind === 'permit' && x.scope === 'push' && (x.state === 'open' || (x.resolved_option === 'later' && now - Date.parse(x.resolved_at ?? '0') < PUSH_LATER_MS)))
   const open = c.cards.filter((x) => x.state === 'open')
+  const pointed = new Set([...mine, ...d.waiting].flatMap((r) => r.card.tasks ?? []))
   return {
     workspace: c.workspace.name,
     orca: orcaState,
     counts: { ...d.counts, total: d.total },
     next: next && { id: next.card.id, kind: next.card.kind, title: next.card.title, due: next.card.due },
+    mine: mine.map((r) => ({ id: r.card.id, kind: r.card.kind, title: r.card.title, due: r.card.due })),
     overdue: d.queue.filter((r) => isOver(r.card.due, now)).map((r) => r.card.id),
     talking: d.talking.map((r) => r.card.id),
     waiting: d.waiting.map((r) => ({ id: r.card.id, who: r.card.awaiting?.who ?? '', what: r.card.awaiting?.what ?? r.card.title, since: r.card.awaiting?.since ?? '', remind_at: r.card.awaiting?.remind_at })),
@@ -325,6 +335,8 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       missing_context: open.filter((x) => x.kind === 'decide' && CONTEXT_KEYS.some((k) => !String(x.context?.[k] ?? '').trim())).map((x) => x.id),
       remind_due: d.waiting.filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).map((r) => r.card.id),
       orphan_cards: open.filter((x) => x.kind !== 'inbox' && !x.stream && !x.owner && !x.tasks?.length).map((x) => x.id),
+      local_deliverables: open.filter((x) => (x.kind === 'review' || x.kind === 'report') && [x.href, ...(x.links ?? []).map((l) => l.href)].some((h) => h && TMP.test(h))).map((x) => x.id),
+      orphan_waits: tasks.filter((t) => t.why === 'record' && (t.state === 'stop' || t.state === 'wait') && !t.task.waiting_on?.trim() && !pointed.has(t.task.id)).map((t) => t.task.id),
       intake: intake.map((t) => t.task.id),
       missing_workers: tasks.filter((t) => t.why === 'missing').map((t) => t.task.id),
       push_check: !tasks.some((t) => t.state === 'run') && !pushOpen,
