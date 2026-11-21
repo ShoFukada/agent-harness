@@ -7,6 +7,7 @@ worker の生死は Orca の orchestration（worker-start の監督）が見て�
 """
 
 import argparse
+import glob
 import json
 import os
 import re
@@ -15,6 +16,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 HOME = os.environ.get("STALLWATCH_HOME") or os.path.expanduser("~/Library/Application Support/stallwatch")
 COCKPIT_DIR = os.environ.get("COCKPIT_DIR") or os.path.expanduser("~/Library/Application Support/cockpit")
@@ -29,8 +32,16 @@ LOG_ERROR = re.compile(r"\b(Error|ENOENT|EACCES|EADDRINUSE|Unhandled|Traceback)\
 JOB_FAILED = re.compile(r"(?i)\b(error|failed|failure|fatal|traceback|unauthorized)\b|失敗|エラー")
 # orca-state.ts の stopReason と同じ。長い発言は作業の報告なので、短いものだけを見る。
 SHORT = 400
-LIMIT = re.compile(r"(?i)usage limit|rate limit|limit reached|out of extra usage|上限に達")
+# Claude Code の上限の 1 行は「You've hit your 5-hour limit · resets 4:40pm (Asia/Tokyo)」「You've reached your Fable limit.」の形。
+LIMIT = re.compile(r"(?i)usage limit|rate limit|limit reached|out of extra usage|上限に達|hit your [\w -]*limit|reached your [\w -]*limit")
 AUTH = re.compile(r"(?i)/login|not logged in|authentication_error|oauth token|invalid api key|\b401\b")
+RESETS = re.compile(r"resets (?:([A-Z][a-z]{2}) (\d{1,2}) at )?(\d{1,2})(?::(\d{2}))?([ap]m)(?: \(([^)]+)\))?")
+MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
+# Orca は起動し直すと全員の stateStartedAt を数秒のうちに付け直す（2026-11-21 の再起動では 7 人が 3 秒以内）。
+RESTART_SKEW_MS = 5_000
+# Orca が outcome: failure を付けた時刻（stateStartedAt）と、会話記録の最後の応答の時刻の差。実測は 10ms 未満。
+REPLY_SKEW_MS = 2 * 60_000
+TRANSCRIPT_TAIL = 256 * 1024
 LABEL = {"working": "作業中", "done": "止まった", "blocked": "許可待ち", "waiting": "返事待ち"}
 
 
@@ -84,18 +95,144 @@ def pick_main(agents):
     return max(chats, key=lambda a: a.get("updatedAt") or a.get("stateStartedAt") or 0)
 
 
-def main_stop(a):
+def reset_at(text, at):
+    """上限の 1 行の「resets 4:40pm (Asia/Tokyo)」「resets Nov 22 at 9am (Asia/Tokyo)」が指す時刻（ms）。at は上限に当たった時刻。"""
+    m = RESETS.search(text)
+    if not m:
+        return None
+    mon, day, hour, minute, ampm, tz = m.groups()
+    try:
+        zone = ZoneInfo(tz) if tz else None
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = None
+    base = datetime.fromtimestamp(at / 1000, zone) if zone else datetime.fromtimestamp(at / 1000).astimezone()
+    try:
+        t = base.replace(hour=int(hour) % 12 + (12 if ampm == "pm" else 0), minute=int(minute or 0), second=0, microsecond=0)
+        if mon:
+            t = t.replace(month=MONTHS.index(mon) + 1, day=int(day))
+            if t < base:
+                t = t.replace(year=t.year + 1)
+        elif t <= base:
+            t += timedelta(days=1)
+    except ValueError:
+        return None
+    return int(t.timestamp() * 1000)
+
+
+def clock(ms, now):
+    t = time.localtime(ms / 1000)
+    same_day = time.strftime("%Y%m%d", t) == time.strftime("%Y%m%d", time.localtime(now / 1000))
+    return time.strftime("%H:%M" if same_day else "%-m/%-d %H:%M", t)
+
+
+def stop_cause(text, at, now):
+    """短い発言から、利用枠の上限とログイン切れを見分ける。長い発言は作業の報告なので見ない。at はその発言の時刻。"""
+    if len(text) > SHORT:
+        return None
+    if LIMIT.search(text):
+        reset = reset_at(text, at)
+        if reset is None:
+            return "利用枠の上限で止まった"
+        if now < reset:
+            return "利用枠の上限で止まった（%s に戻る）" % clock(reset, now)
+        # 枠が戻っても、上限で途切れた作業は誰かが入力するまで再開しないので、消さずに弱めて残す。
+        return "利用枠の上限で止まったまま（枠は %s に戻った。新しい入力を待っている）" % clock(reset, now)
+    if AUTH.search(text):
+        return "ログインが切れて止まった"
+    return None
+
+
+def claude_projects():
+    """Claude の会話記録の置き場所。Orca はプロファイルごとに CLAUDE_CONFIG_DIR を分けるが、中の projects は共有のことがある。"""
+    homes = [os.path.expanduser("~/.claude"), os.environ.get("CLAUDE_CONFIG_DIR") or ""]
+    homes += glob.glob(os.path.expanduser("~/Library/Application Support/orca/claude-profiles/*/home"))
+    found = {}
+    for h in homes:
+        p = os.path.join(h, "projects")
+        if h and os.path.isdir(p):
+            found.setdefault(os.path.realpath(p), p)
+    return list(found.values())
+
+
+def ms_of(iso):
+    try:
+        return int(datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def last_reply(root, at):
+    """root で動いた Claude の会話記録のうち、最後の応答の時刻が at に最も近いものの (時刻, 本文, API のエラーか)。"""
+    name = re.sub(r"[^A-Za-z0-9]", "-", root.rstrip("/"))
+    best = None
+    for proj in claude_projects():
+        for path in glob.glob(os.path.join(proj, name, "*.jsonl")):
+            try:
+                if os.path.getmtime(path) * 1000 < at - REPLY_SKEW_MS:
+                    continue
+                with open(path, "rb") as fh:
+                    fh.seek(max(0, os.path.getsize(path) - TRANSCRIPT_TAIL))
+                    lines = fh.read().decode("utf-8", "replace").splitlines()
+            except OSError:
+                continue
+            entry = None
+            for line in reversed(lines):
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(e, dict) and e.get("type") == "assistant":
+                    entry = e
+                    break
+            ts = entry and ms_of(entry.get("timestamp"))
+            if not ts or abs(ts - at) > REPLY_SKEW_MS or (best and abs(best[0] - at) <= abs(ts - at)):
+                continue
+            content = (entry.get("message") or {}).get("content")
+            text = content if isinstance(content, str) else "".join(
+                c.get("text") or "" for c in content or [] if isinstance(c, dict) and c.get("type") == "text")
+            best = (ts, text, bool(entry.get("isApiErrorMessage")))
+    return best
+
+
+def main_stop(a, root, now):
     if a.get("hasLivePty") is False:
         return "端末が終わった"
-    msg = a.get("lastAssistantMessage") or ""
-    if a.get("state") == "done" and len(msg) <= SHORT:
-        if LIMIT.search(msg):
-            return "利用枠の上限で止まった"
-        if AUTH.search(msg):
-            return "ログインが切れて止まった"
-    if a.get("state") == "done" and (a.get("mainAgent") or {}).get("outcome") == "failure":
-        return "エラーで止まった"
-    return None
+    if a.get("state") != "done":
+        return None
+    at = a.get("stateStartedAt") or now
+    shown = stop_cause(a.get("lastAssistantMessage") or "", at, now)
+    if (a.get("mainAgent") or {}).get("outcome") != "failure":
+        return shown
+    # Orca の lastAssistantMessage には API のエラーの 1 行（上限・ログイン切れ）が入らず、前の報告が残るので、会話記録の最後の応答を先に見る。
+    reply = last_reply(root, at)
+    if reply:
+        ts, text, api_error = reply
+        cause = stop_cause(text, ts, now)
+        if cause:
+            return cause
+        if api_error:
+            return "API のエラーで止まった（%s）" % " ".join(text.split())[:100]
+    return shown or "エラーで止まった"
+
+
+def note_restart(state, runtime, now):
+    """Orca が起動し直した時刻の幅と、その前に作業中だったメイン。再起動の判定はここと by_restart だけで持つ。
+    runtimeId が変わったら、前に Orca を読めた回から今回までのどこかで起動し直している。
+    見張りが見る前の再起動は時刻が分からないので、初めての回までの全部を幅にする。"""
+    restart = state.get("restart") or {"from": 0, "to": now, "working": []}
+    if runtime and state.get("runtime") and runtime != state["runtime"]:
+        restart = {"from": state.get("read_at", 0), "to": now,
+                   "working": sorted(k for k, v in state.get("main_state", {}).items() if v == "working")}
+    if runtime:
+        state["runtime"] = runtime
+    state["restart"], state["read_at"] = restart, now
+    return restart
+
+
+def by_restart(restart, *stamps):
+    """stamps（stateStartedAt）がどれも、その再起動で Orca が一斉に付け直したものか。"""
+    return (all(restart["from"] <= t <= restart["to"] for t in stamps)
+            and max(stamps) - min(stamps) <= RESTART_SKEW_MS)
 
 
 def check_mains(now, state):
@@ -107,12 +244,8 @@ def check_mains(now, state):
     out = []
     # Orca が起動し直すと、作業の途中だったメインも done・success に戻り、手待ちと見分けられない。
     # 前の回に作業中だったメインが、起動し直したあと動いていなければ知らせる（Orca が止まっていた回は記録を変えない）。
-    restarted = bool(runtime and state.get("runtime") and runtime != state["runtime"])
-    if runtime:
-        state["runtime"] = runtime
-    last = state.get("main_state", {})
-    hits = state.get("restart_hits", {})
-    state["main_state"], state["restart_hits"] = {}, {}
+    restart = note_restart(state, runtime, now)
+    state["main_state"] = {}
     for row in rows:
         root = row.get("path")
         if not root or not os.path.isfile(os.path.join(root, ".orca", "cockpit.json")):
@@ -124,15 +257,13 @@ def check_mains(now, state):
             out.append(alert("main-missing:" + root, "「%s」のメインが Orca に見当たらない（チャットか端末が閉じた）" % name, root, confirm=True))
             continue
         state["main_state"][root] = m.get("state")
-        if restarted and last.get(root) == "working" and m.get("state") != "working":
-            hits[root] = m.get("stateStartedAt")
-        if root in hits and m.get("state") == "done" and m.get("stateStartedAt") == hits[root]:
-            state["restart_hits"][root] = hits[root]
+        since = m.get("stateStartedAt") or 0
+        if root in restart["working"] and m.get("state") == "done" and by_restart(restart, since):
             # 再起動のあとに人が動かして終えた場合と見分けられないので、メインは起こさず人に知らせるだけにする。
-            out.append(alert("main-restarted:%s:%s" % (root, hits[root]),
+            out.append(alert("main-restarted:%s:%s" % (root, since),
                              "「%s」のメインが、Orca の再起動のときに作業中だったまま止まっている（続きが要るか確かめる）" % name, root))
             continue
-        stop = main_stop(m)
+        stop = main_stop(m, root, now)
         if stop:
             out.append(alert("main-dead:" + root, "「%s」のメインが%s" % (name, stop), root))
             continue
@@ -143,12 +274,13 @@ def check_mains(now, state):
         if m.get("state") != "done":
             continue
         # メインが手を止めたあとに止まった worker。Orca がメインを起こしていれば、メインの stateStartedAt がそれより新しくなる。
+        # 再起動でメインと一緒に付け直された worker は、止まった時刻が分からないので数えない。
         kids = [r for r in rows if r.get("parentWorktreeId") and r["parentWorktreeId"] == row.get("worktreeId")]
         workers = [(a, r) for r in kids for a in (r.get("agents") or [])] + [(a, row) for a in own if a is not m]
-        since = m.get("stateStartedAt") or 0
         for a, r in workers:
             started = a.get("stateStartedAt") or 0
-            if a.get("state") == "working" or started <= since or now - started < UNHANDLED_MS:
+            if (a.get("state") == "working" or started <= since or by_restart(restart, since, started)
+                    or now - started < UNHANDLED_MS):
                 continue
             title = a.get("conversationName") or a.get("displayName") or a.get("taskTitle") or os.path.basename(r.get("path", ""))
             text = "「%s」の worker「%s」が%sあと、メインが %d 分動いていない" % (

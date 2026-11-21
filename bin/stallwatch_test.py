@@ -1,20 +1,39 @@
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "stallwatch")
 MIN = 60_000
+HOUR = 60 * MIN
+TOKYO = ZoneInfo("Asia/Tokyo")
 
 
 def now_ms():
     return int(time.time() * 1000)
+
+
+def resets(ms, date=False):
+    """Claude Code の上限の 1 行の「resets」の後ろ（「4:40pm」「4pm」「Nov 22 at 9am」）。"""
+    t = datetime.fromtimestamp(ms / 1000, TOKYO)
+    hm = "%d%s%s" % (t.hour % 12 or 12, ":%02d" % t.minute if t.minute else "", "pm" if t.hour >= 12 else "am")
+    return "%s %d at %s" % (t.strftime("%b"), t.day, hm) if date else hm
+
+
+def shown(ms):
+    """窓に出る時刻。今日なら 16:40、別の日なら 11/22 09:00。"""
+    t = time.localtime(ms / 1000)
+    today = time.strftime("%Y%m%d", t) == time.strftime("%Y%m%d")
+    return time.strftime("%H:%M" if today else "%-m/%-d %H:%M", t)
 
 
 class Page(http.server.BaseHTTPRequestHandler):
@@ -96,7 +115,8 @@ cat "$f"
     def run_watch(self, *args):
         env = dict(os.environ, PATH=self.bin + ":/usr/bin:/bin", STALLWATCH_HOME=os.path.join(self.tmp, "home"),
                    COCKPIT_DIR=os.path.join(self.tmp, "cockpit"), STALLWATCH_NOTIFY=os.path.join(self.bin, "notify"),
-                   ORCA_CLI_COMMAND="orca")
+                   ORCA_CLI_COMMAND="orca", HOME=self.tmp)
+        env.pop("CLAUDE_CONFIG_DIR", None)
         r = subprocess.run([sys.executable, SCRIPT, "--window", self.url, "--window-log", self.window_log] + list(args),
                            env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -125,6 +145,94 @@ cat "$f"
              "updatedAt": now_ms() - 60 * MIN, "orcaSessionId": "s1", "mainAgent": {"outcome": "success"}}
         a.update(over)
         return a
+
+    def failed_main(self, at, said="Orca が再起動したので、状態を確かめ直しました。途中で止まった作業はありません。"):
+        """2026-11-21 に上限で止まった resi-dra のメインの形。Orca は outcome: failure を付けるが、
+        lastAssistantMessage には上限の 1 行が入らず、その前の普通の報告が残る。"""
+        return self.main_agent(stateStartedAt=at, updatedAt=at + 47, mainAgent={"state": "done", "outcome": "failure", "stateStartedAt": at},
+                               lastAssistantMessage=said)
+
+    def transcript(self, at, text, error, home=".claude", name="61503ca7-72ff-4db3-9b0b-2811d8cccb17", offset=-9):
+        """メインの会話記録（~/.claude/projects/<root の記号を - にしたもの>/<会話>.jsonl）の末尾を、実物の行の並びで書く。
+        上限やログイン切れは、Claude Code が model <synthetic>・isApiErrorMessage の応答として書く。offset は Orca の記録との時刻の差。"""
+        d = os.path.join(self.tmp, home, "projects", re.sub(r"[^A-Za-z0-9]", "-", self.root))
+        os.makedirs(d, exist_ok=True)
+
+        def reply(ms, body, err=None):
+            e = {"type": "assistant", "sessionId": "61503ca7", "message": {
+                "model": "<synthetic>" if err else "claude-opus-5-5", "role": "assistant", "content": [{"type": "text", "text": body}]},
+                "timestamp": datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (ms % 1000)}
+            if err:
+                e.update(isApiErrorMessage=True, error=err)
+            return e
+
+        lines = [reply(at - 20 * MIN, "途中の報告"), {"type": "attachment", "sessionId": "61503ca7"},
+                 {"type": "api-request", "sessionId": "61503ca7"}, reply(at + offset, text, error),
+                 {"type": "last-prompt", "sessionId": "61503ca7"}, {"type": "cost-state", "sessionId": "61503ca7"}]
+        with open(os.path.join(d, name + ".jsonl"), "w") as fh:
+            fh.write('{"type":"api-request-blob","truncated":"' + "x" * 300_000 + '\n')
+            fh.writelines(json.dumps(l, ensure_ascii=False) + "\n" for l in lines)
+
+    def test_main_stopped_on_the_5_hour_limit_until_it_resets(self):
+        at = now_ms() - 30 * MIN
+        reset = (at + 3 * HOUR) // MIN * MIN
+        # 同じ root の別の会話が、少し後に普通の応答を書いていても、時刻の近いメインの記録を採る。
+        self.transcript(at, "別の会話の報告", None, name="82ca1a84-0a17-49f3-9bf1-4715c47173e2", offset=30_000)
+        self.ps([self.failed_main(at, said="`/login` の手順を確かめました。")])
+        self.transcript(at, "You've hit your 5-hour limit · resets %s (Asia/Tokyo)" % resets(reset), "rate_limit")
+        self.run_watch()
+        (a,) = self.alerts().values()
+        self.assertIn("利用枠の上限で止まった（%s に戻る）" % shown(reset), a["text"], "前の短い報告より会話記録の最後を先に見る")
+        at = now_ms() - 4 * HOUR
+        reset = (at + HOUR) // MIN * MIN
+        self.ps([self.failed_main(at)])
+        self.transcript(at, "You've hit your 5-hour limit · resets %s (Asia/Tokyo)" % resets(reset), "rate_limit")
+        self.run_watch()
+        (a,) = self.alerts().values()
+        self.assertIn("上限で止まったまま（枠は %s に戻った。新しい入力を待っている）" % shown(reset), a["text"],
+                      "枠が戻っても、途切れた作業は入力するまで再開しないので弱めて残す")
+        self.assertEqual(len(self.notes_lines()), 1, "弱めた表示に変わっても知らせ直さない")
+
+    def test_main_failure_takes_its_cause_from_the_transcript(self):
+        at = now_ms() - 30 * MIN
+        self.ps([self.failed_main(at)])
+        self.run_watch()
+        self.assertIn("メインがエラーで止まった", self.alerts()["main-dead:" + self.root]["text"], "会話記録が無ければ前と同じ")
+        reset = (at + 30 * HOUR) // HOUR * HOUR
+        cases = [
+            ("Login reached its time limit · Please run /login", "authentication_failed", "ログインが切れて止まった"),
+            ("You've hit your weekly limit · resets %s (Asia/Tokyo)" % resets(reset, date=True), "rate_limit",
+             "上限で止まった（%s に戻る）" % shown(reset)),
+            ("You've hit your session limit · resets 4pm (Invalid/Zone)", "rate_limit", "利用枠の上限で止まった（"),
+            ("You've reached your Fable limit. Run /usage-credits to continue or switch models with /model.", "rate_limit",
+             "利用枠の上限で止まった"),
+            ("API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.", "server_error",
+             "API のエラーで止まった（API Error: 529 Overloaded."),
+        ]
+        for text, error, want in cases:
+            # Orca のプロファイルの CLAUDE_CONFIG_DIR に置かれた会話記録も読む。
+            self.transcript(at, text, error, home="Library/Application Support/orca/claude-profiles/p1/home")
+            self.run_watch()
+            self.assertIn(want, self.alerts()["main-dead:" + self.root]["text"], text)
+        self.ps([self.failed_main(at + 30 * MIN)])
+        self.run_watch()
+        self.assertIn("メインがエラーで止まった", self.alerts()["main-dead:" + self.root]["text"],
+                      "最後の応答の時刻が Orca の記録と合わない会話記録は別の会話なので見ない")
+
+    def test_worker_put_back_with_the_main_by_an_orca_restart_is_quiet(self):
+        # 2026-11-21 14:57:04 の再起動で、pasona のメインと worker の stateStartedAt が 5ms 差で付け直された形。
+        back = now_ms() - 195 * MIN
+        main = self.main_agent(paneKey="91bc831e:aad12dd0", stateStartedAt=back, updatedAt=back + 3327, hasLivePty=True,
+                               mainAgent={"state": "done", "stateStartedAt": back + 3327}, lastAssistantMessage=None)
+        worker = {"paneKey": "74647b77:11668409", "state": "done", "stateStartedAt": back + 5, "updatedAt": back + 2595,
+                  "conversationName": "W29 文面集の修正", "hasLivePty": True, "mainAgent": {"state": "done", "stateStartedAt": back + 2595}}
+        self.ps([main], kids=[worker])
+        self.run_watch()
+        self.assertEqual(self.alerts(), {})
+        self.ps([main], kids=[dict(worker, stateStartedAt=back + 60 * MIN)])
+        self.run_watch()
+        (a,) = self.alerts().values()
+        self.assertIn("W29 文面集の修正", a["text"], "再起動のあとに worker だけが止まったら知らせる")
 
     def test_quiet_when_nothing_is_stopped(self):
         self.ps([self.main_agent()], kids=[{"paneKey": "w", "state": "working", "stateStartedAt": now_ms() - 5 * MIN}])
@@ -171,7 +279,7 @@ cat "$f"
         self.ps([self.main_agent(stateStartedAt=restart)])
         self.run_watch()
         self.assertEqual(len(self.notes_lines()), 1, "Orca に繋がらない回を挟んでも知らせ直さない")
-        self.ps([self.main_agent(stateStartedAt=restart + 1000)])
+        self.ps([self.main_agent(stateStartedAt=now_ms())])
         self.run_watch()
         self.assertEqual(self.alerts(), {}, "メインが動いたら消える")
 
