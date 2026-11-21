@@ -70,11 +70,11 @@ def alert(aid, text, root=None, confirm=False):
     return {"id": aid, "text": text, "root": root, "confirm": confirm}
 
 
-def orca(*args):
+def orca(*args, timeout=30):
     """(result, エラーの 1 行, runtimeId)。runtimeId は Orca が起動するたびに変わる。"""
     try:
         r = subprocess.run([os.environ.get("ORCA_CLI_COMMAND") or "orca"] + list(args) + ["--json"],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, str(e), None
     try:
@@ -384,9 +384,16 @@ def check_jobs(jobs, services):
     return out
 
 
-def notify(texts):
+def check_failover(now):
+    """account-failover が書いた知らせ（全席が上限・切り替えた・移せなかった端末）。alerts.json の書き手をここ 1 つに保つため、帯へはここで合流させる。"""
+    # account-failover は書いた時点で自分で通知しているので、ここでは帯にだけ出す（quiet）。
+    return [dict(alert(a["id"], a["text"]), quiet=True) for a in load(os.path.join(HOME, "failover.json"), {}).get("alerts", [])
+            if not a.get("until") or now < a["until"]]
+
+
+def notify(texts, title=None):
     cmd = os.environ.get("STALLWATCH_NOTIFY")
-    title = "止まっているもの %d 件" % len(texts) if len(texts) > 1 else "止まっているもの"
+    title = title or ("止まっているもの %d 件" % len(texts) if len(texts) > 1 else "止まっているもの")
     body = " / ".join(texts)[:600]
     script = "display notification %s with title %s" % (json.dumps(body, ensure_ascii=False), json.dumps(title, ensure_ascii=False))
     try:
@@ -400,7 +407,8 @@ def run(a):
     now = now_ms()
     state_path = os.path.join(HOME, "state.json")
     state = load(state_path, {})
-    found = check_mains(now, state) + check_window(a.window, a.window_log, state, now) + check_jobs(a.job, a.service)
+    found = (check_mains(now, state) + check_window(a.window, a.window_log, state, now) + check_jobs(a.job, a.service)
+             + check_failover(now))
     seen = state.get("seen", {})
     notified = state.get("notified", {})
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -411,7 +419,7 @@ def run(a):
         if f["confirm"] and f["id"] not in seen:
             continue
         active.append(f)
-        if f["id"] not in notified:
+        if f["id"] not in notified and not f.get("quiet"):
             fresh.append(f)
     sent = bool(fresh) and notify([f["text"] for f in fresh])
     # Orca に繋がらない回はメインの様子が分からないので、メインについての記録は解消と見なさずに残す。
