@@ -51,10 +51,10 @@ test('案件で絞ると、その案件の票だけになり、右に案件の�
   assert.match(t, /外部 API の繋ぎ込み 森さんの返事待ち/)
 })
 
-test('決める: 何のため → なぜ今 → 選択肢 → 返事が無いとき → 決めるための情報 → 話す相手。おすすめを選んだ状態で開き「おすすめで決める」、選び直すと「この案で決める」', () => {
+test('決める: 何のため → これは何か → なぜ今 → 選択肢 → 返事が無いとき → 決めるための情報の残り → 話す相手。おすすめを選んだ状態で開き「おすすめで決める」、選び直すと「この案で決める」', () => {
   const ui = { ...newUi(), sel: '/ws/aoba#d21' }
   const t = text(html(model(), ui))
-  const order = ['何のため', 'なぜ今決めるか', '図はこのまま', '返事が無いとき', 'これは何か', '失うこと', '担当 AWS 構成案'].map((x) => t.indexOf(x))
+  const order = ['何のため', 'これは何か', 'なぜ今決めるか', '図はこのまま', '返事が無いとき', '失うこと', '担当 AWS 構成案'].map((x) => t.indexOf(x))
   assert.deepEqual([...order].sort((a, b) => a - b), order)
   assert.match(html(model(), ui), /data-act="decide"[^>]*\s>推奨案で決定/)
   assert.match(html(model(), ui), /role="radio" aria-checked="true" data-pick="keep"/)

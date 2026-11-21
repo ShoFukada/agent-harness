@@ -259,7 +259,8 @@ export function backgroundParts(r: Row, svg: (raw: string) => string, figures: R
     parts.push(fld('選んだら起きること', `<div class="tblwrap"><table class="cmp"><tr>${c.compare.columns.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>${c.compare.rows.map((row) => `<tr>${row.map((x) => `<td>${esc(x)}</td>`).join('')}</tr>`).join('')}</table></div>`))
   const fig = c.figure ?? (typeof c.compare === 'string' ? c.compare : undefined)
   if (fig && figures[fig]) parts.push(`<div class="fig">${svg(figures[fig]!)}</div>`)
-  if (c.quote) parts.push(fld('原文', `<div class="quote">${esc(c.quote)}</div>`))
+  // 送信前の相手の発言は本文の上に出すので重ねない。
+  if (c.quote && c.kind !== 'send') parts.push(fld('原文', `<div class="quote">${esc(c.quote)}</div>`))
   return parts
 }
 
@@ -280,22 +281,25 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       if (c.reply) parts.push(fld('返事', c.reply === 'needed' ? '要る（担当が下書きを作る）' : '要らない'))
       break
     case 'send':
+      if (c.quote) parts.push(fld('相手の発言', `<div class="quote">${esc(c.quote)}</div>`))
       if (c.why) parts.push(fld('なぜ今', rich(c.why, c.repo)))
       if (c.draft)
         parts.push(`<div class="fld"><span class="lb">送る前の文面</span><div class="msg-to"><span class="sp">${sp([`宛先 <b>${esc(c.draft.to)}</b>`, c.draft.via && esc(c.draft.via)])}</span></div><div class="msg">${esc(c.draft.text)}</div></div>`)
       parts.push(optionsHtml(r, ui))
       break
     case 'decide':
+      if (c.context?.what) parts.push(fld('これは何か', rich(c.context.what, c.repo)))
       if (c.why) parts.push(fld('なぜ今決めるか', rich(c.why, c.repo)))
       parts.push(optionsHtml(r, ui))
       if (c.fallback) parts.push(fld('返事が無いとき', esc(c.fallback)))
-      if (c.context && CONTEXT_FIELDS.some(([k]) => c.context?.[k]))
-        parts.push(`<dl class="ctx">${CONTEXT_FIELDS.filter(([k]) => c.context?.[k]).map(([k, l]) => `<dt>${esc(l)}</dt><dd>${rich(c.context![k], c.repo)}</dd>`).join('')}</dl>`)
+      // これは何かは選択肢の前に出したので、ここでは重ねない。
+      if (c.context && CONTEXT_FIELDS.some(([k]) => k !== 'what' && c.context?.[k]))
+        parts.push(`<dl class="ctx">${CONTEXT_FIELDS.filter(([k]) => k !== 'what' && c.context?.[k]).map(([k, l]) => `<dt>${esc(l)}</dt><dd>${rich(c.context![k], c.repo)}</dd>`).join('')}</dl>`)
       if (c.draft) parts.push(`<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b></div><div class="msg">${esc(c.draft.text)}</div></div>`)
       break
     case 'review':
-      if (c.request) parts.push(fld('依頼の原文', `<div class="quote">${esc(c.request)}</div>`))
       if (c.look_for?.length) parts.push(fld('確認事項', `<ul class="rich">${c.look_for.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
+      if (c.request) parts.push(fld('依頼の原文', `<div class="quote">${esc(c.request)}</div>`))
       if (c.evidence?.length) parts.push(fld('確かめた結果', `<ul class="rich">${c.evidence.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
       if (r.fix) parts.push(fld('頼んだ直し', `<div class="quote">${esc(r.fix)}</div>`))
       break
@@ -304,7 +308,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
         parts.push(manualHtml(r))
         break
       }
-      parts.push(fld('対象', rich(c.target, c.repo)), fld('影響', rich(c.effect, c.repo)), fld('戻し方', esc(c.undo)))
+      parts.push(fld('影響', rich(c.effect, c.repo)), fld('対象', rich(c.target, c.repo)), fld('戻し方', esc(c.undo)))
       parts.push(optionsHtml(r, ui))
       break
     case 'stuck':
