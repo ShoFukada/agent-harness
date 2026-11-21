@@ -165,6 +165,7 @@ export function mount(t: Transport, opts: Options = {}) {
         showToast(input.to_main ? (chatMain(v.cockpit) ? 'メインに渡しました。次にメインに話しかけたときに読まれます' : 'メインに渡しました。メインの作業が一区切りしたら届けます') : '送りました。アシスタントが読んでいます')
       else if (input.type === 'need_context')
         showToast(chatMain(v.cockpit) ? '判断材料をメインに頼みました。次に話しかけたときに読まれます' : '判断材料をメインに頼みました')
+      else if (input.type === 'repeat') showToast('「前にも言った」を記録しました。メインが記録を読み直します')
       else if (input.type === 'revert') showToast(`「${item?.decided?.[input.target ?? -1]?.what ?? ''}」を戻すよう記録しました`)
       else if (input.type === 'undo') {
         showToast(`「${item?.title ?? ''}」を要対応に戻しました`)
@@ -268,6 +269,7 @@ export function mount(t: Transport, opts: Options = {}) {
       })
     } else if (d.areq) ui.curArch = `req:${d.areq}`
     else if (d.keys !== undefined) ui.keys = !ui.keys
+    else if (d.repeat !== undefined) return void op({ item_id: '', type: 'repeat' })
     else if (d.idle !== undefined) ui.showIdle = !ui.showIdle
     else if (d.ms !== undefined) ui.showMs = !ui.showMs
     else if (d.jump !== undefined) return app.querySelector('#ck-more')?.scrollIntoView({ block: 'start', behavior: 'smooth' })

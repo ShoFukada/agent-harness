@@ -308,6 +308,7 @@ function tabs(ctx: Ctx): string {
     : ''
   return `<div class="tabs" role="tablist">
     ${t('todo', '要対応')}${t('whole', '全体')}${t('arch', '対応済み')}
+    <button class="btn sm repeat" data-repeat title="前に伝えたことをメインが落としたときに押します。メインが記録を読み直し、2 回押されると次の日の最初の発言の前に新しいチャットへ引き継ぎます">前にも言った</button>
     ${keys}<button class="keyhint" data-keys title="キーの一覧" aria-pressed="${!!ctx.ui.keys}">?</button>
   </div>`
 }
@@ -316,6 +317,9 @@ function notes(ctx: Ctx): string {
   const { v, ui, now } = ctx
   const lines = v.errors.map((e) => `<div class="err">${esc(e)}</div>`)
   if (ui.notice) lines.push(`<div class="err">${esc(ui.notice)}</div>`)
+  // 引き継いだ知らせは 1 日だけ出す（古い知らせで、今のチャットを新しいものと取り違えないように）。
+  if (v.handoff && now - new Date(v.handoff.at).getTime() < 86_400_000)
+    lines.push(`<div class="row2"><span class="mut">メインを新しいチャットに引き継ぎました（${esc(fmtDate(v.handoff.at))}・${esc(v.handoff.reason)}）。Orca のチャットの一覧から新しいチャットを開いてください</span></div>`)
   const unapplied = unappliedOps(v.cockpit, v.log).filter((o) => now - new Date(o.at).getTime() >= UNDO_GRACE_MS)
   if (unapplied.length && chatMain(v.cockpit))
     lines.push(`<div class="row2"><span class="mut">未反映の操作 ${unapplied.length} 件。メインはチャットのため、次に話しかけたときに反映されます</span></div>`)

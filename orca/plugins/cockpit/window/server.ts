@@ -18,7 +18,7 @@ import { appendOp, appendReply, emptyFiles, loadFiles, notifyMain, readNotified,
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
 const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/nav.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts'])
-const OP_TYPES: OpType[] = ['decide', 'ack', 'approve_ask', 'accept', 'talk', 'need_context', 'undo', 'revert']
+const OP_TYPES: OpType[] = ['decide', 'ack', 'approve_ask', 'accept', 'talk', 'need_context', 'undo', 'revert', 'repeat']
 /** ページが表示されている間に Orca の状態を確かめる間隔。プロセスが落ちた worker は Orca から知らせが来ないため。 */
 const POLL_MS = 60_000
 const REFRESH_GAP_MS = 5_000
@@ -158,7 +158,7 @@ export function createServer(opts: Options) {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit: files.cockpit, log: files.log, archive: files.archive, figures: files.figures, errors: files.errors,
       workers: root ? workersOf(root, files) : [], worktrees: root ? worktreesOf(root) : [], notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal,
-      replies: files.replies, thinking: ws?.thinking?.size ? [...ws.thinking] : undefined
+      replies: files.replies, thinking: ws?.thinking?.size ? [...ws.thinking] : undefined, handoff: files.handoff
     }
   }
 

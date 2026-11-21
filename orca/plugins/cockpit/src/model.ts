@@ -135,7 +135,8 @@ export type Cockpit = {
   applied_ops?: number[]
 }
 
-export type OpType = 'decide' | 'ack' | 'approve_ask' | 'accept' | 'talk' | 'need_context' | 'undo' | 'revert'
+/** repeat: 窓の「前にも言った」。前に伝えたことをメインが落としたという合図で、item_id は空。メイン側の hook が押下を数え、新しいチャットへの引き継ぎに使う。 */
+export type OpType = 'decide' | 'ack' | 'approve_ask' | 'accept' | 'talk' | 'need_context' | 'undo' | 'revert' | 'repeat'
 export type Op = {
   op_id: number
   at: string
@@ -166,6 +167,12 @@ export function textError(text: string | undefined): string | undefined {
 }
 export type UserLog = { ops: Op[] }
 export type Archive = { items: Item[] }
+/** .orca/cockpit/handoff.json。メイン側の hook が、メインを新しいチャットに引き継いだときに書く。 */
+export type Handoff = { at: string; reason: string }
+export function parseHandoff(text: string): Handoff | undefined {
+  const v = JSON.parse(text) as Partial<Handoff>
+  return typeof v?.at === 'string' && typeof v.reason === 'string' ? { at: v.at, reason: v.reason } : undefined
+}
 
 const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
 const ITEM_KINDS: ItemKind[] = ['dec', 'ask', 'rev', 'ack']

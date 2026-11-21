@@ -2,8 +2,8 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  OTHER, nextOp, textError, parseArchive, parseCockpit, parseTalk, parseUserLog, unappliedOps, TALK_MAX, UNDO_GRACE_MS,
-  type Cockpit, type Item, type Op, type Reply, type UserLog
+  OTHER, nextOp, textError, parseArchive, parseCockpit, parseHandoff, parseTalk, parseUserLog, unappliedOps, TALK_MAX, UNDO_GRACE_MS,
+  type Cockpit, type Handoff, type Item, type Op, type Reply, type UserLog
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -11,11 +11,11 @@ export const SIGNAL = '【操縦席】未反映の操作があります'
 
 /** 合図の 1 行。話したいの発言があれば、端末のメインが読めるよう本文の頭を載せる（端末に送るので改行は空白にする）。 */
 export function signalText(ops: Op[]): string {
-  const talk = ops.filter((o) => (o.type === 'talk' && o.text) || o.type === 'need_context' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
+  const talk = ops.filter((o) => (o.type === 'talk' && o.text) || o.type === 'need_context' || o.type === 'repeat' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
   if (!talk) return SIGNAL
   const t = (talk.text ?? '').replace(/\s+/g, ' ').trim()
-  const what = talk.type === 'need_context' ? '情報が足りない' : talk.type === 'decide' ? '別の答え' : talk.to_main ? 'メインに渡す' : '話したい'
-  return `${SIGNAL}（${what} ${talk.item_id}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
+  const what = talk.type === 'need_context' ? '情報が足りない' : talk.type === 'repeat' ? '前にも言った' : talk.type === 'decide' ? '別の答え' : talk.to_main ? 'メインに渡す' : '話したい'
+  return `${SIGNAL}（${what}${talk.item_id ? ' ' + talk.item_id : ''}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
 }
 
 /** 回答を .orca/cockpit.talk.json に追記する。窓の常駐のプロセスとメインが書くので、操作ログと同じロックで 1 つずつ。 */
@@ -41,6 +41,7 @@ export type Files = {
   errors: string[]
   missing: boolean
   replies: Reply[]
+  handoff?: Handoff
 }
 
 export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, replies: [] })
@@ -74,7 +75,7 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 
 /** 読めたファイルだけ差し替え、壊れたものは prev の中身を保ってエラーを 1 行残す。 */
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
-  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, replies: prev.replies }
+  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, replies: prev.replies, handoff: prev.handoff }
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
     try {
@@ -95,6 +96,9 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   })
   await one('cockpit.talk.json', '', (text) => {
     next.replies = text === undefined ? [] : parseTalk(text).replies
+  })
+  await one('cockpit/handoff.json', '', (text) => {
+    next.handoff = text === undefined ? undefined : parseHandoff(text)
   })
   const figures: Record<string, string> = {}
   const refs = [...(next.cockpit?.tasks ?? []), ...(next.cockpit?.items ?? []), ...next.archive]
@@ -126,7 +130,8 @@ export function appendOp(root: string, cockpit: Cockpit | undefined, input: OpIn
 async function write(root: string, cockpit: Cockpit | undefined, { root: _root, ...input }: OpInput): Promise<UserLog> {
   if (!cockpit) throw conflict('操縦席がありません')
   // 話したいはタスクにも書ける。それ以外の操作は項目だけ。
-  const known = cockpit.items.some((i) => i.id === input.item_id) || (input.type === 'talk' && cockpit.tasks.some((t) => t.id === input.item_id))
+  // 「前にも言った」はワークスペース全体への合図で、項目を持たない。
+  const known = (input.type === 'repeat' && input.item_id === '') || cockpit.items.some((i) => i.id === input.item_id) || (input.type === 'talk' && cockpit.tasks.some((t) => t.id === input.item_id))
   if (!known) throw Object.assign(new Error(`項目 ${input.item_id} がありません`), { code: 'invalid_params' })
   const invalid = (msg: string) => Object.assign(new Error(msg), { code: 'invalid_params' })
   const bad = textError(input.text)

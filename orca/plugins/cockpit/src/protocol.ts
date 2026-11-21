@@ -1,4 +1,4 @@
-import type { Cockpit, Item, OpType, Reply, UserLog } from './model.ts'
+import type { Cockpit, Handoff, Item, OpType, Reply, UserLog } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -41,6 +41,8 @@ export type CockpitView = {
   replies: Reply[]
   /** アシスタントが答えている途中の talk の op_id。 */
   thinking?: number[]
+  /** メインを新しいチャットに引き継いだ知らせ（.orca/cockpit/handoff.json）。 */
+  handoff?: Handoff
 }
 
 /** root と item_rev はパネルが表示していたもの。切り替え前の画面や古い表示で押した操作を、別のワークスペースや新しい版に記録しない。 */

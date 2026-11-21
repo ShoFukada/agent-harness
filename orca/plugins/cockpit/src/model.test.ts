@@ -173,6 +173,7 @@ test('合図の 1 行に、話したいの発言の頭を改行を詰めて載�
   assert.equal(signalText([op({ op_id: 1, item_id: 'd1', type: 'need_context' })]), `${SIGNAL}（情報が足りない d1）`)
   assert.equal(signalText([op({ op_id: 1, item_id: 'd5', type: 'decide', option_id: 'other', text: 'もう手で送った' })]), `${SIGNAL}（別の答え d5: もう手で送った）`)
   assert.equal(signalText([op({ op_id: 1, item_id: 'd1', type: 'need_context', text: '既存の\n18 社は？' })]), `${SIGNAL}（情報が足りない d1: 既存の 18 社は？）`)
+  assert.equal(signalText([op({ op_id: 1, item_id: '', type: 'repeat' })]), `${SIGNAL}（前にも言った）`)
 })
 
 test('worker が進めるタスクは、端末の記録 → 同じ worktree の済んでいないもの → 同じ worktree の最後のもの', () => {

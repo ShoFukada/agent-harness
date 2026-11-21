@@ -60,7 +60,8 @@ async function view(): Promise<CockpitView> {
     workers: s.agents.filter((a) => a.terminalId !== main),
     notifiedOp: s.root ? await readNotified(cockpitDir(), s.root) : 0,
     signal: s.signal,
-    replies: s.replies
+    replies: s.replies,
+    handoff: s.handoff
   })
 }
 

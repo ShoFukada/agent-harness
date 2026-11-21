@@ -23,6 +23,13 @@ test('ファイルが無いワークスペースでは、メインに作らせ�
   assert.match(html, /cockpit skill で操縦席を作って/)
 })
 
+test('上に「前にも言った」のボタンを置き、メインを引き継いだ知らせは 1 日だけ出す', () => {
+  assert.match(draw(base()), /data-repeat[^>]*>前にも言った</)
+  const handoff = { at: '2026-11-16T09:00:00+09:00', reason: '窓の「前にも言った」が 2 回押された' }
+  assert.match(draw(base({ handoff })), /メインを新しいチャットに引き継ぎました（[^）]*・窓の「前にも言った」が 2 回押された）/)
+  noMatch(draw(base({ handoff }), ui(), NOW + 86_400_000), /新しいチャットに引き継ぎました/)
+})
+
 test('決める: 選ぶ前は「選択肢を選ぶ」（押せない）、選んだ後は「この案で決める」', () => {
   assert.match(draw(base(), ui({ cur: 'd1' })), /<button class="btn pri" data-decide disabled>選択肢を選ぶ<\/button>/)
   const html = draw(base(), ui({ cur: 'd1', pick: { 'd1@1': 'auto' } }))

@@ -47,6 +47,8 @@ body { margin:0; background:var(--ck-background); }
 .ck .keys { margin-left:auto; align-self:center; font-size:var(--fs-note); }
 .ck .keyhint { margin-left:auto; align-self:center; background:none; border:1px solid var(--ck-border); border-radius:50%; width:24px; height:24px; padding:0; font-size:var(--fs-note); color:var(--ck-muted-foreground); }
 .ck .keys + .keyhint { margin-left:8px; }
+.ck .tabs .repeat { margin-left:auto; align-self:center; }
+.ck .tabs .repeat + .keyhint, .ck .tabs .repeat + .keys { margin-left:8px; }
 .ck kbd { font-family:var(--mono); font-size:var(--fs-note); border:1px solid var(--ck-border); border-radius:3px; padding:0 4px; }
 
 .ck .notes { display:grid; gap:4px; padding:6px 18px; border-bottom:1px solid var(--ck-border); font-size:var(--fs-note); background:var(--paper2); }

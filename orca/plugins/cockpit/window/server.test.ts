@@ -407,6 +407,16 @@ test('「情報が足りない」は need_context として、知りたいこと
   assert.deepEqual(log.ops.map((o: { type: string; text?: string }) => [o.type, o.text]), [['need_context', undefined], ['need_context', '既存の 18 社はどうなる？']])
 })
 
+test('「前にも言った」は項目を持たない repeat として追記し、ほかの種類の空の項目は断る', async () => {
+  const { a, rows } = twoWorkspaces()
+  const { s, port, post } = await start(rows, a)
+  await listen(port, s.token).until((w) => w.rows.length === 3)
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'repeat' })).status, 200)
+  assert.notEqual((await post('op', { root: a, item_id: '', item_rev: 0, type: 'ack' })).status, 200)
+  const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))
+  assert.deepEqual(log.ops.map((o: { type: string; item_id: string }) => [o.type, o.item_id]), [['repeat', '']])
+})
+
 test('話したいには、項目と関係するタスクとやり取りを渡してアシスタントが答え、cockpit.talk.json に追記する', async () => {
   const { a, rows } = twoWorkspaces()
   const prompts: { prompt: string; cwd: string }[] = []
