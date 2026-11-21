@@ -266,6 +266,9 @@ body { margin:0; }
 .ck.win .flags { padding-bottom:10px; }
 .ck.win .flags .err { color:var(--hot); font-weight:600; }
 .ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
+.ck.win .wnotes { padding:5px 18px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
+.ck.win .wnotes summary { cursor:pointer; }
+.ck.win .wnotes div { font-size:var(--fs-xs); padding-left:1.2em; }
 .ck.win .keyline { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; padding:6px 18px; border-bottom:1px solid var(--rule); background:var(--surface); font-size:var(--fs-xs); color:var(--ink2); min-height:34px; }
 .ck.win .keyline .cap { color:var(--ink3); font-weight:600; letter-spacing:.04em; }
 .ck.win .keyline .k { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
@@ -297,8 +300,9 @@ body { margin:0; }
 .ck.win .cardrow .kd { display:grid; grid-template-columns:auto 1fr; }
 .ck.win .cardrow .kd small { grid-column:1 / -1; font-weight:400; color:var(--ink3); }
 .ck.win .cardrow .tt { min-width:0; }
-.ck.win .cardrow .tl { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ck.win .cardrow .tl .tag { margin-left:6px; }
+.ck.win .cardrow .tl { display:flex; align-items:center; gap:6px; min-width:0; }
+.ck.win .cardrow .tl .ti { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.ck.win .cardrow .tl .tag { flex:none; }
 .ck.win .cardrow .crumb { display:block; font-size:var(--fs-xs); color:var(--ink3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .cardrow .du { font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; text-align:right; display:grid; justify-items:end; }
 .ck.win .cardrow .du.cl { white-space:normal; max-width:220px; }

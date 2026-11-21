@@ -268,7 +268,8 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   for (const r of queue) counts[r.card.kind]++
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const recent = (r: Row) => !r.when || now - Date.parse(r.when) < CLOSED_DAYS * DAY
-  const closed = rows.filter((r) => r.status === 'closed' && recent(r)).sort((a, b) => (b.when ?? '').localeCompare(a.when ?? ''))
+  // when は操作の時刻（UTC の Z）と窓口が書いた時刻（+09:00）が混ざるので、文字列ではなく時刻で比べる。
+  const closed = rows.filter((r) => r.status === 'closed' && recent(r)).sort((a, b) => (Date.parse(b.when ?? '') || 0) - (Date.parse(a.when ?? '') || 0))
   const requests = requestViews(c, log, archive, tasks)
   const unsorted = unsortedOf(c, opts.utterances ?? [])
   const late = (g: Gap) => !!g.since && now - Date.parse(g.since) >= GAP_GRACE_MS

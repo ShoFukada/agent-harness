@@ -321,7 +321,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
     case 'inbox': btns = [talk(), b('skip', '返事は要らない'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
     case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', '送った'), talk('担当と直す'), b('skip', '送らない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
     case 'decide': btns = [decideBtn, talk(), other]; break
-    case 'review': btns = [b('accept', 'これでよい', 'pri'), b('other', otherOpen ? '書くのをやめる' : '直してほしいことを書く'), ...(otherOpen ? [decideBtn] : []), talk('直してほしい（担当と話す）'), ...(c.href ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
+    case 'review': btns = [b('accept', 'これでよい', 'pri'), b('other', otherOpen ? '書くのをやめる' : '直してほしいことを書く'), ...(otherOpen ? [decideBtn] : []), talk('直してほしい（担当と話す）'), ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
     case 'permit': btns = c.manual ? [b('sent', '済ませた', 'pri'), talk()]
       : c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許す', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}任せる`), b('skip', '止める', 'quiet'), talk()]; break
     case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と話す' : '担当を開く'), other]; break

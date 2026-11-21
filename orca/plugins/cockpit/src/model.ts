@@ -493,6 +493,10 @@ function closedLabel(c: Card, type: OpType | undefined, option?: Option, text?: 
   return '担当が片付けた'
 }
 
+const USER_DONE: Record<CardKind, string> = {
+  review: 'これでよい', permit: '許した', decide: '決めた', send: '送った', report: '読んだ', stuck: '答えた', inbox: '返事は要らない', consult: '話して決めた', talk: '話して決めた'
+}
+
 /** cockpit.json の状態に、操作ログのうち効いている操作を重ねる。 */
 export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardView[] {
   const applied = new Set(c.applied_ops ?? [])
@@ -512,7 +516,8 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardVie
     }
     if (card.state === 'done') {
       const chosen = option(card.resolved_option)
-      const how = card.resolved_by === 'user' ? closedLabel(card, undefined, chosen, card.resolved_text) || '済んだ' : closedLabel(card, undefined)
+      // 深田さんの返答で閉じたのに選択肢の記録が無いもの（見て・許す・報告など）は、種類ごとの返答の名前にする（「担当が片付けた」と出さない）。
+      const how = card.resolved_by === 'user' ? (chosen ? closedLabel(card, undefined, chosen, card.resolved_text) : card.resolved_text ? `${USER_DONE[card.kind]}: ${card.resolved_text}` : USER_DONE[card.kind]) : closedLabel(card, undefined)
       out.push({ card, status: 'closed', pending: false, how: card.resolved_option === OTHER ? `別の答え: ${card.resolved_text ?? ''}` : how, when: card.resolved_at, chosen })
       continue
     }

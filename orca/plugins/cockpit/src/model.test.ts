@@ -200,3 +200,11 @@ test('操作は押した瞬間のファイルで確かめる: 画面が古くて
   writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify({ workspace: { name: 'x' }, streams: [], tasks: [], items: [] }))
   await assert.rejects(appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'talk' }), /migrate\.ts/)
 })
+
+test('深田さんの返答で閉じたカードは、選択肢の記録が無くても種類ごとの返答の名前で出す（担当が片付けたと出さない）', () => {
+  const base = { rev: 1, state: 'done' as const, title: 'x', resolved_by: 'user' as const }
+  const c = { version: 2, workspace: { name: 'w' }, streams: [], tasks: [], cards: [
+    { ...base, id: 'v1', kind: 'review' }, { ...base, id: 'p1', kind: 'permit', resolved_text: 'push だけ' }, { ...base, id: 'v2', kind: 'review', resolved_by: 'owner' }
+  ] } as Cockpit
+  assert.deepEqual(overlay(c, { ops: [] }).map((v) => v.how), ['これでよい', '許した: push だけ', '担当が片付けた'])
+})

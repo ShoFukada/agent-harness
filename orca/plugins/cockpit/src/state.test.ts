@@ -252,3 +252,13 @@ test('担当と話すを押したカードは私の番に残り、hook の talki
   assert.ok(r.mine.some((x) => x.id === 'd21'))
   assert.deepEqual(r.talking, [{ id: 'd21', since: '2026-11-21T09:50:00+09:00', with: 'AWS 構成案' }])
 })
+
+test('片付いたものは時刻で新しい順に並べる（操作の UTC の時刻と、窓口が書いた +09:00 の時刻が混ざっても）', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  c.cards.push({ id: 'v7', rev: 1, kind: 'review', state: 'done', title: '窓口が閉じた', resolved_at: '2026-11-21T09:40:00+09:00' })
+  const log = { ops: [...w.log.ops, { op_id: 9, at: '2026-11-21T00:50:00.000Z', item_id: 'd21', item_rev: 1, type: 'decide' as const, option_id: c.cards.find((x) => x.id === 'd21')!.options![0]!.id }] }
+  const d = derive(c, log, [], '', undefined, NOW)
+  const ids = d.closed.map((r) => r.card.id)
+  assert.ok(ids.indexOf('d21') < ids.indexOf('v7'), ids.join())
+})

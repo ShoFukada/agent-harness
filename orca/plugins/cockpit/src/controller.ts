@@ -181,7 +181,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     if (ui.otherOpen[k]) return other ? act('decide', r, { option_id: OTHER, text: other }, `別の答えで決めました`) : undefined
     const id = chosenOption(r, ui)
     const o = r.card.options?.find((x) => x.id === id)
-    if (o) return act('decide', r, { option_id: o.id }, `決めました「${o.label}」`)
+    if (o) return act('decide', r, { option_id: o.id }, `${r.card.kind === 'permit' ? '許しました' : '決めました'}「${o.label}」`)
   }
 
   const LABEL: Partial<Record<OpType, string>> = { accept: '承りました', sent: '送ったと記録しました', skip: '見送りました', delegate: '許して、以後は任せました', ack: '読みました' }
