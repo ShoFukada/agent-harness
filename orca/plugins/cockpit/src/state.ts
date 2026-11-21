@@ -1,8 +1,8 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, DEFAULT_PHASES, KIND_LABEL, missingFields, overlay, shownTask, unappliedOps, worstState,
-  type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Request, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
+  COUNTED, DEFAULT_PHASES, KIND_LABEL, missingFields, overlay, shownTask, unappliedOps, unmappedElements, worstState,
+  type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
 
@@ -149,7 +149,7 @@ export type RequestView = {
   /** 済の条件ごとに証拠があるか。 */
   covered: boolean[]
 }
-export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string> }
+export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[] }
 /** 帳簿の不備を窓口に直させる猶予。過ぎても欠けたままなら、窓の要対応の上に「抜けている」として出す（R47）。 */
 export const GAP_GRACE_MS = 30 * 60_000
 
@@ -306,7 +306,7 @@ export function requestViews(c: Cockpit, log: UserLog, archive: Card[], tasks: M
     if (legacy) {
       return { req: r, legacy, tasks: ts, cards, streams, missing: [], covered, state: r.state === 'done' ? '済' : ts.length ? '進行中' : '受付' }
     }
-    const missing = [!r.utterances?.length && '発言（utterances）', !r.done_when?.length && '済の条件（done_when）', !r.kind && '種類（kind）'].filter((x): x is string => !!x)
+    const missing = [!r.utterances?.length && !r.source && '発言（utterances）か出典（source）', !r.done_when?.length && '済の条件（done_when）', !r.kind && '種類（kind）'].filter((x): x is string => !!x)
     // 「これでよい」は、押した版が今のカードの版と同じときだけ効く（同じ URL を改訂したら rev を上げるので、古い承認は外れる）。
     const accepted = ev.some((e) => {
       const o = e.kind === 'op' ? liveOp(e.ref) : undefined
@@ -439,6 +439,12 @@ export type StateReport = {
     unknown_phase: string[]
     /** 形（form: delegate・cowork・watch）の書かれていない、済んでいない仕事（R51）。 */
     no_form: string[]
+    /** 「これでよい」の op が来ているのに、要素（elements）の行き先（element_map）が欠けたカードと欠けた番号（9.2）。 */
+    unmapped_elements: { card: string; missing: number[] }[]
+    /** 結ばれたタスクが全部済なのに、証拠の無い済の条件（done_when の番号、0 始まり）が残る依頼（9.4）。 */
+    unproven: { request: string; when: number[] }[]
+    /** 判断（rulings.jsonl）の affects に挙がったのに、reviewed_for にその判断の無いタスク（9.5）。 */
+    affected_tasks: { ruling: string; task: string }[]
   }
   /** 全体の 1 行（hook が発言のたびにメインに流す）。 */
   overview: string
@@ -464,6 +470,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
   // 欠けた欄を窓口が埋めている途中のカードも、そのタスクを指している（checks.incomplete_cards と二重に名指ししない）。
   const pointed = new Set([...mine.map((r) => r.card), ...d.waiting.map((r) => r.card), ...d.incomplete.map((g) => c.cards.find((x) => x.id === g.id)!)].flatMap((x) => x.tasks ?? []))
   const live = c.tasks.filter((t) => t.state !== 'ok')
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
   return {
     workspace: c.workspace.name,
     orca: orcaState,
@@ -499,7 +506,17 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       stale_tasks: tasks.filter((t) => t.task.state === 'run' && t.why === 'intake' && facts?.dispatches?.[currentDispatch(t.task, facts) ?? '']?.taskStatus === 'completed').map((t) => t.task.id),
       loose_tasks: live.filter((t) => !c.streams.some((s) => s.id === t.stream)).map((t) => t.id),
       unknown_phase: live.filter((t) => !(c.phases ?? DEFAULT_PHASES).includes(t.phase)).map((t) => `${t.id}（${t.phase}）`),
-      no_form: d.jobs.filter((j) => j.state !== 'done' && !c.streams.find((s) => s.id === j.id)?.form).map((j) => j.id)
+      no_form: d.jobs.filter((j) => j.state !== 'done' && !c.streams.find((s) => s.id === j.id)?.form).map((j) => j.id),
+      unmapped_elements: c.cards
+        .filter((x) => x.elements?.length && log.ops.some((o) => o.type === 'accept' && o.item_id === x.id && o.item_rev === x.rev && !undone.has(o.op_id)))
+        .map((x) => ({ card: x.id, missing: unmappedElements(x) }))
+        .filter((x) => x.missing.length),
+      unproven: d.requests
+        .filter((r) => r.state !== '済' && r.tasks.length && r.tasks.every((t) => t.task.state === 'ok') && r.covered.some((x) => !x))
+        .map((r) => ({ request: r.req.id, when: r.covered.flatMap((x, i) => (x ? [] : [i])) })),
+      affected_tasks: (opts.rulings ?? []).flatMap((ru) => (ru.affects ?? [])
+        .filter((id) => c.tasks.some((t) => t.id === id && !t.reviewed_for?.includes(ru.id)))
+        .map((task) => ({ ruling: ru.id, task })))
     },
     overview: `全体: ${countsText(d.counts, d.total)}・話し中 ${d.talking.length}・顧客待ち ${d.waiting.length}・動いている worker ${running.length}${names(running.map((t) => t.task.title))}`,
     card: `${countsText(d.counts, d.total)}${next?.card.due ? `・最短 ${fmtDate(next.card.due)}` : ''}`

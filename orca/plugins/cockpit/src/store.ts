@@ -3,7 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  type Card, type Cockpit, type Handoff, type Op, type UserLog, type Utterance
+  type Card, type Cockpit, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -32,9 +32,28 @@ export type Files = {
   utterances: Utterance[]
   /** at の無い開いたカードを、窓の常駐のプロセスが最初に見つけた時刻（.orca/cockpit/firstseen.json）。抜けの 30 分を数える。 */
   firstSeen: Record<string, string>
+  /** 判断の記録（.orca/cockpit/rulings.jsonl）の id と affects。見直していないタスクの検査に使う。 */
+  rulings: Ruling[]
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {} })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [] })
+
+/** 判断の記録の 1 行ずつ。壊れた行と id の無い行は飛ばす。 */
+export function parseRulings(text: string): Ruling[] {
+  const out: Ruling[] = []
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const v = JSON.parse(line) as { id?: unknown; affects?: unknown }
+      if (typeof v.id !== 'string' || !v.id) continue
+      const affects = Array.isArray(v.affects) ? v.affects.filter((x): x is string => typeof x === 'string') : undefined
+      out.push(affects ? { id: v.id, affects } : { id: v.id })
+    } catch {
+      // 書きかけの行。
+    }
+  }
+  return out
+}
 
 /** 発言の記録の 1 行ずつ。壊れた行は飛ばす（hook が追記の途中で落ちても、ほかの行の仕分けは見る）。 */
 export function parseUtterances(text: string): Utterance[] {
@@ -82,7 +101,7 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
   const next: Files = {
     cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff,
-    utterances: prev.utterances, firstSeen: prev.firstSeen
+    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings
   }
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
@@ -107,6 +126,9 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   })
   await one('cockpit/utterances.jsonl', '', (text) => {
     next.utterances = text === undefined ? [] : parseUtterances(text)
+  })
+  await one('cockpit/rulings.jsonl', '', (text) => {
+    next.rulings = text === undefined ? [] : parseRulings(text)
   })
   await one('cockpit/firstseen.json', '', (text) => {
     const v: unknown = text === undefined ? {} : JSON.parse(text)

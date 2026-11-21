@@ -207,7 +207,7 @@ test('依頼の帳簿: 移し替えの前は全部古い行。古い行は書か
   log.ops.push({ op_id: 8, at: '2026-11-21T09:31:00+09:00', item_id: 'r5', item_rev: 1, type: 'undo', undo_of: 7 } as never)
   assert.equal(states().r8, '確認待ち')
   const r = report(w.cockpit, log, [], undefined, 'skipped', NOW)
-  assert.deepEqual(r.checks.incomplete_requests, [{ id: 'r3', missing: ['発言（utterances）', '済の条件（done_when）', '種類（kind）'] }])
+  assert.deepEqual(r.checks.incomplete_requests, [{ id: 'r3', missing: ['発言（utterances）か出典（source）', '済の条件（done_when）', '種類（kind）'] }])
 })
 
 test('発言の仕分け: through より後の発言と、checked_through より後で依頼にも none にも結ばれていない発言を出す。id の無い行は見ない', () => {

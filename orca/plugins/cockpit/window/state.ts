@@ -30,7 +30,7 @@ export async function stateOf(root: string, orca = orcaCli(process.env.COCKPIT_O
     orcaFacts(root, files.cockpit, orca.ps, orca.terminals, orca.show, { tasks: orca.runTasks, link: orca.taskLink }),
     orca.plugins().catch((): PluginRow[] | undefined => undefined)
   ])
-  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, firstSeen: files.firstSeen })
+  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, firstSeen: files.firstSeen, rulings: files.rulings })
 }
 
 if (import.meta.main) {

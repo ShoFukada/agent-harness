@@ -98,6 +98,13 @@ function firstView(r: VRow, ui: Ui, now: number): string {
   const c = r.card
   const list = (xs: string[] | undefined, ordered = false) => (xs?.length ? `<${ordered ? 'ol' : 'ul'} class="rich">${xs.map((x) => `<li>${mono(esc(x))}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>` : '')
   if (c.manual) return manualHtml(r)
+  // 承認を求める要素（9.2）。これでよいは、この全部の要素への承認として受け取られる。
+  const elements = c.elements?.length ? fld('承認する要素', `<ol class="rich">${c.elements.map((e) => `<li value="${e.n}">${mono(esc(e.text))}</li>`).join('')}</ol>`) : ''
+  return elements + firstOfKind(r, ui, list)
+}
+
+function firstOfKind(r: VRow, ui: Ui, list: (xs: string[] | undefined, ordered?: boolean) => string): string {
+  const c = r.card
   switch (c.kind) {
     case 'review':
       return [c.href ? `<div class="links">${linkBtn('成果物', c.href)}</div>` : '', fld('見てほしい点', list(c.look_for, true)), r.fix ? fld('頼んだ直し（原文）', `<div class="quote">${esc(r.fix)}</div>`) : ''].join('')

@@ -78,6 +78,7 @@ async function readChange(arg: string): Promise<unknown> {
 if (import.meta.main) {
   const args = process.argv.slice(2)
   const plain = args.filter((a) => !a.startsWith('--'))
+  const dry = args.includes('--check') || args.includes('--dry-run')
   const fail = (e: Error) => {
     console.error(e.message)
     process.exit(1)
@@ -90,16 +91,16 @@ if (import.meta.main) {
       console.log(args.includes('--write') ? '\n書き換えた。元は .orca/cockpit.v2.json' : '\n（書き換えていない。--write で書き換える）')
     }, fail)
   } else if (plain.length === 1 || plain.length === 2) {
-    readChange(plain[1] ?? '-').then((ch) => write(path.resolve(plain[0]!), ch, args.includes('--check'))).then((r) => {
+    readChange(plain[1] ?? '-').then((ch) => write(path.resolve(plain[0]!), ch, dry)).then((r) => {
       for (const w of r.warnings) console.log(`注意: ${w}`)
       if (r.errors.length) {
         console.error(`書いていない:\n${r.errors.map((e) => `  ${e}`).join('\n')}`)
         process.exit(1)
       }
-      console.log(args.includes('--check') ? '検査を通った（書いていない）' : '書いた')
+      console.log(dry ? '検査を通った（書いていない）' : '書いた')
     }, fail)
   } else {
-    console.error('使い方: cockpit-write <ワークスペースの root> [変更の JSON ファイル | -] [--check]\n        cockpit-write migrate-v3 [ワークスペースの root] [--write]')
+    console.error('使い方: cockpit-write <ワークスペースの root> [変更の JSON ファイル | -] [--dry-run]\n        cockpit-write migrate-v3 [ワークスペースの root] [--write]')
     process.exit(2)
   }
 }

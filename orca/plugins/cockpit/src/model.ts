@@ -43,6 +43,8 @@ export type Task = {
    * 今の Dispatch は窓が Run の Task の続き（follow_up_of）をたどって引く。dispatch_id は版 2 の古い形で、読むが新しく書かせない。
    */
   worker?: TaskWorker
+  /** 見直した判断（rulings.jsonl の id）。判断の affects に挙がったタスクは、見直したらその id を足す（9.5）。 */
+  reviewed_for?: string[]
 }
 export type TaskWorker = { task_id: string; run_id?: string; dispatch_id?: string }
 /** 仕事の形（R51）。delegate: 任せる・cowork: 一緒に作る・watch: 見張る。タスクは仕事の形を引き継ぐ。 */
@@ -181,7 +183,16 @@ export type Card = {
   closed_without_review?: boolean
   resolved_option?: string
   resolved_text?: string
+
+  /** decide・review の、この版で承認を求める要素（9.2）。提案のページの「要素の一覧」はここから作る。 */
+  elements?: { n: number; text: string }[]
+  /** 要素ごとの行き先。task（タスクの id）・request（「r30#2」の形で依頼と済の条件の番号）・skip（やらない理由）のどれか 1 つ。 */
+  element_map?: ElementMap[]
 }
+export type ElementMap = { n: number; task?: string; request?: string; skip?: string }
+/** 行き先（element_map）の無い要素の番号。 */
+export const unmappedElements = (c: Pick<Card, 'elements' | 'element_map'>) =>
+  (c.elements ?? []).map((e) => e.n).filter((n) => !(c.element_map ?? []).some((m) => m.n === n))
 
 export type RequestKind = 'work' | 'question' | 'decide' | 'send'
 export const REQUEST_KINDS: RequestKind[] = ['work', 'question', 'decide', 'send']
@@ -204,9 +215,15 @@ export type Request = {
   evidence?: Evidence[]
   check?: boolean
   legacy?: boolean
+  /** 発言の記録（utterances.jsonl）で結べない依頼・窓口の約束の出典（9.1）。utterances か source のどちらかが要る。 */
+  source?: { session?: string; at: string; quote: string }
+  /** 台帳の行の id（照合と再生のため）。 */
+  ledger?: string[]
 }
 /** 発言の仕分けの位置（utterances.jsonl の id）。through までの発言は、依頼に結んだか none に入れてある。 */
 export type Intake = { through?: string; none?: string[]; checked_through?: string }
+/** .orca/cockpit/rulings.jsonl の 1 行のうち、窓が読む欄。affects は範囲を変える判断で見直すタスク（9.5）。 */
+export type Ruling = { id: string; affects?: string[] }
 /** .orca/cockpit/utterances.jsonl の 1 行（hook が書く）。id の無い古い行は仕分けの検査に入れない。 */
 export type Utterance = { id?: string; at: string; prompt?: string }
 
@@ -301,6 +318,8 @@ const CARD_SHAPE: Record<string, Shape> = {
   done: list(obj(['what'], ['why', 'undo', 'task'])),
   awaiting: obj(['who', 'what', 'since'], ['resumes', 'remind_at']),
   links: list(obj(['label', 'href'])),
+  elements: list((v) => isObj(v) && Number.isInteger(v.n) && str(v.text)),
+  element_map: list((v) => isObj(v) && Number.isInteger(v.n) && ['task', 'request', 'skip'].filter((k) => v[k] !== undefined).length === 1 && ['task', 'request', 'skip'].every((k) => v[k] === undefined || str(v[k]))),
   repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
 }
 
@@ -351,7 +370,8 @@ const EVIDENCE_SHAPE: Shape = (e) => isObj(e) && Number.isInteger(e.when) && EVI
 export const REQUEST_SHAPE: Record<string, Shape> = {
   at: str, title: str, quote: str, state: (v) => v === 'open' || v === 'done', tasks: strs,
   utterances: list(obj(['id', 'quote'])), kind: (v) => REQUEST_KINDS.includes(v as RequestKind), done_when: strs, evidence: list(EVIDENCE_SHAPE),
-  check: (v) => typeof v === 'boolean', legacy: (v) => typeof v === 'boolean'
+  check: (v) => typeof v === 'boolean', legacy: (v) => typeof v === 'boolean',
+  source: obj(['at', 'quote'], ['session']), ledger: strs
 }
 export const INTAKE_SHAPE: Shape = (v) => obj([], ['through', 'checked_through'])(v) && ((v as Intake).none === undefined || strs((v as Intake).none))
 
@@ -382,7 +402,7 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
       : undefined
     if (why) problems.push(`形の誤り: cockpit.json のタスク ${String(t?.id)}（${why}）。このタスクは表示していません`)
     if (why) return false
-    const bad = ['next', 'waiting_on', 'waiting_since'].filter((k) => t[k] != null && !str(t[k]))
+    const bad = [...['next', 'waiting_on', 'waiting_since'].filter((k) => t[k] != null && !str(t[k])), ...(t.reviewed_for != null && !strs(t.reviewed_for) ? ['reviewed_for'] : [])]
     for (const k of bad) delete t[k]
     if (bad.length) problems.push(`cockpit.json のタスク ${String(t.id)} の ${bad.join('・')} の形が違うので、その欄を出さずに表示しています`)
     return true
