@@ -201,11 +201,32 @@ worker の設定で起こし直す（`--after-switch` と自動の切り替え�
 - 自動の切り替えでは、切り替える前に worker が動いていた端末を控え、そこで起こし直した claude には、設定で動いていると確かめたか起こし直せたときだけ続きを頼む。Task や Dispatch を読めず確かめられなければ続きを頼まない（worker の一覧を読めなければ、どの端末にも頼まない）
 
 - チャット（Orca のチャットのタブ。窓口・担当）のプロセスは切り替えでは起動し直らず、元の席のまま動き続ける（2026-11-21 の本物の切り替えで、窓口と担当のチャットは元の席のまま止まらずに動き、担当のチャットから `account-failover` も打てた）。Orca は次にメッセージを送るとき、チャットのプロセスの席が今の席と違えば起こし直す。ただし、Dispatch が開いているチャット（worker として動く担当）と作業の途中のチャットは起こし直さない（Orca 1.4.267 の structured-agent-session-host-assembly にある outgrown-child の判定）。2026-11-22 00:15 に担当のチャットで「続ける」を押したが、元の席の上限で 0.5 秒で止まった（担当のチャットの記録）。窓口のチャットは Dispatch を持たないので、00:21 の発言で新しい席に乗り換わった。チャットを外から続ける公開の口（CLI・プラグイン API）は無い。Orca の設定「上限がリセットされたらチャットを自動で続ける」（`nativeChatAutoContinueAfterUsageLimit`）をオンにすると、Orca が「Continue where you left off.」を送り、席を切り替えたあとはリセットを待たずに続ける
+- Orca の設定「上限がリセットされたらチャットを自動で続ける」はオンにしておく（Orca の設定の画面のチャット。CLI からは変えられない）。窓口のような Dispatch の無いチャットは、これで切り替えのあと新しい席で自動で続く。担当のチャットは下の「上限で止まった担当のチャットを出し直す」
 - 全部の席が上限なら切り替えず、最初に戻る席と時刻を 1 回だけ通知し、窓の帯に出し続ける。どれかの席の枠が戻ると、次に上限に当たったときに優先度の高い席から選び直す。上限に当たっていないときに優先度の高い席へ戻ることはしない（作業中の端末を止めないため）
 - 切り替えたあと 10 分は次の切り替えをしない（Orca が新しい席の使用量を読むのを待つ）。6 時間に 6 回を超えたら往復していると見なして止め、知らせる。使用量の分からない席へ移って 15 分たっても Orca が読めなければ、「上限に当たっても自動では切り替えられない」と帯に出す
 - Orca の設定「ターミナルで Claude を実行中にアカウントを切り替える場合」を「維持」にしていると、端末は起動し直らない。Orca が窓を開かずに動いているときも起動し直らない
 - 確認の画面は、Orca が見分けるもの（`blockedReason`。フォルダの信頼など）のほかに、Orca が見分けない auto mode の確認があるので、入力待ちにならなければ画面の下 25 行を読んで見分ける（`bin/stallwatch` の `STARTUP_SCREENS`。orca-launch も同じものを使う）
 - 窓の帯へは、account-failover が `STALLWATCH_HOME/failover.json` に書き、stallwatch が `alerts.json` に合流させる（帯の書き手を stallwatch 1 つに保つ）。通知は account-failover が書いた時点で出すので、stallwatch は重ねて出さない
+
+### 上限で止まった担当のチャットを出し直す（R114）
+
+Dispatch の開いている担当のチャットは、Orca が新しい席へ移さないので、元の席の枠が戻るまで止まったままになる。そこで同じ仕事を新しいチャットに出し直し、古いチャットを閉じる。
+
+1. launchd の実行は、切り替えから 6 時間のあいだ 1 分おきに、元の席の上限で止まったまま Dispatch を持つチャットを探す。worker の一覧で端末が `structworker_` の Dispatch を、`worker-show` の `processIncarnation`（`structured:<チャットの id>`）でチャットに結ぶ。Orca はチャットの id と Claude の会話 id を別に持つので、`orca agent read` の最後の担当の発言を含む Claude の会話記録を探してそのチャットの会話記録とし（1 つに決まらなければ見送る）、その最後の応答が上限の 1 行かで見る（同じ worktree のほかの会話の上限で取り違えない）。元の席の枠が戻って 10 分のうちは Orca の自動の「続ける」に任せる
+2. 出し直しは担当を出した Run の coordinator にしか許されない。窓口はチャットで、チャットの名は launchd から名乗れない（`--from orca_session_id:…` は `session_caller_chat_not_declarable` で断られる）。そこで launchd は止まった担当の名で coordinator に「`account-failover --after-switch` を打つ」と 1 回だけ知らせる。窓口が上限で止まっていても、上の設定で窓口が続いたあとに届く
+3. coordinator が `--after-switch` を打つと、自分の Run の止まった担当ごとに、引き継ぎの brief を機械的に集めて `STALLWATCH_HOME/handoffs/<古い Dispatch>.md` に書き、`worker-start --spec-file <brief> --agent claude --worktree path:<同じ worktree> --keep-open --model <元のモデル>` で新しいチャットに出す。新しい Task になる（同じ Task に `--retry-of` で出すと、Task の元の brief が最初の指示になり、引き継ぎの材料を読む前にやり直しかねないため）。brief の中身:
+   - 先頭: 「席が切り替わって、前の担当のチャットが止まったので出し直した。下の材料で止まったところから続ける。最初に受け取った意図を 1〜3 行で窓口に send する」、「窓口から『前の担当を止めた。始めて』が届くまでは、意図の send のほかは何もしない」と、前の担当のチャット・Dispatch・Task・Run・worktree
+   - 元の Task の brief の全文（`task-list --run <run> --full` の spec。前の出し直しの brief なら、その中の元の brief だけを引き継ぎ、出し直すたびに積み増さない）
+   - 担当になってから届いた指示の全文（担当が coordinator をしている Run の受信箱 `run:<run>` と、担当の Dispatch あて。id で重複を除く。未読は切らずにすべて、既読は担当の worker からの報告を除いて合わせて 3 万字まで入れ、超えたら古い既読から省いて id と読み方を書く。Orca の inbox は 500 通までしか返さないので、500 通がすべて担当になってからのものなら「取れなかった」に書く）
+   - 止まったチャットの会話の最後（`orca agent read <チャット> --limit 100` の発言を、新しい順に 1.5 万字まで）
+   - 担当の作業メモ（`/private/tmp/claude-<uid>/<worktree のパスを - でつないだ名>/<担当の Claude の会話 id>/scratchpad/state.md`。同じ worktree のほかの会話のメモは入れない）
+   - 担当の Run と `orca orchestration run-use --id <run>` で引き継ぐ手順、作業中・待ちの worker と最近終わった worker
+   - worktree の `git status --short --branch` と `git log --oneline -15`
+   - 集められなかった材料は「取れなかった材料」に何が・なぜを書き、`--after-switch` の出力にも出す
+4. 新しいチャットを立てる直前に、前の担当がまだ止まっているかを確かめ直す。新しいチャットが ready になったら、前の担当が動き出していないかをもう一度見て、動き出していれば新しいチャットを止めて前の担当を残す。止まったままなら、古い Dispatch を `worker-stop`・`worker-release` し、古い Task を `failed`（result に「cancelled: … Task <新しい Task> に引き継いだ」）にし、新しいチャットに `--to dispatch:<新しい Dispatch>` で「前の担当を止めた。始めて」を送る。古いチャットが Orca の一覧から消えたかを確かめ、残れば「手で閉じる」と出す。新しいチャットが立たなければ、古いチャットには触らない
+   - 後始末の手順（止める・解放する・Task を閉じる・始めるよう送る）は、済んだものを `failover-handoffs.json` に印として残す。途中で落ちるか失敗したら、次の `--after-switch` が新しいチャットを立て直さずに残りの手順から続ける
+5. 同じ Task に生きた担当のチャットは 1 つに保つ。同じ worktree に別の生きた担当のチャット（`structworker_` の in_progress の Dispatch）があれば出し直さない。出し直しの途中の印（`STALLWATCH_HOME/failover-handoffs.json`）が 15 分より新しければ待つ。`--after-switch` は launchd と同じロックを取る
+6. 出し直したこと（古いチャットと Dispatch → 新しいチャット・Task・Dispatch）は、`--after-switch` の出力（coordinator 自身が読む）と `failover-history.jsonl` の `handoff` に残す
 
 ## 入っているもの
 

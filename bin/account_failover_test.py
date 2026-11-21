@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -87,6 +88,38 @@ elif cmd == "orchestration send" and os.path.exists(os.path.join(d, "send-fails"
     print(json.dumps({"ok": False, "error": {"message": "refused"}}))
 elif cmd == "orchestration send":
     ok({"messageId": "msg_1"})
+elif cmd == "orchestration run-list":
+    ok({"runs": load("runs.json") if os.path.exists(os.path.join(d, "runs.json")) else []})
+elif cmd == "orchestration inbox":
+    box = a[a.index("--terminal") + 1]
+    ok({"messages": [m for m in (load("inbox.json") if os.path.exists(os.path.join(d, "inbox.json")) else []) if m["to_handle"] == box]})
+elif cmd == "agent read":
+    ok({"entries": load("talk.json") if os.path.exists(os.path.join(d, "talk.json")) else [], "source": "chat"})
+elif cmd == "orchestration worker-start" and "--spec-file" in a:
+    with open(a[a.index("--spec-file") + 1]) as fh:
+        spec = fh.read()
+    with open(os.path.join(d, "started-spec.md"), "w") as fh:
+        fh.write(spec)
+    if os.path.exists(os.path.join(d, "start-fails")):
+        print(json.dumps({"ok": False, "error": {"message": "start failed"}}))
+    else:
+        if os.path.exists(os.path.join(d, "old-resumes-on-start")):
+            save("agents.json", [dict(x, state="working") if x.get("kind") == "chat" else x for x in load("agents.json")])
+        ws = a[a.index("--worktree") + 1].replace("path:", "r::")
+        save("workers.json", [{"dispatchId": "ctx_new", "taskId": "task_new", "state": "ready", "outcome": "in_progress",
+                               "terminal": "structworker_new", "workspace": ws}] + load("workers.json"))
+        ok({"state": "ready", "dispatchId": "ctx_new", "taskId": "task_new", "terminal": "structworker_new"})
+elif cmd == "orchestration worker-stop":
+    disp = a[a.index("--dispatch") + 1]
+    if not os.path.exists(os.path.join(d, "stop-keeps-chat")):
+        save("workers.json", [dict(w, state="failed", outcome="failed") if w["dispatchId"] == disp else w for w in load("workers.json")])
+        save("agents.json", [x for x in load("agents.json") if x.get("dispatch") != disp])
+    ok({"processAction": "closed_agent_terminal"})
+elif cmd == "orchestration task-update" and os.path.exists(os.path.join(d, "task-update-fails-once")):
+    os.remove(os.path.join(d, "task-update-fails-once"))
+    print(json.dumps({"ok": False, "error": {"message": "refused"}}))
+elif cmd in ("orchestration worker-release", "orchestration task-update"):
+    ok({})
 elif cmd == "orchestration worker-start" and os.path.exists(os.path.join(d, "start-fenced")):
     print(json.dumps({"ok": False, "error": {"code": "consumer_fenced", "message": "This caller is not bound to Run run_1."}}))
 elif cmd == "orchestration worker-start":
@@ -107,7 +140,7 @@ elif cmd == "terminal send":
         sid = re.findall(r"[0-9a-f]{8}-[0-9a-f-]{27}", json.dumps(load("heads.json").get(h)) + json.dumps(load("shows.json")))[0]
         screens[h] = ["Resume this session with:", "claude --resume " + sid[:20], sid[20:], "~/w/x", "❯"]
     elif text.startswith(("claude ", "env ")):
-        screens[h] = []
+        screens[h] = load("after-launch.json") if os.path.exists(os.path.join(d, "after-launch.json")) else []
     save("screens.json", screens)
     ok({"accepted": True})
 else:
@@ -255,7 +288,8 @@ class AccountFailoverTest(unittest.TestCase):
     def env(self):
         env = dict(os.environ, PATH=self.bin + ":/usr/bin:/bin", STALLWATCH_HOME=self.home, FAKE_DIR=self.fake,
                    COCKPIT_DIR=os.path.join(self.tmp, "cockpit"), STALLWATCH_NOTIFY=os.path.join(self.bin, "notify"),
-                   ORCA_CLI_COMMAND="orca", HOME=self.tmp, FAILOVER_RESTART_WAIT_S="1", FAILOVER_EXIT_WAIT_S="3")
+                   ORCA_CLI_COMMAND="orca", HOME=self.tmp, FAILOVER_RESTART_WAIT_S="1", FAILOVER_EXIT_WAIT_S="3",
+                   FAILOVER_SCRATCH_ROOT=os.path.join(self.tmp, "scratch"))
         env.pop("CLAUDE_CONFIG_DIR", None)
         env.pop("ORCA_WORKER_SETTINGS", None)
         return env
@@ -411,6 +445,10 @@ class AccountFailoverTest(unittest.TestCase):
         # 続きを頼むと、coordinator が別の端末に出し直した同じ Task と二重に動きうるので頼まない。
         self.assertEqual(self.sends(), [])
         self.assertIn("続きを頼んでいない。Dispatch を結び直せなかった（Run run_1 の coordinator が分からない）", self.notes()[0])
+        # coordinator がチャットで launchd から名乗れないときは、Run の受信箱あてに知らせる。
+        (told,) = [c for c in self.calls() if c.startswith("orchestration send")]
+        self.assertIn("--from t1-new --to run:run_1 --type status", told)
+        self.assertIn("account-failover --after-switch", told)
         self.assertIn("結び直せなかった worker task_1（Run run_1 の coordinator が分からない）。Run run_1 の coordinator が "
                       "account-failover --after-switch を打つ", self.notes()[0])
 
@@ -653,7 +691,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
         self.run_failover()
         self.assertEqual(self.sends(), ["t1-new"])
-        self.assertIn("チャット（窓口・担当）は席の切り替えでは起動し直らず、元の席のまま動き続ける", self.notes()[0])
+        self.assertIn("上限で止まった担当は、coordinator が account-failover --after-switch を打つと新しいチャットに出し直す", self.notes()[0])
 
     def lost_worker_without_settings(self, head_settings=None, truncated=False):
         """Orca が起こし直した t1-new は、失った worker（--settings 付き）の会話 S1 を開き直したが、--settings を落としている。"""
@@ -842,6 +880,27 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertIn("orchestration worker-start --task task_ctx_9 --retry-of ctx_9 --terminal t4 --from coord_1 --run run_1", self.calls())
         self.assertEqual(len(self.texts()), 2)  # worker-start が Task を渡すので、続きは別に頼まない
 
+    def test_terminal_left_on_the_old_seat_is_not_given_the_command_twice(self):
+        self.stale_terminal()
+        # 起こしたが、claude が確認の画面で止まって入力待ちにならない。
+        self.put("after-launch.json", AUTO_MODE_SCREEN)
+        self.run_failover()
+        self.run_failover()
+        self.assertEqual(self.texts().count(self.relaunched_to()), 1)  # 起こした claude に起動の行を打ち込まない
+        self.put("screens.json", {})
+        self.run_failover()
+        self.assertEqual(self.texts().count(self.relaunched_to()), 1)
+        self.assertIn("題 t4（t4） を今の席 admin@example.com で起こし直した", self.notes()[-1])
+
+    def test_terminal_left_on_the_old_seat_is_started_when_exit_could_not_be_confirmed(self):
+        self.stale_terminal()
+        open(os.path.join(self.fake, "exit-hangs"), "w").close()  # /exit は届いたが、終わりの案内を読めない
+        self.run_failover()
+        self.agents([])  # 次の回にはもう claude ではない（シェルに戻った）
+        self.run_failover()
+        self.assertEqual(self.texts(), ["/exit --enter --wait-submit 10", self.relaunched_to()] + self.texts()[2:])
+        self.assertEqual(self.texts().count("/exit --enter --wait-submit 10"), 1)
+
     def test_terminal_left_on_the_old_seat_is_started_again_after_claude_exited(self):
         self.stale_terminal()
         open(os.path.join(self.fake, "launch-fails-once"), "w").close()
@@ -852,6 +911,155 @@ class AccountFailoverTest(unittest.TestCase):
         self.run_failover()
         self.assertEqual(self.texts()[2], self.relaunched_to())
         self.assertEqual(self.texts().count("/exit --enter --wait-submit 10"), 1)
+
+    LEAD_SID = "765e8793-f3d8-4879-9163-e2b220fbb7fc"
+
+    def stuck_lead(self, memo=True, run=True):
+        """元の席の上限で止まった担当のチャット（Run run_1 の Dispatch ctx_lead、自分の Run run_lead の coordinator）を作る。"""
+        wt = os.path.join(self.tmp, "lead-wt")
+        os.makedirs(wt)
+        for cmd in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "窓の版 3 の途中"]):
+            subprocess.run(["git", "-C", wt, *cmd], check=True)
+        sid = self.LEAD_SID
+        # fake の worker-stop が消すチャットを決めるため、Dispatch を持たせる（本物の agent list には無い）。
+        self.agents([{"orcaSessionId": sid, "kind": "chat", "agent": "claude", "state": "done", "worktreeId": "r::" + wt, "dispatch": "ctx_lead",
+                      "title": "操縦席の作り直し（担当）", "updatedAt": now_ms() - 5 * MIN}])
+        proj = os.path.join(self.tmp, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", wt))
+        os.makedirs(proj)
+        # 枠が戻るのは 2 時間あと（実行する時刻に依らないよう、今から決める）。
+        reset = time.gmtime(now_ms() / 1000 + 9 * 3600 + 2 * 3600)
+        limit = "You've hit your 5-hour limit · resets %d:%02d%s (Asia/Tokyo)" % (reset.tm_hour % 12 or 12, reset.tm_min, "pm" if reset.tm_hour >= 12 else "am")
+        line = lambda text, ago: json.dumps({"type": "assistant", "timestamp": iso(now_ms() - ago * MIN), "message": {"content": [{"type": "text", "text": text}]}})
+        with open(os.path.join(proj, "a519465d-5f0c-47e9-9f1e-1e8ec17d6d5b.jsonl"), "w") as fh:
+            fh.write(line("担当の最後の返事: 追加 22 を A に出した", 8) + "\n" + line(limit, 5) + "\n")
+        # 同じ worktree の別の会話（端末の Claude）。上限の時刻が近くても、担当のものと取り違えない。
+        with open(os.path.join(proj, "99999999-0000-0000-0000-000000000000.jsonl"), "w") as fh:
+            fh.write(line("別の会話の返事", 6) + "\n" + line("ふつうの返事で止まった", 5) + "\n")
+        self.put("workers.json", [{"dispatchId": "ctx_lead", "taskId": "task_lead", "state": "ready", "outcome": "in_progress",
+                                   "terminal": "structworker_old", "workspace": "r::" + wt},
+                                  {"dispatchId": "ctx_w1", "taskId": "task_w1", "state": "ready", "outcome": "in_progress",
+                                   "terminal": "term_w1", "workspace": "r::/w/w1", "terminalState": "active"}])
+        self.put("shows.json", {"ctx_lead": {"dispatch": {"id": "ctx_lead", "runId": "run_1", "taskId": "task_lead", "processIncarnation": "structured:" + sid,
+                                                          "createdAt": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now_ms() / 1000 - 3600))},
+                                             "worker": {"worktreeId": "r::" + wt, "startOptions": {"launch": {"requested": {"model": "claude-opus-5-5"}}}}}})
+        self.put("tasks.json", {"run_1": [{"id": "task_lead", "status": "dispatched", "task_title": "操縦席の作り直し", "spec": "lead.md を読み、窓の版 3 を仕上げる（元の brief）"}]})
+        if run:
+            self.put("runs.json", [{"id": "run_lead", "coordinator_handle": "structworker_old"}])
+        recent = iso(now_ms() - 30 * MIN)
+        self.put("inbox.json", [
+            {"id": "msg_unread", "to_handle": "run:run_lead", "from_handle": "orca_session_id:main", "subject": "上限で止まっていた間に追加 23 を直接出した",
+             "body": "追加 23 は窓口が直接出した。担当は出し直さない。", "read": 0, "created_at": recent},
+            {"id": "msg_report", "to_handle": "run:run_lead", "from_handle": "term_w1", "subject": "worker の報告", "body": "報告の本文", "read": 1, "created_at": recent},
+            {"id": "msg_old", "to_handle": "run:run_lead", "from_handle": "orca_session_id:main", "subject": "前の担当のころの指示",
+             "body": "古い指示", "read": 1, "created_at": iso(now_ms() - 5 * HOUR)}])
+        self.put("talk.json", [{"kind": "tool", "name": "Bash"},
+                               {"kind": "message", "role": "user", "text": "深田さんの最後の発言: 線で区切った一覧にして"},
+                               {"kind": "message", "role": "assistant", "text": "担当の最後の返事: 追加 22 を A に出した"}])
+        for session, text in ((("a519465d-5f0c-47e9-9f1e-1e8ec17d6d5b", "# 作業メモ\n追加 23 の結び直し待ち"),) if memo else ()) + (
+                ("99999999-0000-0000-0000-000000000000", "別の会話の作業メモ"),):
+            path = os.path.join(self.tmp, "scratch", re.sub(r"[^A-Za-z0-9]", "-", wt), session, "scratchpad")
+            os.makedirs(path)
+            with open(os.path.join(path, "state.md"), "w") as fh:
+                fh.write(text)
+        return wt
+
+    def started_spec(self):
+        with open(os.path.join(self.fake, "started-spec.md")) as fh:
+            return fh.read()
+
+    def test_after_switch_hands_off_a_lead_stuck_on_the_old_seat(self):
+        wt = self.stuck_lead()
+        r = self.run_after()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        spec = self.started_spec()
+        self.assertTrue(spec.startswith("席が切り替わって、前の担当のチャットが止まったので出し直した。"))
+        self.assertIn("「前の担当を止めた。始めて」が届くまでは", spec)
+        self.assertNotIn("別の会話の作業メモ", spec)
+        for part in ("lead.md を読み、窓の版 3 を仕上げる（元の brief）",          # 元の Task の brief
+                     "追加 23 は窓口が直接出した。担当は出し直さない。", "未読",       # 届いた指示（未読も）
+                     "深田さんの最後の発言: 線で区切った一覧にして", "担当の最後の返事: 追加 22 を A に出した",  # 会話の最後
+                     "追加 23 の結び直し待ち",                                       # 作業メモ
+                     "ctx_w1 Task task_w1", "orca orchestration run-use --id run_lead",  # 配下の worker と Run の引き継ぎ
+                     "窓の版 3 の途中"):                                              # git の log
+            self.assertIn(part, spec)
+        self.assertNotIn("古い指示", spec)  # 担当になる前の指示は入れない
+        self.assertNotIn("報告の本文", spec)  # 配下の worker の既読の報告は入れない
+        self.assertNotIn("取れなかった材料", spec)
+        acts = [c.split(" --subject")[0].split(" --spec-file")[0].split(" --status")[0]
+                for c in self.calls() if c.startswith(("orchestration worker-start", "orchestration worker-stop", "orchestration task-update", "orchestration send"))]
+        # 新しいほうが立ってから古いほうを止め、止めてから新しいほうに始めるよう送る。
+        self.assertEqual(acts, ["orchestration worker-start", "orchestration worker-stop --dispatch ctx_lead", "orchestration task-update --id task_lead",
+                                "orchestration send --to dispatch:ctx_new --type status"])
+        start = next(c for c in self.calls() if c.startswith("orchestration worker-start"))
+        self.assertIn("--agent claude --worktree path:%s --keep-open" % wt, start)
+        self.assertIn("--model claude-opus-5-5", start)
+        self.assertIn("出し直した担当: 操縦席の作り直し（担当）: チャット %s（Dispatch ctx_lead）→ 新しいチャット structworker_new" % self.LEAD_SID, r.stdout)
+        self.assertNotIn("閉じられなかった", r.stdout)
+        self.assertEqual(self.history()[-1]["handoffs"][0].split(":")[0], "操縦席の作り直し（担当）")
+
+    def test_after_switch_names_the_materials_it_could_not_gather(self):
+        self.stuck_lead(memo=False, run=False)
+        r = self.run_after()
+        spec = self.started_spec()
+        self.assertIn("## 取れなかった材料", spec)
+        self.assertIn("担当の作業メモ", spec)
+        self.assertIn("担当が coordinator をしている Run", spec)
+        self.assertIn("取れなかった材料: ", r.stdout)
+
+    def test_after_switch_keeps_the_old_chat_when_the_new_one_fails(self):
+        self.stuck_lead()
+        open(os.path.join(self.fake, "start-fails"), "w").close()
+        r = self.run_after()
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(any(c.startswith(("orchestration worker-stop", "orchestration task-update")) for c in self.calls()))
+        self.assertIn("新しいチャットが立たなかったので、古いチャットは残した", r.stdout)
+
+    def test_after_switch_twice_starts_only_one_chat(self):
+        self.stuck_lead()
+        open(os.path.join(self.fake, "stop-keeps-chat"), "w").close()
+        r = self.run_after()
+        self.assertIn("古いチャットは止めたが Orca の一覧に残っている（手で閉じる）", r.stdout)
+        self.run_after()
+        self.assertEqual(len([c for c in self.calls() if c.startswith("orchestration worker-start")]), 1)
+
+    def test_after_switch_stops_the_new_chat_when_the_old_one_started_again(self):
+        self.stuck_lead()
+        open(os.path.join(self.fake, "old-resumes-on-start"), "w").close()
+        r = self.run_after()
+        stops = [c for c in self.calls() if c.startswith("orchestration worker-stop")]
+        self.assertEqual(stops, ["orchestration worker-stop --dispatch ctx_new"])
+        self.assertFalse(any(c.startswith("orchestration send --to dispatch:ctx_new") for c in self.calls()))
+        self.assertIn("前の担当が動き出したので、新しいチャット structworker_new を止めて前の担当を残した", r.stdout)
+
+    def test_after_switch_finishes_the_cleanup_it_could_not_finish(self):
+        self.stuck_lead()
+        open(os.path.join(self.fake, "task-update-fails-once"), "w").close()
+        r = self.run_after()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("終わっていない後始末: 古い Task を閉じる", r.stdout)
+        r = self.run_after()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(len([c for c in self.calls() if c.startswith("orchestration worker-start")]), 1)
+        self.assertEqual(len([c for c in self.calls() if c.startswith("orchestration task-update")]), 2)
+        self.assertEqual(len([c for c in self.calls() if c.startswith("orchestration send --to dispatch:ctx_new")]), 1)
+
+    def test_after_switch_dry_run_writes_the_brief_but_starts_nothing(self):
+        self.stuck_lead()
+        r = self.run_after("--dry-run")
+        self.assertIn("新しいチャットに出し直す（brief: ", r.stdout)
+        self.assertFalse(any(c.startswith(("orchestration worker-start", "orchestration worker-stop")) for c in self.calls()))
+
+    def test_switch_tells_the_coordinator_once_about_a_stuck_lead(self):
+        self.stuck_lead()
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.run_failover()  # 切り替える
+        self.accounts(B, {A: usage(session=100), B: usage(), C: usage()})
+        self.run_failover()
+        self.run_failover()
+        tells = [c for c in self.calls() if c.startswith("orchestration send") and "--from structworker_old" in c]
+        self.assertEqual(len(tells), 1)
+        self.assertIn("account-failover --after-switch", tells[0])
+        self.assertFalse(any(c.startswith("orchestration worker-start --spec-file") for c in self.calls()))
 
     def test_after_switch_trusts_a_relaunch_done_by_the_switch(self):
         self.test_switch_restores_the_worker_settings_before_asking_to_continue()
