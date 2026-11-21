@@ -53,14 +53,13 @@ def config_dir():
     return next((x.get("home") for x in r["accounts"] if x.get("id") == r.get("activeAccountId")), None)
 
 
-def command(a):
+def command(a, home):
     if a.agent == "codex":
         return shlex.join(["codex", *a.extra])
     argv = ["claude", "--model", a.model]
     settings = a.settings or os.environ.get("ORCA_WORKER_SETTINGS")
     if settings:
         argv += ["--settings", os.path.expanduser(settings)]
-    home = config_dir()
     env = ["env", "CLAUDE_CONFIG_DIR=" + home] if home else []
     return shlex.join(env + argv + a.extra)
 
@@ -162,7 +161,8 @@ def main():
     if wt.get("id") and wt["id"] != os.environ.get("ORCA_WORKTREE_ID"):
         meta = ["--comment", plan["comment"], "--parent-worktree", plan["parent"]] if plan else []
         orca("worktree", "set", "--worktree", a.worktree, "--display-name", a.title, "--workspace-status", "in-progress", *meta)
-    created = orca("terminal", "create", "--worktree", a.worktree, "--title", "%s（worker）" % a.title, "--command", command(a))
+    home = config_dir() if a.agent == "claude" else None
+    created = orca("terminal", "create", "--worktree", a.worktree, "--title", "%s（worker）" % a.title, "--command", command(a, home))
     handle = ((created.get("result") or {}).get("terminal") or {}).get("handle")
     if not handle:
         sys.exit("orca-launch: 端末を作れなかった")
@@ -182,6 +182,10 @@ def main():
         sys.exit("orca-launch: %s が %d 秒で入力待ちにならなかった（%s）。orca terminal read --terminal %s --screen で見て、"
                  "入力待ちになったら %s で渡す（渡さないなら orca terminal close --terminal %s で閉じる）"
                  % (handle, WAIT_MS // 1000, wait.get("status"), handle, retry, handle))
+    # 席を読んでから端末ができるまでに account-failover が切り替えると、この端末は Orca の起動し直しに入らず古い席に残る。
+    if a.agent == "claude" and config_dir() != home:
+        orca("terminal", "close", "--terminal", handle)
+        sys.exit("orca-launch: 起動の途中で Claude の席が切り替わったので、Task を渡さずに端末を閉じた。同じ orca-launch を打ち直す")
 
     started = orca(*args)
     r = started.get("result") or {}

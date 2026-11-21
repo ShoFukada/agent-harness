@@ -27,7 +27,11 @@ elif args[:2] == ["terminal", "wait"]:
     blocked = os.environ.get("FAKE_BLOCKED")
     out({"wait": {"satisfied": not blocked, "status": "running", **({"blockedReason": blocked} if blocked else {})}})
 elif args[:2] == ["account", "list"] and os.environ.get("FAKE_ACCOUNTS"):
-    out(json.loads(os.environ["FAKE_ACCOUNTS"]))
+    seen = sum(1 for l in open(os.environ["FAKE_LOG"]) if '"account", "list"' in l)
+    later = os.environ.get("FAKE_ACCOUNTS_LATER")
+    out(json.loads(later if later and seen > 1 else os.environ["FAKE_ACCOUNTS"]))
+elif args[:2] == ["terminal", "close"]:
+    out({})
 elif args[:2] == ["orchestration", "worker-start"]:
     spec = args[args.index("--spec-file") + 1]
     with open(os.environ["FAKE_LOG"] + ".spec", "w") as fh:
@@ -89,6 +93,14 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
         self.assertTrue(create[create.index("--command") + 1].startswith("env CLAUDE_CONFIG_DIR=/p/b/home claude "))
+
+    def test_seat_switched_while_starting_closes_the_terminal(self):
+        a = {"activeAccountId": "a", "accounts": [{"id": "a", "home": "/p/a/home"}, {"id": "b", "home": "/p/b/home"}]}
+        r = self.run_launch(FAKE_ACCOUNTS=json.dumps(a), FAKE_ACCOUNTS_LATER=json.dumps(dict(a, activeAccountId="b")))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("席が切り替わった", r.stderr)
+        self.assertTrue(any(x[:2] == ["terminal", "close"] for x in self.calls()))
+        self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
 
     def test_system_default_seat_sets_no_config_dir(self):
         r = self.run_launch(FAKE_ACCOUNTS=json.dumps({"activeAccountId": None, "accounts": [{"id": "a", "home": self.cfg}]}))
