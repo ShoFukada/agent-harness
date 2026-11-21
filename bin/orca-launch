@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orca の worker を、呼んだ側と同じアカウントの端末で立てて、brief を Orca の Task として渡す。
+"""Orca の worker を、Orca で今選ばれている Claude の席の端末で立てて、brief を Orca の Task として渡す。
 
 orca orchestration worker-start --agent は起動コマンドを指定できず、worker 用の設定（sandbox）を付けられない。
 そこで low-level の形（terminal create → terminal wait → worker-start --terminal）を 1 つにまとめる。
@@ -13,7 +13,9 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
 cockpit.json は読むだけで書かない（受け取りの runId・taskId は窓口が cockpit-write で書く）。root を省くと、今のディレクトリから上に
 .orca/cockpit.json を探し、無ければ git の本線（リポジトリのルート）を使う。
 
-claude は CLAUDE_CONFIG_DIR（呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動する。
+claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなければ呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動する。
+呼んだ側の値をそのまま渡さないのは、account-failover が利用枠の上限で席を切り替えたあとも元の席に残るチャットの担当から立てたとき、
+worker が上限の席で起動するのを避けるため。
 確認の画面（初めてのリポジトリで出る「フォルダを信頼するか」など）で止まったら、Task を渡さずに止めて知らせる
 （渡すと指示の文字が「No, exit」を選ぶことがある）。信頼を設定ファイル（.claude.json）に先に書くことはしない。
 動いている claude も同じファイルを書き換え、排他の手段が無いので、競合するとほかの項目の更新を消す。
@@ -43,6 +45,14 @@ def orca(*args):
     return d
 
 
+def config_dir():
+    """Orca で今選ばれている Claude の席の置き場所。システムの既定のログインが選ばれていれば None。Orca が読めなければ呼んだ側の値。"""
+    r = orca("account", "list", "--agent", "claude").get("result")
+    if not isinstance(r, dict) or not isinstance(r.get("accounts"), list):
+        return os.environ.get("CLAUDE_CONFIG_DIR")
+    return next((x.get("home") for x in r["accounts"] if x.get("id") == r.get("activeAccountId")), None)
+
+
 def command(a):
     if a.agent == "codex":
         return shlex.join(["codex", *a.extra])
@@ -50,7 +60,8 @@ def command(a):
     settings = a.settings or os.environ.get("ORCA_WORKER_SETTINGS")
     if settings:
         argv += ["--settings", os.path.expanduser(settings)]
-    env = ["env", "CLAUDE_CONFIG_DIR=" + os.environ["CLAUDE_CONFIG_DIR"]] if os.environ.get("CLAUDE_CONFIG_DIR") else []
+    home = config_dir()
+    env = ["env", "CLAUDE_CONFIG_DIR=" + home] if home else []
     return shlex.join(env + argv + a.extra)
 
 

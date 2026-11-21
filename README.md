@@ -5,7 +5,7 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 | 道具 | できること |
 |---|---|
 | 操縦席（`orca/plugins/cockpit`） | 全案件で自分が決める・許す・送る・見るものを、期限順の 1 列に並べる画面。押した操作は窓口に届き、迷うものは仕事の担当のチャットへ渡せる |
-| orca-launch（`bin/orca-launch`） | worker（別の worktree の端末で動く Claude Code や Codex）を、呼んだエージェントと同じアカウントと worker 用の設定で立ち上げ、指示を Orca の orchestration の Task として渡す |
+| orca-launch（`bin/orca-launch`） | worker（別の worktree の端末で動く Claude Code や Codex）を、Orca で今選ばれている Claude の席と worker 用の設定で立ち上げ、指示を Orca の orchestration の Task として渡す |
 | stallwatch（`bin/stallwatch`） | Orca の監視外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓・launchd の定時ジョブ）を数分おきに見て、macOS の通知と操縦席の窓の上の帯に出す。モデルは呼ばない |
 | worktree-sweep（`bin/worktree-sweep`） | 取り込み済みで使い終わった worker・担当の worktree を毎晩消し、取り込むか捨てるかを人が決めるものを一覧にする。モデルは呼ばない |
 | account-failover（`bin/account-failover`） | 今の Claude の席が利用枠の上限に当たったら、優先度が高く空いている席へ切り替え、Orca が起動し直した端末に続きを頼む。全部の席が上限なら戻る時刻を知らせる。モデルは呼ばない |

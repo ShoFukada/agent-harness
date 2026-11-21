@@ -26,6 +26,8 @@ elif args[:2] == ["terminal", "create"]:
 elif args[:2] == ["terminal", "wait"]:
     blocked = os.environ.get("FAKE_BLOCKED")
     out({"wait": {"satisfied": not blocked, "status": "running", **({"blockedReason": blocked} if blocked else {})}})
+elif args[:2] == ["account", "list"] and os.environ.get("FAKE_ACCOUNTS"):
+    out(json.loads(os.environ["FAKE_ACCOUNTS"]))
 elif args[:2] == ["orchestration", "worker-start"]:
     spec = args[args.index("--spec-file") + 1]
     with open(os.environ["FAKE_LOG"] + ".spec", "w") as fh:
@@ -79,6 +81,20 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(setw[setw.index("--display-name") + 1], "t")
         self.assertEqual(setw[setw.index("--workspace-status") + 1], "in-progress")
         self.assertEqual(json.loads(r.stdout)["dispatchId"], "ctx_1")
+
+    def test_follows_the_seat_orca_has_selected(self):
+        # account-failover が席を切り替えたあと、元の席に残った担当（CLAUDE_CONFIG_DIR は古い席）から立てても、新しい席で起動する。
+        accounts = {"activeAccountId": "b", "accounts": [{"id": "a", "home": self.cfg}, {"id": "b", "home": "/p/b/home"}]}
+        r = self.run_launch(FAKE_ACCOUNTS=json.dumps(accounts))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
+        self.assertTrue(create[create.index("--command") + 1].startswith("env CLAUDE_CONFIG_DIR=/p/b/home claude "))
+
+    def test_system_default_seat_sets_no_config_dir(self):
+        r = self.run_launch(FAKE_ACCOUNTS=json.dumps({"activeAccountId": None, "accounts": [{"id": "a", "home": self.cfg}]}))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
+        self.assertTrue(create[create.index("--command") + 1].startswith("claude "))
 
     def test_blocked_prompt_does_not_dispatch(self):
         r = self.run_launch("--run", "run_9", "--keep-open", FAKE_BLOCKED="agent-trust-workspace")
