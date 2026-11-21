@@ -154,9 +154,10 @@ test('Orca の下の帯に、前面の案件の私の番を出す。期限が 24
   const w = await mountWorker(main, { host: h })
   await w.emit('workspace.changed', { context: { workspaceId: 'w1', branch: 'b', displayName: 'w', terminals: [] } })
   const last = h.callsOf('statusBar.update').at(-1) as { text: string; tone: string; tooltip: string }
-  assert.equal(last.text, '私の番 3')
+  // 許可待ちの worker（term_w）は詰まりとして数える。
+  assert.equal(last.text, '私の番 4')
   assert.equal(last.tone, 'danger')
-  assert.match(last.tooltip, /青葉物流 配車アプリ: 私の番 3 件（決める 1・送る前 1・見て 1）/)
+  assert.match(last.tooltip, /青葉物流 配車アプリ: 私の番 4 件（詰まり 1・決める 1・送る前 1・見て 1）/)
 })
 
 test('メインの端末がワークスペースに無ければ送らず、理由を返す', async () => {
@@ -256,7 +257,8 @@ test('取り消しの猶予が過ぎた操作は、メインが入力待ちに�
   const old = new Date(Date.now() - 60_000).toISOString()
   const root = workspace({
     '.orca/cockpit.json': withMain('term_main'),
-    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 1, at: old, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }] })
+    // 見本の applied_ops は [1] なので、未反映の操作は 2 から。
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 2, at: old, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }] })
   })
   const h = host(root)
   const agents = (state: string) => ({ agents: [{ terminalId: 'term_main', title: 'main', agent: 'claude', state, stateStartedAt: 1 }] })
@@ -269,7 +271,7 @@ test('取り消しの猶予が過ぎた操作は、メインが入力待ちに�
   await w.emit('agent.status.changed', { workspaceId: 'w1', paneKey: 'p', terminalId: 'term_main', state: 'done', receivedAt: 2 })
   assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 'term_main', text: SIGNAL, enter: true }])
   const done = await w.request('cockpit.get')
-  assert.equal(done.notifiedOp, 1)
+  assert.equal(done.notifiedOp, 2)
   assert.equal(done.signal, undefined)
   await w.emit('agent.status.changed', { workspaceId: 'w1', paneKey: 'p', terminalId: 'term_main', state: 'done', receivedAt: 3 })
   assert.equal(h.callsOf('terminal.sendText').length, 1, '届けた操作には二度送らない')
