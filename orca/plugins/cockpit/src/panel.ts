@@ -10,7 +10,8 @@ const ctl = mount(
     open: (_root, path) => orca.plugin.request('cockpit.open', { path }),
     // 押した操作の中で呼ぶ（Orca はクリックやキー操作の中でしか外部のブラウザを開かせない）。初めてのホストは Orca が確かめる。
     openUrl: async (url) => (orca.shell ? orca.shell.openExternal(url) : { opened: false, reason: 'この Orca では外部のブラウザを開けません' }),
-    focusAgent: async (terminalId) => (terminalId ? orca.plugin.request('cockpit.focus', { terminalId }) : { focused: false })
+    focusAgent: async (terminalId) => (terminalId ? orca.plugin.request('cockpit.focus', { terminalId }) : { focused: false }),
+    clip: (text, format) => orca.plugin.request('cockpit.clip', { text, format })
   },
   { panel: true }
 )

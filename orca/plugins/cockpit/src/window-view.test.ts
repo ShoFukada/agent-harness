@@ -161,6 +161,14 @@ test('Codex v3 4・5: 属性の値の中の > でタグを切らず、コピー�
   assert.match(copyMessage({ opened: true }), new RegExp(`「${SENT_LABEL}」を押して`))
 })
 
+test('追加 20: コピーの知らせは宛先の書式・素の文字列に戻した理由・メールの件名を添える', () => {
+  assert.equal(copyMessage(undefined, { copied: true, format: 'teams' }), '本文をTeamsの書式でコピーしました')
+  assert.equal(copyMessage({ opened: false, reason: 'x' }, { copied: false, reason: 'pandoc が無い', format: 'teams' }),
+    '本文を素の文字列でコピーしましたが、スレッドを開けませんでした: x。書式に直せませんでした: pandoc が無い')
+  assert.equal(copyMessage({ opened: true }, { copied: true, subject: '【ご確認】手順書', format: 'mail' }),
+    `本文をメールの書式でコピーし、スレッドを開きました。送ったら「${SENT_LABEL}」を押してください。件名は「【ご確認】手順書」です（本文からは外しました）`)
+})
+
 test('追加 14: 許可の対象は本文の書体にし、` で囲んだ所と SHA だけを等幅にする（窓とパネル）', () => {
   const m = aoba((v) => {
     v.cockpit!.cards.push({ id: 'p9', rev: 1, kind: 'permit', state: 'open', at: '2026-11-21T09:00:00+09:00', stream: 's1', title: '本番に流す', purpose: '一覧を出す', target: '本番の DB に `migrate 0042` を流す（a1b2c3d）', effect: '一覧の列が増える', undo: '0041 に戻す', why: '今日出す', fallback: '待つ', quote: '出して' })

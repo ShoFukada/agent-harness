@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
+import { clipDraft, isDraftFormat } from './clip.ts'
 import { chatMain, COUNTED, overlay } from './model.ts'
 import type { AgentRow, CockpitView, NotifyResult, TalkResult } from './protocol.ts'
 import { agentTitle, countsText, derive, isHot, ownerOf } from './state.ts'
@@ -277,6 +278,8 @@ export default function activate(api: OrcaWorkerApi): void {
     const { focused } = await orca.host.call('terminal.focus', { terminalId }).catch(() => ({ focused: false }))
     return { focused, how: '端末' }
   })
+  orca.panels.handle('cockpit.clip', async ({ text, format }) =>
+    typeof text === 'string' && isDraftFormat(format) ? clipDraft(text, format) : { copied: false, reason: '本文か書式の形が違います' })
 }
 
 /**

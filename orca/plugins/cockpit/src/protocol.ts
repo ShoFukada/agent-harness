@@ -1,4 +1,4 @@
-import type { Card, Cockpit, Handoff, OpType, UserLog, Utterance } from './model.ts'
+import type { Card, Cockpit, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -89,6 +89,8 @@ export type NotifyResult = { sent: boolean; reason?: string }
 export type TalkResult = { opened: boolean; how: string; tab?: string; reason?: string }
 /** 開く系の結果。開けなければ理由を返し、画面が黙って何も起きないようにしない。 */
 export type OpenResult = { opened: boolean; reason?: string }
+/** 送る文面を宛先の書式でクリップボードに入れた結果。subject はメールの先頭の「件名:」行（本文からは外す）。 */
+export type ClipResult = { copied: boolean; subject?: string; reason?: string }
 /** 帯の印・「端末を開く」の結果。how は前に出したもの（端末かワークスペース）。 */
 export type FocusResult = { focused: boolean; how?: string }
 
@@ -114,6 +116,8 @@ declare module 'orca' {
     /** ファイルを Orca で開く。path はワークスペースからの相対パスか、同じリポジトリの worktree の中の絶対パス。 */
     'cockpit.open': { input: { path: string }; output: OpenResult }
     'cockpit.focus': { input: { terminalId: string }; output: FocusResult }
+    /** 送る文面を clip-draft に渡し、宛先の書式でクリップボードに入れる。 */
+    'cockpit.clip': { input: { text: string; format: DraftFormat }; output: ClipResult }
     /** カードの担当を開く（担当の端末を前に出す。チャットの担当はワークスペースを開く）。 */
     /** root と item_rev は画面が表示していたもの。前面が変わったあと・担当が書き換えたあとの要求は断る。 */
     'cockpit.talk': { input: { root: string; item_id: string; item_rev: number }; output: TalkResult }

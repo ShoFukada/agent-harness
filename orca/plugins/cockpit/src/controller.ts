@@ -1,7 +1,7 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
-import { OTHER, UNDO_GRACE_MS, type OpType } from './model.ts'
+import { draftFormat, OTHER, UNDO_GRACE_MS, type DraftFormat, type OpType } from './model.ts'
 import { morph } from './morph.ts'
-import type { CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkResult } from './protocol.ts'
+import type { ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
@@ -18,17 +18,30 @@ export type Transport = {
   focusAgent(terminalId: string | null, worktree?: string): Promise<FocusResult>
   /** 仕事の担当（無ければ窓口）を開く。窓の全体のタブが使う。カードが無いので話し中の印は付けない。 */
   talkStream?(root: string, stream: string): Promise<TalkResult>
+  /** 送る文面を宛先の書式でクリップボードに入れる（clip-draft を呼ぶ）。 */
+  clip(text: string, format: DraftFormat): Promise<ClipResult>
 }
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
 
 const THEME_KEY = 'cockpit.theme'
 
 /** 帯の印（Orca で止まった worker）を開いた結果を、担当と話すと同じ知らせにする。 */
-/** 本文をコピーしたあとの知らせ。スレッドを開けたら、今あるボタンの名前で次の操作を案内する。 */
-export const copyMessage = (res?: OpenResult): string =>
-  !res ? '本文をコピーしました'
-    : res.opened ? `本文をコピーし、スレッドを開きました。送ったら「${SENT_LABEL}」を押してください`
-    : `本文をコピーしましたが、スレッドを開けませんでした${res.reason ? `: ${res.reason}` : ''}`
+const FORMAT_LABEL: Record<DraftFormat, string> = { slack: 'Slack', teams: 'Teams', mail: 'メール' }
+
+/**
+ * 本文をコピーしたあとの知らせ。宛先の書式で入れたかと、メールの件名を添える。スレッドを開けたら、今あるボタンの名前で次の操作を案内する。
+ * clip は宛先の書式で入れようとした結果（書式が決まらない宛先は無し）。
+ */
+export function copyMessage(res?: OpenResult, clip?: ClipResult & { format: DraftFormat }): string {
+  const copied = !clip ? '本文をコピー' : clip.copied ? `本文を${FORMAT_LABEL[clip.format]}の書式でコピー` : '本文を素の文字列でコピー'
+  const head = !res ? `${copied}しました` : res.opened ? `${copied}し、スレッドを開きました。送ったら「${SENT_LABEL}」を押してください`
+    : `${copied}しましたが、スレッドを開けませんでした${res.reason ? `: ${res.reason}` : ''}`
+  const notes = [
+    clip && !clip.copied && `書式に直せませんでした${clip.reason ? `: ${clip.reason}` : ''}`,
+    clip?.subject !== undefined && `件名は「${clip.subject}」です（本文からは外しました）`
+  ].filter(Boolean)
+  return [head, ...notes].join('。')
+}
 
 const focusResult = (x: FocusResult, title: string): TalkResult =>
   x.focused ? { opened: true, how: x.how === '端末' || !x.how ? `${title}の端末` : x.how } : { opened: false, how: `${title}の端末`, reason: `「${title}」の端末も worktree も Orca にありません` }
@@ -172,10 +185,20 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   async function copy(r: VRow): Promise<void> {
+    const d = r.card.draft
+    const format = d && draftFormat(d)
     try {
-      await navigator.clipboard.writeText(r.card.draft?.text ?? '')
-      const res = r.card.draft?.href ? await t.openUrl(r.card.draft.href) : undefined
-      toast(copyMessage(res))
+      if (!d || !format) {
+        await navigator.clipboard.writeText(d?.text ?? '')
+        return toast(copyMessage(d?.href ? await t.openUrl(d.href) : undefined))
+      }
+      // 宛先の書式（Teams の HTML など）は clip-draft が入れる。スレッドはクリックの中で開き始める（パネルは操作の外で外部のブラウザを開けない）。
+      toast(`本文を${FORMAT_LABEL[format]}の書式に直しています`)
+      const opening = d.href ? t.openUrl(d.href) : undefined
+      const clip = await t.clip(d.text, format).catch((e: Error): ClipResult => ({ copied: false, reason: e.message }))
+      // 素の文字列で写し直す。スレッドが前に出て窓が前面でなくなると、ブラウザは書き込みを断る。そのときは clip-draft の理由を出す。
+      if (!clip.copied) await navigator.clipboard.writeText(d.text).catch(() => Promise.reject(new Error(clip.reason ?? '書式に直せませんでした')))
+      toast(copyMessage(await opening, { ...clip, format }))
     } catch (e) {
       fail(e)
     }

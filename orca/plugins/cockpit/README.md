@@ -48,6 +48,16 @@
 
 「見て」の「直してほしいことを書く」は、書いた文を本文つきの `talk` の操作（`text` に原文）として記録します。カードは件数から外れて「直し依頼済み（受領待ち）」、窓口が受け取ると「直し待ち」になり、担当が書き換えて `rev` を上げると要対応に戻ります。
 
+送信前の「本文をコピー」「コピーしてスレッドを開く」は、宛先の書式で本文をクリップボードに入れます。書式の変換と書き込みは reply-draft の `clip-draft`（`~/.local/bin/clip-draft`、`COCKPIT_CLIP_DRAFT` で差し替え）に任せ、窓は常駐のプロセス、パネルはworkerから呼びます（`src/clip.ts`）。
+
+| 宛先 | 決め方 | クリップボードに入るもの |
+|---|---|---|
+| Slack | `draft.format: "slack"`、無ければ `via` か `href` のホストにSlack | Markdownのテキストのまま |
+| Teams | `draft.format: "teams"`、無ければ `via` か `href` のホストにTeams | HTML（pandocで変換）とテキストの両方 |
+| メール | `draft.format: "mail"`、無ければ `via` に「メール」・mail・Outlookか、`href` がmailtoかメールのホスト | テキスト。先頭の「件名: 」行は本文から外し、件名を知らせに出す |
+
+決まらない宛先（LINEなど）と、`clip-draft` が失敗したときは、今までどおり素の文字列を写し、知らせに理由を出します。見本の文面は `fixtures/drafts.ts`、中身の固定は `src/clip.test.ts`。
+
 手作業を頼む「許す」は `manual: { "where": "どこで", "command": "打つコマンド", "steps": ["手順"], "check": "済ませたあと窓口が確かめること" }` を書きます。
 
 カードには種類ごとに必須の欄があります（共通: どの仕事の話か・何のため・なぜ今か期限・返事が無いとき・出典。`src/model.ts` の `missingFields`）。欠けたカードは窓にもパネルにも出さず、`checks.incomplete_cards` で窓口に名指しします。

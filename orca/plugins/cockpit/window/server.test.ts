@@ -526,6 +526,19 @@ test('URL は http と https だけを既定のブラウザで開く', async () 
   assert.deepEqual(calls.filter((x) => x[0] === 'url'), [['url', 'https://docs.google.com/document/d/x/edit']])
 })
 
+test('送る文面のコピーは本文と書式を clip-draft の呼び出しに渡し、書式の形が違えば断る', async () => {
+  const got: unknown[][] = []
+  const s = createServer({ port: 0, dir: tmp('cockpit-dir-'), orca: fakeOrca([]).orca, clip: async (text, format) => (got.push([text, format]), { copied: true, subject: '件名' }) })
+  servers.push(s)
+  const origin = `http://127.0.0.1:${await s.listen()}`
+  const post = (body: unknown) =>
+    fetch(`${origin}/api/clip`, { method: 'POST', headers: { 'content-type': 'application/json', origin, 'x-cockpit-token': s.token }, body: JSON.stringify(body) })
+  const ok = await post({ text: '- **a**', format: 'teams' })
+  assert.deepEqual([ok.status, await ok.json()], [200, { copied: true, subject: '件名' }])
+  for (const bad of [{ text: 'a', format: 'line' }, { text: 1, format: 'slack' }]) assert.equal((await post(bad)).status, 400)
+  assert.deepEqual(got, [['- **a**', 'teams']])
+})
+
 test('見ての「直してほしいこと」は本文つきの talk として記録し、合図の 1 行に本文の頭を載せる', async () => {
   const old = new Date(Date.now() - 60_000).toISOString()
   const a = workspace('a', {

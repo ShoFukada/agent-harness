@@ -9,7 +9,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chatMain, requestCards, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
-import type { CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
+import { clipDraft, isDraftFormat } from '../src/clip.ts'
+import type { ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
 import { currentDispatches, descendants, failuresOf, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type Failure, type InboxMessage, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
@@ -135,7 +136,8 @@ class HttpError extends Error {
   }
 }
 
-export type Options = { port: number; dir: string; orca: Orca; host?: string }
+/** clip はテストで差し替える（既定は clip-draft を呼ぶ）。 */
+export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft }
 
 export function createServer(opts: Options) {
   const token = randomBytes(24).toString('base64url')
@@ -543,6 +545,10 @@ export function createServer(opts: Options) {
         }
       }
       return { opened: false, reason: `ワークスペースと、その担当・worker の worktree の外のファイルは開かない: ${file}` }
+    },
+    async clip(b): Promise<ClipResult> {
+      if (typeof b.text !== 'string' || !isDraftFormat(b.format)) throw new HttpError(400, '本文か書式の形が違います')
+      return (opts.clip ?? clipDraft)(b.text, b.format)
     },
     async openurl(b) {
       const url = str(b.url)
