@@ -21,7 +21,8 @@ export type PsRow = { worktreeId: string; path: string; parentWorktreeId: string
 // ログイン切れと利用枠は Orca が状態として持たないので、最後の発言の文から推す。
 // 長い発言は作業の報告で、文中の「limit」などを拾わないよう短いものだけを見る。
 export const SHORT = 400
-const LIMIT = /usage limit|rate limit|limit reached|out of extra usage|上限に達/i
+// bin/stallwatch の LIMIT と同じ形にそろえる（Claude Code の上限の 1 行は「You've hit your 5-hour limit · resets …」「You've reached your Fable limit.」）。
+const LIMIT = /usage limit|rate limit|limit reached|out of extra usage|上限に達|hit your [\w -]*limit|reached your [\w -]*limit/i
 const AUTH = /\/login|not logged in|authentication_error|oauth token|invalid api key|\b401\b/i
 
 export function stopReason(a: PsAgent): StopReason | undefined {
@@ -83,7 +84,7 @@ export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>
 
 /** orca orchestration worker-show --full の、使う欄だけ。 */
 export type WorkerShow = {
-  dispatch?: { completedAt?: string | null } | null
+  dispatch?: { completedAt?: string | null; runId?: string | null } | null
   projection?: { stage?: { worker?: string } | null; liveness?: { verdict?: string } | null } | null
   terminal?: { handle?: string | null } | null
   /** チャットの worker は terminal が null で、handle はここにある。 */

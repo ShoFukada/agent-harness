@@ -397,6 +397,9 @@ test('止まった理由: 許可待ち・返事待ち・落ちた・利用枠・
   assert.equal(stopReason(agent('p', { hasLivePty: false })), 'dead')
   assert.equal(stopReason(agent('p', { state: 'done', hasLivePty: false, mainAgent: { outcome: 'success' } })), undefined)
   assert.equal(stopReason(agent('p', { state: 'done', lastAssistantMessage: "You've hit your usage limit · resets 5pm" })), 'limit')
+  // bin/stallwatch と同じ 3 行（短い 1 行なので SHORT の条件で落ちない）。
+  for (const msg of ["You've hit your 5-hour limit · resets 4:40pm (Asia/Tokyo)", "You've reached your Fable limit.", "You've hit your weekly limit · resets Nov 23 at 4am"])
+    assert.equal(stopReason(agent('p', { state: 'done', lastAssistantMessage: msg })), 'limit', msg)
   assert.equal(stopReason(agent('p', { state: 'done', lastAssistantMessage: 'Invalid API key · Please run /login' })), 'auth')
   assert.equal(stopReason(agent('p', { state: 'done', mainAgent: { outcome: 'failure' } })), 'error')
   assert.equal(stopReason(agent('p', { state: 'done', interrupted: true })), 'interrupted')
