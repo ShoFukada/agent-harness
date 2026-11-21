@@ -64,7 +64,8 @@ export type CockpitView = {
 export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string }
 export type NotifyResult = { sent: boolean; reason?: string }
 /** 担当を開いた結果。how はどこを開いたか（画面に出す）。 */
-export type TalkResult = { opened: boolean; how: string }
+/** tab は利用者が選ぶチャットのタブの題（Orca にはチャットのタブを前に出す手段が無いので、名前で案内する）。 */
+export type TalkResult = { opened: boolean; how: string; tab?: string }
 
 /** 常駐のプロセスが窓のページに SSE で送る全体。 */
 export type WindowView = {

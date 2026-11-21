@@ -5,7 +5,7 @@ import type { CockpitView, NotifyResult, OpInput, TalkResult } from './protocol.
 import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
-import { boardsOf, keyOf, newUi, preface, render, type Model, type Theme, type Ui, type VRow } from './view.ts'
+import { boardsOf, chosenOption, keyOf, newUi, preface, render, talkMessage, type Model, type Theme, type Ui, type VRow } from './view.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -135,9 +135,9 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       copied = false
     }
     try {
-      const res = r.agent ? { opened: (await t.focusAgent(r.agent.terminalId, r.agent.worktree)).focused, how: `${r.owner.title} の端末` } : await t.talk(r.root, r.card.id, r.card.rev)
+      const res: TalkResult = r.agent ? { opened: (await t.focusAgent(r.agent.terminalId, r.agent.worktree)).focused, how: `${r.owner.title}の端末` } : await t.talk(r.root, r.card.id, r.card.rev)
       if (!r.agent && COUNTED.includes(r.card.kind) && r.status === 'mine') advance(keyOf(r))
-      toast(`${res.opened ? `${res.how}を開きました` : `${res.how}で話してください`}。${copied ? '書き出しをコピーしたので、チャットに貼って話してください' : ''}`)
+      toast(talkMessage(res, copied))
     } catch (e) {
       fail(e)
     }
@@ -156,8 +156,9 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
   async function decide(r: VRow): Promise<void> {
     const k = keyOf(r)
     const other = (ui.other[k] ?? '').trim()
-    if (ui.otherOpen[k] && other) return act('decide', r, { option_id: OTHER, text: other }, `別の答えで決めました`)
-    const id = ui.picked[k]
+    // 別の答えを開いている間は、その文だけで決める（空のままおすすめが決まらないように）。
+    if (ui.otherOpen[k]) return other ? act('decide', r, { option_id: OTHER, text: other }, `別の答えで決めました`) : undefined
+    const id = chosenOption(r, ui)
     const o = r.card.options?.find((x) => x.id === id)
     if (o) return act('decide', r, { option_id: o.id }, `決めました「${o.label}」`)
   }
@@ -185,6 +186,10 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
           toast('「前にも言った」を記録しました。窓口が記録を読み直します')
         }, fail)
       return
+    }
+    if (name === 'unseen') {
+      ui.open.unseen = !ui.open.unseen
+      return draw()
     }
     if (name === 'notify') {
       const root = feed.views[0]?.root
@@ -225,6 +230,7 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
   /** 選んだら確定のボタンに移す。題や選択肢のボタンに残ると、次の Enter がそのボタンを押して決まらないため。 */
   function pick(k: string, optionId: string): void {
     ui.picked[k] = optionId
+    ui.otherOpen[k] = false
     draw()
     app.querySelector<HTMLButtonElement>(`[data-strip="${CSS_ESC(k)}"] [data-act="decide"]`)?.focus()
   }

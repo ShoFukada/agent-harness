@@ -143,7 +143,7 @@ test('担当と話す: カードを話し中にする操作を 1 度だけ記録
   // 前面が変わったあとの要求は、別の案件の同じ id のカードに記録しない。
   await assert.rejects(w.request('cockpit.talk', { root: '/other', item_id: 'r5', item_rev: 1 }), /表示中のワークスペースが変わりました/)
   // 担当がチャットなら、パネルからは前に出せないので、どこで話すかを返す。
-  assert.deepEqual(await w.request('cockpit.talk', { root, item_id: 'd21', item_rev: 1 }), { opened: false, how: 'AWS 構成案のチャット（このワークスペースのタブ）' })
+  assert.deepEqual(await w.request('cockpit.talk', { root, item_id: 'd21', item_rev: 1 }), { opened: false, how: 'このワークスペース', tab: 'AWS 構成案（担当）' })
   assert.deepEqual(await w.request('cockpit.notify'), { sent: true })
   assert.deepEqual(h.callsOf('terminal.sendText').at(-1), { terminalId: 'term_main', text: `${SIGNAL}（担当と話す d21）`, enter: true })
 })

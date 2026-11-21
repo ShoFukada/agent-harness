@@ -7,7 +7,7 @@ import path from 'node:path'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { chatMain, COUNTED } from './model.ts'
 import type { AgentRow, CockpitView, NotifyResult } from './protocol.ts'
-import { countsText, derive, isHot, ownerOf } from './state.ts'
+import { agentTitle, countsText, derive, isHot, ownerOf } from './state.ts'
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeAtomic, writeNotified, type Files } from './store.ts'
 
 export { SIGNAL } from './store.ts'
@@ -259,10 +259,10 @@ export default function activate(api: OrcaWorkerApi): void {
     const name = o.how === 'main' ? '窓口' : o.title
     if (o.terminal) {
       const { focused } = await orca.host.call('terminal.focus', { terminalId: o.terminal }).catch(() => ({ focused: false }))
-      if (focused) return { opened: true, how: `${name}の端末` }
+      return { opened: focused, how: `${name}の端末` }
     }
     // Orca にはチャットを前に出す手段が無い。パネルは前面のワークスペースにいるので、チャットはそのタブにある。
-    return { opened: false, how: `${name}のチャット（このワークスペースのタブ）` }
+    return { opened: false, how: 'このワークスペース', tab: o.how === 'main' ? '窓口' : agentTitle(o.title, '担当') }
   })
   orca.panels.handle('cockpit.focus', async ({ terminalId }) => {
     const { focused } = await orca.host.call('terminal.focus', { terminalId })

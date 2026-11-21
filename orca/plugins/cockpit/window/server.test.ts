@@ -248,7 +248,7 @@ test('担当と話す: 話し中の操作を 1 度だけ記録し、担当の端
   await listen(port, s.token).until(ready)
   assert.deepEqual((await post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body, { opened: true, how: '配車画面の改修の端末' })
   assert.deepEqual((await post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body.opened, true)
-  assert.deepEqual((await post('talk', { root: a, item_id: 'd21', item_rev: 1 })).body, { opened: true, how: `AWS 構成案のいるワークスペース（${path.basename(child)}）` })
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd21', item_rev: 1 })).body, { opened: true, how: `ワークスペース「${path.basename(child)}」`, tab: 'AWS 構成案（担当）' })
   assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '窓口の端末' })
   assert.deepEqual(calls.filter((x) => x[0] !== 'send'), [['switch', 'term_aoba_w1'], ['switch', 'term_aoba_w1'], ['activate', child], ['switch', 'term_main']])
   const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))

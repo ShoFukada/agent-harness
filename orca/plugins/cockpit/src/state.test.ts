@@ -36,7 +36,7 @@ test('Orca で止まった worker は詰まりの行になり、仕事の名前�
   const d = derive(w.cockpit, w.log, [], '/h', { workers: [agent({ terminalId: 'term_h_w1', state: 'blocked', stop: 'blocked', task: 'u1' })] }, NOW)
   const stuck = d.queue[0]!
   assert.equal(stuck.card.kind, 'stuck')
-  assert.equal(stuck.card.title, 'ログ集計の見直し が許可待ち')
+  assert.equal(stuck.card.title, '「ログ集計の見直し」が許可待ち')
   assert.equal(stuck.card.answerable, true)
   assert.equal(stuck.agent?.terminalId, 'term_h_w1')
   assert.equal(d.counts.stuck, 1)
@@ -103,10 +103,10 @@ test('Dispatch で落ちた・Orca に見つからない worker は、端末が�
   const w = ws(0)
   const dead = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: { ctx_aoba_list: { state: 'dispatched', liveness: 'exited' } } }, NOW)
   const s = dead.queue.find((r) => r.card.id === '#dispatch:t1')!
-  assert.equal(s.card.title, '配車画面の改修 が落ちた')
+  assert.equal(s.card.title, '「配車画面の改修」が落ちた')
   assert.equal(s.card.answerable, false)
   const gone = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: {} }, NOW)
-  assert.equal(gone.queue.find((r) => r.card.id === '#dispatch:t1')!.card.title, '配車画面の改修 が Orca に見つからない')
+  assert.equal(gone.queue.find((r) => r.card.id === '#dispatch:t1')!.card.title, '「配車画面の改修」が Orca に見つからない')
   const done = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: { ctx_aoba_list: { state: 'succeeded', settledAt: NOW - 60_000 } } }, NOW)
   assert.equal(done.tasks.get('t1')!.why, 'intake')
   assert.ok(!done.queue.some((r) => r.card.kind === 'stuck'))

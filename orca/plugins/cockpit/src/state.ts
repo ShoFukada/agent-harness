@@ -22,12 +22,28 @@ const STOP_UNBLOCK: Record<StopReason, [boolean, string]> = {
 
 const WEEK = '日月火水木金土'
 /** ISO 8601 の日付・日時を「11/19(水) 18:00」にする。読めなければそのまま出す。 */
+/** 手元の時計での今日の YYYY-MM-DD（toISOString は UTC の日付になり、日本時間の朝 9 時前は前日になる）。 */
+export const localDay = (t: number) => {
+  const d = new Date(t)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 export function fmtDate(iso: string | undefined): string {
   if (!iso) return ''
-  const d = new Date(iso)
+  // 日付だけの値は手元の 0 時として読む（new Date('YYYY-MM-DD') は UTC の 0 時になる）。
+  const d = new Date(iso.length > 10 ? iso : `${iso}T00:00:00`)
   if (Number.isNaN(d.getTime())) return iso
   const day = `${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})`
   return iso.length > 10 ? `${day} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : day
+}
+export function nearDate(iso: string | undefined, now: number): string {
+  if (!iso) return ''
+  const t = new Date(iso.length > 10 ? iso : `${iso}T00:00:00`).getTime()
+  if (Number.isNaN(t)) return iso
+  const days = Math.round((dayOf(t) - dayOf(now)) / DAY)
+  if (days < -1 || days > 1) return fmtDate(iso)
+  const word = days === -1 ? '昨日' : days === 1 ? '明日' : '今日'
+  if (iso.length <= 10) return `${word}中`
+  return days === 0 ? hhmm(t) : `${word} ${hhmm(t)}`
 }
 export const hhmm = (t: number) => {
   const d = new Date(t)
@@ -157,7 +173,7 @@ function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, writt
       const name = c.streams.find((s) => s.id === (task?.stream ?? ownStream))?.title ?? a.job ?? a.title ?? 'worker'
       const card: Card = {
         id: `#agent:${a.terminalId ?? a.worktree ?? a.title}`, rev: 0, kind: 'stuck', state: 'open',
-        title: `${name} が${STOP_LABEL[a.stop!]}`, since: new Date(a.since).toISOString(),
+        title: `「${name}」が${STOP_LABEL[a.stop!]}`, since: new Date(a.since).toISOString(),
         reason: STOP_LABEL[a.stop!], answerable, unblock, stream: task?.stream, tasks: task ? [task.id] : undefined
       }
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: { title: name, how: 'terminal' as const, state: a.state, terminal: a.terminalId ?? undefined }, stream: c.streams.find((s) => s.id === task?.stream), agent: a }
@@ -177,7 +193,7 @@ function dispatchStuck(c: Cockpit, root: string, tasks: Map<string, TaskView>, w
       const reason = t.why === 'missing' ? 'Orca に見つからない' : STOP_LABEL[stop]
       const name = c.streams.find((s) => s.id === t.task.stream)?.title ?? t.task.title
       const card: Card = {
-        id: `#dispatch:${t.task.id}`, rev: 0, kind: 'stuck', state: 'open', title: `${name} が${t.why === 'missing' ? ' ' : ''}${reason}`,
+        id: `#dispatch:${t.task.id}`, rev: 0, kind: 'stuck', state: 'open', title: `「${name}」が${t.why === 'missing' ? ' ' : ''}${reason}`,
         since: t.settledAt ? new Date(t.settledAt).toISOString() : undefined, reason, answerable, unblock, stream: t.task.stream, tasks: [t.task.id]
       }
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: ownerOf(c, card), stream: c.streams.find((s) => s.id === t.task.stream) }

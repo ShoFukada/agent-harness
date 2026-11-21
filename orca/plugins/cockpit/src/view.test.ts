@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import type { CockpitView } from './protocol.ts'
-import { boardsOf, linkKind, newUi, preface, render, rich, type Model, type Ui } from './view.ts'
+import { boardsOf, linkKind, newUi, preface, render, rich, talkMessage, type Model, type Ui } from './view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const svg = (s: string) => s
@@ -24,7 +24,8 @@ test('上の帯: 全案件の私の番の合計と 5 種類の内訳。届いた
 })
 
 test('1 列: 止まっている → 期限切れ → 今の線 → 今日 → 明日 → 今週 → 期限なし の順で、期限切れは今の線より上', () => {
-  const t = text(html())
+  const h = html()
+  const t = text(h.slice(h.indexOf('class="queue"')))
   const order = ['止まっている', '期限切れ', '今 10:00', '今日', '明日', '今週', '期限なし'].map((x) => t.indexOf(x))
   assert.deepEqual([...order].sort((a, b) => a - b), order)
   assert.ok(order.every((n) => n >= 0))
@@ -49,21 +50,59 @@ test('案件で絞ると、その案件の票だけになり、右に案件の�
   assert.match(t, /外部 API の繋ぎ込み 森さんの返事待ち/)
 })
 
-test('決める: 何のため → なぜ今 → 決めるための情報 → 選択肢 → 返事が無いとき → 話す相手。選ぶ前は押せない「選択肢を選ぶ」、選んだ後は「この案で決める」', () => {
+test('決める: 何のため → なぜ今 → 選択肢 → 返事が無いとき → 決めるための情報 → 話す相手。おすすめを選んだ状態で開き「おすすめで決める」、選び直すと「この案で決める」', () => {
   const ui = { ...newUi(), sel: '/ws/aoba#d21' }
   const t = text(html(model(), ui))
-  const order = ['何のため', 'なぜ今決めるか', 'これは何か', '失うこと', '図はこのまま', '返事が無いとき', '話す相手 AWS 構成案'].map((x) => t.indexOf(x))
+  const order = ['何のため', 'なぜ今決めるか', '図はこのまま', '返事が無いとき', 'これは何か', '失うこと', '話す相手 AWS 構成案'].map((x) => t.indexOf(x))
   assert.deepEqual([...order].sort((a, b) => a - b), order)
-  assert.match(html(model(), ui), /data-act="decide"[^>]*disabled>選択肢を選ぶ/)
-  ui.picked['/ws/aoba#d21'] = 'keep'
+  assert.match(html(model(), ui), /data-act="decide"[^>]*\s>おすすめで決める/)
+  assert.match(html(model(), ui), /role="radio" aria-checked="true" data-pick="keep"/)
+  ui.picked['/ws/aoba#d21'] = 'draw'
   assert.match(html(model(), ui), /data-act="decide"[^>]*>この案で決める/)
-  assert.match(html(model(), ui), /role="radio" aria-checked="true"/)
+  assert.match(html(model(), ui), /role="radio" aria-checked="true" data-pick="draw"/)
+  // おすすめの無いカードと、戻せない操作を含む詰まり・許すは、選ぶまで押せない。
+  assert.match(html(model(), { ...newUi(), sel: '/ws/harness#d28' }), /data-act="decide"[^>]*disabled>選択肢を選ぶ/)
+  assert.match(html(model(), { ...newUi(), sel: '/ws/konan#k9' }), /data-act="decide"[^>]*disabled>選択肢を選ぶ/)
+  // 別の答えを開いたら、文が空のうちはおすすめでも決められない。
+  const other = { ...newUi(), sel: '/ws/aoba#d21', otherOpen: { '/ws/aoba#d21': true }, other: { '/ws/aoba#d21': '  ' } }
+  assert.match(html(model(), other), /data-act="decide"[^>]*disabled>別の答えで決める/)
+})
+
+test('今日の見出しの日付は手元の時計で決める（日本時間の朝 9 時前でも前日にならない）', () => {
+  const early = Date.parse('2026-11-21T07:00:00+09:00')
+  assert.match(text(render(model(), newUi(), early, svg)), /今日 11\/21\(土\)/)
+})
+
+test('期限は、1 列の見出しと重なる日付を省く（今日は時刻だけ、明日は「明日 18:00」）', () => {
+  const h = html()
+  assert.match(h, /due hot"><b>! あと 3 時間<\/b><span class="tm">13:00<\/span>/)
+  assert.match(h, /<span class="due">明日 18:00<\/span>/)
+  assert.match(h, /<span class="due">11\/24\(火\) 17:00<\/span>/)
+})
+
+test('案件の列は、止まっている・期限切れ・今日・話し中の件数を出す（日時は出さない）', () => {
+  const h = html()
+  const aoba = text(h.slice(h.indexOf('data-filter="/ws/aoba"'), h.indexOf('</button>', h.indexOf('data-filter="/ws/aoba"'))))
+  assert.match(aoba, /期限切れ 1 今日 1 話し中 1/)
+  assert.ok(!aoba.includes('最短'))
+})
+
+test('担当と話すの知らせは、次に押す場所を名前で言う', () => {
+  assert.equal(talkMessage({ opened: true, how: 'ワークスペース「aoba」', tab: 'AWS 構成案（担当）' }, true), 'ワークスペース「aoba」を前に出しました。チャットの「AWS 構成案（担当）」を開き、書き出しをコピーしたので、貼って話してください')
+  assert.equal(talkMessage({ opened: true, how: '窓口の端末' }, false), '窓口の端末を開きました。話してください')
+  assert.equal(talkMessage({ opened: false, how: '窓口の端末' }, true), '窓口の端末を開けませんでした。Orca で開き、書き出しをコピーしたので、貼って話してください')
+})
+
+test('詰まりの題に仕事の名前があれば、上の行に同じ名前を出さない', () => {
+  const h = html()
+  const strip = h.slice(h.indexOf('data-strip="/ws/konan#k9"'))
+  assert.ok(!strip.slice(0, strip.indexOf('</article>')).includes('class="jobname"'))
 })
 
 test('種類ごとの返答: 送る前はコピーしてスレッドを開く・送った・担当と直す・送らない、見ては これでよい・直してほしい、許すは 許す・任せる・止める', () => {
   const acts = (sel: string) => {
     const h = html(model(), { ...newUi(), sel })
-    return [...h.matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
+    return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
   }
   assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送った', 'talk:担当と直す', 'skip:送らない'])
   assert.deepEqual(acts('/ws/aoba#r5'), ['accept:これでよい', 'talk:直してほしい（担当と話す）', 'url:開く'])
@@ -98,7 +137,9 @@ test('何もしなくてよいのは見ていないものが無いときだけ�
   const t = text(html(model({ unseen: [{ name: '試し置き場', path: '/x' }] }, empty)))
   assert.match(t, /私の番はありません。ただし見ていないものがあります/)
   assert.match(t, /見ていない 1/)
-  assert.match(text(html(model())), /Teams 病院の情報部: .* から読めていない/)
+  // 一覧は上の帯の「見ていない n」から開き、案件の列には重ねて出さない。
+  assert.ok(!/Teams 病院の情報部: .* から読めていない/.test(text(html(model()))))
+  assert.match(text(html(model(), { ...newUi(), open: { unseen: true } })), /Teams 病院の情報部: .* から読めていない/)
   // 案件で絞ったときは、ほかの案件の見ていないものでその案件を警告しない。
   const f = html(model({ unseen: [{ name: '試し置き場', path: '/x' }] }, empty), { ...newUi(), filter: '/ws/hokuto' })
   assert.match(text(f), /何もしなくてよい/)

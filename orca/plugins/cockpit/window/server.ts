@@ -10,7 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chatMain, OP_TYPES, type Card, type OpType } from '../src/model.ts'
 import type { CockpitView, DispatchFact, NotifyResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
-import { ownerOf } from '../src/state.ts'
+import { agentTitle, ownerOf } from '../src/state.ts'
 import { orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
@@ -436,11 +436,13 @@ export function createServer(opts: Options) {
         await orca.switchTerminal(o.terminal)
         return { opened: true, how: `${name}の端末` }
       }
+      // 端末の担当の端末が閉じられたら、無いチャットのタブへは案内しない。
+      if (o.terminal && o.how !== 'main') return { opened: false, how: `${name}の端末` }
       // Orca にはチャットを前に出す手段が無いので、チャットのあるワークスペースを開く（チャットはそのタブにある）。
       const chat = o.owner?.session ? owners.find((x) => x.session === o.owner!.session) : undefined
       const where = chat?.worktree && rowOf(chat.worktree) ? chat.worktree : ws.root
       await orca.activate(where)
-      return { opened: true, how: `${name}のいるワークスペース（${path.basename(where)}）` }
+      return { opened: true, how: `ワークスペース「${path.basename(where)}」`, tab: chat?.title ?? (o.how === 'main' ? '窓口' : agentTitle(o.title, '担当')) }
     },
     async notify(b) {
       const ws = knownWs(b.root)

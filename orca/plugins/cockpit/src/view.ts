@@ -1,8 +1,8 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
 import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, type Card, type CardKind, type Repo } from './model.ts'
-import type { CockpitView } from './protocol.ts'
+import type { CockpitView, TalkResult } from './protocol.ts'
 import {
-  BUCKET_LABEL, bucketOf, byUrgency, countsText, derive, dueAt, fmtDate, hhmm, isHot, routeProblem, upcomingMilestones,
+  BUCKET_LABEL, bucketOf, byUrgency, countsText, derive, dueAt, fmtDate, hhmm, isHot, localDay, nearDate, routeProblem, upcomingMilestones,
   type Bucket, type Derived, type JobView, type OrcaFacts, type OwnerRef, type Row
 } from './state.ts'
 
@@ -125,9 +125,9 @@ export function dueHtml(due: string | undefined, now: number): string {
   if (isHot(due, now)) {
     const h = Math.round((t - now) / 3_600_000)
     const tag = t < now ? '! 過ぎた' : h < 1 ? '! 1 時間以内' : `! あと ${h} 時間`
-    return `<span class="due hot"><b>${tag}</b>${esc(fmtDate(due))}</span>`
+    return `<span class="due hot"><b>${tag}</b><span class="tm">${esc(nearDate(due, now))}</span></span>`
   }
-  return `<span class="due">${esc(fmtDate(due))}</span>`
+  return `<span class="due">${esc(nearDate(due, now))}</span>`
 }
 
 const ago = (iso: string | undefined, now: number) => {
@@ -166,12 +166,17 @@ const sp = (xs: (string | false | undefined)[]) => xs.filter(Boolean).map((x) =>
 
 const fld = (label: string, html: string) => (html ? `<div class="fld"><span class="lb">${esc(label)}</span><div>${html}</div></div>` : '')
 
+// 先に選んでおくのは決めるだけ。許す・詰まりは戻せない操作を含むので、利用者が選ぶまで押せない。
+export const chosenOption = (r: Row, ui: Ui): string | undefined =>
+  ui.picked[keyOf(r)] ?? (r.card.kind === 'decide' ? r.card.options?.find((o) => o.recommended)?.id : undefined)
+
 function optionsHtml(r: Row, ui: Ui): string {
   const c = r.card
   if (!c.options?.length) return ''
+  const cur = chosenOption(r, ui)
   const k = keyOf(r)
   return `<div class="opts" role="radiogroup" aria-label="選択肢">${c.options.map((o, n) =>
-    `<button class="opt" type="button" role="radio" aria-checked="${ui.picked[k] === o.id}" data-pick="${esc(o.id)}" data-key="${esc(k)}">
+    `<button class="opt" type="button" role="radio" aria-checked="${cur === o.id}" data-pick="${esc(o.id)}" data-key="${esc(k)}">
       <span class="key">${n + 1}</span><span><span class="lbl">${esc(o.label)}</span>${o.recommended ? '<span class="rec">おすすめ</span>' : ''}${o.example ? `<span class="ex">${esc(o.example)}</span>` : ''}</span></button>`
   ).join('')}</div>`
 }
@@ -216,11 +221,11 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       break
     case 'decide':
       if (c.why) parts.push(fld('なぜ今決めるか', rich(c.why, c.repo)))
+      parts.push(optionsHtml(r, ui))
+      if (c.fallback) parts.push(fld('返事が無いとき', esc(c.fallback)))
       if (c.context && CONTEXT_FIELDS.some(([k]) => c.context?.[k]))
         parts.push(`<dl class="ctx">${CONTEXT_FIELDS.filter(([k]) => c.context?.[k]).map(([k, l]) => `<dt>${esc(l)}</dt><dd>${rich(c.context![k], c.repo)}</dd>`).join('')}</dl>`)
       if (c.draft) parts.push(`<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b></div><div class="msg">${esc(c.draft.text)}</div></div>`)
-      parts.push(optionsHtml(r, ui))
-      if (c.fallback) parts.push(fld('返事が無いとき', esc(c.fallback)))
       break
     case 'review':
       if (c.request) parts.push(fld('依頼の原文', `<div class="quote">${esc(c.request)}</div>`))
@@ -266,11 +271,12 @@ function actsHtml(r: Row, ui: Ui): string {
   const k = esc(keyOf(r))
   const b = (act: string, label: string, cls = '', extra = '') => `<button class="btn ${cls}" type="button" data-act="${act}" data-key="${k}" ${extra}>${esc(label)}</button>`
   const talk = (label = '担当と話す') => b('talk', label, 'talk')
-  const picked = ui.picked[keyOf(r)]
+  const picked = chosenOption(r, ui)
   const otherOpen = ui.otherOpen[keyOf(r)]
-  const decideBtn = c.options?.length || otherOpen
-    ? b('decide', otherOpen && (ui.other[keyOf(r)] ?? '').trim() ? '別の答えで決める' : picked ? 'この案で決める' : '選択肢を選ぶ', 'pri', picked || (otherOpen && (ui.other[keyOf(r)] ?? '').trim()) ? '' : 'disabled')
-    : ''
+  const otherText = otherOpen && (ui.other[keyOf(r)] ?? '').trim()
+  const decideLabel = otherOpen ? '別の答えで決める' : !picked ? '選択肢を選ぶ' : ui.picked[keyOf(r)] ? 'この案で決める' : 'おすすめで決める'
+  const ready = otherOpen ? otherText : picked
+  const decideBtn = c.options?.length || otherOpen ? b('decide', decideLabel, 'pri', ready ? '' : 'disabled') : ''
   const other = b('other', otherOpen ? '別の答えを閉じる' : '別の答え', 'quiet')
   let btns: string[]
   if (r.agent) btns = [b('focus', '端末を開く', 'pri')]
@@ -299,7 +305,7 @@ export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => st
   const meta = [
     `<span class="kind">${glyph(c.kind)}${KIND_LABEL[c.kind]}</span>`,
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
-    r.stream ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
+    r.stream && !c.title.includes(r.stream.title) ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
     r.status === 'talking' ? `<span>${r.pending ? '担当に渡した（受け取り待ち）' : '話し中'}</span>` : ''
   ].filter(Boolean).join('')
   return `<article class="strip k-${c.kind}${isHot(c.due, now) ? ' hot' : ''}" aria-expanded="${open}" data-strip="${esc(k)}" id="s-${esc(k)}">
@@ -333,7 +339,7 @@ function queueHtml(rows: VRow[], m: Model, ui: Ui, now: number, svg: (raw: strin
       nowDrawn = true
     }
     if (!list) continue
-    const sub = b === 'today' ? fmtDate(new Date(now).toISOString().slice(0, 10)) : b === 'over' || b === 'stuck' ? `${list.length} 件` : ''
+    const sub = b === 'today' ? fmtDate(localDay(now)) : b === 'over' || b === 'stuck' ? `${list.length} 件` : ''
     out.push(`<section class="lane ${b}" aria-label="${BUCKET_LABEL[b]}"><div class="when">${BUCKET_LABEL[b]}${sub ? `<small>${esc(sub)}</small>` : ''}</div>
       <div class="strips">${list.map((r) => stripHtml(r, ui, now, svg, showWs)).join('')}</div></section>`)
   }
@@ -343,23 +349,29 @@ function queueHtml(rows: VRow[], m: Model, ui: Ui, now: number, svg: (raw: strin
 function casesHtml(m: Model, ui: Ui, now: number): string {
   const total = m.boards.reduce((n, b) => n + b.d.total, 0)
   const row = (b: Board) => {
-    const next = b.d.queue.find((r) => COUNTED.includes(r.card.kind))
-    const stuck = b.d.counts.stuck
-    const sub = [next?.card.due ? `最短 ${fmtDate(next.card.due)}` : '', stuck ? `詰まり ${stuck}` : '', b.d.talking.length ? `話し中 ${b.d.talking.length}` : ''].filter(Boolean).map((x) => `<span class="pt">${esc(x)}</span>`).join('')
+    const counted = b.d.queue.filter((r) => COUNTED.includes(r.card.kind))
+    const over = counted.filter((r) => bucketOf(r.card.due, now, r.card.kind) === 'over').length
+    const today = counted.filter((r) => bucketOf(r.card.due, now, r.card.kind) === 'today').length
+    const sub = sp([
+      b.d.counts.stuck && `止まっている ${b.d.counts.stuck}`,
+      over && `<b class="hot">期限切れ ${over}</b>`,
+      today && `今日 ${today}`,
+      b.d.talking.length && `話し中 ${b.d.talking.length}`
+    ].map((x) => x || undefined))
     return `<button class="case${b.d.total ? '' : ' zero'}" type="button" data-filter="${esc(b.root)}" aria-current="${ui.filter === b.root}">
       <span class="nm">${esc(b.v.cockpit!.workspace.name)}${m.focused === b.root ? '<span class="here" title="Orca で表示中"></span>' : ''}</span><span class="n">${b.d.total}</span>${sub ? `<span class="sub sp">${sub}</span>` : ''}</button>`
   }
   const sorted = [...m.boards].sort((a, b) => b.d.total - a.d.total || a.v.cockpit!.workspace.name.localeCompare(b.v.cockpit!.workspace.name, 'ja'))
-  const routes = m.boards.flatMap((b) => (b.v.cockpit?.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x).map((x) => `${b.v.cockpit!.workspace.name}: ${x}`))
-  const unseen = m.unseen.length || routes.length
-    ? `<details class="unseen"><summary>見ていない ${m.unseen.length + routes.length}</summary><ul>${[
-        ...m.unseen.map((u) => `<li>${u.why ? `${esc(u.name)}: ${esc(u.why)}` : `操縦席の無い案件: ${esc(u.name)}`}</li>`),
-        ...routes.map((x) => `<li>${esc(x)}</li>`)
-      ].join('')}</ul></details>`
-    : ''
   return `<nav class="cases" aria-label="案件で絞る"><h3>案件</h3>
     <button class="case" type="button" data-filter="" aria-current="${!ui.filter}"><span class="nm">全案件</span><span class="n">${total}</span></button>
-    ${sorted.map(row).join('')}${unseen}</nav>`
+    ${sorted.map(row).join('')}</nav>`
+}
+
+function unseenList(m: Model, now: number): string[] {
+  return [
+    ...m.unseen.map((u) => (u.why ? `${u.name}: ${u.why}` : `操縦席の無い案件: ${u.name}`)),
+    ...m.boards.flatMap((b) => (b.v.cockpit?.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x).map((x) => `${b.v.cockpit!.workspace.name}: ${x}`))
+  ]
 }
 
 function jobsHtml(b: Board, now: number, label: string): string {
@@ -367,8 +379,17 @@ function jobsHtml(b: Board, now: number, label: string): string {
   const ms = upcomingMilestones(c.workspace.milestones, now).slice(0, 3)
   const live = b.d.jobs.filter((j) => j.state !== 'done')
   const done = b.d.jobs.length - live.length
-  const job = (j: JobView) => `<li class="job ${j.state}"><span class="js" aria-hidden="true"></span><span class="t">${esc(j.title)}</span><span class="st">${esc(j.label)}${j.since ? `（${esc(fmtDate(j.since.slice(0, 10)))} から）` : ''}</span>
-    ${j.next || j.owner ? `<span class="nx">${j.next ? `<b class="pl">次</b>${mono(esc(j.next))}` : ''}${j.owner ? `${j.next ? '　' : ''}<b class="pl">担当</b>${esc(j.owner.title)}${j.owner.state ? `（${OWNER_STATE[j.owner.state] ?? esc(j.owner.state)}）` : ''}` : ''}</span>` : ''}</li>`
+  const ownerText = (j: JobView) => {
+    const o = j.owner
+    if (!o) return ''
+    const st = o.state ? OWNER_STATE[o.state] ?? o.state : ''
+    return o.title === j.title ? st : st ? `${o.title}（${st}）` : o.title
+  }
+  const job = (j: JobView) => {
+    const who = ownerText(j)
+    return `<li class="job ${j.state}"><span class="js" aria-hidden="true"></span><span class="t">${esc(j.title)}</span><span class="st">${esc(j.label)}${j.since ? `（${esc(fmtDate(j.since.slice(0, 10)))} から）` : ''}</span>
+    ${j.next || who ? `<span class="nx sp">${sp([j.next && `<b class="pl">次</b>${mono(esc(j.next))}`, who && `<b class="pl">担当</b>${esc(who)}`])}</span>` : ''}</li>`
+  }
   return `<section class="pane" aria-label="案件の今"><h2>${esc(c.workspace.name)} <small>${esc(label)}</small></h2>
     ${ms.length ? `<ul class="ms">${ms.map((x) => `<li><b>${x.left === 0 ? '今日' : `あと ${x.left} 日`}</b><span>${esc(x.label)}</span></li>`).join('')}</ul>` : ''}
     ${live.length ? `<ul class="jobs">${live.map(job).join('')}</ul>` : '<p class="mut">動いている仕事はありません</p>'}
@@ -392,13 +413,12 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const counts = Object.fromEntries(COUNTED.map((k) => [k, shown.reduce((n, b) => n + b.d.counts[k], 0)])) as Record<CardKind, number>
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const inbox = shown.reduce((n, b) => n + b.d.counts.inbox, 0)
-  const routes = m.boards.flatMap((b) => (b.v.cockpit?.routes ?? []).filter((r) => routeProblem(r, now)))
-  const unseenCount = m.unseen.length + routes.length
+  const unseen = unseenList(m, now)
   const signal = m.panel ? signalHtml(shown[0]?.v) : ''
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
     <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${glyph(k)}${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox" title="届いたは私の番の数に入れない">${glyph('inbox')}届いた <b>${inbox}</b></span>` : ''}</div>
-    <div class="flags">${unseenCount ? `<span class="flag warn">見ていない ${unseenCount}</span>` : ''}${m.live !== undefined ? `<span class="flag">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
+    <div class="flags">${unseen.length ? `<button class="flag warn" type="button" data-act="unseen" aria-expanded="${!!ui.open.unseen}">見ていない ${unseen.length}</button>` : ''}${m.live !== undefined ? `<span class="flag live">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
       ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : '自動'}</button>`).join('')}</span>`}</div>
   </header>`
   const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
@@ -413,8 +433,8 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
       const late = a?.remind_at && Date.parse(a.remind_at) < now
       return `<span class="r sp${late ? ' hot' : ''}">${a ? sp([esc(a.who), `${esc(fmtDate(a.since.slice(0, 10)))} から`, late && '催促の日を過ぎた']) : ''}</span>${a?.resumes ? `<small><b class="pl">返事で再開</b>${esc(a.resumes)}</small>` : ''}`
     }, true),
-    miniList('reports', '報告', all('reports'), ui, now, svg, showWs, (r) => `<span class="r">${esc(fmtDate(r.card.at))}</span>`, false),
-    miniList('closed', '片付いた', all('closed').slice(0, 40), ui, now, svg, showWs, (r) => `<span class="r ${r.pending ? 'pend' : 'recv'}">${r.pending ? '受け取り待ち' : '受け取った'}</span><small class="sp">${sp([esc(r.how), r.when && esc(fmtDate(r.when))])}</small>`, false)
+    miniList('reports', '報告', all('reports'), ui, now, svg, showWs, (r) => `<span class="r">${esc(nearDate(r.card.at, now))}</span>`, false),
+    miniList('closed', '片付いた', all('closed').slice(0, 40), ui, now, svg, showWs, (r) => `<span class="r ${r.pending ? 'pend' : 'recv'}">${r.pending ? '受け取り待ち' : '受け取った'}</span><small class="sp">${sp([esc(r.how), r.when && esc(nearDate(r.when, now))])}</small>`, false)
   ].join('')
   const msg = ui.toast && ui.toast.until > now ? `<div class="toast" role="status"><span>${esc(ui.toast.text)}</span></div>` : ''
   const undo = ui.undos
@@ -432,6 +452,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
     ${paneSwitch(ui, total, sideCount)}
     <main class="board${m.panel ? ' panel' : ''}" data-pane="${ui.pane ?? 'queue'}">
       ${errs.length ? `<div class="errs" role="alert">${errs.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
+      ${unseen.length && ui.open.unseen ? `<div class="notes warn" role="status"><b>見ていないもの</b>${unseen.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : ''}
       ${handoffHtml(shown, now)}
       ${m.panel ? '' : casesHtml(m, ui, now)}
       <div class="queue" aria-label="私の番">${empty}</div>
@@ -471,6 +492,13 @@ function signalHtml(v: CockpitView | undefined): string {
   if (v.signal?.state === 'failed') return `<button class="flag err" type="button" data-act="notify">メインに届いていません（${esc(v.signal.reason ?? '')}）。もう一度送る</button>`
   if (v.signal?.state === 'waiting') return '<span class="flag">メインの手が空いたら届けます</span>'
   return ''
+}
+
+export function talkMessage(res: TalkResult, copied: boolean): string {
+  const where = res.opened ? `${res.how}を前に出しました。` : ''
+  const paste = copied ? '書き出しをコピーしたので、貼って話してください' : '話してください'
+  if (res.tab) return `${where}チャットの「${res.tab}」を開き、${paste}`
+  return res.opened ? `${res.how}を開きました。${paste}` : `${res.how}を開けませんでした。Orca で開き、${paste}`
 }
 
 /** 担当のチャットに貼る書き出し。どのカードの話かを説明し直さずに済むように。 */

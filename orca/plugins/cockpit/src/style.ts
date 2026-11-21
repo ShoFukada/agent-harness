@@ -36,7 +36,7 @@ body { margin:0; }
 .ck .kinds .ref { color:var(--ink3); padding-left:14px; border-left:1px solid var(--rule); }
 .ck .flags { margin-left:auto; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; font-size:var(--fs-s); color:var(--ink2); }
 .ck .flag { display:inline-flex; gap:6px; align-items:center; border:0; background:none; padding:2px 0; color:inherit; }
-.ck .flag.warn { color:var(--k-permit); font-weight:600; }
+.ck .flag.warn { color:var(--k-permit); font-weight:600; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:3px; }
 .ck .flag.err { color:var(--hot); font-weight:600; }
 .ck .seg { display:inline-flex; border:1px solid var(--rule); border-radius:6px; overflow:hidden; }
 .ck .seg button { border:0; background:none; padding:1px 9px; font-size:var(--fs-xs); color:var(--ink2); }
@@ -68,14 +68,11 @@ body { margin:0; }
 .ck .case .here { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--focus); margin-left:6px; vertical-align:middle; }
 .ck .case.zero .n { color:var(--ink3); font-weight:400; }
 .ck .cases h3, .ck .side h3 { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); margin:14px 10px 4px; letter-spacing:.02em; }
-.ck .unseen { margin:4px 10px; font-size:var(--fs-xs); color:var(--ink3); }
-.ck .unseen summary { cursor:pointer; color:var(--k-permit); font-weight:600; }
-.ck .unseen ul { margin:4px 0 0; padding-left:1.1em; }
+.ck .case .sub .hot { color:var(--hot); font-weight:600; }
 @container (max-width:760px) {
   .ck .cases { position:static; display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
   .ck .case { flex:none; grid-template-columns:auto auto; padding:4px 10px; border:1px solid var(--rule); border-radius:999px; }
   .ck .case .sub, .ck .cases h3 { display:none; }
-  .ck .cases .unseen { flex:none; margin:4px 4px; }
 }
 
 /* ── 期限の軸と票 ── */
@@ -98,7 +95,8 @@ body { margin:0; }
 @container (max-width:520px) { .ck .lane { grid-template-columns:minmax(0,1fr); } .ck .when { text-align:left; padding:10px 0 0; } .ck .when::after { display:none; }
   .ck .when small { display:inline; margin-left:6px; } .ck .now-line { grid-template-columns:auto minmax(0,1fr); }
   /* 狭い幅で案件名と仕事の名前が並ぶと、どちらも数文字に削られるので、案件名があるときは仕事の名前を出さない。 */
-  .ck .strip .meta .ws ~ .jobname { display:none; } .ck .strip .ws { max-width:none; } }
+  .ck .strip .meta .ws ~ .jobname { display:none; } .ck .strip .ws { max-width:none; }
+  .ck .due.hot .tm, .ck .flag.live, .ck .acts .hint { display:none; } }
 
 .ck .strip { position:relative; min-width:0; }
 .ck .strip + .strip { border-top:1px solid var(--rule2); }
@@ -230,6 +228,9 @@ body { margin:0; }
 .ck .calm.warn b { color:var(--k-permit); }
 .ck .notes { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
 .ck .notes div { background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); color:var(--ink2); }
+.ck .notes.warn { background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--k-permit); border-radius:6px; padding:8px 12px; gap:2px; font-size:var(--fs-s); }
+.ck .notes.warn > b { color:var(--k-permit); }
+.ck .notes.warn div { background:none; border:0; padding:0; }
 .ck .flag.repeat { border:1px solid var(--rule); border-radius:6px; padding:1px 9px; font-size:var(--fs-xs); cursor:pointer; }
 .ck .errs { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
 .ck .errs div { background:var(--hot-bg); color:var(--hot); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); font-weight:600; }
