@@ -144,15 +144,20 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(any(x[:2] == ["worktree", "set"] for x in self.calls()))
 
-    def cockpit(self, owners):
+    def cockpit(self, owners, said=None, utter=None):
         root = os.path.join(self.tmp, "root")
-        os.makedirs(os.path.join(root, ".orca"))
+        os.makedirs(os.path.join(root, ".orca", "cockpit"))
+        if utter:
+            with open(os.path.join(root, ".orca", "cockpit", "utterances.jsonl"), "w") as fh:
+                fh.write("".join(json.dumps(u, ensure_ascii=False) + "\n" for u in utter) + "{書きかけ")
         with open(os.path.join(root, ".orca", "cockpit.json"), "w") as fh:
             json.dump({"version": 2, "workspace": {"name": "ハーネス"}, "streams": [{"id": "s1", "title": "操縦席の窓"}],
                        "tasks": [{"id": "t65", "stream": "s1", "phase": "実装", "title": "窓の版 3", "state": "run"}],
                        "owners": owners, "cards": [],
-                       "requests": [{"id": "r30", "at": "", "title": "上限の判定", "tasks": ["t65"], "done_when": ["LIMIT が 3 行の上限の文言に当たる"]},
-                                    {"id": "r31", "at": "", "title": "別の仕事", "tasks": ["t1"], "done_when": ["関係ない"]}]}, fh)
+                       "requests": [{"id": "r30", "at": "", "title": "上限の判定", "tasks": ["t65"], "done_when": ["LIMIT が 3 行の上限の文言に当たる"],
+                                     "utterances": said or []},
+                                    {"id": "r31", "at": "", "title": "別の仕事", "tasks": ["t1"], "done_when": ["関係ない"],
+                                     "utterances": [{"id": "u-9", "quote": "別の仕事の発言"}]}]}, fh)
         return root
 
     def run_cockpit(self, root):
@@ -176,6 +181,57 @@ class LaunchTest(unittest.TestCase):
         self.assertNotIn("r31", spec)
         with open(os.path.join(root, ".orca", "cockpit.json")) as fh:
             self.assertIn("t65", fh.read())
+
+    def spec_text(self):
+        with open(self.log + ".spec") as fh:
+            return fh.read()
+
+    def test_cockpit_task_passes_utterances_verbatim(self):
+        # 原文は発言の記録の全文。記録に無い発言は依頼の引用で補う。ほかのタスクの依頼の発言は足さない。
+        root = self.cockpit([], said=[{"id": "u-4", "quote": "記録に無い発言"}, {"id": "u-2", "quote": "一行目"}],
+                            utter=[{"id": "u-2", "at": "2026-11-21T19:41:00+09:00", "prompt": "一行目\n二行目の細部"}])
+        r = self.run_cockpit(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        spec = self.spec_text()
+        self.assertIn("- r30#1: LIMIT が 3 行の上限の文言に当たる", spec)
+        self.assertIn("深田（u-2）:\n> 一行目\n> 二行目の細部\n\n深田（u-4）:\n> 記録に無い発言\n", spec)
+        self.assertNotIn("u-9", spec)
+        self.assertNotIn("省いた", spec)
+
+    def test_cockpit_task_keeps_each_quote_and_skips_broken_lines(self):
+        # 記録に無い同じ発言を別の依頼が別の箇所で引いたら両方残す。UTF-8 が途中で切れた行があってもほかの行は読む（Codex 中 4・5）
+        root = self.cockpit([], said=[{"id": "u-1", "quote": "前半の引用"}],
+                            utter=[{"id": "u-3", "at": "", "prompt": "全文"}])
+        path = os.path.join(root, ".orca", "cockpit", "utterances.jsonl")
+        with open(path, "rb") as fh:
+            body = fh.read()
+        with open(path, "wb") as fh:
+            fh.write('{"id": "u-2", "prompt": "途中'.encode()[:-1] + b"\n" + '{"id": "u-4", "prompt": "壊'.encode()[:-1] + b'"}\n' + body)
+        with open(os.path.join(root, ".orca", "cockpit.json")) as fh:
+            c = json.load(fh)
+        c["requests"].append({"id": "r32", "at": "", "title": "同じ発言", "tasks": ["t65"], "done_when": ["x"],
+                              "utterances": [{"id": "u-1", "quote": "後半の引用"}, {"id": "u-3", "quote": "全"}, {"id": "u-4", "quote": "壊れた行の引用"}]})
+        with open(os.path.join(root, ".orca", "cockpit.json"), "w") as fh:
+            json.dump(c, fh)
+        r = self.run_cockpit(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        spec = self.spec_text()
+        self.assertIn("深田（u-1）:\n> 前半の引用", spec)
+        self.assertIn("深田（u-1）:\n> 後半の引用", spec)
+        self.assertIn("深田（u-3）:\n> 全文", spec)
+        self.assertIn("深田（u-4）:\n> 壊れた行の引用", spec)
+        self.assertNotIn("\ufffd", spec)
+
+    def test_cockpit_task_cuts_old_utterances_over_the_limit(self):
+        big = lambda n, ch: {"id": "u-%d" % n, "at": "", "prompt": ch * 5000}
+        root = self.cockpit([], said=[{"id": "u-%d" % n, "quote": "x"} for n in (3, 10, 7)],
+                            utter=[big(3, "古"), big(7, "中"), big(10, "新")])
+        r = self.run_cockpit(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        spec = self.spec_text()
+        self.assertIn("深田（u-10）:", spec)
+        self.assertNotIn("深田（u-7）:", spec)
+        self.assertIn("古い発言 u-7・u-3 を省いた", spec)
 
     def test_cockpit_task_without_owner_hangs_under_main(self):
         root = self.cockpit([])

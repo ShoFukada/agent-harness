@@ -266,3 +266,32 @@ test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ�
   assert.equal(parseCockpit(JSON.stringify({ ...c, main: { ...c.main, run_id: 3 } }), problems).main?.run_id, undefined)
   assert.match(problems.join(), /main\.run_id（3）の形が違う/)
 })
+
+test('書く道具: カードとタスクの人が読む欄の柔らかい言い回しを、欄と語を名指しして断る。draft・quote・深田さんの last と、元からある文は見ない（R84）', () => {
+  const c = aoba()
+  const soft = { ...card(c, 'd21'), rev: 2, purpose: '図を足すかも', last: { text: '送っておきました', by: '担当' }, options: [{ id: 'a', label: 'このままですね' }] }
+  const err = applyChange(c, { cards: [soft] }).errors.join('\n')
+  assert.match(err, /カード d21: 柔らかい言い回し purpose「かも」・last\.text「ておきました」・options\[0\]\.label「ですね」/)
+  // 相手と深田さんの言葉（draft の本文・quote・深田さんの last）は原文のまま書ける。
+  const quoted = { ...card(c, 'd21'), rev: 2, quote: '任せてもいいかも', draft: { to: '森さん', text: '送っておきましたね' }, last: { text: '決める感じですね', by: '私' } }
+  assert.ok(applyChange(c, { cards: [quoted] }).next)
+  // 元からある文の書き戻し（片付けるだけ）は止めない。
+  const old = aoba()
+  old.cards.find((x) => x.id === 'd21')!.purpose = '図を足すかも'
+  assert.ok(applyChange(old, { cards: [{ ...card(old, 'd21'), state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T10:00:00+09:00', resolved_option: 'keep' }] }).next)
+  // 推量でない「かも」（〜するかも記録する）は通す。選択肢の具体例と比較表は窓口の文なので見る（Codex 高 1・中 3）。
+  assert.ok(applyChange(c, { cards: [{ ...card(c, 'd21'), rev: 2, purpose: '誰が承認するかも記録する' }] }).next)
+  const ex = { ...card(c, 'd21'), rev: 2, options: [{ id: 'a', label: '直す', example: '直しておきました' }], compare: { columns: ['案'], rows: [['送るかも']] } }
+  assert.match(applyChange(c, { cards: [ex] }).errors.join('\n'), /options\[0\]\.example「ておきました」・compare\.rows\[0\]\[0\]「かも」/)
+  // 版 2 の talk は深田さんの last を読み込みで stance に写す。写した文は窓口の文として断らない（Codex 中 2）。
+  const talk: Card = { id: 'k9', rev: 1, kind: 'talk', state: 'open', title: '話の続き', stream: 's1', last: { text: '明日かも', by: '私' } }
+  assert.ok(applyChange(c, { cards: [structuredClone(talk)] }).next)
+  // 読み込みで consult になった形（stance を写したもの）で閉じる書き戻しも止めない（Codex 再レビュー 高 1）。
+  const withTalk = aoba()
+  withTalk.cards.push(structuredClone(talk))
+  const closing = { ...talk, kind: 'consult', stance: '明日かも', state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T10:00:00+09:00' } as Card
+  assert.deepEqual(applyChange(withTalk, { cards: [closing] }).errors.filter((e) => e.includes('柔らかい')), [])
+  assert.match(applyChange(c, { cards: [{ ...card(c, 'd21'), rev: 2, purpose: '延期かも、先方に確かめる' }] }).errors.join('\n'), /purpose「かも」/)
+  const task = { ...c.tasks[0]!, next: '直しちゃいます', done: [{ text: '出しておきました', at: '2026-11-21T09:00:00+09:00' }] }
+  assert.match(applyChange(c, { tasks: [task] }).errors.join('\n'), /タスク t1: 柔らかい言い回し next「しちゃ」・done\[0\]\.text「ておきました」/)
+})

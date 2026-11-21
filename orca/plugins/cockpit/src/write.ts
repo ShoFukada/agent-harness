@@ -71,6 +71,49 @@ function strayKeys(row: object, spec: Keys): string[] {
   return out
 }
 
+/**
+ * 窓口・担当が書く人の読む欄で断る柔らかい言い回し（R84。カードと報告は業務文書の語調にする）。
+ * draft の本文・quote・request・reason・background.quote・深田さんの last は相手か深田さんの言葉なので見ない。
+ */
+const SOFT: [string, RegExp][] = [
+  ...['ておきました', 'でおきました', 'ですね', 'ますね', 'ですよね', 'しちゃ', 'ちゃいました', 'ちゃった'].map((w): [string, RegExp] => [w, new RegExp(w)]),
+  // 「誰が承認するかも記録する」の「かも」は推量ではないので、文末・「かもしれ」「かもです」の形だけを見る。
+  ['かも', /かも(?=しれ|です|ね|$|[。、！!？?\s」）)])/]
+]
+const CARD_PROSE: Keys = {
+  top: ['title', 'purpose', 'asked', 'routed', 'why', 'fallback', 'look_for', 'evidence', 'effect', 'undo', 'unblock', 'issue', 'stance', 'known', 'undecided', 'next', 'compare'],
+  nested: {
+    last: ['text'], context: ['what', 'now', 'how', 'gain', 'cost'], options: ['label', 'body', 'example'], compare: ['columns', 'rows'], done: ['what', 'why', 'undo'], awaiting: ['what', 'resumes'],
+    background: ['text'], elements: ['text'], manual: ['steps', 'check']
+  }
+}
+const TASK_PROSE: Keys = { top: ['title', 'goal', 'next', 'done'], nested: { done: ['text'] } }
+const USER_BY = new Set(['私', '深田', 'user'])
+
+function prose(row: object, spec: Keys): Map<string, string> {
+  const rec = row as Record<string, unknown>
+  const out = new Map<string, string>()
+  const put = (at: string, v: unknown) => {
+    if (typeof v === 'string') out.set(at, v)
+    else if (Array.isArray(v)) v.forEach((x, i) => put(`${at}[${i}]`, x))
+  }
+  for (const k of spec.top) put(k, rec[k])
+  for (const [k, keys] of Object.entries(spec.nested)) {
+    const v = rec[k]
+    if (k === 'last' && isObj(v) && USER_BY.has(String(v.by))) continue
+    const items: [string, unknown][] = Array.isArray(v) ? v.map((x, i) => [`${k}[${i}]`, x]) : [[k, v]]
+    for (const [at, x] of items) if (isObj(x)) for (const j of keys) put(`${at}.${j}`, x[j])
+  }
+  return out
+}
+
+/** 新しく書く・書き換える文に柔らかい言い回しがあれば、欄と語を並べた理由を返す。元の行にそのままある文は断らない（片付けるだけの書き戻しを止めないため）。 */
+function softError(name: string, row: object, old: object | undefined, spec: Keys): string | undefined {
+  const before = old ? prose(old, spec) : new Map<string, string>()
+  const hits = [...prose(row, spec)].filter(([at, s]) => before.get(at) !== s).flatMap(([at, s]) => SOFT.filter(([, re]) => re.test(s)).map(([w]) => `${at}「${w}」`))
+  return hits.length ? `${name}: 柔らかい言い回し ${hits.join('・')}。業務文書の語調（体言止め・短い動詞）に直す（R84）` : undefined
+}
+
 /** 版 2 の talk と、読み込みで直した consult を同じ中身として比べる（移し替えはディスクの talk を残すため）。 */
 function canon(y: Card): Card {
   const z = structuredClone(y)
@@ -151,6 +194,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (typeof t.title !== 'string' || !t.title.trim() || typeof t.phase !== 'string') errors.push(`タスク ${t.id}: title・phase が無い`)
     if (!TASK_STATES.includes(t.state as TaskState)) errors.push(`タスク ${t.id}: state は ${TASK_STATES.join('・')} のどれか`)
     if (!has(streams, t.stream)) errors.push(`タスク ${t.id}: 仕事 ${t.stream} が無い`)
+    const soft = softError(`タスク ${t.id}`, t, old, TASK_PROSE)
+    if (soft) errors.push(soft)
     const rec = t as unknown as Record<string, unknown>
     // null は、その行に元から null で書かれていた欄だけ書き戻してよい（読み込みは null の欄を無いものとして読む）。
     const was = old as unknown as Record<string, unknown> | undefined
@@ -220,6 +265,10 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       errors.push(`カード ${x.id}: ${head}`)
       continue
     }
+    // 読み込みで直す前の形を、読み込みで直した元の行と比べる（upgradeCard は版 2 の talk の深田さんの last を stance に写す。写した文を窓口の文として断らない）。
+    const prev = c.cards.find((y) => y.id === x.id)
+    const soft = softError(`カード ${x.id}`, x, prev && canon(prev), CARD_PROSE)
+    if (soft) errors.push(soft)
     const card = upgradeCard(x)
     // 返しの印は読むときは配列なら受ける（python の照合と同じ）が、書くときは return_id の形だけにする。
     const bad = [...badFields(card), ...(['from_returns', 'held_returns'] as const).filter((k) => Array.isArray(card[k]) && !card[k]!.every(returnId))]

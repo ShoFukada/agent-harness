@@ -153,6 +153,7 @@ bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write �
 
 - 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." } }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換え、`null` で消す（agent・terminal は今の値を保つ）。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
 - 検査: 欄の形・参照（仕事・タスク・担当・依頼の id）・`rev`（開いたカードの中身を変えたら 1 上げる。片付けるだけ・要素の行き先を書くだけなら据え置き）・依頼の欄・仕分けの位置・要素の行き先。通らなければ書かずに理由を返す
+- 語調: カードとタスクの人が読む欄（title・purpose・why・next・`last.text`・`look_for`・`options` の label と body・タスクの `done` など）に柔らかい言い回し（ておきました・ですね・ますね・ですよね・かも・しちゃ・ちゃいました・ちゃった）があれば、欄と語を名指しして断る（R84）。draft・quote・request・reason・`background.quote`・深田さんの `last`（by が 私）と、元の行にそのままある文は見ない
 - 必須の欄が欠けたカードは書くが、注意で名指しする（窓には出ない）
 - migrate-v3: 開いた `talk` を `consult` に、`created_at` を `at` に写し、worker に `run_id` を補う。今ある依頼に `legacy` を付け、タスクとカードが全部済で深田さんの返答が残るものだけ済にし、ほかは窓口が仕分ける一覧に出す。閉じたカードの `resolved_at` を補い（`resolved_at_inferred`）、深田さんの操作の無いまま閉じた見てに `closed_without_review` を付ける。元は `cockpit.v2.json` に控える
 - 台帳の取り込み: 取り込む依頼を `{ "requests": [...] }` の変更にして、`--dry-run` で通ることを確かめてから書く。既存の依頼と同じ件はその id で置き換え、`legacy` を外して `utterances` か `source`・`done_when` を足す
@@ -225,7 +226,7 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 
 - 起動は launchd などの常駐の仕組みに任せる。ブラウザ向けの TS は、配るときに Node の `module.stripTypeScriptTypes` で型を除く。ビルドの手順は無い。配るのは `window/server.ts` の `SERVED` に書いたファイルだけ
 - 窓は前面の案件だけを描き、操縦席の無いワークスペースは並べない。読めていない連絡の経路（`routes`）は全体の「見張る」に出す
-- worker の記録: 窓口が担当や worker を Orca の orchestration で立てたら、タスクの `worker` に受け取った `run_id`・`task_id` を書く（`bin/orca-launch --cockpit-task <task id>` で立てると、題・comment・親の worktree をタスクから決め、依頼の済の条件を brief に足す）。窓は Run の Task の続きをたどって今の Dispatch を引き、`orca orchestration worker-show --dispatch <id> --full` で様子を読む。Dispatch の端末で worker とタスクを結ぶ。worker_done を返したら取り込み待ち、起動できない・落ちた・人の確認待ちは詰まり、Orca に無ければ「Orca に見つからない」の詰まりになる
+- worker の記録: 窓口が担当や worker を Orca の orchestration で立てたら、タスクの `worker` に受け取った `run_id`・`task_id` を書く（`bin/orca-launch --cockpit-task <task id>` で立てると、題・comment・親の worktree をタスクから決め、依頼の済の条件と、依頼に結んだ深田さんの発言の原文（`utterances.jsonl` の全文。「深田（u-12）:」のラベル付き、新しい順に 8000 字まで）を brief に足す）。窓は Run の Task の続きをたどって今の Dispatch を引き、`orca orchestration worker-show --dispatch <id> --full` で様子を読む。Dispatch の端末で worker とタスクを結ぶ。worker_done を返したら取り込み待ち、起動できない・落ちた・人の確認待ちは詰まり、Orca に無ければ「Orca に見つからない」の詰まりになる
 - Orca の監視外で止まったもの（`bin/stallwatch` が書く `alerts.json`）は、窓の上にエラーの行で出す
 - 前面のワークスペースは、パネルの worker が書く `focus.json` を見張って取る（ポーリングしない）
 - Orca を呼ぶのは窓が表示されている間だけで、(1) 接続したとき、(2) `focus.json` にあるエージェントの変化時刻が変わったとき（5 秒に 1 回まで）、(3) 60 秒ごと

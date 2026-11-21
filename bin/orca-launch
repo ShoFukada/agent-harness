@@ -9,7 +9,8 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
   orca-launch --worktree <selector> --cockpit-task <task id> --spec-file <brief> [--cockpit-root <root>] ...
 
 --cockpit-task は操縦席（<root>/.orca/cockpit.json）のタスクから、題（タスクの題）・comment（「<仕事の題> › <タスク id>｜worker が作業中」）・
-親の worktree（仕事の担当の worktree、担当がいなければ窓口の worktree）を決め、そのタスクを持つ依頼の済の条件を brief の末尾に足して渡す。
+親の worktree（仕事の担当の worktree、担当がいなければ窓口の worktree）を決め、そのタスクを持つ依頼の済の条件と、依頼に結んだ深田さんの発言の原文
+（.orca/cockpit/utterances.jsonl の全文。新しい順に上限まで）を brief の末尾に足して渡す。窓口が brief に要約し直すと細部が落ちるため。
 cockpit.json は読むだけで書かない（受け取りの runId・taskId は窓口が cockpit-write で書く）。root を省くと、今のディレクトリから上に
 .orca/cockpit.json を探し、無ければ git の本線（リポジトリのルート）を使う。
 
@@ -115,8 +116,58 @@ def owner_worktree(c, stream):
     return None
 
 
+SAID_LIMIT = 8000
+
+
+def utterance_section(root, reqs):
+    """依頼に結んだ深田さんの発言の原文を、brief に足す節にする。原文は発言の記録（hook が書く utterances.jsonl）の全文で、
+    記録に無ければ依頼の引用。合わせて SAID_LIMIT 字を超えたら新しい順に残し、省いた発言の id を書く。"""
+    full = {}
+    try:
+        # UTF-8 が途中で切れた行は、壊れた文を brief に入れないよう行ごと飛ばす
+        with open(os.path.join(root, ".orca", "cockpit", "utterances.jsonl"), "rb") as fh:
+            for line in fh:
+                try:
+                    v = json.loads(line.decode("utf-8"))
+                except ValueError:
+                    continue
+                if isinstance(v, dict) and isinstance(v.get("id"), str) and isinstance(v.get("prompt"), str):
+                    full[v["id"]] = v["prompt"]
+    except OSError:
+        pass
+    # 全文があれば発言ごとに 1 つ、無ければ依頼ごとの引用を全部残す（同じ発言の別の箇所を引いた依頼もある）
+    said = []
+    for r in reqs:
+        for u in r.get("utterances") or []:
+            if isinstance(u, dict) and u.get("id"):
+                row = (u["id"], full.get(u["id"]) or u.get("quote") or "")
+                if row not in said:
+                    said.append(row)
+    if not said:
+        return ""
+    num = lambda i: int(i[2:]) if i.startswith("u-") and i[2:].isdigit() else -1
+    kept, dropped, size = [], [], 0
+    for i, text in sorted(said, key=lambda x: num(x[0]), reverse=True):
+        if dropped or (kept and size + len(text) > SAID_LIMIT):
+            label = i if i not in [k for k, _ in kept] else "%s（別の引用）" % i
+            if label not in dropped:
+                dropped.append(label)
+            continue
+        if len(text) > SAID_LIMIT:
+            text = text[:SAID_LIMIT] + "\n（以下 %d 字を省いた）" % (len(text) - SAID_LIMIT)
+        kept.append((i, text))
+        size += len(text)
+    out = ["## 深田さんの発言の原文（このタスクの依頼に結んだもの。要約し直さずに読む）"]
+    if dropped:
+        out.append("上限 %d 字を超えるので、古い発言 %s を省いた。全文は %s、記録に無い発言は cockpit.json の依頼の引用にある。"
+                   % (SAID_LIMIT, "・".join(dropped), os.path.join(root, ".orca", "cockpit", "utterances.jsonl")))
+    for i, text in reversed(kept):
+        out.append("\n深田（%s）:\n%s" % (i, "\n".join("> " + l for l in text.split("\n"))))
+    return "\n".join(out) + "\n"
+
+
 def cockpit_plan(a):
-    """--cockpit-task から題・comment・親の worktree・済の条件を足した brief を決める。"""
+    """--cockpit-task から題・comment・親の worktree と、済の条件・発言の原文を足した brief を決める。"""
     root = cockpit_root(a.cockpit_root)
     path = os.path.join(root or "", ".orca", "cockpit.json")
     if not root or not os.path.isfile(path):
@@ -128,18 +179,21 @@ def cockpit_plan(a):
         sys.exit("orca-launch: 操縦席にタスク %s が無い（%s）" % (a.cockpit_task, path))
     s = next((x for x in c.get("streams") or [] if x.get("id") == t.get("stream")), None)
     owner = owner_worktree(c, t.get("stream"))
-    lines = []
-    for r in c.get("requests") or []:
-        if a.cockpit_task in (r.get("tasks") or []):
-            for i, w in enumerate(r.get("done_when") or []):
-                lines.append("- %s#%d: %s" % (r["id"], i + 1, w))
-    spec = a.spec_file
+    reqs = [r for r in c.get("requests") or [] if a.cockpit_task in (r.get("tasks") or [])]
+    lines = ["- %s#%d: %s" % (r["id"], i + 1, w) for r in reqs for i, w in enumerate(r.get("done_when") or [])]
+    tail = ""
     if lines:
+        tail += "\n\n## 済の条件（操縦席の依頼。戻りはこの番号ごとに証拠を返す）\n" + "\n".join(lines) + "\n"
+    said = utterance_section(root, reqs)
+    if said:
+        tail += "\n\n" + said
+    spec = a.spec_file
+    if tail:
         with open(a.spec_file) as fh:
             body = fh.read()
         fd, spec = tempfile.mkstemp(prefix="brief-%s-" % a.cockpit_task, suffix=".md")
         with os.fdopen(fd, "w") as fh:
-            fh.write(body.rstrip("\n") + "\n\n## 済の条件（操縦席の依頼。戻りはこの番号ごとに証拠を返す）\n" + "\n".join(lines) + "\n")
+            fh.write(body.rstrip("\n") + tail)
     return {
         "title": t["title"],
         "comment": "%s › %s｜worker が作業中" % ((s or {}).get("title") or t.get("stream") or "仕事", t["id"]),
@@ -152,7 +206,7 @@ def main():
     ap = argparse.ArgumentParser(prog="orca-launch", description=__doc__.split("\n")[0])
     ap.add_argument("--worktree", required=True, help="worker を置く worktree（orca の selector。先に orca worktree create で作る）")
     ap.add_argument("--title", help="仕事の短い日本語名（サイドバーは 20 文字ほどで切れるので、何の仕事かを先頭に）。--cockpit-task のときはタスクの題")
-    ap.add_argument("--cockpit-task", help="操縦席のタスクの id。題・comment・親の worktree・済の条件をそこから引く")
+    ap.add_argument("--cockpit-task", help="操縦席のタスクの id。題・comment・親の worktree・済の条件・深田さんの発言の原文をそこから引く")
     ap.add_argument("--cockpit-root", help="操縦席のあるワークスペースの root（省くと探す）")
     ap.add_argument("--spec-file", required=True, help="brief のファイル")
     ap.add_argument("--task-title")
