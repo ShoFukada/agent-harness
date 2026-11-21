@@ -253,7 +253,7 @@ body { margin:0; }
 .ck svg text { font-family:inherit; }
 
 /* ══ 窓の 3 タブ（window-view.ts）。パネルの部品（.fld・.opt・.btn・.acts）は上の決まりを使う ══ */
-.ck.win { height:100vh; min-height:0; display:grid; grid-template-rows:auto auto auto minmax(0,1fr); overflow:hidden; }
+.ck.win { height:100vh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .ck.win .pad { padding:18px; }
 .ck.win .hotc { color:var(--hot); }
 .ck.win .wtop { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; padding:10px 18px 0; border-bottom:1px solid var(--rule); background:var(--bg); }
@@ -274,7 +274,7 @@ body { margin:0; }
 .ck.win .keyline .k { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
 .ck.win .keyline .k .sw { width:4px; height:14px; border-radius:2px; background:var(--kc); }
 .ck.win .keyline .sep { width:1px; height:16px; background:var(--rule); }
-.ck.win .wbody { display:grid; min-height:0; }
+.ck.win .wbody { display:grid; flex:1; min-height:0; }
 .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
 .ck.win .wbody.whole { grid-template-columns:minmax(0,1fr) 360px; }
 .ck.win .wpane { overflow-y:auto; padding:14px 18px 80px; display:grid; align-content:start; gap:14px; min-height:0; min-width:0; }
