@@ -682,22 +682,25 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   const port = await s.listen()
   const v = await listen(port, s.token).until((x) => !!board(x, roots.aoba!)?.questions?.length)
   const m = { boards: boardsOf(v.boards, now), focused: roots.aoba, unseen: [], errors: [] }
-  const rows = (b: Board) => todoGroups(b).flatMap(([, xs]) => xs.map((r) => r.card.title))
+  const lines = (b: Board) => todoGroups(b).flatMap(([, xs]) => xs).filter((r) => r.agent?.ask).map((r) => [r.card.title, r.agent!.ask!.from])
   const aoba = m.boards.find((b) => b.root === roots.aoba)!
-  assert.deepEqual(rows(aoba).filter((t) => t.includes('聞いている')), [
-    '「配車画面の改修」が聞いている: キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？',
-    '「一覧の並べ替えと絞り込み」のworkerが窓口に聞いている: 一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか',
-    '「AWS 構成案」のworkerが担当に聞いている: 構成図は PowerPoint と draw.io のどちらで描きますか（森さんが直すのは PowerPoint）'
+  // 1 行目は問いそのもの、2 行目は誰が誰に聞いているか。
+  assert.deepEqual(lines(aoba), [
+    ['キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', 'worker（朝の地図の遅さの調査）があなたに聞いている'],
+    ['一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか', 'worker（一覧の並べ替えと絞り込み）が窓口に聞いて、12 分答えが無い'],
+    ['構成図は PowerPoint と draw.io のどちらで描きますか（森さんが直すのは PowerPoint）', 'worker（AWS 構成案）が担当に聞いて、45 分答えが無い']
   ])
   // 押すと宛先を前に出す: 地図の worker は自分の端末、窓口宛ては窓口の端末、担当宛ては担当のチャットのある worktree。
   const row = (t: string) => todoGroups(aoba).flatMap(([, xs]) => xs).find((r) => r.card.title.includes(t))!
-  assert.deepEqual([row('キャッシュ').agent?.terminalId, row('窓口に').agent?.terminalId, row('担当に').agent?.worktree], ['term_aoba_w2', 'term_aoba_main', path.join(base, 'aoba-aws')])
-  // 詳細に問いの本文と選択肢を出す。
-  const h = renderWindow(m, { ...newUi(), sel: keyOf(row('窓口に')) }, now, (x) => x)
-  assert.match(h, /聞かれていること.*配送日の降順にする<\/li><li>登録順のままにする/s)
-  assert.match(h, /窓口の端末を開いて答えを伝える/)
+  assert.deepEqual([row('キャッシュ').agent?.terminalId, row('既定の並び').agent?.terminalId, row('構成図').agent?.worktree], ['term_aoba_w2', 'term_aoba_main', path.join(base, 'aoba-aws')])
+  // 詳細: 題に収まった問いは本文を重ねず、選択肢は番号を付けずにどこで選ぶかを添える。
+  const h = renderWindow(m, { ...newUi(), sel: keyOf(row('既定の並び')) }, now, (x) => x)
+  assert.doesNotMatch(h, /聞かれていること/)
+  assert.match(h, /選択肢（窓口に伝える）<\/span><div><ul class="rich"><li>配送日の降順にする<\/li><li>登録順のままにする/)
+  assert.match(h, /答え方.*窓口の端末を開いて答えを伝えれば、窓口がworker（一覧の並べ替えと絞り込み）に返す/s)
   assert.match(h, /聞いた日時.*>窓口の端末を開く</s)
+  assert.match(renderWindow(m, { ...newUi(), sel: keyOf(row('キャッシュ')) }, now, (x) => x), /選択肢（端末で選ぶ）/)
   // 許可待ちは道具の欄から（ログ集計の見直し）。
   const harness = m.boards.find((b) => b.root === roots.harness)!
-  assert.ok(rows(harness).includes('「ログ集計の見直し」が許可を求めている: Bash: git push origin feature/log-summary'), rows(harness).join('\n'))
+  assert.deepEqual(lines(harness), [['許可: Bash: git push origin feature/log-summary', 'worker（集計の分け方を直す）が許可を求めている']])
 })

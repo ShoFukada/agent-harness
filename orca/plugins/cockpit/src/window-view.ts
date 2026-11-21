@@ -1,8 +1,8 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
 import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type Sent, type StreamForm, type TaskState } from './model.ts'
-import { STOP_LABEL, byUrgency, fmtDate, isHot, isOver, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
+import { STOP_LABEL, askLine, byUrgency, fmtDate, isHot, isOver, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, backgroundParts, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
+  actsHtml, ago, backgroundParts, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
   type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 
@@ -67,10 +67,12 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
   // 返した答えは 1 行で切り、全文は詳細で読む（長い別の回答で行が伸びないように）。
   const right = closed
     ? `<span class="how" title="${esc(r.how ?? '')}">${esc(r.how ?? '')}</span><span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
-    : winDue(c.due, now)
+    : r.agent?.ask ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : winDue(c.due, now)
+  // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。
+  const sub = r.agent?.ask?.from ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${kindName(c)}</span>
-    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${t ? `<span class="crumb">${esc(t.task.title)}</span>` : ''}</span>
+    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
     <span class="du${closed ? ' cl' : ''}">${right}</span></button>`
 }
 
@@ -176,12 +178,14 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
       // 返事待ち・許可待ちは問いの本文と選択肢を先に出す（開かずに答えを決められるように）。読めなければ、読めなかったと書く。
       const a = r.agent
       const asking = a?.stop === 'waiting' || a?.stop === 'blocked'
-      const ask = a?.ask
-        ? clampQuote(a.ask.text, ui, `ask:${keyOf(r)}`) + (a.ask.options?.length ? `<ol class="rich">${a.ask.options.map((o) => `<li>${esc(o)}</li>`).join('')}</ol>` : '')
-        : asking ? `<p class="mut">${a.chat ? 'チャット' : '端末の画面'}から問いの本文を読めませんでした。開いて確かめてください</p>` : ''
-      return [fld(a?.ask?.kind === 'permit' ? '許可を求めていること' : '聞かれていること', ask),
+      // 題に収まった問いは本文を重ねない（初見 4）。選択肢は窓では選べないので、判断の押せる選択肢と見分けられるよう番号を付けず、どこで選ぶかを添える（初見 3）。
+      const full = a?.ask && askLine(a.ask.text) !== a.ask.text.trim() ? clampQuote(a.ask.text, ui, `ask:${keyOf(r)}`) : ''
+      const pick = c.id.startsWith('#ask:') ? `${r.owner.how === 'main' ? '窓口' : '担当'}に伝える` : `${a?.chat ? 'チャット' : '端末'}で選ぶ`
+      const opts = a?.ask?.options?.length ? fld(`選択肢（${pick}）`, `<ul class="rich">${a.ask.options.map((o) => `<li>${esc(o)}</li>`).join('')}</ul>`) : ''
+      const unread = !a?.ask && asking ? `<p class="mut">${a.chat ? 'チャット' : '端末の画面'}から問いの本文を読めませんでした。開いて確かめてください</p>` : ''
+      return [fld(a?.ask?.kind === 'permit' ? '許可を求めていること' : '聞かれていること', full || unread), opts,
         a?.ask ? '' : fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld(a?.ask ? '聞いた日時' : '停止日時', esc(fmtDate(c.since))) : '',
-        fld('直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
+        fld(a?.ask ? '答え方' : '直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
     }
     case 'consult':
       return [fld('論点', note(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)), fld('分かっていること', list(c.known)), fld('決めかねていること', list(c.undecided))].join('')
@@ -256,8 +260,8 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
     <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}${nextBtn}</div>
-      <div class="kl"><span class="kd">${kindName(c)}</span>${c.id.startsWith('#') ? '<span class="mut">Orca から</span>' : ''}${winDue(c.due, now)}</div>
-      <h2>${esc(c.title)}</h2><div>${ownerHtml(r.owner, r.agent ? undefined : b.v.owners)}</div></div>
+      <div class="kl"><span class="kd">${kindName(c)}</span>${c.id.startsWith('#') ? '<span class="mut">Orca が検知</span>' : ''}${winDue(c.due, now)}</div>
+      <h2>${esc(c.title)}</h2><div>${r.agent?.ask?.from ? `<span class="owner">${esc(r.agent.ask.from)}</span>` : ownerHtml(r.owner, r.agent ? false : b.v.owners)}</div></div>
     ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
     ${closed ? '' : otherHtml(r, ui)}
@@ -378,7 +382,8 @@ function taskDetail(b: Board, t: TaskView, ui: Ui): string {
   const cardLine = (v: (typeof cards)[number]) => {
     const k = keyOf(v)
     const state = v.card.kind === 'consult' ? '相談' : v.card.kind === 'report' ? '報告' : CARD_STATE[v.status]
-    const inner = `<span class="kd">${kindName(v.card)}</span><span class="ti">${esc(v.card.title)}</span><span class="${v.status === 'waiting' ? 'mut' : 'now'}">${esc(state)}</span>`
+    // 停止は一覧の行と同じく危険の色にする（Neon 追加 23）。
+    const inner = `<span class="kd${v.card.kind === 'stuck' ? ' hotc' : ''}">${kindName(v.card)}</span><span class="ti">${esc(v.card.title)}</span><span class="${v.status === 'waiting' ? 'mut' : 'now'}">${esc(state)}</span>`
     return listed.has(k) ? `<button type="button" class="lc" data-jump="${esc(k)}">${inner}</button>` : `<div class="lc">${inner}</div>`
   }
   const reqs = b.d.requests.filter((r) => r.req.tasks?.includes(task.id))

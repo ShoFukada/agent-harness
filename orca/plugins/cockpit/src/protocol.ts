@@ -4,7 +4,7 @@ import type { Card, Cockpit, ConsultMemo, DraftFormat, Handoff, OpType, UserLog,
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
 
 /** 止まったエージェントが人に出している問い。question: 質問（AskUserQuestion・orchestration の question）、permit: 道具を使ってよいかの確認。 */
-export type Ask = { kind: 'question' | 'permit'; text: string; options?: string[] }
+export type Ask = { kind: 'question' | 'permit'; text: string; options?: string[]; /** 誰が誰に聞いているかの 1 行（窓の行の 2 行目と詳細の題の下）。derive が足す。 */ from?: string }
 
 /** Orca の orchestration の question のうち、答えの無いまま待っているもの（window/orca-state.ts の questionFacts）。 */
 export type QuestionFact = {

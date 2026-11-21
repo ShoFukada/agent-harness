@@ -243,14 +243,15 @@ function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, writt
       const ownStream = c.owners?.find((o) => o.terminal && o.terminal === a.terminalId)?.stream
       // 仕事の名前は Orca のサイドバーと同じもの（仕事の題）を先にする。
       const name = c.streams.find((s) => s.id === (task?.stream ?? ownStream))?.title ?? a.job ?? a.title ?? 'worker'
-      // 問いが読めたら、誰が何を聞いているかを 1 行にする（窓を開くだけで答えられるように）。
-      const what = a.ask ? `${a.ask.kind === 'permit' ? 'が許可を求めている' : 'が聞いている'}: ${askLine(a.ask.text)}` : `が${STOP_LABEL[a.stop!]}`
+      // 問いが読めたら、題は問いそのものにし、誰が聞いているかは 2 行目に回す（行の頭が問いで始まり、切れても何を聞かれたか分かるように。初見 1）。
+      const role = c.owners?.some((o) => (o.terminal && o.terminal === a.terminalId) || (o.session && o.session === a.session)) ? '担当' : 'worker'
+      const ask = a.ask && { ...a.ask, from: `${role}（${task?.title ?? name}）が${a.ask.kind === 'permit' ? '許可を求めている' : 'あなたに聞いている'}` }
       const card: Card = {
         id: agentCardId(a), rev: a.since, kind: 'stuck', state: 'open',
-        title: `「${name}」${what}`, since: new Date(a.since).toISOString(),
+        title: ask ? `${ask.kind === 'permit' ? '許可: ' : ''}${askLine(ask.text)}` : `「${name}」が${STOP_LABEL[a.stop!]}`, since: new Date(a.since).toISOString(),
         reason: `${STOP_LABEL[a.stop!]}${a.reset ? `（${a.reset} に戻る）` : ''}`, answerable, unblock, stream: task?.stream, tasks: task ? [task.id] : undefined
       }
-      return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: { title: name, how: a.chat ? 'chat' as const : 'terminal' as const, state: a.state, terminal: a.terminalId ?? undefined, session: a.session }, stream: c.streams.find((s) => s.id === task?.stream), agent: a }
+      return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: { title: name, how: a.chat ? 'chat' as const : 'terminal' as const, state: a.state, terminal: a.terminalId ?? undefined, session: a.session }, stream: c.streams.find((s) => s.id === task?.stream), agent: ask ? { ...a, ask } : a }
     })
 }
 
@@ -273,9 +274,9 @@ function questionRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, no
     .map((q) => {
       const task = c.tasks.find((t) => t.id === q.task)
       const stream = c.streams.find((s) => s.id === (task?.stream ?? q.stream))
-      const who = q.byOwner ? `「${stream?.title ?? q.asker ?? '担当'}」の担当` : `「${task?.title ?? stream?.title ?? q.asker ?? 'worker'}」のworker`
+      const who = q.byOwner ? `担当（${stream?.title ?? q.asker ?? '名前不明'}）` : `worker（${task?.title ?? stream?.title ?? q.asker ?? '名前不明'}）`
       const card: Card = {
-        id: `#ask:${q.id}`, rev: q.at, kind: 'stuck', state: 'open', title: `${who}が${q.to === 'main' ? '窓口' : '担当'}に聞いている: ${askLine(q.line)}`,
+        id: `#ask:${q.id}`, rev: q.at, kind: 'stuck', state: 'open', title: askLine(q.line),
         since: new Date(q.at).toISOString(), reason: STOP_LABEL.waiting, answerable: true, stream: stream?.id, tasks: task ? [task.id] : undefined
       }
       const owner: OwnerRef = q.to === 'main' ? { title: '窓口', how: 'main', terminal: c.main?.terminal || undefined } : ownerOf(c, card, facts)
@@ -284,10 +285,14 @@ function questionRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, no
       const chat = owner.how === 'chat' || !owner.terminal
       const agent: AgentRow = {
         terminalId: chat ? null : owner.terminal!, title: owner.title, agent: null, state: 'waiting', since: q.at, stop: 'waiting',
-        worktree: live?.worktree ?? root, ...(chat && { chat: true }), ask: { kind: 'question', text: q.text, ...(q.options && { options: q.options }) }
+        worktree: live?.worktree ?? root, ...(chat && { chat: true }),
+        // 窓口・担当が答えずに回ってきた理由（答えの無い時間）を、誰が誰に聞いたかと一緒に出す（初見 2）。
+        ask: { kind: 'question', text: q.text, ...(q.options && { options: q.options }), from: `${who}が${q.to === 'main' ? '窓口' : '担当'}に聞いて、${Math.round((now - q.at) / 60_000)} 分答えが無い` }
       }
-      const to = owner.how === 'main' ? '窓口' : `担当「${owner.title}」`
-      card.unblock = `${to}の${chat ? 'チャット' : '端末'}を開いて答えを伝える（${owner.how === 'main' ? '窓口' : '担当'}が聞いた側に返す）`
+      const where = chat ? 'チャット' : '端末'
+      // 担当の Run 宛てでも担当を引けなければ窓口を開くので、そう書く（担当を開くように見せない）。
+      card.unblock = owner.how !== 'main' ? `担当（${owner.title}）の${where}を開いて答えを伝えれば、担当が${who}に返す`
+        : q.to === 'main' ? `窓口の${where}を開いて答えを伝えれば、窓口が${who}に返す` : `宛先の担当を引けないため、窓口の${where}を開いて伝える`
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner, stream, agent }
     })
 }

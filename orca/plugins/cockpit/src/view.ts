@@ -185,9 +185,10 @@ export const OWNER_STATE: Record<string, string> = { working: '作業中', block
  * 担当の行。owners を渡す窓では、担当の端末かチャットを前に出すボタンにする（「チャット」「端末」の語だけでは押せるか分からない。Neon 追加 22）。
  * チャットは Orca がタブを前に出せないので、居場所の worktree が分かるときだけボタンにする。
  */
-export function ownerHtml(o: OwnerRef, owners?: OwnerLive[]): string {
-  const where = o.how === 'main' ? '' : o.how === 'chat' ? 'チャット' : '端末'
-  const wt = o.how === 'chat' && o.session ? owners?.find((x) => x.session === o.session)?.worktree : undefined
+export function ownerHtml(o: OwnerRef, owners?: OwnerLive[] | false): string {
+  // false: 操作の帯に同じ「端末を開く」がある行。ここでは「端末」「チャット」の語を出さない（押せない語を並べない。Neon 追加 23）。
+  const where = o.how === 'main' || owners === false ? '' : o.how === 'chat' ? 'チャット' : '端末'
+  const wt = o.how === 'chat' && o.session && owners ? owners.find((x) => x.session === o.session)?.worktree : undefined
   const open = owners && (o.how === 'terminal' ? !!o.terminal : !!wt)
     ? `<button type="button" class="act" data-term="${esc(o.how === 'terminal' ? o.terminal : '')}" data-wt="${esc(wt ?? '')}">${where}を開く</button>`
     : where ? `<span>${where}</span>` : ''

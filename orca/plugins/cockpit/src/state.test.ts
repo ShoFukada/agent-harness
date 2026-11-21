@@ -407,11 +407,14 @@ test('工程は 5 段に寄せる。実データ（nix-darwin の帳簿、11/21 
 test('答えの無い question は、窓口宛ては 5 分・担当宛ては 30 分たってから出す。窓口が問いのあとに同じタスクのカードを書いたら、そちらだけを出す。対応済みで隠せる', () => {
   const w = ws(0)
   const q = (over: Partial<QuestionFact>): QuestionFact => ({ id: 'm1', at: NOW - 6 * 60_000, line: '並びを変えるか', text: '並びを変えるか', to: 'main', task: 't1', ...over })
-  const asks = (questions: QuestionFact[], c = w.cockpit, log = w.log) => derive(c, log, [], '/a', { workers: [], questions }, NOW).queue.filter((r) => r.card.id.startsWith('#ask:')).map((r) => r.card.title)
+  const asks = (questions: QuestionFact[], c = w.cockpit, log = w.log) => derive(c, log, [], '/a', { workers: [], questions }, NOW).queue.filter((r) => r.card.id.startsWith('#ask:')).map((r) => r.agent!.ask!.from)
   assert.deepEqual(asks([q({}), q({ id: 'm2', at: NOW - 4 * 60_000 }), q({ id: 'm3', to: 'owner', at: NOW - 20 * 60_000 }), q({ id: 'm4', to: 'owner', at: NOW - 31 * 60_000, task: undefined, stream: 's2', asker: '構成図' })]), [
-    '「一覧の並べ替えと絞り込み」のworkerが窓口に聞いている: 並びを変えるか',
-    '「AWS 構成案」のworkerが担当に聞いている: 並びを変えるか'
+    'worker（一覧の並べ替えと絞り込み）が窓口に聞いて、6 分答えが無い',
+    'worker（AWS 構成案）が担当に聞いて、31 分答えが無い'
   ])
+  // 担当の Run 宛てでも担当を引けなければ、窓口を開くと書く（担当を開くように見せない）。
+  const lost = derive(w.cockpit, w.log, [], '/a', { workers: [], questions: [q({ to: 'owner', at: NOW - 31 * 60_000, task: undefined })] }, NOW).queue.find((r) => r.card.id === '#ask:m1')!
+  assert.equal(lost.card.unblock, '宛先の担当を引けないため、窓口の端末を開いて伝える')
   const carded = structuredClone(w.cockpit)
   carded.cards.push({ id: 'd30', rev: 1, kind: 'decide', state: 'open', at: new Date(NOW - 60_000).toISOString(), title: '一覧の既定の並び', tasks: ['t1'] })
   assert.deepEqual(asks([q({})], carded), [])

@@ -187,7 +187,7 @@ body { margin:0; }
 .ck .btn.talk { border-color:var(--focus); color:var(--focus); }
 .ck .btn.quiet { border-color:transparent; color:var(--ink2); font-weight:400; }
 .ck .acts .hint { margin-left:auto; font-size:var(--fs-xs); color:var(--ink3); }
-.ck kbd { font:inherit; font-size:var(--fs-xs); border:1px solid var(--rule); border-radius:4px; padding:0 4px; }
+.ck kbd { font:inherit; font-size:var(--fs-xs); border:1px solid var(--ink3); border-radius:4px; padding:0 4px; }
 
 /* ── 右の列: 案件の今・話し中・顧客待ち・報告・片付いた ── */
 /* 右の列は区切り線で区分を分け、囲みの箱にしない（R111）。 */
@@ -414,8 +414,8 @@ body { margin:0; }
 /* 開いた中身は、開閉の印の幅だけ下げて仕事の名前より左に出さない。 */
 .ck.win .st .inner { padding:0 4px 10px 26px; display:grid; gap:0; }
 .ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:6px 0 0; display:flex; gap:8px; align-items:center; }
-.ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); margin:0 -6px; padding-right:6px; }
-.ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:3px 6px; font:inherit; color:inherit; min-width:0; }
+.ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); margin:0 -12px; padding-right:12px; }
+.ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:3px 6px 3px 12px; font:inherit; color:inherit; min-width:0; }
 .ck.win .task:hover { background:var(--sunk); }
 .ck.win .task:has(> .tsel[aria-current="true"]) { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .task .wk { padding-top:3px; }
