@@ -969,8 +969,8 @@ function taskDetail(ctx: Ctx, t: Task): string {
   if (t.sources?.length) h += `<div class="src mut">出典 ${t.sources.map((s) => linkHtml(s)).join('')}</div>`
   const fig = figure(ctx, t.figure)
   if (fig) h += `<div class="sec"><div class="h">現在の案</div>${fig}</div>`
-  // パネルは worker とタスクを結べない（Orca の worktree の一覧を持たない）ので、worker の欄は窓だけに出す。
-  if (t.worker && ctx.v.worktrees) {
+  // パネルは Orca の orchestration を読めないので、worker の欄は窓だけに出す。
+  if (t.worker && ctx.v.dispatches) {
     const ws = ctx.v.workers.filter((w) => w.task === t.id)
     const why = ctx.shown(t).why
     const note = why === 'ok' ? '<span class="mut">終了（取り込み済み）</span>'
@@ -1066,7 +1066,7 @@ export function render(v: CockpitView | null, ui: Ui, now: number, svg: (raw: st
       <div class="mut" style="margin-top:8px">メインのエージェントに <code>cockpit skill で操縦席を作って</code> と頼むと作られます。</div></div>`
   }
   const c = v.cockpit
-  const d = derive(c, v.log, v.archive, v.worktrees ? { workers: v.workers, worktrees: v.worktrees } : undefined)
+  const d = derive(c, v.log, v.archive, v.dispatches ? { workers: v.workers, dispatches: v.dispatches } : undefined)
   const ctx: Ctx = { v, c, ui, now, views: d.views, d, tasks: new Map(c.tasks.map((t) => [t.id, t])), svg, inWindow, shown: (t) => d.tasks.get(t.id)! }
   const body = ui.tab === 'todo' ? todo(ctx) : ui.tab === 'whole' ? whole(ctx) : arch(ctx)
   const toast = ui.toast

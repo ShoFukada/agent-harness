@@ -87,21 +87,21 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 - どの項目にも「選択肢以外で決める」の欄がある。選択肢に無い答えや「もう手で送った」を書いて送ると、`decide`・`option_id: "other"`・`text` を追記する。反映待ちのあいだは「送った答え: …（メインが反映待ち）」、反映後は「あなたの答え: …」と対応済みに残る
 
 ## worker とタスク
-メインが worker を立てたときに、タスクの `worker.worktree_id` に Orca の worktree id を、`worker.terminal` に worker の端末の handle を記録する。窓は `orca worktree ps` の稼働状態を、端末の記録 → 同じ worktree の済んでいないタスク → 同じ worktree の最後のタスクの順で引いてタスク・依頼に結び（`model.ts` の `taskOfWorker`）、止まった worker の帯にはタスクの名前を出す。記録の無い worker は、今までどおり worktree の表示名・コメントから名前を取る。
+メインが担当や worker を Orca の orchestration で立てたときに、タスクの `worker` に受け取りの `task_id`・`dispatch_id` を記録する。窓は済んでいないタスクの Dispatch を `orca orchestration worker-show --dispatch <id> --full` で引き（`window/orca-state.ts` の `orcaDispatches`）、Dispatch の端末で `orca worktree ps` のエージェントとタスクを結んで、止まった worker の帯にタスクの名前を出す。記録の無い worker は、worktree の表示名・コメントから名前を取る。
 
-worker の記録があるタスクの状態は、メインの書いた `state` ではなく Orca の状態から出す（`model.ts` の `shownTask`）。全体の行・大タスクの画面のタスクの行・タスクの詳細はすべてこれを通すので、場所によって状態が食い違わない。メインの書いた `state` をそのまま出すのは、`ok`（取り込み済み）と利用者の番の `stop`・`wait` だけ。パネルは worktree の一覧を持たないので、メインの書いた `state` のまま出し、worker の欄を出さない。
+worker の記録があるタスクの状態は、メインの書いた `state` ではなく Dispatch の様子から出す（`model.ts` の `shownTask`）: worker_done を返したら取り込み待ち、起動できない・落ちた・端末が消えたら止まっている、人の確認待ちなら許可待ち、Orca に無ければ見つからない（記録漏れ）、それ以外は進行中。全体の行・大タスクの画面のタスクの行・タスクの詳細はすべてこれを通すので、場所によって状態が食い違わない。メインの書いた `state` をそのまま出すのは、`ok`（取り込み済み）と利用者の番の `stop`・`wait` だけ。パネルは orchestration を読めないので、メインの書いた `state` のまま出し、worker の欄を出さない。
 
 ## 書体
 IBM Plex Sans JP（Mac に入れておく）を第一に、無ければヒラギノ。パネルは Orca のサンドボックスで Web フォントを読めないので、Mac に入れた書体を名前で指す。文字の大きさは 22・17・15・14 の 4 種類。
 
 ## メインの端末への合図
 
-端末には中身を送らず、`【操縦席】未反映の操作があります` の 1 行だけを送る。利用者が決めたあとに「知らせる」操作はさせない。
+メインには中身を送らず、`【操縦席】未反映の操作があります` の 1 行だけを送る。利用者が決めたあとに「知らせる」操作はさせない。
 
 - 取り消しの猶予（10 秒）が過ぎたら自動で送る。ただし Orca の `terminal.sendText`（窓は `orca terminal send`）は入力欄に打ち込むのと同じなので、メインのエージェントが作業中（working）の間は送らない。入力待ちになった知らせ（`agent.status.changed`、窓は `focus.json` の `agents_at`）で送る。ポーリングはしない
 - 届けたら「メインに届けました」、送れなかったときだけ「もう一度送る」を出す。話したいことも同じく猶予のあとに送り、合図の 1 行に本文の頭を載せる
 - パネルと窓は別のプロセスなので、操作を書いたほうが 10 秒で送り、もう片方は 30 秒待ってから拾う（書いたほうが送れなかったときだけ）。どこまで送ったかは `~/Library/Application Support/cockpit/notified.json` で共有する
-- メインが Orca のチャットで動いていて `main.terminal` が空のときは、送る手段が無い（Orca の CLI にもチャットへ文を送るものが無い）ので、「次に話しかけたときに反映されます」と出す
+- メインが Orca のチャットで動いていて `main.terminal` が空のときは、送る手段が無い（Orca の CLI にもチャットへ文を送るものが無い。`orca orchestration send` は送り主の端末が要り、端末を持たない窓の常駐のプロセスからは `no_active_sender_terminal` で断られる）ので、「次に話しかけたときに反映されます」と出す
 
 ## 開発
 
@@ -112,7 +112,7 @@ COCKPIT_PORT=47299 COCKPIT_DIR=$TMPDIR/cockpit node --disable-warning=Experiment
 node window/state.ts <ワークスペースの root>   # hook とメインが読む判定済みの状態
 ```
 
-- `orca plugin dev load .` は本物の `local.cockpit` を置き換える。読み込み元を消すとプラグインの worker が止まり、Orca に合わせた切り替え（`focus.json`）が止まる。本物は承認待ちに戻る。worktree で触るときは、上のテストと別のポートの窓で確かめ、読み込んだら報告の前に `orca plugin dev unload <dir>` で外す（`workerctl done` も消す前に外す）
+- `orca plugin dev load .` は本物の `local.cockpit` を置き換える。読み込み元を消すとプラグインの worker が止まり、Orca に合わせた切り替え（`focus.json`）が止まる。本物は承認待ちに戻る。worktree で触るときは、上のテストと別のポートの窓で確かめ、読み込んだら報告の前に `orca plugin dev unload <dir>` で外す（worktree を消す前にも外す）
 - `local.cockpit` が承認待ち・止まっている・開発用に置き換わっているときは、窓の上の帯に理由を出し（`window/orca-state.ts` の `pluginProblem`）、hook がメインに承認を頼む dec を出させる
 
 HTML パネルは `orca plugin shot --act` で操作できないので、操作の流れは窓のページ（同じ controller）をブラウザで確かめる。

@@ -9,9 +9,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chatMain, type Op, type OpType } from '../src/model.ts'
-import type { CockpitView, NotifyResult, OpInput, WindowView, WsRow } from '../src/protocol.ts'
+import type { CockpitView, DispatchFact, NotifyResult, OpInput, WindowView, WsRow } from '../src/protocol.ts'
 import { derive } from '../src/state.ts'
-import { orcaAgents, orcaWorktrees, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
+import { orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { buildPrompt, claudeCli, FAILED_TEXT, parseAnswer, type Ask } from './assistant.ts'
 import { appendOp, appendReply, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
@@ -29,6 +29,8 @@ export type Orca = {
   ps(): Promise<PsRow[]>
   terminals(): Promise<TerminalRow[]>
   plugins(): Promise<PluginRow[]>
+  /** orchestration worker-show --full。Dispatch が Orca に無ければ null。 */
+  show(dispatch: string): Promise<WorkerShow | null>
   send(terminal: string, text: string): Promise<void>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
@@ -41,13 +43,13 @@ export function orcaCli(bin = 'orca'): Orca {
   const run = (args: string[]) =>
     new Promise<Record<string, unknown>>((resolve, reject) =>
       execFile(bin, [...args, '--json'], { timeout: 15_000, maxBuffer: 64 << 20 }, (err, out) => {
-        let json: { ok?: boolean; result?: Record<string, unknown>; error?: { message?: string } } | undefined
+        let json: { ok?: boolean; result?: Record<string, unknown>; error?: { message?: string; code?: string } } | undefined
         try {
           json = JSON.parse(out)
         } catch {
           return reject(new Error(err?.message ?? 'orca の出力を読めません'))
         }
-        if (err || json?.ok === false) return reject(new Error(json?.error?.message ?? err?.message ?? 'orca が失敗しました'))
+        if (err || json?.ok === false) return reject(Object.assign(new Error(json?.error?.message ?? err?.message ?? 'orca が失敗しました'), { code: json?.error?.code }))
         resolve(json?.result ?? {})
       })
     )
@@ -75,6 +77,14 @@ export function orcaCli(bin = 'orca'): Orca {
       if (mine) mine.folderHash = ((await run(['plugin', 'inspect', mine.source!.reference!]).catch(() => ({}))) as { contentHash?: string }).contentHash ?? null
       return rows.map(({ kind: _kind, ...r }) => r)
     },
+    show: (dispatch) =>
+      run(['orchestration', 'worker-show', '--dispatch', dispatch, '--full']).then(
+        (r) => r as WorkerShow,
+        (e: Error & { code?: string }) => {
+          if (e.code === 'dispatch_not_found') return null
+          throw e
+        }
+      ),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
@@ -117,6 +127,8 @@ export function createServer(opts: Options) {
   const wss = new Map<string, Ws>()
   let ps: PsRow[] = []
   let terms = new Map<string, string>()
+  /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
+  const facts = new Map<string, Record<string, DispatchFact | null>>()
   let orcaError: string | undefined
   let pluginNote: string | undefined
   let alerts: string[] = []
@@ -148,9 +160,8 @@ export function createServer(opts: Options) {
   }
   const selected = () => (mode === 'manual' ? manual : followRoot())
 
-  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit)
+  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root))
   const workersOf = (root: string, files: Files) => agentsOf(root, files).workers
-  const worktreesOf = (root: string) => orcaWorktrees(root, ps)
 
   async function cockpitView(root: string | undefined): Promise<CockpitView> {
     const ws = root ? wss.get(root) : undefined
@@ -158,7 +169,7 @@ export function createServer(opts: Options) {
     return {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit: files.cockpit, log: files.log, archive: files.archive, figures: files.figures, errors: files.errors,
-      workers: root ? workersOf(root, files) : [], worktrees: root ? worktreesOf(root) : [], notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal,
+      workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal,
       replies: files.replies, thinking: ws?.thinking?.size ? [...ws.thinking] : undefined, handoff: files.handoff
     }
   }
@@ -189,7 +200,8 @@ export function createServer(opts: Options) {
       const c = ws.files.cockpit
       if (!c) continue
       const workers = workersOf(ws.root, ws.files)
-      const d = derive(c, ws.files.log, ws.files.archive, { workers, worktrees: worktreesOf(ws.root) })
+      const dispatches = facts.get(ws.root)
+      const d = derive(c, ws.files.log, ws.files.archive, dispatches && { workers, dispatches })
       const next = d.open[0]
       list.push({
         root: ws.root, name: c.workspace.name, open: d.open.length, due: next?.due, counts: d.counts,
@@ -306,6 +318,7 @@ export function createServer(opts: Options) {
         pluginNote = plugins && pluginProblem(plugins)
         ps = rowsNow
         terms = new Map(tl.map((t) => [`${t.tabId}:${t.leafId}`, t.handle]))
+        for (const ws of wss.values()) if (ws.files.cockpit) facts.set(ws.root, await orcaDispatches(ws.files.cockpit, orca.show))
         orcaError = undefined
       } catch (e) {
         orcaError = 'Orca に繋がりません'

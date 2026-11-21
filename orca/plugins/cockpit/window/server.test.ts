@@ -8,6 +8,7 @@ import type { WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
 import type { Ask } from './assistant.ts'
 import { createServer, stopReason, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import type { WorkerShow } from './orca-state.ts'
 
 const SAMPLE = readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8')
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -26,9 +27,12 @@ const cockpit = (name: string, over: Record<string, unknown> = {}) => {
   c.main = { agent: 'claude', terminal: 'term_main' }
   return JSON.stringify({ ...c, ...over })
 }
+/** Orca に働きかけた呼び出し。Dispatch の問い合わせ（show）は読むだけなので除く。 */
+const acts = (calls: string[][]) => calls.filter((x) => x[0] !== 'show')
+
 const agent = (paneKey: string, over: Partial<PsAgent> = {}): PsAgent => ({ paneKey, state: 'working', stateStartedAt: 1, hasLivePty: true, ...over })
 
-function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }]) {
+function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], shows: Record<string, WorkerShow> = {}) {
   const calls: string[][] = []
   const orca: Orca = {
     ps: async () => rows,
@@ -37,6 +41,7 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
       { handle: 'term_w1', tabId: 't', leafId: 'w1' }
     ],
     plugins: async () => plugins,
+    show: async (id) => (calls.push(['show', id]), shows[id] ?? null),
     send: async (t, text) => void calls.push(['send', t, text]),
     activate: async (root) => void calls.push(['activate', root]),
     switchTerminal: async (t) => void calls.push(['switch', t]),
@@ -51,12 +56,12 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, ask: Ask | null = null, plugins?: PluginRow[]) {
+async function start(rows: PsRow[], focusPath?: string, ask: Ask | null = null, plugins?: PluginRow[], shows?: Record<string, WorkerShow>) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
   if (focusPath) setFocus(focusPath)
-  const fake = fakeOrca(rows, plugins)
+  const fake = fakeOrca(rows, plugins, shows)
   // テストでは claude CLI を起こさない（ask を渡したテストだけ答える）。
   const s = createServer({ port: 0, dir, orca: fake.orca, ask })
   servers.push(s)
@@ -245,7 +250,7 @@ test('操作は共有の関数で cockpit.user.json に追記する。話した�
   await listen(port, s.token).until((w) => w.rows.length === 3)
   const r = await post('op', { root: a, item_id: 'd1', item_rev: 1, type: 'talk', text: '偏りは？' })
   assert.equal(r.status, 200)
-  assert.deepEqual(calls, [])
+  assert.deepEqual(acts(calls), [])
   const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))
   assert.deepEqual(log.ops.map((o: { op_id: number; type: string; text?: string }) => [o.op_id, o.type, o.text]), [[1, 'talk', '偏りは？']])
   assert.equal((await post('op', { root: a, item_id: 'd1', item_rev: 1, type: 'talk', text: '  ' })).status, 400)
@@ -262,7 +267,7 @@ test('帯の印は端末を前に出し、端末が無ければ worktree を開�
   assert.deepEqual((await post('focus', { terminalId: 'term_w1', worktree: child })).body, { focused: true })
   assert.deepEqual((await post('focus', { terminalId: '', worktree: child })).body, { focused: true })
   assert.deepEqual((await post('focus', { terminalId: 'term_x', worktree: '/etc' })).body, { focused: false })
-  assert.deepEqual(calls, [['switch', 'term_w1'], ['activate', child]])
+  assert.deepEqual(acts(calls), [['switch', 'term_w1'], ['activate', child]])
 })
 
 test('止まった理由: 許可待ち・返事待ち・落ちた・利用枠・ログイン切れ・エラー・中断。終わったものは止まっていない', () => {
@@ -309,19 +314,22 @@ test('窓でも、取り消しの猶予が過ぎた操作はメインが入力�
   const { s, port, calls, dir } = await start(rows, a)
   const v = await listen(port, s.token).until((w) => w.view.notifiedOp === 1)
   assert.equal(v.view.signal, undefined)
-  assert.deepEqual(calls, [['send', 'term_main', SIGNAL]])
+  assert.deepEqual(acts(calls), [['send', 'term_main', SIGNAL]])
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'notified.json'), 'utf8')), { [a]: 1 })
 })
 
-test('worker は操縦席の task に記録された worktree id で task に結び、仕事の名前は task の名前にする', async () => {
+test('worker は操縦席の task に記録された Dispatch の端末で task に結び、仕事の名前は task の名前にする', async () => {
   const { a, child, rows } = twoWorkspaces()
   const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
-  c.tasks.find((t: { id: string }) => t.id === 't2').worker = { worktree_id: 'r::a-w1' }
+  c.tasks.find((t: { id: string }) => t.id === 't2').worker = { task_id: 'task_w1', dispatch_id: 'ctx_w1' }
   writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
   rows.find((r) => r.path === child)!.displayName = 'notify｜表示名から推した名前'
-  const { s, port } = await start(rows, a)
+  const shows = { ctx_w1: { projection: { stage: { worker: 'ready' }, liveness: { verdict: 'live' } }, terminal: { handle: 'term_w1' }, observation: { agentWait: null } } }
+  const { s, port } = await start(rows, a, null, undefined, shows)
   const v = await listen(port, s.token).until((w) => w.view.workers.length === 1 && w.rows.length === 3)
   assert.deepEqual(v.view.workers.map((w) => [w.task, w.job]), [['t2', '通知の設計']])
+  // view は JSON で届くので settledAt: undefined は欄ごと落ちる。ctx_a2 は fixture の進行中のタスクの記録で、偽物の Orca に無い
+  assert.deepEqual(v.view.dispatches, { ctx_w1: { state: 'ready', liveness: 'live', terminal: 'term_w1', waiting: false }, ctx_a2: null })
 
   delete c.tasks.find((t: { id: string }) => t.id === 't2').worker
   writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
@@ -329,22 +337,18 @@ test('worker は操縦席の task に記録された worktree id で task に結
   assert.equal(v2.view.workers[0]!.job, '表示名から推した名前', '記録が無ければ今までどおり表示名から')
 })
 
-test('同じ worktree に複数のタスクがあれば、端末の記録 → 済んでいないタスク → 最後のタスクの順で結ぶ。生きている worktree を view に渡す', async () => {
+test('Orca に無い Dispatch は null で view に渡し、済んだタスクの Dispatch は問い合わせない', async () => {
   const { a, rows } = twoWorkspaces()
   const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
   const task = (id: string) => c.tasks.find((t: { id: string }) => t.id === id)
-  // t8（済み）が先に並び、t2（進行中）が後ろ。済んだ t8 に結ぶと、進行中の t2 が「動いていない」と出る（2026-11-16 の t1 と t25）
-  task('t8').worker = { worktree_id: 'r::a-w1' }
-  task('t2').worker = { worktree_id: 'r::a-w1' }
+  task('t8').state = 'ok'
+  task('t8').worker = { task_id: 'task_old', dispatch_id: 'ctx_old' }
+  task('t2').worker = { task_id: 'task_gone', dispatch_id: 'ctx_gone' }
   writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
-  const { s, port } = await start(rows, a)
-  const v = await listen(port, s.token).until((w) => w.view.workers.length === 1 && w.rows.length === 3)
-  assert.deepEqual(v.view.workers.map((w) => w.task), ['t2'])
-  assert.deepEqual(v.view.worktrees, ['r::a', 'r::a-w1'])
-
-  task('t8').worker = { worktree_id: 'r::a-w1', terminal: 'term_w1' }
-  writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
-  assert.deepEqual((await listen(port, s.token).until((w) => w.view.workers[0]?.task === 't8')).view.workers.map((w) => w.task), ['t8'], '端末の記録が先')
+  const { s, port, calls } = await start(rows, a)
+  const v = await listen(port, s.token).until((w) => w.rows.length === 3 && !!w.view.dispatches)
+  assert.deepEqual(v.view.dispatches, { ctx_gone: null, ctx_a2: null })
+  assert.ok(!calls.some((x) => x[0] === 'show' && x[1] === 'ctx_old'))
 })
 
 test('開けるのは本線と本線の子の worktree の中のファイルだけ。日本語の名前と path:行 も開く', async () => {

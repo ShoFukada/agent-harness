@@ -4,7 +4,7 @@ import {
   DEFAULT_PHASES, doneAt, doneText, isYours, missingFields, overlay, shownTask, unappliedOps, worstState,
   type Cockpit, type Item, type ItemKind, type Milestone, type ItemView, type Request, type Stream, type Task, type TaskShown, type TaskState, type UserLog
 } from './model.ts'
-import type { AgentRow, StopReason } from './protocol.ts'
+import type { AgentRow, DispatchFact, StopReason } from './protocol.ts'
 
 export const ST_LABEL: Record<TaskState, string> = { stop: '止まっている', run: '進行中', wait: '外部待ち', idle: '未着手', ok: '完了' }
 export const STOP_LABEL: Record<StopReason, string> = {
@@ -50,14 +50,14 @@ export function upcomingMilestones(ms: Milestone[] | undefined, now: number): (M
     .map(({ t, ...m }) => ({ ...m, left: Math.round((dayOf(t) - dayOf(now)) / 86_400_000) }))
 }
 
-/** Orca から分かること。パネルは worktree の一覧を持たないので undefined（タスクはメインの書いた state のまま）。 */
-export type OrcaFacts = { workers: AgentRow[]; worktrees: string[] }
+/** Orca から分かること。パネルは orchestration を読まないので undefined（タスクはメインの書いた state のまま）。dispatches の null は Orca に無い。 */
+export type OrcaFacts = { workers: AgentRow[]; dispatches: Record<string, DispatchFact | null> }
 
 /**
  * label は一覧に出す短い状態の文。situation は誰の・何を待っていて・いつからかまで入れた今の様子、
  * detail は situation に次の作業（「次: …」）を足した 1 行。
  */
-export type TaskView = TaskShown & { task: Task; label: string; situation: string; detail: string; since?: string; agents: AgentRow[] }
+export type TaskView = TaskShown & { task: Task; label: string; situation: string; detail: string; since?: string; agents: AgentRow[]; settledAt?: number }
 export type RequestView = { request: Request; status: RequestStatus; label: string }
 export type Counts = { dec: number; ask: number; rev: number }
 
@@ -173,12 +173,12 @@ export function derive(c: Cockpit, log: UserLog, archive: Item[], orca: OrcaFact
   const open = views.filter((x) => !x.closed && isYours(x.item)).map((x) => x.item).sort((a, b) => dueKey(a) - dueKey(b) || RANK[a.kind] - RANK[b.kind])
   const yours = new Map<string, ItemKind>()
   for (const i of open) for (const r of i.related ?? []) if (!yours.has(r.task)) yours.set(r.task, i.kind)
-  const alive = orca && new Set(orca.worktrees)
   const workers = orca?.workers ?? []
   const tasks = new Map<string, TaskView>()
   for (const t of c.tasks) {
     const agents = workers.filter((w) => w.task === t.id)
-    const s = shownTask(t, agents, alive && !!t.worker && alive.has(t.worker.worktree_id), new Set(yours.keys()))
+    const fact = orca && t.worker ? orca.dispatches[t.worker.dispatch_id] ?? null : undefined
+    const s = shownTask(t, fact, new Set(yours.keys()))
     const label = taskLabel(s, t, yours.get(t.id))
     const since = waitSince(t, s, views)
     let situation = label
@@ -187,7 +187,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Item[], orca: OrcaFact
       if (i) situation += `「${i.title}」`
     } else if (since) situation += `（${fmtDate(since.slice(0, 10))} から）`
     const next = s.state !== 'ok' && s.why !== 'yours' ? t.next?.trim() : undefined
-    tasks.set(t.id, { ...s, task: t, label, situation, detail: next ? `${situation}。次: ${next}` : situation, since, agents })
+    tasks.set(t.id, { ...s, task: t, label, situation, detail: next ? `${situation}。次: ${next}` : situation, since, agents, settledAt: fact?.settledAt })
   }
   const requests = (c.requests ?? []).map((r) => {
     const status = requestStatus(r, views, tasks)
@@ -347,7 +347,7 @@ export function report(c: Cockpit, log: UserLog, archive: Item[], orca: OrcaFact
   const names = (xs: string[]) => (xs.length ? `（${xs.join(' / ')}）` : '')
   const total = d.counts.dec + d.counts.ask + d.counts.rev
   const next = d.open[0]
-  const intake = tasks.filter((t) => t.why === 'intake' && (!t.agents.length || now - Math.max(...t.agents.map((a) => a.since)) >= INTAKE_GRACE_MS))
+  const intake = tasks.filter((t) => t.why === 'intake' && now - (t.settledAt ?? 0) >= INTAKE_GRACE_MS)
   const pushOpen = c.items.some((i) => i.topic === 'push' && (i.state === 'open' || (i.resolved_option === 'later' && now - new Date(i.resolved_at ?? 0).getTime() < PUSH_LATER_MS)))
   const openItems = d.views.filter((x) => !x.closed).map((x) => x.item)
   return {

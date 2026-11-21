@@ -1,6 +1,8 @@
 // .orca/cockpit.json（メインが書く）と .orca/cockpit.user.json（パネルが書く操作ログ）の形と、
 // その 2 つを重ねて表示の状態を作る純粋な関数。worker とパネルの両方が使う。
 
+import type { DispatchFact } from './protocol.ts'
+
 export type TaskState = 'stop' | 'run' | 'wait' | 'idle' | 'ok'
 /** dec: 決める、ask: 顧客に聞く、rev: 成果物を見て承認する、ack: 読めば済む報告。 */
 export type ItemKind = 'dec' | 'ask' | 'rev' | 'ack'
@@ -25,9 +27,11 @@ export type Task = {
   sources?: string[]
   /** 本文の #123 を PR へのリンクにするリポジトリ（owner/name）。前置きごとに分けるなら { "BE": "owner/be" }。 */
   repo?: Repo
-  /** このタスクを進める worker。メインが worker を立てたときに Orca の worktree id を記録する。 */
-  /** terminal は worker の端末の handle（term_…）。同じ worktree に複数のタスクがあるとき、どれを進めているかを決める。 */
-  worker?: { worktree_id: string; terminal?: string }
+  /**
+   * このタスクを進める担当か worker の、Orca の orchestration の Task と Dispatch（worker-start・send の受け取りの taskId・dispatchId）。
+   * 続きを send して Dispatch が変わったら書き換える。窓はこの Dispatch の様子で状態を出す。
+   */
+  worker?: { task_id: string; dispatch_id: string }
 }
 export type DoneEntry = string | { text: string; at?: string }
 export const doneText = (d: DoneEntry) => (typeof d === 'string' ? d : d.text)
@@ -199,6 +203,9 @@ export function parseCockpit(text: string): Cockpit {
     const done = t.done
     if (done !== undefined && (!Array.isArray(done) || done.some((d) => typeof d !== 'string' && !(isObj(d) && typeof d.text === 'string' && (d.at === undefined || typeof d.at === 'string')))))
       throw new Error(`tasks の done の形が不正です（文字列か { text, at }）: ${String(t.id)}`)
+    const w = t.worker
+    if (w !== undefined && !(isObj(w) && typeof w.task_id === 'string' && typeof w.dispatch_id === 'string'))
+      throw new Error(`tasks の worker の形が不正です（{ task_id, dispatch_id }。workerctl の頃の { worktree_id, terminal } は書き換える）: ${String(t.id)}`)
   }
   for (const i of v.items as Record<string, unknown>[]) {
     if (!ITEM_KINDS.includes(i?.kind as ItemKind)) throw new Error(`items の kind が不正です: ${String(i?.id)}`)
@@ -343,39 +350,26 @@ export function worstState(states: TaskState[]): TaskState | undefined {
   return [...states].sort((a, b) => SEV[a] - SEV[b])[0]
 }
 
-/**
- * 動いている worker が進めているタスク。① 端末の記録が一致するもの ② 同じ worktree の済んでいないもの ③ 同じ worktree の最後のもの。
- * 同じ worktree で済んだタスクを先に拾うと、進行中のタスクが「動いていない」と出るため（2026-11-16 に t1 と t25）。
- */
-export function taskOfWorker(tasks: Task[], worktreeId: string, terminalId: string | null): Task | undefined {
-  const same = tasks.filter((t) => t.worker?.worktree_id === worktreeId)
-  return (terminalId ? tasks.find((t) => t.worker?.terminal === terminalId) : undefined) ?? same.find((t) => t.state !== 'ok') ?? same.at(-1)
-}
-
 /** タスクの状態を、どこから決めたか。ラベルの文は画面（view.ts）が持つ。 */
 export type ShownWhy = 'ok' | 'yours' | 'record' | 'working' | 'intake' | 'stopped' | 'missing'
 export type TaskShown = { state: TaskState; why: ShownWhy; stop?: string }
-/** 結び付いたエージェントの Orca の状態（AgentRow の一部）。stop は止まった理由（返事待ち waiting も含む）。 */
-export type LiveAgent = { state: string; stop?: string }
-
 /**
- * 画面に出すタスクの状態。worker の記録があるタスクは、メインの書いた state ではなく Orca の状態から決める
+ * 画面に出すタスクの状態。worker の記録があるタスクは、メインの書いた state ではなく Orca の Dispatch の様子から決める
  * （メインが書き忘れると「worker が作業中なのに動いていない」のような矛盾が出たため、2026-11-16）。
- * 表のマス・一覧・詳しい欄は、すべてこれを通す。
+ * 表のマス・一覧・詳しい欄は、すべてこれを通す。fact は undefined なら Orca を読んでいない、null なら Orca に無い。
  * - state が ok なら完了（worker の記録は履歴として残る）
  * - 利用者の番の stop・wait（開いた決める・聞く・見てが指す）は、メインの書いた state のまま
- * - 作業中のエージェントがいれば進行中。許可待ち・落ちた・利用枠などで止まっていれば止まっている
- * - 作業を終えた・入力待ち、または worktree はあるがエージェントがいなければ、メインの取り込み待ち
- * - 端末も worktree も見つからなければ、worker が見つからない（メインの記録漏れ）
+ * - worker_done を返していれば、メインの取り込み待ち
+ * - 起動できない・落ちた・端末が消えた・人の確認待ちなら、止まっている
+ * - それ以外は進行中（担当が利用者と話している間や worker を待つ間も、Dispatch は開いたまま）
  */
-export function shownTask(t: Task, linked: LiveAgent[], worktreeAlive: boolean | undefined, yours: Set<string>): TaskShown {
+export function shownTask(t: Task, fact: DispatchFact | null | undefined, yours: Set<string>): TaskShown {
   if (t.state === 'ok') return { state: 'ok', why: 'ok' }
   if ((t.state === 'stop' || t.state === 'wait') && yours.has(t.id)) return { state: t.state, why: 'yours' }
-  // パネルは worktree の一覧を持たない（Orca の状態が分からない）ので、メインの書いた state のまま。
-  if (!t.worker || worktreeAlive === undefined) return { state: t.state, why: 'record' }
-  if (linked.some((a) => a.state === 'working' && !a.stop)) return { state: 'run', why: 'working' }
-  const stopped = linked.find((a) => a.stop && a.stop !== 'waiting')
-  if (stopped) return { state: 'stop', why: 'stopped', stop: stopped.stop }
-  if (linked.length || worktreeAlive) return { state: 'wait', why: 'intake' }
-  return { state: 'stop', why: 'missing' }
+  if (!t.worker || fact === undefined) return { state: t.state, why: 'record' }
+  if (fact === null) return { state: 'stop', why: 'missing' }
+  if (fact.state === 'succeeded') return { state: 'wait', why: 'intake' }
+  if (fact.state === 'failed' || fact.liveness === 'exited') return { state: 'stop', why: 'stopped', stop: fact.liveness === 'exited' ? 'dead' : 'error' }
+  if (fact.waiting) return { state: 'stop', why: 'stopped', stop: 'blocked' }
+  return { state: 'run', why: 'working' }
 }

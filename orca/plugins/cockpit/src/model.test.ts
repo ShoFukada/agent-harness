@@ -2,7 +2,7 @@ import { assert, test } from 'orca/testing'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { nextOp, shownTask, taskOfWorker, overlay, parseCockpit, unappliedOps, worstState, type Cockpit, type Op, type Task } from './model.ts'
+import { nextOp, shownTask, overlay, parseCockpit, unappliedOps, worstState, type Cockpit, type Op, type Task } from './model.ts'
 import { harness } from '../fixtures/harness.ts'
 import { derive } from './state.ts'
 
@@ -111,6 +111,9 @@ test('形の違う cockpit.json は例外にする', () => {
   const c = JSON.parse(readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8'))
   c.tasks[0].state = '"><img src=x onerror=alert(1)>'
   assert.throws(() => parseCockpit(JSON.stringify(c)), /state が不正/)
+  const old = JSON.parse(readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8'))
+  old.tasks[0].worker = { worktree_id: 'r::w', terminal: 'term_w' }
+  assert.throws(() => parseCockpit(JSON.stringify(old)), /worker の形が不正です.*worktree_id/)
 })
 
 test('合図の対象: 自分が書いた操作は猶予の 10 秒、ほかの画面の操作は 30 秒で。未反映の取り消しの組は除き、話したいも同じ猶予で送る', async () => {
@@ -176,27 +179,18 @@ test('合図の 1 行に、話したいの発言の頭を改行を詰めて載�
   assert.equal(signalText([op({ op_id: 1, item_id: '', type: 'repeat' })]), `${SIGNAL}（前にも言った）`)
 })
 
-test('worker が進めるタスクは、端末の記録 → 同じ worktree の済んでいないもの → 同じ worktree の最後のもの', () => {
-  const t = (id: string, state: Task['state'], worker?: Task['worker']): Task => ({ id, stream: 's', phase: 'p', title: id, state, worker })
-  const tasks = [t('t1', 'ok', { worktree_id: 'w' }), t('t2', 'ok', { worktree_id: 'w' }), t('t25', 'run', { worktree_id: 'w' }), t('t30', 'ok', { worktree_id: 'w', terminal: 'term_x' })]
-  assert.equal(taskOfWorker(tasks, 'w', 'term_x')?.id, 't30')
-  assert.equal(taskOfWorker(tasks, 'w', 'term_y')?.id, 't25')
-  assert.equal(taskOfWorker(tasks.filter((x) => x.state === 'ok'), 'w', null)?.id, 't30')
-  assert.equal(taskOfWorker(tasks, 'other', null), undefined)
-})
-
-test('worker の記録があるタスクの状態は Orca の状態から決め、済み・利用者の番・記録の無いタスクはメインの state のまま', () => {
-  const t = (state: Task['state'], worker = true): Task => ({ id: 'x', stream: 's', phase: 'p', title: 'x', state, worker: worker ? { worktree_id: 'w' } : undefined })
+test('worker の記録があるタスクの状態は Orca の Dispatch から決め、済み・利用者の番・記録の無いタスクはメインの state のまま', () => {
+  const t = (state: Task['state'], worker = true): Task => ({ id: 'x', stream: 's', phase: 'p', title: 'x', state, worker: worker ? { task_id: 'task_1', dispatch_id: 'ctx_1' } : undefined })
   const none = new Set<string>()
-  assert.deepEqual(shownTask(t('ok'), [{ state: 'working' }], true, none), { state: 'ok', why: 'ok' })
-  assert.deepEqual(shownTask(t('wait'), [], true, new Set(['x'])), { state: 'wait', why: 'yours' })
-  assert.deepEqual(shownTask(t('run', false), [], true, none), { state: 'run', why: 'record' })
-  assert.deepEqual(shownTask(t('ok'), [], undefined, none), { state: 'ok', why: 'ok' })
-  assert.deepEqual(shownTask(t('run'), [], undefined, none), { state: 'run', why: 'record' }, 'パネルは Orca の状態が分からない')
-  assert.deepEqual(shownTask(t('idle'), [{ state: 'working' }], true, none), { state: 'run', why: 'working' }, 'メインが idle のまま書き忘れても進行中')
-  assert.deepEqual(shownTask(t('run'), [{ state: 'blocked', stop: 'blocked' }], true, none), { state: 'stop', why: 'stopped', stop: 'blocked' })
-  assert.deepEqual(shownTask(t('run'), [{ state: 'waiting', stop: 'waiting' }], true, none), { state: 'wait', why: 'intake' })
-  assert.deepEqual(shownTask(t('run'), [{ state: 'done' }], true, none), { state: 'wait', why: 'intake' })
-  assert.deepEqual(shownTask(t('run'), [], true, none), { state: 'wait', why: 'intake' }, 'worktree はあるが端末を閉じた')
-  assert.deepEqual(shownTask(t('run'), [], false, none), { state: 'stop', why: 'missing' })
+  const live = { state: 'ready', liveness: 'live' }
+  assert.deepEqual(shownTask(t('ok'), live, none), { state: 'ok', why: 'ok' })
+  assert.deepEqual(shownTask(t('wait'), live, new Set(['x'])), { state: 'wait', why: 'yours' })
+  assert.deepEqual(shownTask(t('run', false), undefined, none), { state: 'run', why: 'record' })
+  assert.deepEqual(shownTask(t('run'), undefined, none), { state: 'run', why: 'record' }, 'パネルは Orca の状態が分からない')
+  assert.deepEqual(shownTask(t('idle'), live, none), { state: 'run', why: 'working' }, 'メインが idle のまま書き忘れても進行中')
+  assert.deepEqual(shownTask(t('run'), { ...live, waiting: true }, none), { state: 'stop', why: 'stopped', stop: 'blocked' })
+  assert.deepEqual(shownTask(t('run'), { state: 'succeeded', liveness: 'unverifiable' }, none), { state: 'wait', why: 'intake' })
+  assert.deepEqual(shownTask(t('run'), { state: 'failed', liveness: 'exited' }, none), { state: 'stop', why: 'stopped', stop: 'dead' })
+  assert.deepEqual(shownTask(t('run'), { state: 'failed', liveness: 'unverifiable' }, none), { state: 'stop', why: 'stopped', stop: 'error' }, '起動できなかった')
+  assert.deepEqual(shownTask(t('run'), null, none), { state: 'stop', why: 'missing' })
 })

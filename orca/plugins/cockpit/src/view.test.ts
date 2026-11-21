@@ -2,7 +2,7 @@ import { assert, test } from 'orca/testing'
 import { readFileSync } from 'node:fs'
 import { parseCockpit } from './model.ts'
 import { harness } from '../fixtures/harness.ts'
-import type { AgentRow, CockpitView, WsRow } from './protocol.ts'
+import type { AgentRow, CockpitView, DispatchFact, WsRow } from './protocol.ts'
 import { figureWidth, linkHtml, linkKind, render, richText, type Ui } from './view.ts'
 import { renderWindow } from './window-view.ts'
 
@@ -348,12 +348,12 @@ test('依頼を開くと、原文・タスクと worker・成果物とその確�
 
 test('タスクの詳細: 記録された worker の状態、出どころのリンク（日本語のファイル名・Drive・行）、依頼', () => {
   const workers: AgentRow[] = [{ terminalId: 'w2', title: 'ci-setup', job: 'テスト用 DB の用意', task: 't5', agent: 'claude', state: 'blocked', since: NOW - 25 * 60000, stop: 'blocked', worktree: '/w/a-w2' }]
-  const worktrees = ['r::a', 'r::a1', 'r::a2']
-  const t5 = detailOf(draw(base({ workers, worktrees }), ui({ tab: 'whole', curTask: 't5' })))
+  const dispatches: Record<string, DispatchFact> = { ctx_a1: { state: 'succeeded' }, ctx_a2: { state: 'ready', liveness: 'live', waiting: true, terminal: 'w2' } }
+  const t5 = detailOf(draw(base({ workers, dispatches }), ui({ tab: 'whole', curTask: 't5' })))
   assert.match(t5, />worker<\/div><span class="chip bad ">[^]*テスト用 DB の用意[^]*許可待ち/)
   assert.match(t5, />依頼<\/div>[^]*data-req="r2"/)
-  assert.match(detailOf(draw(base({ worktrees }), ui({ tab: 'whole', curTask: 't2' }))), />worker<\/div><span class="mut">作業を終えています。メインの取り込み待ち/)
-  // パネルは worktree の一覧を持たず worker とタスクを結べないので、worker の欄を出さない
+  assert.match(detailOf(draw(base({ dispatches }), ui({ tab: 'whole', curTask: 't2' }))), />worker<\/div><span class="mut">作業を終えています。メインの取り込み待ち/)
+  // パネルは orchestration を読めないので、worker の欄を出さない
   noMatch(detailOf(draw(base(), ui({ tab: 'whole', curTask: 't2' }))), />worker<\/div>/)
   const t1 = detailOf(draw(base({ figures: { '.orca/cockpit/figures/list-wire.svg': '<svg viewBox="0 0 10 10"></svg>' } }), ui({ tab: 'whole', curTask: 't1' })))
   assert.match(t1, /出典 <button class="lnk" data-href="docs\/design\/一覧画面.md"[^]*<span class="lk">Drive<\/span>[^]*data-href="project\/minutes\/2026-11-14.md:42"/)
@@ -366,28 +366,28 @@ test('worker のタスクは、同じ cockpit.json と Orca の状態から、�
   const c = sample()
   c.streams = [{ id: 'x', title: '取り込み' }]
   c.phases = ['実装']
-  // 済んだ t1 と進行中の t25 が同じ worktree の worker（2026-11-16 に、済んだ t1 に結んで t25 が「動いていません」と出た）
   c.tasks = [
-    { id: 't1', stream: 'x', phase: '実装', title: '最初の取り込み', state: 'ok', worker: { worktree_id: 'r::w' } },
-    { id: 't25', stream: 'x', phase: '実装', title: '窓の直し', state: 'run', worker: { worktree_id: 'r::w', terminal: 'term_w' } }
+    { id: 't1', stream: 'x', phase: '実装', title: '最初の取り込み', state: 'ok', worker: { task_id: 'task_1', dispatch_id: 'ctx_1' } },
+    { id: 't25', stream: 'x', phase: '実装', title: '窓の直し', state: 'run', worker: { task_id: 'task_25', dispatch_id: 'ctx_25' } }
   ]
   // 確認が並ぶと全体の行はその確認を出すので、タスクの状態だけを比べられるよう、この大タスクに入る確認（依頼 r1 経由の見て）を外す
   c.items = c.items.filter((i) => i.kind !== 'rev').map((i) => ({ ...i, related: [] }))
   const agent = (o: Partial<AgentRow>): AgentRow => ({ terminalId: 'term_w', title: 'w', agent: 'claude', state: 'working', since: NOW - 60000, worktree: '/w/w', task: 't25', ...o })
   // 全体の大タスクの行の様子・大タスクの画面のタスクの行・タスクの詳細の見出し
-  const three = (workers: AgentRow[], worktrees: string[]) => {
-    const v = base({ cockpit: c, workers, worktrees })
+  const three = (workers: AgentRow[], fact?: DispatchFact) => {
+    const v = base({ cockpit: c, workers, dispatches: fact ? { ctx_25: fact } : {} })
     const cell = /data-stream="x">[^]*?<span class="ovnow">([^<]*)<\/span>/.exec(draw(v, ui({ tab: 'whole' })))![1]
     const row = /data-task="t25">[^]*?<span class="ts [^"]*">([^<]*)<\/span>/.exec(draw(v, ui({ tab: 'whole', curStream: 'x' })))![1]
     const head = /<h2>窓の直し <span class="stb">[^]*?<span class="[^"]*">([^<]*)<\/span><\/span><\/h2>/.exec(detailOf(draw(v, ui({ tab: 'whole', curTask: 't25' }))))![1]
     return [cell, row, head]
   }
-  assert.deepEqual(three([agent({})], ['r::a', 'r::w']), ['進行中（worker が作業中）', '進行中（worker が作業中）', '進行中（worker が作業中）'])
-  assert.deepEqual(three([agent({ state: 'done' })], ['r::a', 'r::w']), ['メインの取り込み待ち', 'メインの取り込み待ち', 'メインの取り込み待ち'])
-  assert.deepEqual(three([], ['r::a']), ['worker が見つかりません（メインの記録漏れ）', 'worker が見つかりません（メインの記録漏れ）', 'worker が見つかりません（メインの記録漏れ）'])
-  assert.deepEqual(three([agent({ state: 'blocked', stop: 'blocked' })], ['r::a', 'r::w']), ['worker が許可待ち', 'worker が許可待ち', 'worker が許可待ち'])
+  const live: DispatchFact = { state: 'ready', liveness: 'live', terminal: 'term_w' }
+  assert.deepEqual(three([agent({})], live), ['進行中（worker が作業中）', '進行中（worker が作業中）', '進行中（worker が作業中）'])
+  assert.deepEqual(three([], { state: 'succeeded' }), ['メインの取り込み待ち', 'メインの取り込み待ち', 'メインの取り込み待ち'])
+  assert.deepEqual(three([]), ['worker が見つかりません（メインの記録漏れ）', 'worker が見つかりません（メインの記録漏れ）', 'worker が見つかりません（メインの記録漏れ）'])
+  assert.deepEqual(three([agent({ state: 'blocked', stop: 'blocked' })], { ...live, waiting: true }), ['worker が許可待ち', 'worker が許可待ち', 'worker が許可待ち'])
   // 進行中のタスクの詳しい欄に「動いていません」を出さない
-  noMatch(detailOf(draw(base({ cockpit: c, workers: [agent({})], worktrees: ['r::a', 'r::w'] }), ui({ tab: 'whole', curTask: 't25' }))), /動いていません/)
+  noMatch(detailOf(draw(base({ cockpit: c, workers: [agent({})], dispatches: { ctx_25: live } }), ui({ tab: 'whole', curTask: 't25' }))), /動いていません/)
 })
 
 test('全体では、タスクの担当・依頼の内部の id を出さない', () => {

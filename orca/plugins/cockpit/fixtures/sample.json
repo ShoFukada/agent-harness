@@ -128,7 +128,8 @@
         "docs/design/notification.md"
       ],
       "worker": {
-        "worktree_id": "r::a1"
+        "task_id": "task_a1",
+        "dispatch_id": "ctx_a1"
       }
     },
     {
@@ -209,7 +210,8 @@
         "PR #41"
       ],
       "worker": {
-        "worktree_id": "r::a2"
+        "task_id": "task_a2",
+        "dispatch_id": "ctx_a2"
       }
     }
   ],

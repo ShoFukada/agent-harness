@@ -1,7 +1,8 @@
-// Orca の worktree ps と terminal list から、ワークスペースのメインと worker と worktree を決める。窓の常駐のプロセスと CLI（state.ts）が使う。
+// Orca の worktree ps・terminal list・orchestration worker-show から、ワークスペースのメインと worker と、worker の記録の様子を決める。
+// 窓の常駐のプロセスと CLI（state.ts）が使う。
 import path from 'node:path'
-import { taskOfWorker, type Cockpit } from '../src/model.ts'
-import type { AgentRow, StopReason } from '../src/protocol.ts'
+import type { Cockpit } from '../src/model.ts'
+import type { AgentRow, DispatchFact, StopReason } from '../src/protocol.ts'
 
 export type PsAgent = {
   paneKey: string
@@ -41,10 +42,11 @@ export function jobOf(row: PsRow): string | undefined {
   const name = row.displayName?.split('｜').slice(1).join('｜').trim() || row.displayName?.trim()
   return name || row.comment?.trim() || undefined
 }
-function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit | undefined): AgentRow {
-  // どの task の worker かは、メインが worker を立てたときに記録した worktree id と端末で引く。記録が無ければ表示名・コメント。
+function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit | undefined, byTerminal: Map<string, string>): AgentRow {
+  // どの task の worker かは、メインが記録した Dispatch の端末で引く。記録が無ければ表示名・コメント。
   const terminalId = terms.get(a.paneKey) ?? null
-  const task = c ? taskOfWorker(c.tasks, row.worktreeId, terminalId) : undefined
+  const taskId = terminalId ? byTerminal.get(terminalId) : undefined
+  const task = taskId ? c?.tasks.find((t) => t.id === taskId) : undefined
   return {
     terminalId,
     title: a.conversationName ?? a.displayName ?? a.taskTitle ?? path.basename(row.path),
@@ -53,12 +55,19 @@ function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit 
   }
 }
 
-/** terms は paneKey → 端末の handle。 */
-export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>, c: Cockpit | undefined): { main?: AgentRow; workers: AgentRow[] } {
+/** terms は paneKey → 端末の handle。dispatches は worker の記録の Dispatch の様子（タスクと端末を結ぶ）。 */
+export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>, c: Cockpit | undefined, dispatches: Record<string, DispatchFact | null> = {}): { main?: AgentRow; workers: AgentRow[] } {
   const row = ps.find((r) => r.path === root)
   if (!row) return { workers: [] }
-  const kids = ps.filter((r) => r.parentWorktreeId === row.worktreeId)
-  const all = [row, ...kids].flatMap((r) => r.agents.map((a) => toAgent(a, r, terms, c)))
+  const byTerminal = new Map<string, string>()
+  for (const t of c?.tasks ?? []) {
+    const term = t.worker && dispatches[t.worker.dispatch_id]?.terminal
+    if (term) byTerminal.set(term, t.id)
+  }
+  // 担当の worker は担当の worktree の子（窓口の孫）に立つので、子孫をたどる
+  const tree = [row]
+  for (let i = 0; i < tree.length; i++) tree.push(...ps.filter((r) => r.parentWorktreeId === tree[i].worktreeId && !tree.includes(r)))
+  const all = tree.flatMap((r) => r.agents.map((a) => toAgent(a, r, terms, c, byTerminal)))
   const own = all.filter((a) => a.worktree === root)
   const terminal = c?.main?.terminal
   // メインが端末を開き直して cockpit.json の main が古いときも、本線に 1 つだけいるエージェントはメインと見なす。
@@ -66,10 +75,28 @@ export function orcaAgents(root: string, ps: PsRow[], terms: Map<string, string>
   return { main, workers: all.filter((a) => a !== main) }
 }
 
-/** 本線と子の worktree のうち、Orca に今ある worktree の id。 */
-export function orcaWorktrees(root: string, ps: PsRow[]): string[] {
-  const row = ps.find((r) => r.path === root)
-  return row ? [row, ...ps.filter((r) => r.parentWorktreeId === row.worktreeId)].map((r) => r.worktreeId) : []
+/** orca orchestration worker-show --full の、使う欄だけ。 */
+export type WorkerShow = {
+  dispatch?: { completedAt?: string | null } | null
+  projection?: { stage?: { worker?: string } | null; liveness?: { verdict?: string } | null } | null
+  terminal?: { handle?: string | null } | null
+  observation?: { agentWait?: unknown } | null
+}
+
+export function dispatchFact(r: WorkerShow): DispatchFact {
+  const done = r.dispatch?.completedAt ? Date.parse(r.dispatch.completedAt) : NaN
+  return {
+    state: r.projection?.stage?.worker ?? 'unknown', liveness: r.projection?.liveness?.verdict, terminal: r.terminal?.handle ?? null,
+    // agentWait が null なら Orca が見て待っていない。欄が無いのは見ていないだけなので、待っている扱いにしない。
+    waiting: !!r.observation?.agentWait, settledAt: Number.isNaN(done) ? undefined : done
+  }
+}
+
+/** 済んでいないタスクの worker の記録の Dispatch を、Orca に問い合わせる。show は Orca に無ければ null を返す。 */
+export async function orcaDispatches(c: Cockpit | undefined, show: (dispatch: string) => Promise<WorkerShow | null>): Promise<Record<string, DispatchFact | null>> {
+  const ids = [...new Set((c?.tasks ?? []).filter((t) => t.worker && t.state !== 'ok').map((t) => t.worker!.dispatch_id))]
+  const rows = await Promise.all(ids.map(async (id) => [id, await show(id)] as const))
+  return Object.fromEntries(rows.map(([id, r]) => [id, r ? dispatchFact(r) : null]))
 }
 
 /** orca plugin list の 1 行（使う欄だけ）。 */

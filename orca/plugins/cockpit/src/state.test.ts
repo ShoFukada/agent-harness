@@ -1,7 +1,7 @@
 import { assert, test } from 'orca/testing'
 import { readFileSync } from 'node:fs'
 import { parseCockpit, type Cockpit, type Op } from './model.ts'
-import type { AgentRow, CockpitView, WsRow } from './protocol.ts'
+import type { AgentRow, CockpitView, DispatchFact, WsRow } from './protocol.ts'
 import { NO_STREAM, derive, report, type StateReport } from './state.ts'
 import { render, type Ui } from './view.ts'
 import { renderWindow } from './window-view.ts'
@@ -10,9 +10,11 @@ const NOW = new Date('2026-11-16T12:00:00+09:00').getTime()
 const sample = () => parseCockpit(readFileSync(new URL('../fixtures/sample.json', import.meta.url), 'utf8'))
 const ui = (over: Partial<Ui> = {}): Ui => ({ tab: 'whole', pick: {}, showDone: {}, ...over })
 const view = (c: Cockpit, over: Partial<CockpitView> = {}): CockpitView => ({
-  state: 'ok', root: '/w', cockpit: c, log: { ops: [] }, archive: [], figures: {}, errors: [], workers: [], worktrees: [], notifiedOp: 0, replies: [], ...over
+  state: 'ok', root: '/w', cockpit: c, log: { ops: [] }, archive: [], figures: {}, errors: [], workers: [], dispatches: {}, notifiedOp: 0, replies: [], ...over
 })
 const noMatch = (s: string, re: RegExp) => assert.ok(!re.test(s), `${re} に当たってはいけない`)
+const working: DispatchFact = { state: 'ready', liveness: 'live' }
+const settled = (ago: number): DispatchFact => ({ state: 'succeeded', liveness: 'unverifiable', settledAt: NOW - ago })
 const agent = (o: Partial<AgentRow>): AgentRow => ({ terminalId: 'term_w', title: 'w', agent: 'claude', state: 'working', since: NOW - 60_000, worktree: '/w/w', ...o })
 
 /** 全体のタブの未完了の依頼の行と、各大タスクの画面のタスクの行（完了も開く）の文。 */
@@ -27,7 +29,7 @@ function screen(v: CockpitView): { tasks: Record<string, string>; open: Record<s
   return { tasks, open, html }
 }
 const stateOf = (v: CockpitView): StateReport =>
-  report(v.cockpit!, v.log, v.archive, v.worktrees ? { workers: v.workers, worktrees: v.worktrees } : undefined, 'ok', NOW)
+  report(v.cockpit!, v.log, v.archive, v.dispatches ? { workers: v.workers, dispatches: v.dispatches } : undefined, 'ok', NOW)
 
 /** 窓の表示と、hook とメインが読む状態が、同じことを言っているか。 */
 function sameEverywhere(v: CockpitView): StateReport {
@@ -100,17 +102,16 @@ test('タスクの文は手書きの state_label ではなく事実から出す�
 
 test('worker の状態は Orca から。窓のタスクの文・worker の数・hook の取り込み待ちと記録漏れが同じ判定', () => {
   const c = sample()
-  const base = { worktrees: ['r::a1', 'r::a2'] }
-  // t2 は作業中、t5 は作業を終えて 11 分
-  const v = view(c, { ...base, workers: [agent({ task: 't2', terminalId: 'term_a1' }), agent({ task: 't5', terminalId: 'term_a2', state: 'done', since: NOW - 11 * 60_000 })] })
+  // t2 は作業中、t5 は worker_done を返して 11 分
+  const v = view(c, { dispatches: { ctx_a1: working, ctx_a2: settled(11 * 60_000) }, workers: [agent({ task: 't2', terminalId: 'term_a1' })] })
   const s = sameEverywhere(v)
   assert.equal(s.tasks.find((t) => t.id === 't5')!.label, 'メインの取り込み待ち')
   assert.deepEqual(s.checks.intake, ['t5'])
   // 終えて 5 分なら、窓は取り込み待ちと出すが hook はまだ促さない
-  const soon = stateOf(view(c, { ...base, workers: [agent({ task: 't5', state: 'done', since: NOW - 5 * 60_000 })] }))
+  const soon = stateOf(view(c, { dispatches: { ctx_a1: working, ctx_a2: settled(5 * 60_000) } }))
   assert.ok(!soon.checks.intake.includes('t5'))
-  // worktree が Orca に無い
-  const gone = sameEverywhere(view(c, { worktrees: [] }))
+  // Dispatch が Orca に無い
+  const gone = sameEverywhere(view(c, { dispatches: {} }))
   assert.equal(gone.tasks.find((t) => t.id === 't5')!.label, 'worker が見つかりません（メインの記録漏れ）')
   assert.ok(gone.checks.missing_workers.includes('t5'))
 })
@@ -120,18 +121,18 @@ test('顧客への確認の一覧は、画面のタスクの状態で選ぶ。wo
   const ask = c.items.find((i) => i.id === 'd2')!
   Object.assign(ask, { state: 'done', resolved_by: 'user', resolved_at: '2026-11-15T10:00:00+09:00', related: [{ task: 't5' }] })
   c.tasks.find((t) => t.id === 't5')!.state = 'wait'
-  const html = (workers: AgentRow[]) => render(view(c, { worktrees: ['r::a2'], workers }), ui(), NOW, (x) => x)
-  noMatch(html([agent({ task: 't5' })]), /顧客への確認 <span class="num">/)
-  noMatch(html([agent({ task: 't5', state: 'blocked', stop: 'waiting' })]), /顧客への確認 <span class="num">/)
+  const html = (fact?: DispatchFact) => render(view(c, { dispatches: fact ? { ctx_a2: fact } : {} }), ui(), NOW, (x) => x)
+  noMatch(html(working), /顧客への確認 <span class="num">/)
+  noMatch(html({ ...working, waiting: true }), /顧客への確認 <span class="num">/)
   delete c.tasks.find((t) => t.id === 't5')!.worker
-  assert.match(html([]), /顧客への確認 <span class="num">1<\/span> 件/, 'worker の記録が無い wait は顧客待ち')
+  assert.match(html(), /顧客への確認 <span class="num">1<\/span> 件/, 'worker の記録が無い wait は顧客待ち')
 })
 
 test('hook の検査: 利用者の番でない止まり・待ちだけを名指しし、外の相手と Orca から決めたタスクは外す', () => {
   const c = sample()
   c.tasks.find((t) => t.id === 't9')!.state = 'stop'
   // パネルと同じく Orca の状態を持たない（worker のタスクもメインの書いた state のまま）
-  const noOrca = () => view(c, { worktrees: undefined })
+  const noOrca = () => view(c, { dispatches: undefined })
   const s = stateOf(noOrca())
   assert.deepEqual(s.checks.orphan_waits, ['t9'], 't1 は決めるが指す・t6 は顧客待ち')
   assert.equal(s.checks.push_check, false, '進行中のタスクがある')
@@ -177,7 +178,7 @@ test('完了したタスクには「次の作業」を出さない。worker の�
   const ask = c.items.find((i) => i.id === 'd2')!
   Object.assign(ask, { state: 'done', resolved_by: 'user', resolved_at: '2026-11-15T10:00:00+09:00', related: [{ task: 't5' }, { task: 't6' }] })
   // t5 は worker が作業を終えた（画面は「メインの取り込み待ち」・状態は wait）、t6 は顧客待ち
-  const v = view(c, { worktrees: ['r::a2'], workers: [agent({ task: 't5', state: 'done' })] })
+  const v = view(c, { dispatches: { ctx_a2: settled(60_000) } })
   const html = render(v, ui(), NOW, (x) => x)
   assert.match(html, /顧客への確認 <span class="num">1<\/span> 件/)
   Object.assign(ask, { related: [{ task: 't5' }] })
