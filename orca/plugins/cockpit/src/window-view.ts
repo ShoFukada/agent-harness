@@ -1,6 +1,6 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
 import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type Sent, type StreamForm, type TaskState } from './model.ts'
-import { STOP_LABEL, askLine, byUrgency, fmtDate, isHot, isOver, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
+import { STOP_LABEL, byUrgency, fmtDate, isHot, isOver, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, ago, backgroundParts, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
   type Board, type Model, type Theme, type Ui, type VRow
@@ -118,13 +118,13 @@ function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
 }
 
 /** 種類ごとの「最初に見える部分」。決めるのに要るものだけを出し、残りは「詳しく」に畳む。 */
-function firstView(r: VRow, ui: Ui, svg: Svg): string {
+function firstView(r: VRow, ui: Ui, svg: Svg, now: number): string {
   const c = r.card
   const list = (xs: string[] | undefined, ordered = false) => (xs?.length ? `<${ordered ? 'ol' : 'ul'} class="rich">${xs.map((x) => `<li>${mono(note(x))}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>` : '')
   if (c.manual) return manualHtml(r)
   // 承認を求める要素（9.2）。これでよいは、この全部の要素への承認として受け取られる。
   const elements = c.elements?.length ? fld('承認する要素', `<ol class="rich">${c.elements.map((e) => `<li value="${e.n}">${mono(esc(e.text))}</li>`).join('')}</ol>`) : ''
-  return elements + firstOfKind(r, ui, svg, list)
+  return elements + firstOfKind(r, ui, svg, list, now)
 }
 
 /** 開閉を再描画のあとも保つ畳み（data-fold で ui.open に残す）。 */
@@ -157,7 +157,7 @@ function points(xs: string[] | undefined): string {
 /** 比べた表と図（判断では選択肢と並べて最初に見せる）。 */
 const compareParts = (r: VRow, svg: Svg) => backgroundParts({ ...r, card: { ...r.card, background: undefined, quote: undefined } }, svg, r.v?.figures ?? {}).join('')
 
-function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined, ordered?: boolean) => string): string {
+function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined, ordered?: boolean) => string, now: number): string {
   const c = r.card
   switch (c.kind) {
     case 'review': {
@@ -178,13 +178,13 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
       // 返事待ち・許可待ちは問いの本文と選択肢を先に出す（開かずに答えを決められるように）。読めなければ、読めなかったと書く。
       const a = r.agent
       const asking = a?.stop === 'waiting' || a?.stop === 'blocked'
-      // 題に収まった問いは本文を重ねない（初見 4）。選択肢は窓では選べないので、判断の押せる選択肢と見分けられるよう番号を付けず、どこで選ぶかを添える（初見 3）。
-      const full = a?.ask && askLine(a.ask.text) !== a.ask.text.trim() ? clampQuote(a.ask.text, ui, `ask:${keyOf(r)}`) : ''
+      // 題に本文が全部出ている問いは本文を重ねない（初見 4）。件名が題のときと、長くて題で切ったときは本文を出す。選択肢は窓では選べないので、判断の押せる選択肢と見分けられるよう番号を付けず、どこで選ぶかを添える（初見 3）。
+      const full = a?.ask && !c.title.endsWith(a.ask.text.trim()) ? clampQuote(a.ask.text, ui, `ask:${keyOf(r)}`) : ''
       const pick = c.id.startsWith('#ask:') ? `${r.owner.how === 'main' ? '窓口' : '担当'}に伝える` : `${a?.chat ? 'チャット' : '端末'}で選ぶ`
       const opts = a?.ask?.options?.length ? fld(`選択肢（${pick}）`, `<ul class="rich">${a.ask.options.map((o) => `<li>${esc(o)}</li>`).join('')}</ul>`) : ''
       const unread = !a?.ask && asking ? `<p class="mut">${a.chat ? 'チャット' : '端末の画面'}から問いの本文を読めませんでした。開いて確かめてください</p>` : ''
       return [fld(a?.ask?.kind === 'permit' ? '許可を求めていること' : '聞かれていること', full || unread), opts,
-        a?.ask ? '' : fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld(a?.ask ? '聞いた日時' : '停止日時', esc(fmtDate(c.since))) : '',
+        a?.ask ? '' : fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld(a?.ask ? '聞いた日時' : '停止日時', esc(`${fmtDate(c.since)}${a?.ask ? `（${ago(c.since, now)}前）` : ''}`)) : '',
         fld(a?.ask ? '答え方' : '直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
     }
     case 'consult':
@@ -250,8 +250,8 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
     r.status === 'fixing' ? `<div class="note wait"><b>${r.pending ? '修正依頼済み（受領待ち）' : '修正待ち'}</b></div>` : '',
   ].join('')
   // 対応済みは返した答えが主役。頼んだ中身（手順・選択肢）は「詳しく」に畳む。
-  const first = closed ? '' : firstView(r, ui, svg)
-  const more = (closed ? firstView(r, ui, svg) : '') + moreView(r, svg)
+  const first = closed ? '' : firstView(r, ui, svg, now)
+  const more = (closed ? firstView(r, ui, svg, now) : '') + moreView(r, svg)
   const moreOpen = ui.open['detail-more'] ?? false
   const acts = actsHtml(r, ui, true)
   // 「次へ」は一覧を進む操作なので、答える操作の帯ではなく詳細の上に置く（1280 で帯が折り返さないように）。

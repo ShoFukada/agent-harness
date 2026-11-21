@@ -395,6 +395,7 @@ export function createServer(opts: Options) {
       const shown = new Map<string, Promise<WorkerShow | null>>()
       const showOnce = (d: string) => shown.get(d) ?? (shown.set(d, orca.show(d)), shown.get(d)!)
       const termAt = new Map(ps.flatMap((r) => r.agents.map((a) => [terms.get(a.paneKey) ?? '', r.path] as const)).filter(([h]) => h))
+      const ended = new Set<string>()
       if (!orcaError)
         for (const ws of wss.values()) {
           const c = ws.files.cockpit
@@ -402,12 +403,13 @@ export function createServer(opts: Options) {
           try {
             const { current, status } = await currentDispatches(c, { tasks: orca.runTasks, link: orca.taskLink }, links)
             currents.set(ws.root, current)
-            facts.set(ws.root, await orcaDispatches(c, orca.show, current, status))
-            asks.set(ws.root, await questionFacts(c, ws.root, ps, questions, facts.get(ws.root)!, current, owners, showOnce, termAt))
+            facts.set(ws.root, await orcaDispatches(c, showOnce, current, status))
+            asks.set(ws.root, await questionFacts(c, ws.root, ps, questions, facts.get(ws.root)!, current, owners, showOnce, termAt, ended))
           } catch (e) {
             console.error(`orchestration: ${(e as Error).message}`)
           }
         }
+      if (ended.size) questions = questions.filter((q) => !ended.has(q.id))
       broadcast()
     })().finally(() => {
       refreshing = undefined

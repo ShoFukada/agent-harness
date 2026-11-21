@@ -454,6 +454,7 @@ body { margin:0; }
 .ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis; }
 /* 済んだカードは弱く、要対応・修正待ちだけを目立たせる。 */
 .ck.win .lc.cl, .ck.win .lc.cl .kd { color:var(--ink3); font-weight:400; }
+.ck.win .lc .kd.hotc { color:var(--hot); }
 .ck.win .rqd { display:grid; gap:6px; }
 .ck.win .rqd .code, .ck.win .tid { margin-right:6px; }
 .ck.win .rqd .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }

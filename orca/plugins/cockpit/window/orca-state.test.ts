@@ -155,3 +155,14 @@ test('端末で動く担当の worker の問いも、担当の仕事に結ぶ（
   const facts = await questionFacts(c, '/w/main', ps, qs, {}, {}, [], show, new Map([['term_lead', '/w/lead']]))
   assert.deepEqual(facts.map((f) => [f.to, f.stream]), [['owner', 's9']])
 })
+
+test('同じ thread の追質問では先の問いを消さない。終わった Dispatch の問いは ended に入れて持ち越しから外させる', async () => {
+  const a = { id: 'a', type: 'question', from_handle: 'dispatch:ctx_1', to_handle: 'run:r', body: 'A', created_at: '2026-11-22T00:00:00Z' }
+  const b = { ...a, id: 'b', body: 'B', thread_id: 'a', created_at: '2026-11-22T00:01:00Z' }
+  assert.deepEqual(openQuestions([a, b]).map((x) => x.id), ['a', 'b'])
+  const ps: PsRow[] = [{ worktreeId: 'w', path: '/w', parentWorktreeId: null, agents: [] }]
+  const c = { main: { run_id: 'r' }, cards: [], tasks: [], streams: [] } as unknown as Parameters<typeof questionFacts>[0]
+  const ended = new Set<string>()
+  assert.deepEqual(await questionFacts(c, '/w', ps, openQuestions([a]), { ctx_1: null }, {}, [], async () => null, new Map(), ended), [])
+  assert.deepEqual([...ended], ['a'])
+})

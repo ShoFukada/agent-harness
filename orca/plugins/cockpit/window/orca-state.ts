@@ -62,7 +62,7 @@ const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : unde
  */
 export function openQuestions(messages: InboxMessage[], carry: OpenQuestion[] = []): OpenQuestion[] {
   const answered = (q: { id: string; from: string; at: number }) =>
-    messages.some((m) => m.id !== q.id && (m.thread_id === q.id || (!!q.from && m.from_handle === q.from && m.type !== 'question' && Date.parse(m.created_at ?? '') > q.at)))
+    messages.some((m) => m.id !== q.id && (m.thread_id === q.id || (!!q.from && m.from_handle === q.from && Date.parse(m.created_at ?? '') > q.at)) && !(m.type === 'question' && m.from_handle === q.from))
   const seen = new Set(messages.map((m) => m.id))
   const out: OpenQuestion[] = carry.filter((q) => !seen.has(q.id) && !answered(q))
   for (const q of messages) {
@@ -98,7 +98,7 @@ export function openQuestions(messages: InboxMessage[], carry: OpenQuestion[] = 
  */
 export async function questionFacts(
   c: Cockpit, root: string, ps: PsRow[], questions: OpenQuestion[], dispatches: Record<string, DispatchFact | null>, current: Record<string, string>, owners: OwnerLive[],
-  show: (dispatch: string) => Promise<WorkerShow | null>, termAt: Map<string, string> = new Map()
+  show: (dispatch: string) => Promise<WorkerShow | null>, termAt: Map<string, string> = new Map(), ended?: Set<string>
 ): Promise<QuestionFact[]> {
   const row = ps.find((r) => r.path === root)
   if (!row || !questions.length) return []
@@ -111,13 +111,21 @@ export async function questionFacts(
     const wt = (o.session ? owners.find((x) => x.session === o.session)?.worktree : undefined) ?? (o.terminal ? termAt.get(o.terminal) : undefined)
     if (wt) ownerAt.set(wt, o.stream)
   }
-  const out: QuestionFact[] = []
-  for (const q of questions) {
-    const to = q.run === c.main?.run_id ? 'main' : 'owner'
+  // 問い合わせは並べて行う（1 本が 15 秒待たせても、ほかの問いの分を待たせない）。
+  const looked = await Promise.all(questions.map(async (q) => {
     // 担当（チャットの worker）は payload を付けずに送るので、送り主の handle を Dispatch の受け口と突き合わせる。
     const d = q.dispatch ?? Object.entries(dispatches).find(([, f]) => f?.terminal === q.from)?.[0]
     const f = d ? (d in dispatches ? dispatches[d]! : await show(d).then((r) => (r ? dispatchFact(r) : null), () => undefined)) : undefined
-    if (f === null || f?.settledAt || f?.liveness === 'exited') continue
+    return [q, d, f] as const
+  }))
+  const out: QuestionFact[] = []
+  for (const [q, d, f] of looked) {
+    const to = q.run === c.main?.run_id ? 'main' : 'owner'
+    // 終わった・Orca に無い Dispatch の問いは、もう答えを待っていない。ended に入れて持ち越しから外させる（照会の失敗は undefined で、次に問い直す）。
+    if (f === null || f?.settledAt || f?.liveness === 'exited') {
+      ended?.add(q.id)
+      continue
+    }
     if (to === 'owner' && !(f?.worktree && paths.has(f.worktree))) continue
     const task = d ? c.tasks.find((t) => t.worker && (current[t.id] ?? t.worker.dispatch_id) === d) : undefined
     let stream = task?.stream

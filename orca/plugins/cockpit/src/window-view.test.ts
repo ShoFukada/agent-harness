@@ -369,3 +369,10 @@ test('補助の文字・危険・仕事の形の色は、明暗どちらの地�
   assert.match(CSS, /\.ck \.btn \{[^}]*border:1px solid var\(--ink3\)/)
   assert.match(CSS, /\.ck\.win \.act \{[^}]*border:1px solid var\(--ink3\)/)
 })
+
+test('問いの件名が題のときは、詳細に本文も出す', () => {
+  const m = aoba((v) => {
+    v.questions = [{ id: 'q1', at: NOW - 10 * 60_000, line: '仕様確認', text: '端数は切り上げますか？', to: 'main', task: 't1' }]
+  })
+  assert.match(page(m, { sel: '/ws/aoba##ask:q1' }), /聞かれていること.*端数は切り上げますか？/s)
+})

@@ -286,8 +286,8 @@ function questionRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, no
       const agent: AgentRow = {
         terminalId: chat ? null : owner.terminal!, title: owner.title, agent: null, state: 'waiting', since: q.at, stop: 'waiting',
         worktree: live?.worktree ?? root, ...(chat && { chat: true }),
-        // 窓口・担当が答えずに回ってきた理由（答えの無い時間）を、誰が誰に聞いたかと一緒に出す（初見 2）。
-        ask: { kind: 'question', text: q.text, ...(q.options && { options: q.options }), from: `${who}が${q.to === 'main' ? '窓口' : '担当'}に聞いて、${Math.round((now - q.at) / 60_000)} 分答えが無い` }
+        // 窓口・担当が答えずに回ってきたことを、誰が誰に聞いたかと一緒に出す（初見 2。経った時間は一覧の右と詳細の日時に出す）。
+        ask: { kind: 'question', text: q.text, ...(q.options && { options: q.options }), from: `${who}が${q.to === 'main' ? '窓口' : '担当'}に聞いたが、まだ答えが無い` }
       }
       const where = chat ? 'チャット' : '端末'
       // 担当の Run 宛てでも担当を引けなければ窓口を開くので、そう書く（担当を開くように見せない）。
