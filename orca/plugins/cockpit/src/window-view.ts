@@ -258,7 +258,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
 }
 
 /** 番号は一覧に出さず、詳細の下に小さく置く（深田さんが番号で指せるように。R67・初見 2）。 */
-const ridHtml = (id: string) => `<p class="rid">番号 ${esc(id)}</p>`
+const ridHtml = (id: string) => `<p class="rid">番号<code>${esc(id)}</code></p>`
 
 // ── 全体 ──
 const tasksOf = (b: Board, sid: string) => [...b.d.tasks.values()].filter((t) => t.task.stream === sid)
@@ -446,7 +446,7 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const main = (ms ? `<p class="mut">次の節目: ${esc(ms.label)}（${esc(fmtDate(ms.date))}）</p>` : '')
     // 仕事の一覧を先に、見張る（経路と届いた連絡）は最後に置く。空の置き場所は出さない。
     + FORM_ORDER.filter((f) => f !== 'watch' && filled(f)).map((f) => sec(f)).join('')
-    + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件・形が未設定</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo)).join('')}</section>` : '')
+    + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo)).join('')}</section>` : '')
     + (loose.length ? `<section class="fsec"><h3><span>仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(t, todo, ui.task)).join('')}</div></div></section>` : '')
     + (filled('watch') ? sec('watch', watchExtra) : '')
     + noTaskRequests(b, ui)

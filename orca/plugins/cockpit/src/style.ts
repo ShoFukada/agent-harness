@@ -360,7 +360,9 @@ body { margin:0; }
 /* 詳細の塊は囲まず、塊の間を線で区切る（R111。囲みと引用の線が二重にならない。初見 13）。 */
 .ck.win .first { margin:12px 16px 0; padding:0; border:0; display:grid; gap:10px; font-size:var(--fs-s); }
 .ck.win .first + .first, .ck.win .wdet > .first + .sent, .ck.win .wdet > .sent + .first { border-top:1px solid var(--rule2); padding-top:12px; }
-.ck.win .rid { margin:14px 16px 0; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); color:var(--ink3); }
+/* 番号の行は、下に貼り付く操作の帯に隠れないよう下にも余白を取る。 */
+.ck.win .rid { margin:14px 16px 20px; font-size:var(--fs-xs); color:var(--ink3); }
+.ck.win .rid code { margin-left:.5em; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
 .ck.win .links.main .lk { border-color:var(--ink3); padding:5px 14px; font-size:var(--fs-s); font-weight:600; border-radius:7px; }
 .ck.win .links.main .lk i { display:none; }
 .ck.win .first ol.rich, .ck.win .first ul.rich { margin:0; padding-left:1.4em; }
@@ -409,7 +411,8 @@ body { margin:0; }
 .ck.win .pill.customer { background:var(--amber-bg); color:var(--amber); }
 .ck.win .pill.idle { background:var(--sunk); color:var(--ink2); }
 .ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
-.ck.win .st .inner { padding:0 4px 10px 16px; display:grid; gap:0; }
+/* 開いた中身は、開閉の印の幅だけ下げて仕事の名前より左に出さない。 */
+.ck.win .st .inner { padding:0 4px 10px 26px; display:grid; gap:0; }
 .ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:6px 0 0; display:flex; gap:8px; align-items:center; }
 .ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); margin:0 -6px; padding-right:6px; }
 .ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:3px 6px; font:inherit; color:inherit; min-width:0; }
@@ -419,7 +422,7 @@ body { margin:0; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
 .ck.win .tst.s-run { color:var(--ink); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
 .ck.win .task .tn { display:grid; min-width:0; }
-.ck.win .cardrow .kd small, .ck.win .task .id, .ck.win .rid { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
+.ck.win .cardrow .kd small, .ck.win .task .id { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
 .ck.win .task .nx { color:var(--ink2); font-size:var(--fs-xs); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 .ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
