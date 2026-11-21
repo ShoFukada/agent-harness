@@ -55,19 +55,24 @@ export function failuresOf(messages: InboxMessage[]): Record<string, Failure> {
 export type OpenQuestion = { id: string; run: string; from: string; dispatch?: string; at: number; line: string; text: string; options?: string[] }
 const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
 /**
- * inbox から、答えを待っている question を拾う。thread に返事が付いたもの、聞いた側がそのあと何か送ったもの（返事を別の送り方で受けて動いた）は除く。
+ * inbox から、答えを待っている question を拾う。thread に返事が付いたもの、聞いた側がそのあと question 以外を送ったもの
+ * （返事を別の送り方で受けて動いた）は除く。同じ送り主の次の question では消さない（2 問を続けて聞くことがある）。
  * 宛先が Run の受け口（run:…）でないものは、窓口・担当への問いではないので拾わない。
+ * carry は前回まで答えの無かった問い。inbox は新しい 300 通しか読めないので、古くなって外れた問いも、返事か送信が届くまで持ち越す。
  */
-export function openQuestions(messages: InboxMessage[]): OpenQuestion[] {
-  const out: OpenQuestion[] = []
+export function openQuestions(messages: InboxMessage[], carry: OpenQuestion[] = []): OpenQuestion[] {
+  const answered = (q: { id: string; from: string; at: number }) =>
+    messages.some((m) => m.id !== q.id && (m.thread_id === q.id || (!!q.from && m.from_handle === q.from && m.type !== 'question' && Date.parse(m.created_at ?? '') > q.at)))
+  const seen = new Set(messages.map((m) => m.id))
+  const out: OpenQuestion[] = carry.filter((q) => !seen.has(q.id) && !answered(q))
   for (const q of messages) {
     if (q.type !== 'question' || !q.id || !q.to_handle?.startsWith('run:')) continue
     const at = Date.parse(q.created_at ?? '')
-    if (Number.isNaN(at)) continue
-    if (messages.some((m) => m.id !== q.id && (m.thread_id === q.id || (!!q.from_handle && m.from_handle === q.from_handle && Date.parse(m.created_at ?? '') > at)))) continue
+    if (Number.isNaN(at) || answered({ id: q.id, from: q.from_handle ?? '', at })) continue
     let p: { question?: unknown; options?: unknown; dispatchId?: unknown } = {}
     try {
-      p = JSON.parse(q.payload || '{}')
+      const v: unknown = JSON.parse(q.payload || '{}')
+      if (v && typeof v === 'object') p = v
     } catch {
       // payload の無い send --type question は本文だけで読む。
     }
@@ -93,16 +98,18 @@ export function openQuestions(messages: InboxMessage[]): OpenQuestion[] {
  */
 export async function questionFacts(
   c: Cockpit, root: string, ps: PsRow[], questions: OpenQuestion[], dispatches: Record<string, DispatchFact | null>, current: Record<string, string>, owners: OwnerLive[],
-  show: (dispatch: string) => Promise<WorkerShow | null>
+  show: (dispatch: string) => Promise<WorkerShow | null>, termAt: Map<string, string> = new Map()
 ): Promise<QuestionFact[]> {
   const row = ps.find((r) => r.path === root)
   if (!row || !questions.length) return []
   const paths = new Set(descendants(ps, row).map((r) => r.path))
-  // 担当のチャットのある worktree → 担当の仕事。担当の worker は担当の worktree の子に立つので、聞いた worker の先祖をたどって引く。
+  // 担当のいる worktree → 担当の仕事。担当の worker は担当の worktree の子に立つので、聞いた worker の先祖をたどって引く。
+  // チャットの担当は orca agent list の居場所、端末の担当は termAt（端末の handle → worktree）で引く。
   const ownerAt = new Map<string, string>()
   for (const o of c.owners ?? []) {
-    const wt = o.state !== 'done' && o.stream && o.session ? owners.find((x) => x.session === o.session)?.worktree : undefined
-    if (wt) ownerAt.set(wt, o.stream!)
+    if (o.state === 'done' || !o.stream) continue
+    const wt = (o.session ? owners.find((x) => x.session === o.session)?.worktree : undefined) ?? (o.terminal ? termAt.get(o.terminal) : undefined)
+    if (wt) ownerAt.set(wt, o.stream)
   }
   const out: QuestionFact[] = []
   for (const q of questions) {

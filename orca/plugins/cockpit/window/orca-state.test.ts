@@ -131,3 +131,27 @@ test('question を案件に結ぶ: 窓口の Run 宛てと、案件の木の中�
   const done = await questionFacts(c, '/w/aoba', ps, openQuestions(sampleInbox(now)), { ctx_aoba_list: { state: 'succeeded', settledAt: now } }, {}, owners, async (d) => shows[d] ?? null)
   assert.deepEqual(done.map((q) => q.id), ['msg_q2'])
 })
+
+test('question の持ち越しと閉じ方: 2 問目では 1 問目を消さない。300 通から外れても返事か別の送信まで残す。payload が null でも本文で読む', () => {
+  const at = (m: number) => new Date(Date.parse('2026-11-22T00:00:00Z') + m * 60_000).toISOString()
+  const q = (id: string, m: number) => ({ id, type: 'question', from_handle: 'structworker_x', to_handle: 'run:r', subject: `問い ${id}`, body: id, created_at: at(m) })
+  assert.deepEqual(openQuestions([q('a', 0), q('b', 1)]).map((x) => x.id), ['a', 'b'])
+  const carried = openQuestions([q('a', 0)])
+  // a が新しい 300 通から外れた。返事も送信も無ければ残し、聞いた側が status を送ったら閉じる。
+  assert.deepEqual(openQuestions([q('b', 1)], carried).map((x) => x.id), ['a', 'b'])
+  assert.deepEqual(openQuestions([{ id: 's', type: 'status', from_handle: 'structworker_x', to_handle: 'run:r', created_at: at(2) }], carried), [])
+  assert.deepEqual(openQuestions([{ ...q('n', 0), payload: 'null' }]).map((x) => x.text), ['n'])
+})
+
+test('端末で動く担当の worker の問いも、担当の仕事に結ぶ（端末の handle から担当の worktree を引く）', async () => {
+  const ps: PsRow[] = [
+    { worktreeId: 'w-main', path: '/w/main', parentWorktreeId: null, agents: [] },
+    { worktreeId: 'w-lead', path: '/w/lead', parentWorktreeId: 'w-main', agents: [] },
+    { worktreeId: 'w-kid', path: '/w/kid', parentWorktreeId: 'w-lead', agents: [] }
+  ]
+  const c = { main: { run_id: 'run_main' }, cards: [], tasks: [], streams: [{ id: 's9', title: '調査' }], owners: [{ id: 'o9', title: '調査', stream: 's9', terminal: 'term_lead' }] } as unknown as Parameters<typeof questionFacts>[0]
+  const qs = openQuestions([{ id: 'q', type: 'question', from_handle: 'dispatch:ctx_kid', to_handle: 'run:run_lead', body: 'どちらにしますか', created_at: '2026-11-22T00:00:00Z', payload: JSON.stringify({ dispatchId: 'ctx_kid', question: 'どちらにしますか' }) }])
+  const show = async (): Promise<WorkerShow> => ({ projection: { liveness: { verdict: 'live' }, workspace: { id: 'r::/w/kid' } } })
+  const facts = await questionFacts(c, '/w/main', ps, qs, {}, {}, [], show, new Map([['term_lead', '/w/lead']]))
+  assert.deepEqual(facts.map((f) => [f.to, f.stream]), [['owner', 's9']])
+})

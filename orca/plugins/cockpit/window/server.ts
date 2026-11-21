@@ -381,7 +381,7 @@ export function createServer(opts: Options) {
         const inbox = await orca.inbox?.().catch((e: Error) => void console.error(`inbox: ${e.message}`))
         if (inbox) {
           failures = failuresOf(inbox)
-          questions = openQuestions(inbox)
+          questions = openQuestions(inbox, questions)
         }
         await readScreens()
         orcaError = undefined
@@ -391,6 +391,10 @@ export function createServer(opts: Options) {
       }
       lastRefresh = Date.now()
       await sync()
+      // 1 回の読み直しの中では、同じ Dispatch の worker-show を案件ごとに問い合わせ直さない。
+      const shown = new Map<string, Promise<WorkerShow | null>>()
+      const showOnce = (d: string) => shown.get(d) ?? (shown.set(d, orca.show(d)), shown.get(d)!)
+      const termAt = new Map(ps.flatMap((r) => r.agents.map((a) => [terms.get(a.paneKey) ?? '', r.path] as const)).filter(([h]) => h))
       if (!orcaError)
         for (const ws of wss.values()) {
           const c = ws.files.cockpit
@@ -399,7 +403,7 @@ export function createServer(opts: Options) {
             const { current, status } = await currentDispatches(c, { tasks: orca.runTasks, link: orca.taskLink }, links)
             currents.set(ws.root, current)
             facts.set(ws.root, await orcaDispatches(c, orca.show, current, status))
-            asks.set(ws.root, await questionFacts(c, ws.root, ps, questions, facts.get(ws.root)!, current, owners, orca.show))
+            asks.set(ws.root, await questionFacts(c, ws.root, ps, questions, facts.get(ws.root)!, current, owners, showOnce, termAt))
           } catch (e) {
             console.error(`orchestration: ${(e as Error).message}`)
           }
@@ -416,13 +420,15 @@ export function createServer(opts: Options) {
    */
   async function readScreens(): Promise<void> {
     const next = new Map<string, Ask>()
-    for (const a of ps.flatMap((r) => r.agents)) {
+    // 毎回読み直す（AskUserQuestion の 2 問目に進んでも止まった時刻は変わらない）。読めなかった回は、同じ停止の前の問いを使う。
+    // 端末ごとに並べて読み、1 本が 15 秒待たせても他の端末の分を待たせない。
+    await Promise.all(ps.flatMap((r) => r.agents).map(async (a) => {
       const handle = terms.get(a.paneKey)
-      if ((a.state !== 'blocked' && a.state !== 'waiting') || !handle || toolAsk(a) || !orca.screen) continue
+      if ((a.state !== 'blocked' && a.state !== 'waiting') || !handle || toolAsk(a) || !orca.screen) return
       const key = `${handle}@${a.stateStartedAt}`
-      const ask = screens.get(key) ?? screenAsk(await orca.screen(handle).catch(() => []), a.state === 'blocked' ? 'permit' : 'question')
+      const ask = screenAsk(await orca.screen(handle).catch(() => []), a.state === 'blocked' ? 'permit' : 'question') ?? screens.get(key)
       if (ask) next.set(key, (a.screen = ask))
-    }
+    }))
     screens = next
   }
 
