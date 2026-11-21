@@ -7,7 +7,7 @@ import { afterEach, test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import type { OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
-import { createServer, stopReason, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import { createServer, stopReason, type Consult, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -29,7 +29,7 @@ const cockpit = (name: string, over: Record<string, unknown> = {}) => {
 }
 const agent = (paneKey: string, over: Partial<PsAgent> = {}): PsAgent => ({ paneKey, state: 'working', stateStartedAt: 1, hasLivePty: true, ...over })
 
-function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], owners: OwnerLive[] = [], shows: Record<string, WorkerShow> = {}, showDelay = 0) {
+function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], owners: OwnerLive[] = [], shows: Record<string, WorkerShow> = {}, showDelay = 0, extraTerms: string[] = []) {
   const calls: string[][] = []
   const showCalls: string[] = []
   const orca: Orca = {
@@ -37,7 +37,8 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
     terminals: async () => [
       { handle: 'term_main', tabId: 't', leafId: 'main' },
       { handle: 'term_w1', tabId: 't', leafId: 'w1' },
-      { handle: 'term_aoba_w1', tabId: 't', leafId: 'aw1' }
+      { handle: 'term_aoba_w1', tabId: 't', leafId: 'aw1' },
+      ...extraTerms.map((h) => ({ handle: h, tabId: 't', leafId: h }))
     ],
     plugins: async () => plugins,
     agents: async () => owners,
@@ -62,13 +63,13 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
   if (focusPath) setFocus(focusPath)
-  const fake = fakeOrca(rows, plugins, owners, shows, showDelay)
-  const s = createServer({ port: 0, dir, orca: fake.orca })
+  const fake = fakeOrca(rows, plugins, owners, shows, showDelay, more.terms)
+  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult })
   servers.push(s)
   const port = await s.listen()
   const origin = `http://127.0.0.1:${port}`
@@ -263,6 +264,50 @@ test('担当と話す: 話し中の操作を 1 度だけ記録し、担当の端
   const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))
   assert.deepEqual(log.ops.map((o: { item_id: string; type: string }) => `${o.item_id}:${o.type}`), ['r5:talk', 'd21:talk', 'd22:talk'])
   assert.equal((await post('talk', { root: a, item_id: 'nope' })).status, 409)
+})
+
+/** consult --card の代わり。立てたタブを Orca の端末の一覧に足し、呼ばれた (root, カード) を残す。fail なら理由で落ちる。 */
+function fakeConsult(terms: string[], fail?: string) {
+  const asked: string[][] = []
+  const consult: Consult = async (root, card) => {
+    asked.push([root, card])
+    if (fail) throw new Error(fail)
+    if (!terms.includes('term_consult')) terms.push('term_consult')
+    return 'term_consult'
+  }
+  return { consult, asked }
+}
+const talkOps = (root: string) => JSON.parse(readFileSync(path.join(root, '.orca/cockpit.user.json'), 'utf8')).ops.map((o: { item_id: string; type: string; terminal?: string }) => [o.item_id, o.type, o.terminal ?? null])
+
+test('担当と協議: 担当のいないカードはカードの相談のタブを立て、タブの handle を話し中の記録に残す。2 回目は consult が前に出すだけで記録を重ねない', async () => {
+  const { a, rows } = workspaces()
+  const terms: string[] = []
+  const { consult, asked } = fakeConsult(terms)
+  const { s, port, post, calls } = await start(rows, a, undefined, undefined, undefined, undefined, { consult, terms })
+  const ev = listen(port, s.token)
+  await ev.until(ready)
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '相談のタブ' })
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '相談のタブ' })
+  assert.deepEqual(asked, [[a, 'd22'], [a, 'd22']])
+  assert.deepEqual(calls.filter((x) => x[0] === 'switch' || x[0] === 'activate'), [], 'タブは consult が前に出す')
+  assert.deepEqual(talkOps(a), [['d22', 'talk', 'term_consult']])
+  const w = await ev.until((v) => !!board(v, a)?.terminals?.includes('term_consult'))
+  assert.equal(board(w, a)?.terminals?.includes('term_main'), true)
+  // 担当のいるカードと、全体のタブの仕事の協議（カードの無い talk）は相談にしない。
+  assert.equal((await post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body.how, '配車画面の改修の端末')
+  assert.equal((await post('talk', { root: a, stream: 's4' })).body.how, '窓口の端末')
+  assert.deepEqual(asked.length, 2)
+})
+
+test('担当と協議: consult が失敗したら理由を返して窓口に回し、handle の無い話し中として記録する', async () => {
+  const { a, rows } = workspaces()
+  const { consult, asked } = fakeConsult([], 'consult: 操縦席が見つからない')
+  const { s, port, post, calls } = await start(rows, a, undefined, undefined, undefined, undefined, { consult })
+  await listen(port, s.token).until(ready)
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '窓口の端末', note: '相談のタブを開けませんでした（consult: 操縦席が見つからない）' })
+  assert.deepEqual(asked, [[a, 'd22']])
+  assert.deepEqual(calls.filter((x) => x[0] === 'switch'), [['switch', 'term_main']])
+  assert.deepEqual(talkOps(a), [['d22', 'talk', null]])
 })
 
 /** 担当 o1 を、worker-start --agent で立てたチャットにする。窓口は受け取りの terminal（structworker_…）を terminal に書いた。 */

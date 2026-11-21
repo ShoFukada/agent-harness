@@ -438,6 +438,7 @@ body { margin:0; }
 .ck.win .sent ol { margin:0; padding:0; list-style:none; display:grid; }
 .ck.win .sent li { display:grid; gap:3px; padding:5px 0; font-size:var(--fs-s); }
 .ck.win .sent li + li { border-top:1px solid var(--rule2); }
+.ck.win .sent button.code { border:0; background:none; padding:0; font:inherit; color:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
 .ck.win .sent .sl { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
 .ck.win .sent .tm { font-size:var(--fs-xs); color:var(--ink3); font-variant-numeric:tabular-nums; min-width:8.5em; }
 `

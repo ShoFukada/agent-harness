@@ -2,7 +2,7 @@
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
   COUNTED, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
-  type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
+  type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
 
@@ -89,7 +89,8 @@ export const isHot = (due: string | undefined, now: number) => !!due && !Number.
  * Orca から分かること。パネルは orchestration を読まないので dispatches が無い（タスクはメインの書いた state のまま）。null は Orca に無い。
  * current はタスクの id → 今の Dispatch（Run の Task の続きをたどった先）。無ければ worker の記録の dispatch_id（版 2）を使う。
  */
-export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string> }
+/** terminals は Orca にある端末の handle（読めていなければ無い。カードの相談のタブの生死に使う）。 */
+export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string>; terminals?: string[] }
 
 /** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
 export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
@@ -152,7 +153,7 @@ export type RequestView = {
   /** 済の条件ごとに証拠があるか。 */
   covered: boolean[]
 }
-export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[] }
+export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[] }
 /** 帳簿の不備を窓口に直させる猶予。過ぎても欠けたままなら、窓の要対応の上に「抜けている」として出す（R47）。 */
 export const GAP_GRACE_MS = 30 * 60_000
 
@@ -168,6 +169,8 @@ export type Derived = {
   reports: Row[]
   /** 片付いたもの（新しい順）。 */
   closed: Row[]
+  /** 片付いたもの全部（表示の 14 日を過ぎたものも）。タスクの詳細から開く。 */
+  settled: Row[]
   counts: Counts
   /** 件数に数える 5 種類の合計。 */
   total: number
@@ -269,7 +272,8 @@ function dispatchStuck(c: Cockpit, root: string, tasks: Map<string, TaskView>, w
 const CLOSED_DAYS = 14
 
 export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, facts: OrcaFacts | undefined, now: number, opts: DeriveOpts = {}): Derived {
-  const views = overlay(c, log, archive)
+  const terms = facts?.terminals && new Set(facts.terminals)
+  const views = overlay(c, log, archive, terms ? (t) => terms.has(t) : undefined)
   const row = (v: CardView): Row => ({ ...v, root, ws: c.workspace.name, owner: ownerOf(c, v.card, facts), stream: c.streams.find((s) => s.id === v.card.stream) })
   const rows = views.map(row)
   const written = new Set(c.cards.filter((x) => x.kind === 'stuck' && x.state === 'open').flatMap((x) => [...(x.tasks ?? []), ...(x.stream ? [x.stream] : [])]))
@@ -297,14 +301,15 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const recent = (r: Row) => !r.when || now - Date.parse(r.when) < CLOSED_DAYS * DAY
   // when は操作の時刻（UTC の Z）と窓口が書いた時刻（+09:00）が混ざるので、文字列ではなく時刻で比べる。
-  const closed = rows.filter((r) => r.status === 'closed' && recent(r)).sort((a, b) => timeOf(b.when) - timeOf(a.when))
+  const settled = rows.filter((r) => r.status === 'closed').sort((a, b) => timeOf(b.when) - timeOf(a.when))
+  const closed = settled.filter(recent)
   const requests = requestViews(c, log, archive, tasks)
   const unsorted = unsortedOf(c, opts.utterances ?? [])
   const late = (g: Gap) => !!g.since && now - Date.parse(g.since) >= GAP_GRACE_MS
   const reqGaps = requests.filter((r) => r.missing.length).map((r): Gap => ({ kind: 'request', id: r.req.id, title: r.req.title, missing: r.missing, since: r.req.at }))
 
   return {
-    views, queue, counts, total, tasks, closed, incomplete, unsorted, requests,
+    views, queue, counts, total, tasks, closed, settled, incomplete, unsorted, requests,
     talking: queue.filter((r) => r.talking),
     fixing: rows.filter((r) => r.status === 'fixing').sort(byUrgency),
     waiting: rows.filter((r) => r.status === 'waiting').sort((a, b) => timeOf(a.card.awaiting?.since) - timeOf(b.card.awaiting?.since)),
@@ -479,11 +484,51 @@ export type StateReport = {
     unproven: { request: string; when: number[] }[]
     /** 判断（rulings.jsonl）の affects に挙がったのに、reviewed_for にその判断の無いタスク（9.5）。 */
     affected_tasks: { ruling: string; task: string }[]
+    /** 相談のメモにあって判断の記録か帳簿に入っていない返しと、保留の返し（設計 10.7 の 1）。 */
+    unreflected_returns: Unreflected[]
+    /** カードが片付いたのに Orca に残っている相談のタブ（10.7 の 8）。 */
+    stale_consults: { id: string; terminal: string }[]
   }
   /** 全体の 1 行（hook が発言のたびにメインに流す）。 */
   overview: string
   /** ワークスペースのカードのコメント（orca worktree set --comment）。 */
   card: string
+}
+
+export type Unreflected = { id: string; card: unknown; missing: ('判断の記録' | '帳簿' | '保留')[]; memo: string | null }
+
+/**
+ * 相談のメモにあって、判断の記録の from_return か帳簿のカード（片付けて移したものも）の from_returns のどちらかに無い返しと、
+ * カードの held_returns に残る返し。compaction-keep.py の unreflected と同じ判定・同じ並び（window/state.test.ts で突き合わせる）。
+ */
+export function unreflectedReturns(cards: Card[], rulings: Ruling[], memos: ConsultMemo[]): Unreflected[] {
+  const inRulings = new Set(rulings.map((r) => r.from_return))
+  const inLedger = new Set(cards.flatMap((x) => x.from_returns ?? []))
+  const held = new Map<string, string>()
+  for (const x of cards) for (const id of x.held_returns ?? []) held.set(id, x.id)
+  const out: Unreflected[] = []
+  for (const m of memos)
+    for (const v of m.returns) {
+      const missing = [...(inRulings.has(v.return_id) ? [] : ['判断の記録' as const]), ...(inLedger.has(v.return_id) ? [] : ['帳簿' as const]), ...(held.has(v.return_id) ? ['保留' as const] : [])]
+      if (missing.length) out.push({ id: v.return_id, card: v.card || m.card, missing, memo: m.path })
+    }
+  // メモに書き損ねた返しでも、保留にしたものは相談が返し直すまで名指しする。
+  const named = new Set(out.map((x) => x.id))
+  const rest = [...held].filter(([id]) => !named.has(id)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return [...out, ...rest.map(([id, card]): Unreflected => ({ id, card, missing: ['保留'], memo: null }))]
+}
+
+/** カードが片付いた（帳簿から消えたものも）のに、Orca に残っている相談のタブ。端末の一覧を読めていなければ言い切らない。 */
+export function staleConsults(views: CardView[], log: UserLog, terminals: string[] | undefined): { id: string; terminal: string }[] {
+  if (!terminals) return []
+  const live = new Set(terminals)
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  const status = new Map(views.map((v) => [v.card.id, v.status]))
+  const out = new Map<string, { id: string; terminal: string }>()
+  for (const o of log.ops)
+    if (o.type === 'talk' && o.terminal && !undone.has(o.op_id) && live.has(o.terminal) && (status.get(o.item_id) ?? 'closed') === 'closed')
+      out.set(`${o.item_id}\n${o.terminal}`, { id: o.item_id, terminal: o.terminal })
+  return [...out.values()]
 }
 
 const INTAKE_GRACE_MS = 10 * 60_000
@@ -512,7 +557,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
     next: next && { id: next.card.id, kind: next.card.kind, title: next.card.title, due: next.card.due },
     mine: mine.map((r) => ({ id: r.card.id, kind: r.card.kind, title: r.card.title, due: r.card.due })),
     overdue: d.queue.filter((r) => isOver(r.card.due, now)).map((r) => r.card.id),
-    talking: d.talking.map((r) => ({ id: r.card.id, since: r.talking!.since, with: r.owner.title })),
+    talking: d.talking.map((r) => ({ id: r.card.id, since: r.talking!.since, with: r.talking!.terminal ? 'カードの相談' : r.owner.title })),
     fixing: d.fixing.map((r) => r.card.id),
     waiting: d.waiting.map((r) => ({ id: r.card.id, who: r.card.awaiting?.who ?? '', what: r.card.awaiting?.what ?? r.card.title, since: r.card.awaiting?.since ?? '', remind_at: r.card.awaiting?.remind_at })),
     jobs: d.jobs.map((j) => ({ id: j.id, title: j.title, state: j.state, label: j.label, next: j.next, orca: { display_name: j.title, status: ORCA_STATUS[j.state], unread: j.state === 'mine' } })),
@@ -550,7 +595,9 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
         .map((r) => ({ request: r.req.id, when: r.covered.flatMap((x, i) => (x ? [] : [i + 1])) })),
       affected_tasks: (opts.rulings ?? []).flatMap((ru) => (ru.affects ?? [])
         .filter((id) => c.tasks.some((t) => t.id === id && !t.reviewed_for?.includes(ru.id)))
-        .map((task) => ({ ruling: ru.id, task })))
+        .map((task) => ({ ruling: ru.id, task }))),
+      unreflected_returns: unreflectedReturns([...c.cards, ...archive], opts.rulings ?? [], opts.consults ?? []),
+      stale_consults: staleConsults(d.views, log, facts?.terminals)
     },
     overview: `全体: ${countsText(d.counts, d.total)}・話し中 ${d.talking.length}・顧客待ち ${d.waiting.length}・動いている worker ${running.length}${names(running.map((t) => t.task.title))}`,
     card: `${countsText(d.counts, d.total)}${next?.card.due ? `・最短 ${fmtDate(next.card.due)}` : ''}`

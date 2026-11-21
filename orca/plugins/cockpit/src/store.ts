@@ -3,7 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   dismissable, isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  type Card, type Cockpit, type Handoff, type Op, type Ruling, type UserLog, type Utterance
+  RETURN_ID, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -34,9 +34,51 @@ export type Files = {
   firstSeen: Record<string, string>
   /** 判断の記録（.orca/cockpit/rulings.jsonl）の id と affects。見直していないタスクの検査に使う。 */
   rulings: Ruling[]
+  /** カードの相談のメモ（.orca/consult/*.md）と、その中の窓口への返し。 */
+  consults: ConsultMemo[]
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [] })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [], consults: [] })
+
+/**
+ * 相談のメモの「## 窓口に返したもの」の節にある ```json の塊のうち、return_id を持つもの（同じ id は先のもの）。
+ * 読み方は compaction-keep.py の memo_returns と同じにする（checks.unreflected_returns を python と食い違わせないため）。
+ */
+export function memoReturns(text: string): ConsultReturn[] {
+  const head = /^## 窓口に返したもの[^\n]*\n/m.exec(text)
+  if (!head) return []
+  const rest = text.slice(head.index + head[0].length)
+  const end = /^## /m.exec(rest)
+  const out = new Map<string, ConsultReturn>()
+  for (const m of (end ? rest.slice(0, end.index) : rest).matchAll(/```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g)) {
+    try {
+      const v = JSON.parse(m[1]!) as unknown
+      if (typeof v === 'object' && v !== null && !Array.isArray(v) && typeof (v as ConsultReturn).return_id === 'string' && RETURN_ID.test((v as ConsultReturn).return_id) && !out.has((v as ConsultReturn).return_id))
+        out.set((v as ConsultReturn).return_id, v as ConsultReturn)
+    } catch {
+      // 書きかけの塊。
+    }
+  }
+  return [...out.values()]
+}
+
+/** .orca/consult/*.md を名前の順に読む。置き場所が無ければ空。 */
+async function readConsults(root: string): Promise<ConsultMemo[]> {
+  const dir = path.join(root, '.orca', 'consult')
+  let names: string[]
+  try {
+    names = (await fsp.readdir(dir)).filter((n) => n.endsWith('.md')).sort()
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw e
+  }
+  const out: ConsultMemo[] = []
+  for (const name of names) {
+    const text = await readInOrca(root, `.orca/consult/${name}`).catch(() => undefined)
+    if (text !== undefined) out.push({ card: name.slice(0, -3), path: path.join(dir, name), returns: memoReturns(text) })
+  }
+  return out
+}
 
 /** 判断の記録の 1 行ずつ。壊れた行と id の無い行は飛ばす。 */
 export function parseRulings(text: string): Ruling[] {
@@ -44,10 +86,15 @@ export function parseRulings(text: string): Ruling[] {
   for (const line of text.split('\n')) {
     if (!line.trim()) continue
     try {
-      const v = JSON.parse(line) as { id?: unknown; affects?: unknown }
-      if (typeof v.id !== 'string' || !v.id) continue
+      const v = JSON.parse(line) as { id?: unknown; affects?: unknown; from_return?: unknown }
+      const from = typeof v.from_return === 'string' ? { from_return: v.from_return } : {}
+      // id の無い行も、相談の返しの照合（from_return）には数える（compaction-keep.py の unreflected と同じ）。
+      if (typeof v.id !== 'string' || !v.id) {
+        if (from.from_return) out.push({ id: '', ...from })
+        continue
+      }
       const affects = Array.isArray(v.affects) ? v.affects.filter((x): x is string => typeof x === 'string') : undefined
-      out.push(affects ? { id: v.id, affects } : { id: v.id })
+      out.push({ id: v.id, ...(affects && { affects }), ...from })
     } catch {
       // 書きかけの行。
     }
@@ -101,7 +148,7 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
   const next: Files = {
     cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff,
-    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings
+    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings, consults: prev.consults
   }
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
@@ -130,6 +177,11 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   await one('cockpit/rulings.jsonl', '', (text) => {
     next.rulings = text === undefined ? [] : parseRulings(text)
   })
+  try {
+    next.consults = await readConsults(root)
+  } catch (e) {
+    next.errors.push(`consult を読めません: ${(e as Error).message}`)
+  }
   await one('cockpit/firstseen.json', '', (text) => {
     const v: unknown = text === undefined ? {} : JSON.parse(text)
     next.firstSeen = typeof v === 'object' && v !== null && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, t]) => typeof t === 'string')) as Record<string, string> : {}

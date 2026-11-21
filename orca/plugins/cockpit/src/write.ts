@@ -30,9 +30,12 @@ const stable = (v: unknown): unknown =>
   Array.isArray(v) ? v.map(stable) : isObj(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable(v[k])])) : v
 const same = (a: unknown, b: unknown) => JSON.stringify(stable(a)) === JSON.stringify(stable(b))
 /** 片付ける・顧客待ちにする書き換えで動く欄。rev を上げずに書いてよい（上げると「これでよい」の版の照合から外れる）。 */
-const CLOSING_FIELDS = new Set(['state', 'resolved_by', 'resolved_at', 'resolved_option', 'resolved_text', 'resolved_at_inferred', 'closed_without_review', 'awaiting', 'why', 'element_map'])
-/** 承認を取り込むときに書く要素の行き先。承認した版の中身ではないので、開いたままでも rev を上げずに書ける（上げると承認が外れる）。 */
-const INTAKE_FIELDS = new Set(['element_map'])
+const CLOSING_FIELDS = new Set(['state', 'resolved_by', 'resolved_at', 'resolved_option', 'resolved_text', 'resolved_at_inferred', 'closed_without_review', 'awaiting', 'why', 'element_map', 'from_returns', 'held_returns'])
+/**
+ * 承認を取り込むときに書く要素の行き先と、カードの相談の返しを反映した・保留にした印。承認した版の中身ではないので、開いたままでも rev を上げずに書ける
+ * （上げると承認が外れ、相談が前提にした版とも食い違う）。
+ */
+const INTAKE_FIELDS = new Set(['element_map', 'from_returns', 'held_returns'])
 
 /**
  * 書ける欄の名前。読み込みは知らない欄を読み飛ばすので、書き間違い（through を throug と書くなど）は黙って効かなくなる。書く道具は変更の行だけを検査し、

@@ -1,5 +1,5 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
-import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type Sent, type StreamForm, type TaskState } from './model.ts'
+import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { STOP_LABEL, byUrgency, fmtDate, isHot, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
@@ -205,6 +205,21 @@ function moreView(r: VRow, svg: Svg): string {
   return parts.join('')
 }
 
+/**
+ * カードの相談のメモへのリンクと、相談で決まったこと（新しい返しから 3 件。info-needs 3.9）。返しごとに、窓口が帳簿に入れたか・保留かを札で出す。
+ */
+function consultHtml(memo: ConsultMemo | undefined, c: Card): string {
+  if (!memo) return ''
+  const state = (id: string) => (c.held_returns?.includes(id) ? tag('保留', 'wait') : c.from_returns?.includes(id) ? tag('反映済み') : tag('未反映', 'wait'))
+  const got = [...memo.returns].reverse().flatMap((x) => [
+    ...(typeof x.choice === 'string' && x.choice ? [{ text: `選んだ案: ${c.options?.find((o) => o.id === x.choice)?.label ?? x.choice}`, id: x.return_id }] : []),
+    ...(Array.isArray(x.decisions) ? x.decisions : []).filter((d) => typeof d?.text === 'string' && d.text.trim()).map((d) => ({ text: d.text!, id: x.return_id }))
+  ]).slice(0, 3)
+  const link = `<div class="links">${linkBtn('相談のメモ', memo.path)}</div>`
+  if (!got.length) return fld('相談のメモ', link)
+  return fld('これまでに決まったこと', `<ul class="rich">${got.map((d) => `<li>${mono(note(d.text))}${state(d.id)}</li>`).join('')}</ul>${link}`)
+}
+
 function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string, closed = false): string {
   const c = r.card
   const s = r.stream
@@ -221,11 +236,12 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const moreOpen = ui.open['detail-more'] ?? false
   const acts = actsHtml(r, ui, true).replace('</div>', next ? `<button class="btn quiet nx" type="button" data-sel="${esc(next)}">次へ（j）</button></div>` : '</div>')
   const sent = sentHtml(sentOps([c], b.v.log, b.v.cockpit!.applied_ops))
+  const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
     <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}</div>
       <div class="kl"><span class="kd">${kindName(c)}</span><span class="mut">${esc(c.id.startsWith('#') ? 'Orca から' : c.id)}</span>${c.due ? dueHtml(c.due, now) : ''}</div>
       <h2>${esc(c.title)}</h2><div>${ownerHtml(r.owner)}</div></div>
-    ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${sent}
+    ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
     ${closed ? '' : otherHtml(r, ui)}
     <div class="dbtn">${acts}</div></div>`
@@ -306,10 +322,14 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
     ${open ? `<div class="inner">${inner || '<span class="mut">なし</span>'}</div>` : ''}</div>`
 }
 
-/** 出した指示（新しい順）。withCard はどのカードへの指示かを頭に出す（タスクの詳細）。 */
-function sentHtml(xs: Sent[], withCard = false): string {
+/** 出した指示（新しい順）。jump はどのカードへの指示かを頭に出すとき（タスクの詳細）の、カードを開けるか（開けるならその key）。 */
+function sentHtml(xs: Sent[], jump?: (c: Card) => string | undefined): string {
   if (!xs.length) return ''
-  return `<div class="sent fld"><span class="lb">出した指示</span><ol>${xs.map((s) => `<li><span class="sl"><span class="tm">${esc(fmtDate(s.op.at))}</span>${withCard ? `<span class="code">${esc(s.card.id)}</span>` : ''}<b>${esc(s.label)}</b>${s.applied ? tag('反映済み') : tag('未反映', 'wait')}</span>${s.text ? `<div class="quote verb">${esc(s.text)}</div>` : ''}</li>`).join('')}</ol></div>`
+  const id = (c: Card) => {
+    const k = jump?.(c)
+    return k ? `<button type="button" class="code" data-jump="${esc(k)}">${esc(c.id)}</button>` : `<span class="code">${esc(c.id)}</span>`
+  }
+  return `<div class="sent fld"><span class="lb">出した指示</span><ol>${xs.map((s) => `<li><span class="sl"><span class="tm">${esc(fmtDate(s.op.at))}</span>${jump ? id(s.card) : ''}<b>${esc(s.label)}</b>${s.applied ? tag('反映済み') : tag('未反映', 'wait')}</span>${s.text ? `<div class="quote verb">${esc(s.text)}</div>` : ''}</li>`).join('')}</ol></div>`
 }
 
 const CARD_STATE = { mine: '要対応', fixing: '修正待ち', waiting: '顧客待ち', closed: '対応済み' } as const
@@ -322,7 +342,8 @@ function taskDetail(b: Board, t: TaskView, ui: Ui): string {
   const st = stageOf(task.phase)
   const a = b.v.workers.find((w) => w.task === task.id)
   const owner = b.d.jobs.find((j) => j.id === task.stream)?.owner
-  const listed = new Set([...todoOrder(b), ...b.d.reports.map(keyOf), ...doneOrder(b)])
+  // 済んだカードは表示の 14 日を過ぎても対応済みのタブで開く（settled は期間外も持つ）。
+  const listed = new Set([...todoOrder(b), ...b.d.reports.map(keyOf), ...b.d.settled.map(keyOf)])
   const cards = [...b.d.views.map((v) => ({ ...v, root: b.root })), ...b.d.queue.filter((r) => isSynthetic(r.card.id))].filter((v) => v.card.tasks?.includes(task.id))
   // 頼んでいることは済んでいないカードだけ（済んだものは「出した指示」で返答を読める）。
   const asking = cards.filter((v) => v.status !== 'closed')
@@ -359,7 +380,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui): string {
     fld('済んだこと', doneHtml),
     fld('資料', srcs.length ? `<div class="links">${srcs.map((x) => linkBtn(x.split('/').filter(Boolean).pop() ?? x, x)).join('')}</div>` : '')
   ].join('')
-  const sent = sentHtml(sentOps(cards.map((v) => v.card).filter((x) => !isSynthetic(x.id)), b.v.log, c.applied_ops), true)
+  const sent = sentHtml(sentOps(cards.map((v) => v.card).filter((x) => !isSynthetic(x.id)), b.v.log, c.applied_ops), (x) => (listed.has(keyOf({ root: b.root, card: x })) ? keyOf({ root: b.root, card: x }) : undefined))
   const talk = task.stream ? `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(task.stream)}">${owner ? '担当と協議' : '窓口と協議'}</button></div>` : ''
   return `<div class="wdet">
     <div class="dh"><div class="crumbs">${[c.workspace.name, s?.title ?? '仕事の割り当てなし'].map((x) => `<span>${esc(x)}</span>`).join('<i>›</i>')}</div>
@@ -414,7 +435,8 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
 function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {
   const groups = closedGroups(b)
   const list = groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs, true)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.doneSel, now, true)).join('')}</div></section>`).join('')
-  const cur = groups.flatMap(([, xs]) => xs).find((r) => keyOf(r) === ui.doneSel)
+  // タスクの詳細から開いた期間外のカードは、一覧に無くても詳細を出す。
+  const cur = vrows(b, b.d.settled).find((r) => keyOf(r) === ui.doneSel)
   return `<div class="wpane" aria-label="対応済み"><p class="mut">直近 14 日・新しい順</p>${list || '<div class="calm"><b>対応済み 0 件</b></div>'}</div>
     <aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, undefined, true) : ''}</aside>`
 }

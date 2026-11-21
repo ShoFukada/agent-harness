@@ -227,6 +227,26 @@ test('書く道具（Codex 2 回目）: 欄の順だけ違う閉じ方は中身�
   assert.deepEqual(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['A', 'B', 'C2'] }] }, utter).errors, [])
 })
 
+test('相談の返し: カードの from_returns・held_returns は rev を上げずに書け（開いたままでも、片付けるときも）、依頼の from_return も受ける。return_id の形が違えば断る', () => {
+  const c = aoba()
+  const d21 = card(c, 'd21')
+  const held = applyChange(c, { cards: [{ ...d21, held_returns: ['d21-2'] }] })
+  assert.deepEqual(held.errors, [])
+  assert.equal(held.next!.cards.find((x) => x.id === 'd21')!.rev, d21.rev)
+  const closed = applyChange(held.next!, { cards: [{ ...d21, held_returns: [], from_returns: ['d21-2'], state: 'done', resolved_by: 'user', resolved_option: d21.options![0]!.id, resolved_at: '2026-11-21T10:00:00+09:00' }] })
+  assert.deepEqual(closed.errors, [])
+  assert.deepEqual(closed.next!.cards.find((x) => x.id === 'd21')!.from_returns, ['d21-2'])
+  assert.match(applyChange(c, { cards: [{ ...d21, from_returns: ['d21'] }] }).errors.join(), /from_returns の形が違う/)
+  const req: Request = { id: 'r90', at: '2026-11-21T09:30:00+09:00', title: '相談で出た依頼', kind: 'work', done_when: ['図を直す'], utterances: [{ id: 'u1', quote: '図を直して' }], from_return: 'd21-2' }
+  const withReq = applyChange(c, { requests: [req] }, utter)
+  assert.deepEqual(withReq.errors, [])
+  assert.equal(withReq.next!.requests!.find((x) => x.id === 'r90')!.from_return, 'd21-2')
+  assert.match(applyChange(c, { requests: [{ ...req, from_return: "x" }] }, utter).errors.join(), /from_return/)
+  const problems: string[] = []
+  assert.deepEqual(parseCockpit(JSON.stringify(closed.next), problems).cards.find((x) => x.id === 'd21')!.from_returns, ['d21-2'])
+  assert.deepEqual(problems, [])
+})
+
 test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ。null で消し、run_ で始まらない値・ほかの欄は断る。読み込みも受ける', () => {
   const c = aoba()
   c.main = { agent: 'claude', terminal: 'term_main' }

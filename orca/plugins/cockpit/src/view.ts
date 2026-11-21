@@ -56,7 +56,7 @@ export function boardsOf(views: CockpitView[], now: number): Board[] {
   return views
     .filter((v): v is CockpitView & { root: string; cockpit: NonNullable<CockpitView['cockpit']> } => !!v.root && !!v.cockpit)
     .map((v) => {
-      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, current: v.current }
+      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, current: v.current, terminals: v.terminals }
       return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now, { utterances: v.utterances, firstSeen: v.firstSeen }) }
     })
 }
@@ -601,9 +601,10 @@ function signalHtml(v: CockpitView | undefined): string {
 export function talkMessage(res: TalkResult, copied: boolean): string {
   const where = res.opened ? `${res.how}を前に出しました。` : ''
   const paste = copied ? '書き出しをコピーしたので、貼って話してください' : '話してください'
-  if (res.reason) return `開けませんでした: ${res.reason}`
-  if (res.tab) return `${where}チャットの「${res.tab}」を開き、${paste}`
-  return res.opened ? `${res.how}を開きました。${paste}` : `${res.how}を開けませんでした。Orca で開き、${paste}`
+  const head = res.note ? `${res.note}。窓口に回します。` : ''
+  if (res.reason) return `${head}開けませんでした: ${res.reason}`
+  if (res.tab) return `${head}${where}チャットの「${res.tab}」を開き、${paste}`
+  return head + (res.opened ? `${res.how}を開きました。${paste}` : `${res.how}を開けませんでした。Orca で開き、${paste}`)
 }
 
 /** 担当のチャットに貼る書き出し。どのカードの話かを説明し直さずに済むように。 */

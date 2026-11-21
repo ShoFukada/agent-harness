@@ -111,7 +111,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const boards = boardsOf(feed.views, now)
     rows = new Map()
     for (const b of boards)
-      for (const k of ['queue', 'fixing', 'waiting', 'reports', 'closed'] as const) for (const r of b.d[k]) rows.set(keyOf(r), { ...r, v: b.v })
+      for (const k of ['queue', 'fixing', 'waiting', 'reports', 'settled'] as const) for (const r of b.d[k]) rows.set(keyOf(r), { ...r, v: b.v })
     const shown = ui.filter ? boards.filter((b) => b.root === ui.filter) : boards
     order = shown.flatMap((b) => b.d.queue.map((r) => ({ ...r, v: b.v }))).sort(byUrgency).map(keyOf)
     // 操縦席はあるが読めない案件（版 1 のまま・壊れた JSON）は、黙って外さず「見ていない」に理由つきで出す。
@@ -127,7 +127,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
       const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
       if ((ui.tab ?? 'todo') === 'todo' && !(ui.sel && (order.includes(ui.sel) || reports.includes(ui.sel)))) ui.sel = order[0] ?? reports[0]
-      if (ui.tab === 'done' && !(ui.doneSel && order.includes(ui.doneSel))) ui.doneSel = order[0]
+      // 対応済みはタスクの詳細から開いた期間外のカードも選んだまま出す。
+      if (ui.tab === 'done' && !(ui.doneSel && (order.includes(ui.doneSel) || rows.get(ui.doneSel)?.status === 'closed'))) ui.doneSel = order[0]
       // 全体は右に出しているタスクが消えたら、上から最初のタスクにする（済んだタスクは選んだまま読める）。
       if (ui.tab === 'whole' && !(ui.task && b?.d.tasks.has(ui.task))) ui.task = order[0]
     }

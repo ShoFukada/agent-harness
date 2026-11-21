@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { parseCockpit, requestCards, stageOf, type Card, type Cockpit } from './model.ts'
 import type { AgentRow } from './protocol.ts'
-import { bucketOf, byUrgency, derive, NAME_MAX, ORCA_STATUS, report, routeProblem, type Row } from './state.ts'
+import { bucketOf, byUrgency, derive, NAME_MAX, ORCA_STATUS, report, routeProblem, unreflectedReturns, type Row } from './state.ts'
+import { emptyFiles, loadFiles } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const ws = (n: number) => {
@@ -251,6 +256,66 @@ test('担当と話すを押したカードは私の番に残り、hook の talki
   const r = report(w.cockpit, log, [], undefined, 'skipped', NOW)
   assert.ok(r.mine.some((x) => x.id === 'd21'))
   assert.deepEqual(r.talking, [{ id: 'd21', since: '2026-11-21T09:50:00+09:00', with: 'AWS 構成案' }])
+})
+
+test('カードの相談: タブ（talk の terminal）が Orca にある間だけ話し中。端末の一覧を読めていなければ外さない。片付いたカードに残るタブを stale_consults に出す', () => {
+  const w = ws(0)
+  const talk = (op_id: number, item_id: string, item_rev: number, terminal: string) => ({ op_id, at: '2026-11-21T09:50:00+09:00', item_id, item_rev, type: 'talk' as const, terminal })
+  const log = { ops: [...w.log.ops, talk(5, 'd22', 2, 'term_c22'), talk(6, 'd19', 1, 'term_c19'), talk(7, 'd19', 1, 'term_gone'), talk(8, 'zz', 1, 'term_zz'), talk(9, 'd19', 1, 'term_undone'), { op_id: 10, at: '2026-11-21T09:51:00+09:00', item_id: 'd19', item_rev: 1, type: 'undo' as const, undo_of: 9 }] }
+  const facts = (terminals?: string[]) => ({ workers: [], terminals })
+  const live = report(w.cockpit, log, [], facts(['term_c22', 'term_c19', 'term_zz', 'term_undone']), 'ok', NOW)
+  assert.deepEqual(live.talking, [{ id: 'd22', since: '2026-11-21T09:50:00+09:00', with: 'カードの相談' }])
+  assert.deepEqual(live.checks.stale_consults, [{ id: 'd19', terminal: 'term_c19' }, { id: 'zz', terminal: 'term_zz' }])
+  const closed = report(w.cockpit, log, [], facts([]), 'ok', NOW)
+  assert.deepEqual(closed.talking, [], 'タブが閉じたら話し中を外す')
+  assert.deepEqual(closed.checks.stale_consults, [])
+  const unknown = report(w.cockpit, log, [], undefined, 'error', NOW)
+  assert.deepEqual(unknown.talking.map((x) => x.id), ['d22'])
+  assert.deepEqual(unknown.checks.stale_consults, [])
+})
+
+/** 相談の返しの照合を試す操縦席。d21 は反映済み・帳簿だけ抜け・保留、d22 はメモの塊に card が無い。片付けて移したカードの保留はメモに無い。 */
+function consultRoot(): string {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'cockpit-consult-'))
+  const w = ws(0)
+  const c = structuredClone(w.cockpit) as Cockpit
+  c.cards.find((x) => x.id === 'd21')!.from_returns = ['d21-1']
+  c.cards.find((x) => x.id === 'd21')!.held_returns = ['d21-3']
+  const put = (rel: string, text: string) => {
+    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
+    writeFileSync(path.join(root, rel), text)
+  }
+  put('.orca/cockpit.json', JSON.stringify(c))
+  put('.orca/cockpit.archive.json', JSON.stringify({ cards: [{ id: 'x9', rev: 1, kind: 'decide', state: 'done', title: '移したカード', held_returns: ['x9-1'] }] }))
+  put('.orca/cockpit/rulings.jsonl', [{ id: 'R1', from_return: 'd21-1' }, { from_return: 'd21-2' }, { id: 'R3', from_return: 'd22-1' }, { id: 'R4' }].map((x) => JSON.stringify(x)).join('\n') + '\n')
+  const block = (v: unknown) => '```json\n' + JSON.stringify(v, null, 1) + '\n```\n'
+  put('.orca/consult/d21.md', ['# 相談｜案件A｜d21\n', '## 決めたこと\n', block({ return_id: 'd21-8', card: 'd21' }), '## 窓口に返したもの（時刻・message id）\n',
+    block({ return_id: 'd21-1', card: 'd21', rev: 1, decisions: [{ text: '入口は 1 つにする' }] }), block({ return_id: 'd21-2', card: 'd21', rev: 1 }), block({ return_id: 'd21-2', card: 'x' }),
+    '```json\n{ 書きかけ\n```\n', block({ card: 'd21' }), block({ return_id: 'd21-3', card: 'd21', rev: 1 }), '## 残っている論点\n', block({ return_id: 'd21-9', card: 'd21' })].join(''))
+  put('.orca/consult/d22.md', '## 窓口に返したもの\n' + block({ return_id: 'd22-1', rev: 2 }))
+  put('.orca/consult/c4.md', '# 返しはまだ無い\n')
+  return root
+}
+
+test('相談の返し: メモにあって判断の記録か帳簿に無いものと保留を名指しする（同じ id は先の塊、節の外の塊と書きかけは読まない）', async () => {
+  const root = consultRoot()
+  const f = await loadFiles(root, emptyFiles())
+  const memo = (card: string) => path.join(root, '.orca', 'consult', `${card}.md`)
+  assert.deepEqual(unreflectedReturns([...f.cockpit!.cards, ...f.archive], f.rulings, f.consults), [
+    { id: 'd21-2', card: 'd21', missing: ['帳簿'], memo: memo('d21') },
+    { id: 'd21-3', card: 'd21', missing: ['判断の記録', '帳簿', '保留'], memo: memo('d21') },
+    { id: 'd22-1', card: 'd22', missing: ['帳簿'], memo: memo('d22') },
+    { id: 'x9-1', card: 'x9', missing: ['保留'], memo: null }
+  ])
+})
+
+// nix-darwin の hook（compaction-keep.py unreflected）と同じ結果になること。hook の無い手元では飛ばす。
+const KEEP = path.join(os.homedir(), '.config/nix-darwin/claude/hooks/compaction-keep.py')
+test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結果', { skip: !existsSync(KEEP) && 'compaction-keep.py が無い' }, async () => {
+  const root = consultRoot()
+  const f = await loadFiles(root, emptyFiles())
+  const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
+  assert.deepEqual(unreflectedReturns([...f.cockpit!.cards, ...f.archive], f.rulings, f.consults), py)
 })
 
 test('片付いたものは時刻で新しい順に並べる（操作の UTC の時刻と、窓口が書いた +09:00 の時刻が混ざっても）', () => {

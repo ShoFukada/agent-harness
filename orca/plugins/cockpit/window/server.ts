@@ -136,8 +136,26 @@ class HttpError extends Error {
   }
 }
 
+/**
+ * カードの相談のタブを立てる（開いていれば前に出す）道具。返すのはタブの端末の handle。失敗は理由を message に持つ例外。
+ * 渡さなければ、担当のいないカードも今どおり窓口に回す。
+ */
+export type Consult = (root: string, card: string) => Promise<string>
 /** clip はテストで差し替える（既定は clip-draft を呼ぶ）。 */
-export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft }
+export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft; consult?: Consult }
+
+/** nix-darwin の consult --card。標準出力の 1 行目が端末の handle、失敗は 0 以外の終了と標準エラーの理由。 */
+export function consultCli(cmd: string): Consult {
+  return (root, card) =>
+    new Promise((resolve, reject) =>
+      execFile(cmd, ['--card', root, card], { timeout: 60_000 }, (err, out, errOut) => {
+        const handle = String(out).split('\n')[0]?.trim()
+        if (!err && handle) return resolve(handle)
+        const why = String(errOut).trim() || err?.message || 'consult が端末の handle を返しませんでした'
+        reject(new Error(why.length > 300 ? `${why.slice(0, 300)}…` : why))
+      })
+    )
+}
 
 export function createServer(opts: Options) {
   const token = randomBytes(24).toString('base64url')
@@ -194,16 +212,21 @@ export function createServer(opts: Options) {
     const since = Date.now() - CLOSED_DAYS * 86_400_000
     // 依頼の今は証拠の「これでよい」が指すカードの版と、依頼に結ばれたカードで決めるので、表示の期間を過ぎても送る（CLI と窓で食い違わないように）。
     const proof = files.cockpit ? requestCards(files.cockpit, files.log) : new Set<string>()
-    const keep = (x: Card) => x.state !== 'done' || !x.resolved_at || Date.parse(x.resolved_at) > since || proof.has(x.id)
+    const recent = (x: Card) => x.state !== 'done' || !x.resolved_at || Date.parse(x.resolved_at) > since || proof.has(x.id)
+    // 済んでいないタスクに結ばれたカードは、期間を過ぎても送る（タスクの詳細から開くため）。
+    const live = new Set(files.cockpit?.tasks.filter((t) => t.state !== 'ok').map((t) => t.id))
+    const tied = (x: Card) => !!x.tasks?.some((t) => live.has(t))
+    const keep = (x: Card) => recent(x) || tied(x)
     const cockpit = slim && files.cockpit ? slimmed(files.cockpit, keep) : files.cockpit
     return {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit, log: files.log, figures: files.figures, errors: files.errors,
-      archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since || proof.has(c.id)) : files.archive,
+      archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since || proof.has(c.id) || tied(c)) : files.archive,
       workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, current: root ? currents.get(root) : undefined, owners,
       notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
-      utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen
+      utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen,
+      terminals: lastRefresh && !orcaError ? [...terms.values()] : undefined, consults: files.consults
     }
   }
 
@@ -444,8 +467,9 @@ export function createServer(opts: Options) {
    * 担当と話す先。端末の担当はその端末、チャットの担当はチャットのある worktree（Orca にはチャットのタブを前に出す手段が無い）、
    * 担当の無いカードは窓口。開けないときは理由を返す。
    */
+  const ownerFor = (ws: Ws, c: Cockpit, card: Card) => ownerOf(c, card, { workers: workersOf(ws.root, ws.files), dispatches: facts.get(ws.root), owners, current: currents.get(ws.root) })
   function talkTarget(ws: Ws, c: Cockpit, card: Card): Target {
-    const o = ownerOf(c, card, { workers: workersOf(ws.root, ws.files), dispatches: facts.get(ws.root), owners, current: currents.get(ws.root) })
+    const o = ownerFor(ws, c, card)
     if (o.how === 'main') {
       // cockpit.json の main が古い（開き直した）ときは、本線に 1 つだけいるエージェントの端末を使う。窓口がチャット（main.terminal が空）なら推さない。
       const t = o.terminal ? [o.terminal, agentsOf(ws.root, ws.files).main?.terminalId].find(liveTerminal) : undefined
@@ -469,6 +493,19 @@ export function createServer(opts: Options) {
     if (!chat.worktree || !rowOf(chat.worktree))
       return { how: `${o.title}のチャット`, reason: `${who}のチャットの居場所の worktree${chat.worktree ? `（${path.basename(chat.worktree)}）` : ' '}が Orca にありません。片付けられたようです` }
     return { worktree: chat.worktree, how: wsName(chat.worktree), tab: chat.title ?? agentTitle(o.title, '担当') }
+  }
+
+  /**
+   * 私の番で、まだ話し中の印が無いときだけ記録する（取り消したあとにもう一度押したときも記録する）。印が付いてもカードは私の番に残る。
+   * カードの相談はタブの handle を残し、別のタブで話し中なら（閉じて立て直した）新しいタブで記録し直す。
+   */
+  async function markTalk(ws: Ws, c: Cockpit, card: Card, rev: unknown, terminal?: string): Promise<void> {
+    const now = overlay(c, ws.files.log, [], liveTerminal).find((v) => v.card.id === card.id)
+    if (now?.status !== 'mine' || (now.talking && now.talking.terminal === terminal) || card.kind === 'report' || rev !== card.rev) return
+    ws.files = { ...ws.files, log: await appendOp(ws.root, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk', ...(terminal && { terminal }) }) }
+    mine.add(`${ws.root}#${ws.files.log.ops.at(-1)!.op_id}`)
+    broadcast()
+    void autoSignal(ws).then(broadcast, (e) => console.error(e))
   }
 
   const api: Record<string, (b: Record<string, unknown>) => Promise<unknown>> = {
@@ -499,25 +536,32 @@ export function createServer(opts: Options) {
       if (!c || !card) throw new HttpError(409, typeof b.stream === 'string' ? '仕事が見つかりません。読み直してからもう一度押してください' : 'カードが見つかりません。読み直してからもう一度押してください')
       // 読み直しの途中（lastRefresh は Dispatch を読む前に進む）なら終わりを待つ。チャットの担当は Dispatch から引くため。
       if (refreshing || Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
+      // 担当のいない帳簿のカードは、カードの相談のタブを立てる（2 回目は consult が同じタブを前に出す）。
+      // 全体のタブの仕事の協議（id の空の仮のカード）は相談に分けない（設計 10.7 の 7）。
+      let note: string | undefined
+      if (card.id && opts.consult && ownerFor(ws, c, card).how === 'main') {
+        try {
+          const handle = await opts.consult(ws.root, card.id)
+          // 立てたタブを端末の一覧に入れてから記録する（一覧に無いタブの印は外れて見え、続けて押すと二重に記録するため）。
+          await refreshOrca()
+          await markTalk(ws, c, card, b.item_rev, handle)
+          return { opened: true, how: '相談のタブ' }
+        } catch (e) {
+          note = `相談のタブを開けませんでした（${(e as Error).message}）`
+        }
+      }
       const to = talkTarget(ws, c, card)
       // 開けないのに話し中の印を付けると、誰とも話していないのに話し中に見える。
-      if ('reason' in to) return { opened: false, how: to.how, reason: to.reason }
+      if ('reason' in to) return { opened: false, how: to.how, reason: to.reason, ...(note && { note }) }
       // 前に出せてから記録する（調べた直後に端末が閉じられても、話し中にだけ移らないように）。
       try {
         if ('terminal' in to) await orca.switchTerminal(to.terminal)
         else await orca.activate(to.worktree)
       } catch (e) {
-        return { opened: false, how: to.how, reason: `Orca が前に出せませんでした: ${(e as Error).message}` }
+        return { opened: false, how: to.how, reason: `Orca が前に出せませんでした: ${(e as Error).message}`, ...(note && { note }) }
       }
-      // 私の番で、まだ話し中の印が無いときだけ記録する（取り消したあとにもう一度押したときも記録する）。印が付いてもカードは私の番に残る。
-      const now = overlay(c, ws.files.log).find((v) => v.card.id === card.id)
-      if (now?.status === 'mine' && !now.talking && card.kind !== 'report' && typeof b.item_rev === 'number' && b.item_rev === card.rev) {
-        ws.files = { ...ws.files, log: await appendOp(ws.root, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk' }) }
-        mine.add(`${ws.root}#${ws.files.log.ops.at(-1)!.op_id}`)
-        broadcast()
-        void autoSignal(ws).then(broadcast, (e) => console.error(e))
-      }
-      return 'terminal' in to ? { opened: true, how: to.how } : { opened: true, how: to.how, tab: to.tab }
+      await markTalk(ws, c, card, b.item_rev)
+      return { opened: true, how: to.how, ...('worktree' in to && { tab: to.tab }), ...(note && { note }) }
     },
     async notify(b) {
       const ws = knownWs(b.root)
@@ -677,7 +721,8 @@ export function createServer(opts: Options) {
 if (import.meta.main) {
   const dir = process.env.COCKPIT_DIR ?? path.join(os.homedir(), 'Library/Application Support/cockpit')
   const port = Number(process.env.COCKPIT_PORT ?? 47231)
-  const s = createServer({ port, dir, orca: orcaCli(process.env.COCKPIT_ORCA ?? 'orca') })
+  const consult = consultCli(process.env.COCKPIT_CONSULT_CMD ?? path.join(os.homedir(), '.config/nix-darwin/claude/bin/consult'))
+  const s = createServer({ port, dir, orca: orcaCli(process.env.COCKPIT_ORCA ?? 'orca'), consult })
   s.listen().then((p) => console.error(`cockpit window: http://127.0.0.1:${p}`))
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => void s.close().then(() => process.exit(0)))
 }

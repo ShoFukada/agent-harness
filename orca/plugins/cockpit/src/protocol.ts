@@ -1,4 +1,4 @@
-import type { Card, Cockpit, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
+import type { Card, Cockpit, ConsultMemo, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -77,16 +77,20 @@ export type CockpitView = {
   firstSeen?: Record<string, string>
   /** タスクの id → 今の Dispatch（Run の続きをたどった先）。パネルは持たない。 */
   current?: Record<string, string>
+  /** Orca にある端末の handle（Orca を読めていなければ無い）。カードの相談のタブが閉じたら話し中を外すのに使う。 */
+  terminals?: string[]
+  /** カードの相談のメモ。パネルは持たない。 */
+  consults?: ConsultMemo[]
 }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */
-export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string }
+export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string }
 export type NotifyResult = { sent: boolean; reason?: string }
 /**
  * 担当を開いた結果。how はどこを開いたか（画面に出す）。tab は利用者が選ぶチャットのタブの題（Orca にはチャットのタブを前に出す手段が無いので、
- * 名前で案内する）。reason は開けなかった理由。
+ * 名前で案内する）。reason は開けなかった理由。note はカードの相談を立てられずに窓口へ回したときの理由。
  */
-export type TalkResult = { opened: boolean; how: string; tab?: string; reason?: string }
+export type TalkResult = { opened: boolean; how: string; tab?: string; reason?: string; note?: string }
 /** 開く系の結果。開けなければ理由を返し、画面が黙って何も起きないようにしない。 */
 export type OpenResult = { opened: boolean; reason?: string }
 /** 送る文面を宛先の書式でクリップボードに入れた結果。subject はメールの先頭の「件名:」行（本文からは外す）。 */

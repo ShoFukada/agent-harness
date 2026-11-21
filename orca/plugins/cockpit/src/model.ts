@@ -214,6 +214,10 @@ export type Card = {
 
   /** decide・review の、この版で承認を求める要素（9.2）。提案のページの「要素の一覧」はここから作る。 */
   elements?: { n: number; text: string }[]
+  /** 反映し終えたカードの相談の返し（return_id）。窓口が判断の記録と帳簿に入れたら足す（設計 10.7 の 1）。 */
+  from_returns?: string[]
+  /** 版の違い・増えた判断で保留にした返し。相談が返し直すまで残す。 */
+  held_returns?: string[]
   /** 要素ごとの行き先。task（タスクの id）・request（「r30#2」の形で依頼と済の条件の番号）・skip（やらない理由）のどれか 1 つ。 */
   element_map?: ElementMap[]
 }
@@ -247,11 +251,23 @@ export type Request = {
   source?: { session?: string; at: string; quote: string }
   /** 台帳の行の id（照合と再生のため）。 */
   ledger?: string[]
+  /** カードの相談の返しから起こした依頼なら、その return_id。 */
+  from_return?: string
 }
 /** 発言の仕分けの位置（utterances.jsonl の id）。through までの発言は、依頼に結んだか none に入れてある。 */
 export type Intake = { through?: string; none?: string[]; checked_through?: string }
 /** .orca/cockpit/rulings.jsonl の 1 行のうち、窓が読む欄。affects は範囲を変える判断で見直すタスク（9.5）。 */
-export type Ruling = { id: string; affects?: string[] }
+export type Ruling = { id: string; affects?: string[]; from_return?: string }
+/**
+ * カードの相談が窓口に返したもの（相談のメモの「## 窓口に返したもの」の節の ```json の塊）。窓は読むだけで、反映は窓口が書く道具で行う。
+ * card は塊に無ければメモのファイル名。
+ */
+export type ConsultReturn = {
+  return_id: string; card?: unknown; rev?: number; choice?: string | null
+  decisions?: { text?: string; quote?: string; utterance?: string }[]; requests?: { quote?: string; utterance?: string }[]; open?: string[]
+}
+/** 相談のメモ（<root>/.orca/consult/<カード id>.md）。path は絶対パス。 */
+export type ConsultMemo = { card: string; path: string; returns: ConsultReturn[] }
 /** .orca/cockpit/utterances.jsonl の 1 行（hook が書く）。id の無い古い行は仕分けの検査に入れない。 */
 export type Utterance = { id?: string; at: string; prompt?: string }
 
@@ -299,6 +315,8 @@ export type Op = {
   undo_of?: number
   target?: number
   text?: string
+  /** talk: 窓が立てた（前に出した）カードの相談のタブの端末の handle。タブが Orca から消えたら話し中の印を外す。 */
+  terminal?: string
 }
 export type UserLog = { ops: Op[] }
 export type Archive = { cards: Card[] }
@@ -346,6 +364,9 @@ const strs: Shape = (v) => Array.isArray(v) && v.every(str)
 const obj = (need: string[], opt: string[] = []): Shape => (v) =>
   isObj(v) && need.every((k) => str(v[k])) && opt.every((k) => v[k] === undefined || str(v[k]))
 const list = (one: Shape): Shape => (v) => Array.isArray(v) && v.every(one)
+/** カードの相談の返しの id（<カード id>-<連番>）。 */
+export const RETURN_ID = /^[A-Za-z0-9_]+-\d+$/
+const returnId: Shape = (v) => str(v) && RETURN_ID.test(v as string)
 /** 画面と状態の計算が読むカードの欄の形。種類・状態・id は parseCockpit が先に断る。 */
 export const CARD_SHAPE: Record<string, Shape> = {
   ...Object.fromEntries(['at', 'created_at', 'due', 'stream', 'owner', 'purpose', 'asked', 'routed', 'why', 'fallback', 'figure', 'request', 'request_id', 'href', 'diff', 'target', 'effect', 'undo',
@@ -355,7 +376,7 @@ export const CARD_SHAPE: Record<string, Shape> = {
   resolved_by: (v) => v === 'user' || v === 'owner',
   answerable: (v) => typeof v === 'boolean',
   manual: (v) => obj([], ['where', 'command', 'check'])(v) && ((v as Manual).steps === undefined || strs((v as Manual).steps)),
-  tasks: strs, look_for: strs, evidence: strs, known: strs, undecided: strs,
+  tasks: strs, look_for: strs, evidence: strs, known: strs, undecided: strs, from_returns: list(returnId), held_returns: list(returnId),
   from: obj(['who'], ['via', 'at', 'href']),
   draft: (v) => obj(['to', 'text'], ['via', 'href'])(v) && ((v as Draft).format === undefined || DRAFT_FORMATS.includes((v as Draft).format!)),
   context: obj([], CONTEXT_FIELDS.map(([k]) => k)),
@@ -433,7 +454,7 @@ export const REQUEST_SHAPE: Record<string, Shape> = {
   at: str, title: str, quote: str, state: (v) => v === 'open' || v === 'done', tasks: strs,
   utterances: list(obj(['id', 'quote'])), kind: (v) => REQUEST_KINDS.includes(v as RequestKind), done_when: strs, evidence: list(EVIDENCE_SHAPE),
   check: (v) => typeof v === 'boolean', legacy: (v) => typeof v === 'boolean',
-  source: obj(['at', 'quote'], ['session']), ledger: strs
+  source: obj(['at', 'quote'], ['session']), ledger: strs, from_return: returnId
 }
 export const INTAKE_SHAPE: Shape = (v) => obj([], ['through', 'checked_through'])(v) && ((v as Intake).none === undefined || strs((v as Intake).none))
 
@@ -544,8 +565,8 @@ export type CardView = {
   chosen?: Option
   /** 見ての「直してほしいことを書く」で頼んだ直し（本文つきの talk の操作の text）。 */
   fix?: string
-  /** 「担当と話す」を押してから、担当・窓口がカードを書き直すまで（同じ版のあいだ）。since は押した時刻。 */
-  talking?: { since: string }
+  /** 「担当と話す」を押してから、担当・窓口がカードを書き直すまで（同じ版のあいだ）。since は押した時刻、terminal はカードの相談のタブ。 */
+  talking?: { since: string; terminal?: string }
 }
 
 const CLOSING: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'ack']
@@ -594,8 +615,11 @@ const USER_DONE: Record<CardKind, string> = {
   review: '承認', permit: '許可', decide: '決定', send: '送信済み', report: '既読', stuck: '回答', inbox: '返信不要', consult: '協議で決定', talk: '協議で決定'
 }
 
-/** cockpit.json の状態に、操作ログのうち効いている操作を重ねる。 */
-export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardView[] {
+/**
+ * cockpit.json の状態に、操作ログのうち効いている操作を重ねる。live は Orca にある端末か（分からなければ渡さない）。
+ * カードの相談のタブ（talk の op の terminal）が閉じたら、話し中の印を外す。
+ */
+export function overlay(c: Cockpit, log: UserLog, archive: Card[] = [], live?: (terminal: string) => boolean): CardView[] {
   const applied = new Set(c.applied_ops ?? [])
   const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
   const byCard = new Map<string, Op[]>()
@@ -630,8 +654,8 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardVie
       out.push({ card, status: 'fixing', pending, undoOp: pending ? fix : undefined, when: fix.at, fix: fix.text })
       continue
     }
-    const talk = talks.at(-1)
-    out.push({ card, status: 'mine', pending: false, ...(talk && { talking: { since: talk.at }, when: talk.at, undoOp: applied.has(talk.op_id) ? undefined : talk }) })
+    const talk = talks.filter((o) => !o.terminal || !live || live(o.terminal)).at(-1)
+    out.push({ card, status: 'mine', pending: false, ...(talk && { talking: { since: talk.at, ...(talk.terminal && { terminal: talk.terminal }) }, when: talk.at, undoOp: applied.has(talk.op_id) ? undefined : talk }) })
   }
   for (const card of archive) {
     const chosen = card.options?.find((x) => x.id === card.resolved_option)
