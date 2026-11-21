@@ -148,6 +148,19 @@ test('担当と話す: カードを話し中にする操作を 1 度だけ記録
   assert.deepEqual(h.callsOf('terminal.sendText').at(-1), { terminalId: 'term_main', text: `${SIGNAL}（担当と話す d21）`, enter: true })
 })
 
+test('担当と話す: 担当の端末を前に出せなければ理由を返し、カードを話し中にしない（チャットの担当の structworker_ はパネルからは前に出せない）', async () => {
+  const c = JSON.parse(withMain('term_main'))
+  c.owners[1].terminal = 'structworker_lead'
+  const root = workspace({ '.orca/cockpit.json': JSON.stringify(c) })
+  const h = host(root)
+  h.respond('terminal.focus', { focused: false })
+  const w = await mountWorker(main, { host: h })
+  const r = (await w.request('cockpit.talk', { root, item_id: 'r5', item_rev: 1 })) as { opened: boolean; reason?: string }
+  assert.equal(r.opened, false)
+  assert.match(r.reason ?? '', /担当「配車画面の改修」の端末を Orca が前に出せませんでした/)
+  assert.equal(existsSync(path.join(root, '.orca/cockpit.user.json')), false)
+})
+
 test('Orca の下の帯に、前面の案件の私の番を出す。期限が 24 時間以内のものがあれば danger', async () => {
   const root = workspace({ '.orca/cockpit.json': SAMPLE })
   const h = host(root)
@@ -216,7 +229,7 @@ test('止まっている worker には理由を付け、帯の印から端末を
   const w = await mountWorker(main, { host: h })
   const v = await w.request('cockpit.get')
   assert.deepEqual(v.workers.map((a) => a.stop), ['blocked'])
-  assert.deepEqual(await w.request('cockpit.focus', { terminalId: 'term_w' }), { focused: true })
+  assert.deepEqual(await w.request('cockpit.focus', { terminalId: 'term_w' }), { focused: true, how: '端末' })
   assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 'term_w' }])
 })
 

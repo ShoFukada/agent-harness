@@ -143,3 +143,12 @@ test('hook が読む検査: 一時フォルダのままの成果物と、どの�
   assert.deepEqual(r.mine.map((x) => x.id).sort(), ['a2', 'a3', 'd1'])
   assert.equal(r.next?.id, r.mine[0].id)
 })
+
+test('checks: 手作業を頼むのに、打つコマンドも手順も書いていない許す（manual）を名指しする', () => {
+  const w = ws(1)
+  const p7 = w.cockpit.cards.find((c) => c.id === 'p7')!
+  p7.manual = { where: 'ターミナル', steps: [' '] }
+  assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.empty_manual, ['p7'])
+  p7.manual = { command: 'sudo darwin-rebuild switch --flake ~/.config/nix-darwin' }
+  assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.empty_manual, [])
+})

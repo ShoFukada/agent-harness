@@ -80,13 +80,20 @@ export type WorkerShow = {
   dispatch?: { completedAt?: string | null } | null
   projection?: { stage?: { worker?: string } | null; liveness?: { verdict?: string } | null } | null
   terminal?: { handle?: string | null } | null
+  /** チャットの worker は terminal が null で、handle はここにある。 */
+  worker?: { agentTerminalHandle?: string | null } | null
+  /** endpointIncarnation はチャットの worker なら「structured:<orcaSessionId>」。 */
+  terminalResource?: { terminalHandle?: string | null; endpointIncarnation?: string | null } | null
   observation?: { agentWait?: unknown } | null
 }
 
 export function dispatchFact(r: WorkerShow): DispatchFact {
   const done = r.dispatch?.completedAt ? Date.parse(r.dispatch.completedAt) : NaN
+  const inc = r.terminalResource?.endpointIncarnation
   return {
-    state: r.projection?.stage?.worker ?? 'unknown', liveness: r.projection?.liveness?.verdict, terminal: r.terminal?.handle ?? null,
+    state: r.projection?.stage?.worker ?? 'unknown', liveness: r.projection?.liveness?.verdict,
+    terminal: r.terminal?.handle ?? r.worker?.agentTerminalHandle ?? r.terminalResource?.terminalHandle ?? null,
+    session: inc?.startsWith('structured:') ? inc.slice('structured:'.length) : undefined,
     // agentWait が null なら Orca が見て待っていない。欄が無いのは見ていないだけなので、待っている扱いにしない。
     waiting: !!r.observation?.agentWait, settledAt: Number.isNaN(done) ? undefined : done
   }

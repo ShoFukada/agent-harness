@@ -97,6 +97,8 @@ export type OwnerRef = {
   /** Orca での今（作業中・入力待ち など）。分からなければ無い。 */
   state?: AgentRow['state']
   terminal?: string
+  /** 担当がチャットなら、そのチャットの orcaSessionId。 */
+  session?: string
 }
 
 /** 1 列の 1 行。Orca から作った詰まり（synthetic）は cockpit.json に無い。 */
@@ -149,8 +151,12 @@ export const byUrgency = (a: Row, b: Row) => dueKey(a) - dueKey(b) || RANK[a.car
 export function ownerOf(c: Cockpit, card: Pick<Card, 'owner' | 'stream'>, facts?: OrcaFacts): OwnerRef {
   const own = c.owners?.find((o) => o.id === card.owner) ?? c.owners?.find((o) => o.stream && o.stream === card.stream && o.state !== 'done')
   if (own) {
-    const live = own.session ? facts?.owners?.find((x) => x.session === own.session) : undefined
     const term = own.terminal ? facts?.workers.find((w) => w.terminalId === own.terminal) : undefined
+    // worker-start --agent で立てたチャットの担当は、受け取りの terminal（structworker_…）を terminal に書かれがち。端末の一覧に無いので、
+    // その handle の Dispatch からチャットを引く（2026-11-21 に「担当と話す」が何も開かなかった）。
+    const session = own.session ?? (own.terminal && !term ? Object.values(facts?.dispatches ?? {}).find((f) => f?.terminal === own.terminal)?.session : undefined)
+    const live = session ? facts?.owners?.find((x) => x.session === session) : undefined
+    if (session && !term) return { title: own.title, how: 'chat', owner: own, state: live?.state, session }
     return { title: own.title, how: own.terminal ? 'terminal' : 'chat', owner: own, state: term?.state ?? live?.state, terminal: own.terminal }
   }
   return { title: '窓口', how: 'main', terminal: c.main?.terminal || undefined }
@@ -294,6 +300,8 @@ export type StateReport = {
     pending_ops: number
     /** 決めるのに「これは何か」など 5 欄が欠けたカード。 */
     missing_context: string[]
+    /** 手作業を頼むのに、打つコマンドも手順も書いていない許す（manual）。 */
+    empty_manual: string[]
     /** 催促の日を過ぎた顧客待ち（担当が「送る前」に催促の下書きを出す）。 */
     remind_due: string[]
     /** 仕事にも担当にもつながらない開いたカード。 */
@@ -349,6 +357,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
     checks: {
       pending_ops: unappliedOps(c, log).length,
       missing_context: open.filter((x) => x.kind === 'decide' && CONTEXT_KEYS.some((k) => !String(x.context?.[k] ?? '').trim())).map((x) => x.id),
+      empty_manual: open.filter((x) => x.manual && !x.manual.command?.trim() && !x.manual.steps?.some((s) => s.trim())).map((x) => x.id),
       remind_due: d.waiting.filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).map((r) => r.card.id),
       orphan_cards: open.filter((x) => x.kind !== 'inbox' && !x.stream && !x.owner && !x.tasks?.length).map((x) => x.id),
       local_deliverables: open.filter((x) => (x.kind === 'review' || x.kind === 'report') && [x.href, ...(x.links ?? []).map((l) => l.href)].some((h) => h && TMP.test(h))).map((x) => x.id),

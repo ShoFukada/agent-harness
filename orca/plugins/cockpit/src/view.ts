@@ -154,7 +154,7 @@ function peek(c: Card, now: number): string {
       return rec ? pl('おすすめ', rec.label) : esc(c.purpose ?? '')
     }
     case 'review': return esc(c.look_for?.[0] ?? c.purpose ?? '')
-    case 'permit': return esc(c.target && c.target !== c.title ? c.target : c.effect ?? '')
+    case 'permit': return c.manual?.command ? `<span class="code">${esc(c.manual.command)}</span>` : esc(c.target && c.target !== c.title ? c.target : c.effect ?? '')
     case 'stuck': return sp([esc(c.answerable ? '答えれば進む' : '私では直せない'), c.since && esc(`止まって ${ago(c.since, now)}`)])
     case 'talk': return esc(c.next ?? c.last?.text ?? '')
     case 'report': return esc(c.done?.map((d) => d.what).join(' / ') ?? '')
@@ -185,9 +185,21 @@ function otherHtml(r: Row, ui: Ui): string {
   const k = keyOf(r)
   if (!ui.otherOpen[k]) return ''
   const text = ui.other[k] ?? ''
-  return `<div class="other fld"><label class="lb" for="other-${esc(k)}">別の答え（選択肢に無い答え・「もう手で済ませた」など）</label>
+  const label = r.card.kind === 'review' ? '直してほしいこと（書いた文のまま担当か窓口に届きます）' : '別の答え（選択肢に無い答え・「もう手で済ませた」など）'
+  return `<div class="other fld"><label class="lb" for="other-${esc(k)}">${label}</label>
     <textarea id="other-${esc(k)}" data-other="${esc(k)}" maxlength="${TEXT_MAX + 200}">${esc(text)}</textarea>
     <span class="cnt">あと ${TEXT_MAX - text.length} 字</span></div>`
+}
+
+/** 手作業の頼み。どこで → 打つコマンド（写すボタンつき）→ 手順 → 済ませたあと窓口が確かめること。 */
+function manualHtml(r: Row): string {
+  const m = r.card.manual!
+  return [
+    fld('どこで', esc(m.where)),
+    m.command ? `<div class="fld"><span class="lb">打つコマンド</span><div class="cmd"><pre class="msg code">${esc(m.command)}</pre><button class="btn quiet" type="button" data-act="copycmd" data-key="${esc(keyOf(r))}">コピー</button></div></div>` : '',
+    m.steps?.length ? fld('手順', `<ol class="rich">${m.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>`) : '',
+    fld('済ませたあと', esc(m.check))
+  ].join('')
 }
 
 function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<string, string>): string {
@@ -231,8 +243,13 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       if (c.request) parts.push(fld('依頼の原文', `<div class="quote">${esc(c.request)}</div>`))
       if (c.look_for?.length) parts.push(fld('見てほしい点', `<ul class="rich">${c.look_for.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
       if (c.evidence?.length) parts.push(fld('確かめた結果', `<ul class="rich">${c.evidence.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
+      if (r.fix) parts.push(fld('頼んだ直し', `<div class="quote">${esc(r.fix)}</div>`))
       break
     case 'permit':
+      if (c.manual) {
+        parts.push(manualHtml(r))
+        break
+      }
       parts.push(fld('対象', c.target ? `<span class="code">${esc(c.target)}</span>` : ''), fld('影響', rich(c.effect, c.repo)), fld('戻し方', esc(c.undo)))
       parts.push(optionsHtml(r, ui))
       break
@@ -274,7 +291,7 @@ function actsHtml(r: Row, ui: Ui): string {
   const picked = chosenOption(r, ui)
   const otherOpen = ui.otherOpen[keyOf(r)]
   const otherText = otherOpen && (ui.other[keyOf(r)] ?? '').trim()
-  const decideLabel = otherOpen ? '別の答えで決める' : !picked ? '選択肢を選ぶ' : ui.picked[keyOf(r)] ? 'この案で決める' : 'おすすめで決める'
+  const decideLabel = otherOpen ? (c.kind === 'review' ? 'この直しを頼む' : '別の答えで決める') : !picked ? '選択肢を選ぶ' : ui.picked[keyOf(r)] ? 'この案で決める' : 'おすすめで決める'
   const ready = otherOpen ? otherText : picked
   const decideBtn = c.options?.length || otherOpen ? b('decide', decideLabel, 'pri', ready ? '' : 'disabled') : ''
   const other = b('other', otherOpen ? '別の答えを閉じる' : '別の答え', 'quiet')
@@ -284,8 +301,9 @@ function actsHtml(r: Row, ui: Ui): string {
     case 'inbox': btns = [talk(), b('skip', '返事は要らない'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
     case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', '送った'), talk('担当と直す'), b('skip', '送らない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
     case 'decide': btns = [decideBtn, talk(), other]; break
-    case 'review': btns = [b('accept', 'これでよい', 'pri'), talk('直してほしい（担当と話す）'), ...(c.href ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
-    case 'permit': btns = c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許す', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}任せる`), b('skip', '止める', 'quiet'), talk()]; break
+    case 'review': btns = [b('accept', 'これでよい', 'pri'), b('other', otherOpen ? '書くのをやめる' : '直してほしいことを書く'), ...(otherOpen ? [decideBtn] : []), talk('直してほしい（担当と話す）'), ...(c.href ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
+    case 'permit': btns = c.manual ? [b('sent', '済ませた', 'pri'), talk()]
+      : c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許す', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}任せる`), b('skip', '止める', 'quiet'), talk()]; break
     case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と話す' : '担当を開く'), other]; break
     case 'talk': btns = [talk('続きを話す')]; break
     case 'report': btns = [b('ack', '読んだ', 'pri'), talk()]; break
@@ -306,7 +324,7 @@ export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => st
     `<span class="kind">${glyph(c.kind)}${KIND_LABEL[c.kind]}</span>`,
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
     r.stream && !c.title.includes(r.stream.title) ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
-    r.status === 'talking' ? `<span>${r.pending ? '担当に渡した（受け取り待ち）' : '話し中'}</span>` : ''
+    r.status === 'talking' ? `<span>${r.fix ? (r.pending ? '直しを頼んだ（受け取り待ち）' : '直し待ち') : r.pending ? '担当に渡した（受け取り待ち）' : '話し中'}</span>` : ''
   ].filter(Boolean).join('')
   return `<article class="strip k-${c.kind}${isHot(c.due, now) ? ' hot' : ''}" aria-expanded="${open}" data-strip="${esc(k)}" id="s-${esc(k)}">
     <button class="head" type="button" data-sel="${esc(k)}" aria-label="${esc(KIND_LABEL[c.kind])}: ${esc(c.title)}">
@@ -497,6 +515,7 @@ function signalHtml(v: CockpitView | undefined): string {
 export function talkMessage(res: TalkResult, copied: boolean): string {
   const where = res.opened ? `${res.how}を前に出しました。` : ''
   const paste = copied ? '書き出しをコピーしたので、貼って話してください' : '話してください'
+  if (res.reason) return `開けませんでした: ${res.reason}`
   if (res.tab) return `${where}チャットの「${res.tab}」を開き、${paste}`
   return res.opened ? `${res.how}を開きました。${paste}` : `${res.how}を開けませんでした。Orca で開き、${paste}`
 }

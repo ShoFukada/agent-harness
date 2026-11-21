@@ -4,9 +4,10 @@
 import { promises as fsp, watch, type FSWatcher } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { chatMain, COUNTED } from './model.ts'
-import type { AgentRow, CockpitView, NotifyResult } from './protocol.ts'
+import { chatMain, COUNTED, overlay } from './model.ts'
+import type { AgentRow, CockpitView, NotifyResult, TalkResult } from './protocol.ts'
 import { agentTitle, countsText, derive, isHot, ownerOf } from './state.ts'
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeAtomic, writeNotified, type Files } from './store.ts'
 
@@ -120,6 +121,8 @@ function watchRoot(): void {
     s.watcher = watch(root, (_ev, name) => name === '.orca' && changed())
     s.watchingDir = false
   }
+  // 見張れないとき（見張りの上限など）も worker は落とさない。表示は次の切り替えか操作で読み直す。
+  s.watcher.on('error', (e: Error) => orca.log(`.orca を見張れません: ${e.message}`))
 }
 
 async function refreshAgents(): Promise<void> {
@@ -233,10 +236,10 @@ export default function activate(api: OrcaWorkerApi): void {
   })
   orca.panels.handle('cockpit.open', async ({ path: href }) => {
     await ensure()
-    if (!s.workspaceId || !s.root) return { opened: false }
+    if (!s.workspaceId || !s.root) return { opened: false, reason: '表示中のワークスペースが分かりません' }
     // パネルの editor.open は行を受けないので、path:行 の行は捨ててファイルだけ開く。
     const target = await resolveOpen(s.root, s.workspaceId, href)
-    if (!target) return { opened: false }
+    if (!target) return { opened: false, reason: `ワークスペースの中にファイルが見つかりません: ${href}` }
     await orca.host.call('editor.open', target)
     return { opened: true }
   })
@@ -248,25 +251,31 @@ export default function activate(api: OrcaWorkerApi): void {
     const card = st.cockpit?.cards.find((c) => c.id === item_id)
     if (!st.root || !st.cockpit || !card) throw conflict('カードが見つかりません')
     if (card.rev !== item_rev) throw conflict(`「${card.title}」は担当が書き換えました。読み直してからもう一度押してください`)
-    const talked = st.log.ops.some((o) => o.type === 'talk' && o.item_id === card.id && o.item_rev === card.rev)
-    if (card.state === 'open' && card.kind !== 'talk' && card.kind !== 'report' && !talked) {
+    const o = ownerOf(st.cockpit, card, { workers: st.agents })
+    const name = o.how === 'main' ? '窓口' : o.title
+    let res: TalkResult
+    if (o.terminal) {
+      const { focused } = await orca.host.call('terminal.focus', { terminalId: o.terminal }).catch(() => ({ focused: false }))
+      // パネルは Dispatch を読まないので、チャットの担当の handle（structworker_…）は端末として前に出せない。
+      res = focused ? { opened: true, how: `${name}の端末` }
+        : { opened: false, how: `${name}の端末`, reason: `${o.how === 'main' ? '窓口' : `担当「${name}」`}の端末を Orca が前に出せませんでした。窓の「担当と話す」か、Orca のサイドバーから開いてください` }
+    } else {
+      // Orca にはチャットを前に出す手段が無い。パネルは前面のワークスペースにいるので、チャットはそのタブにある。
+      res = { opened: false, how: 'このワークスペース', tab: o.how === 'main' ? '窓口' : agentTitle(o.title, '担当') }
+    }
+    // 開けないのに話し中へ移すと、カードが私の番から消えたまま誰とも話せない。
+    const status = overlay(st.cockpit, st.log).find((v) => v.card.id === card.id)?.status
+    if (!res.reason && status === 'mine' && card.kind !== 'report') {
       st.log = await appendOp(st.root, st.cockpit, { root: st.root, item_id: card.id, item_rev: card.rev, type: 'talk' })
       mine.add(`${st.root}#${st.log.ops.at(-1)!.op_id}`)
       await autoSignal()
       await publish()
     }
-    const o = ownerOf(st.cockpit, card, { workers: st.agents })
-    const name = o.how === 'main' ? '窓口' : o.title
-    if (o.terminal) {
-      const { focused } = await orca.host.call('terminal.focus', { terminalId: o.terminal }).catch(() => ({ focused: false }))
-      return { opened: focused, how: `${name}の端末` }
-    }
-    // Orca にはチャットを前に出す手段が無い。パネルは前面のワークスペースにいるので、チャットはそのタブにある。
-    return { opened: false, how: 'このワークスペース', tab: o.how === 'main' ? '窓口' : agentTitle(o.title, '担当') }
+    return res
   })
   orca.panels.handle('cockpit.focus', async ({ terminalId }) => {
-    const { focused } = await orca.host.call('terminal.focus', { terminalId })
-    return { focused }
+    const { focused } = await orca.host.call('terminal.focus', { terminalId }).catch(() => ({ focused: false }))
+    return { focused, how: '端末' }
   })
 }
 
@@ -275,7 +284,7 @@ export default function activate(api: OrcaWorkerApi): void {
  * 表示中のワークスペースか、同じリポジトリ（projectId）の worktree の中だけ（worker のブランチの成果物）。
  */
 async function resolveOpen(root: string, workspaceId: string, href: string): Promise<{ workspaceId: string; path: string } | undefined> {
-  const file = splitLine(href).file
+  const file = splitLine(href.startsWith('file://') ? fileURLToPath(href) : href).file
   const candidates: { id: string; path: string }[] = [{ id: workspaceId, path: root }]
   if (path.isAbsolute(file)) {
     const { workspaces } = await orca.host.call('workspace.list')

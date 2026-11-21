@@ -1,7 +1,7 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
 import { COUNTED, OTHER, UNDO_GRACE_MS, type OpType } from './model.ts'
 import { morph } from './morph.ts'
-import type { CockpitView, NotifyResult, OpInput, TalkResult } from './protocol.ts'
+import type { CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
@@ -12,13 +12,17 @@ export type Transport = {
   /** カードの担当を開く。cockpit.json にあるカードなら、話し中にする操作も記録する。 */
   talk(root: string, itemId: string, itemRev: number): Promise<TalkResult>
   notify(root: string): Promise<NotifyResult>
-  open(root: string, path: string): Promise<{ opened: boolean }>
-  openUrl(url: string): Promise<{ opened: boolean; reason?: string }>
-  focusAgent(terminalId: string | null, worktree?: string): Promise<{ focused: boolean }>
+  open(root: string, path: string): Promise<OpenResult>
+  openUrl(url: string): Promise<OpenResult>
+  focusAgent(terminalId: string | null, worktree?: string): Promise<FocusResult>
 }
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
 
 const THEME_KEY = 'cockpit.theme'
+
+/** 帯の印（Orca で止まった worker）を開いた結果を、担当と話すと同じ知らせにする。 */
+const focusResult = (x: FocusResult, title: string): TalkResult =>
+  x.focused ? { opened: true, how: x.how === '端末' || !x.how ? `${title}の端末` : x.how } : { opened: false, how: `${title}の端末`, reason: `「${title}」の端末も worktree も Orca にありません` }
 
 export function mount(t: Transport, opts: { panel?: boolean } = {}) {
   const style = document.createElement('style')
@@ -135,8 +139,8 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       copied = false
     }
     try {
-      const res: TalkResult = r.agent ? { opened: (await t.focusAgent(r.agent.terminalId, r.agent.worktree)).focused, how: `${r.owner.title}の端末` } : await t.talk(r.root, r.card.id, r.card.rev)
-      if (!r.agent && COUNTED.includes(r.card.kind) && r.status === 'mine') advance(keyOf(r))
+      const res: TalkResult = r.agent ? focusResult(await t.focusAgent(r.agent.terminalId, r.agent.worktree), r.owner.title) : await t.talk(r.root, r.card.id, r.card.rev)
+      if (res.opened && !r.agent && COUNTED.includes(r.card.kind) && r.status === 'mine') advance(keyOf(r))
       toast(talkMessage(res, copied))
     } catch (e) {
       fail(e)
@@ -146,8 +150,10 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
   async function copy(r: VRow): Promise<void> {
     try {
       await navigator.clipboard.writeText(r.card.draft?.text ?? '')
-      if (r.card.draft?.href) await t.openUrl(r.card.draft.href)
-      toast(r.card.draft?.href ? '本文をコピーし、スレッドを開きました。送ったら「送った」を押してください' : '本文をコピーしました')
+      const res = r.card.draft?.href ? await t.openUrl(r.card.draft.href) : undefined
+      toast(!res ? '本文をコピーしました'
+        : res.opened ? '本文をコピーし、スレッドを開きました。送ったら「送った」を押してください'
+        : `本文をコピーしましたが、スレッドを開けませんでした${res.reason ? `: ${res.reason}` : ''}`)
     } catch (e) {
       fail(e)
     }
@@ -157,6 +163,8 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
     const k = keyOf(r)
     const other = (ui.other[k] ?? '').trim()
     // 別の答えを開いている間は、その文だけで決める（空のままおすすめが決まらないように）。
+    // 見ての「直してほしいこと」は片付けずに、本文つきの talk として渡す（カードは直し待ちになり、担当が書き換えると私の番に戻る）。
+    if (ui.otherOpen[k] && r.card.kind === 'review') return other ? act('talk', r, { text: other }, '直しを頼みました') : undefined
     if (ui.otherOpen[k]) return other ? act('decide', r, { option_id: OTHER, text: other }, `別の答えで決めました`) : undefined
     const id = chosenOption(r, ui)
     const o = r.card.options?.find((x) => x.id === id)
@@ -201,7 +209,8 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       case 'decide': return void decide(r)
       case 'talk': return void talk(r)
       case 'copy': return void copy(r)
-      case 'focus': return void t.focusAgent(r.agent?.terminalId ?? null, r.agent?.worktree).then((x) => toast(x.focused ? '端末を開きました' : '端末が見つかりません'), fail)
+      case 'copycmd': return void navigator.clipboard.writeText(r.card.manual?.command ?? '').then(() => toast('コマンドをコピーしました。打って終わったら「済ませた」を押してください'), fail)
+      case 'focus': return void t.focusAgent(r.agent?.terminalId ?? null, r.agent?.worktree).then((x) => toast(talkMessage(focusResult(x, r.owner.title), false)), fail)
       case 'url': return void openTarget(r.root, el)
       case 'other': {
         const k = keyOf(r)
@@ -212,13 +221,13 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       }
       case 'revert': return void act('revert', r, { target: Number(el.dataset.target) }, '戻すよう頼みました')
       case 'accept': case 'sent': case 'skip': case 'delegate': case 'ack':
-        return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許しました' : LABEL[name]!)
+        return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許しました' : r.card.manual && name === 'sent' ? '済ませたと記録しました' : LABEL[name]!)
     }
   }
 
   function openTarget(root: string, el: HTMLElement): void {
     if (el.dataset.url) void t.openUrl(el.dataset.url).then((x) => !x.opened && toast(`開けませんでした${x.reason ? `: ${x.reason}` : ''}`), fail)
-    else if (el.dataset.file) void t.open(root, el.dataset.file).then((x) => !x.opened && toast('ワークスペースの中にファイルが見つかりません'), fail)
+    else if (el.dataset.file) void t.open(root, el.dataset.file).then((x) => !x.opened && toast(`開けませんでした: ${x.reason ?? 'ワークスペースの中にファイルが見つかりません'}`), fail)
   }
 
   const CSS_ESC = (s: string) => (window.CSS?.escape ? window.CSS.escape(s) : s.replace(/"/g, '\\"'))
@@ -303,7 +312,8 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       e.preventDefault()
       return select(order[n])
     }
-    if (/^[1-9]$/.test(e.key) && sel?.card.options) {
+    // 手作業の票（manual）は選択肢を出さないので、数字と Enter で決めない。
+    if (/^[1-9]$/.test(e.key) && sel?.card.options && !(sel.card.kind === 'permit' && sel.card.manual)) {
       const o = sel.card.options[Number(e.key) - 1]
       if (o) pick(keyOf(sel), o.id)
       return

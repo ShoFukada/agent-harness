@@ -26,7 +26,10 @@ export type DispatchFact = {
   liveness?: string
   /** 人にしか答えられない確認（許可など）で止まっている。 */
   waiting?: boolean
+  /** worker の handle。チャットの worker（worker-start --agent）は structworker_… で、端末の一覧には出ない。 */
   terminal?: string | null
+  /** チャットの worker なら、そのチャットの orcaSessionId（orca agent list で居場所を引く）。 */
+  session?: string
   /** 終わった時刻（ミリ秒）。取り込み待ちの猶予に使う。 */
   settledAt?: number
 }
@@ -63,9 +66,15 @@ export type CockpitView = {
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */
 export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string }
 export type NotifyResult = { sent: boolean; reason?: string }
-/** 担当を開いた結果。how はどこを開いたか（画面に出す）。 */
-/** tab は利用者が選ぶチャットのタブの題（Orca にはチャットのタブを前に出す手段が無いので、名前で案内する）。 */
-export type TalkResult = { opened: boolean; how: string; tab?: string }
+/**
+ * 担当を開いた結果。how はどこを開いたか（画面に出す）。tab は利用者が選ぶチャットのタブの題（Orca にはチャットのタブを前に出す手段が無いので、
+ * 名前で案内する）。reason は開けなかった理由。
+ */
+export type TalkResult = { opened: boolean; how: string; tab?: string; reason?: string }
+/** 開く系の結果。開けなければ理由を返し、画面が黙って何も起きないようにしない。 */
+export type OpenResult = { opened: boolean; reason?: string }
+/** 帯の印・「端末を開く」の結果。how は前に出したもの（端末かワークスペース）。 */
+export type FocusResult = { focused: boolean; how?: string }
 
 /** 常駐のプロセスが窓のページに SSE で送る全体。 */
 export type WindowView = {
@@ -87,8 +96,8 @@ declare module 'orca' {
     'cockpit.op': { input: OpInput; output: { view: CockpitView; notify?: NotifyResult } }
     'cockpit.notify': { output: NotifyResult }
     /** ファイルを Orca で開く。path はワークスペースからの相対パスか、同じリポジトリの worktree の中の絶対パス。 */
-    'cockpit.open': { input: { path: string }; output: { opened: boolean } }
-    'cockpit.focus': { input: { terminalId: string }; output: { focused: boolean } }
+    'cockpit.open': { input: { path: string }; output: OpenResult }
+    'cockpit.focus': { input: { terminalId: string }; output: FocusResult }
     /** カードの担当を開く（担当の端末を前に出す。チャットの担当はワークスペースを開く）。 */
     /** root と item_rev は画面が表示していたもの。前面が変わったあと・担当が書き換えたあとの要求は断る。 */
     'cockpit.talk': { input: { root: string; item_id: string; item_rev: number }; output: TalkResult }

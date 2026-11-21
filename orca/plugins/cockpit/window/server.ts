@@ -8,8 +8,8 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chatMain, OP_TYPES, type Card, type OpType } from '../src/model.ts'
-import type { CockpitView, DispatchFact, NotifyResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
+import { chatMain, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
+import type { CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
 import { orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
@@ -133,6 +133,8 @@ export function createServer(opts: Options) {
   let ps: PsRow[] = []
   let terms = new Map<string, string>()
   let owners: OwnerLive[] = []
+  /** orca agent list を読めなかった。チャットが「無い」と言い切らないために持つ。 */
+  let ownersStale = false
   let orcaError: string | undefined
   let pluginNote: string | undefined
   /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
@@ -285,6 +287,7 @@ export function createServer(opts: Options) {
         const [rowsNow, tl, plugins, ags] = await Promise.all([orca.ps(), orca.terminals(), orca.plugins().catch(() => undefined), orca.agents().catch(() => undefined)])
         pluginNote = plugins && pluginProblem(plugins)
         if (ags) owners = ags
+        ownersStale = !ags
         ps = rowsNow
         terms = new Map(tl.map((t) => [`${t.tabId}:${t.leafId}`, t.handle]))
         orcaError = undefined
@@ -397,6 +400,41 @@ export function createServer(opts: Options) {
     return r.sent ? { sent: true } : { sent: false, reason: r.reason }
   }
 
+  const liveTerminal = (t: string | null | undefined): t is string => !!t && [...terms.values()].includes(t)
+  const wsName = (p: string) => `ワークスペース「${path.basename(p)}」`
+
+  type Target = { terminal: string; how: string } | { worktree: string; how: string; tab?: string } | { how: string; reason: string }
+  /**
+   * 担当と話す先。端末の担当はその端末、チャットの担当はチャットのある worktree（Orca にはチャットのタブを前に出す手段が無い）、
+   * 担当の無いカードは窓口。開けないときは理由を返す。
+   */
+  function talkTarget(ws: Ws, c: Cockpit, card: Card): Target {
+    const o = ownerOf(c, card, { workers: workersOf(ws.root, ws.files), dispatches: facts.get(ws.root), owners })
+    if (o.how === 'main') {
+      // cockpit.json の main が古い（開き直した）ときは、本線に 1 つだけいるエージェントの端末を使う。窓口がチャット（main.terminal が空）なら推さない。
+      const t = o.terminal ? [o.terminal, agentsOf(ws.root, ws.files).main?.terminalId].find(liveTerminal) : undefined
+      if (t) return { terminal: t, how: '窓口の端末' }
+      // 窓口はチャット。本線を開き、本線で動いているチャット（済んでいないもの、新しいもの）の題を案内する。
+      const chat = owners
+        .filter((x) => x.kind === 'chat' && x.worktree === ws.root)
+        .sort((x, y) => Number(x.state === 'done') - Number(y.state === 'done') || (y.updatedAt ?? 0) - (x.updatedAt ?? 0))[0]
+      return { worktree: ws.root, how: wsName(ws.root), tab: chat?.title ?? '窓口' }
+    }
+    const who = `担当「${o.title}」`
+    if (o.how === 'terminal') {
+      if (liveTerminal(o.terminal)) return { terminal: o.terminal, how: `${o.title}の端末` }
+      return { how: `${o.title}の端末`, reason: `${who}の端末（${o.terminal}）が Orca にありません。閉じたか、開き直して handle が変わりました。窓口に操縦席の担当の記録を直すよう頼んでください` }
+    }
+    if (!o.session)
+      return { how: `${o.title}のチャット`, reason: `${who}のチャットが分かりません。操縦席の担当の記録に session が無く、記録の Dispatch からも引けません。窓口に担当の記録を直すよう頼んでください` }
+    const chat = owners.find((x) => x.session === o.session)
+    if (!chat)
+      return { how: `${o.title}のチャット`, reason: ownersStale ? 'Orca からチャットの一覧を読めません。少し待ってもう一度押してください' : `${who}のチャットが Orca にありません。閉じられたようです` }
+    if (!chat.worktree || !rowOf(chat.worktree))
+      return { how: `${o.title}のチャット`, reason: `${who}のチャットの居場所の worktree${chat.worktree ? `（${path.basename(chat.worktree)}）` : ' '}が Orca にありません。片付けられたようです` }
+    return { worktree: chat.worktree, how: wsName(chat.worktree), tab: chat.title ?? agentTitle(o.title, '担当') }
+  }
+
   const api: Record<string, (b: Record<string, unknown>) => Promise<unknown>> = {
     async op(b) {
       const ws = knownWs(b.root)
@@ -414,35 +452,33 @@ export function createServer(opts: Options) {
       await autoSignal(ws)
       return { view: await cockpitView(ws.root, true) }
     },
-    /** 担当と話す。カードを話し中にし（件数から外す）、担当の端末かチャットのワークスペースを Orca で前に出す。 */
+    /** 担当と話す。担当の端末かチャットのワークスペースを Orca で前に出し、開けたらカードを話し中にする（件数から外す）。 */
     async talk(b): Promise<TalkResult> {
       const ws = knownWs(b.root)
       const c = ws.files.cockpit
       const card = c?.cards.find((x) => x.id === b.item_id)
       if (!c || !card) throw new HttpError(409, 'カードが見つかりません。読み直してからもう一度押してください')
-      if (card.state === 'open' && card.kind !== 'talk' && card.kind !== 'report' && typeof b.item_rev === 'number' && b.item_rev === card.rev) {
-        const already = ws.files.log.ops.some((o) => o.type === 'talk' && o.item_id === card.id && o.item_rev === card.rev)
-        if (!already) {
-          ws.files = { ...ws.files, log: await appendOp(ws.root, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk' }) }
-          mine.add(`${ws.root}#${ws.files.log.ops.at(-1)!.op_id}`)
-          broadcast()
-          void autoSignal(ws).then(broadcast, (e) => console.error(e))
-        }
+      // 読み直しの途中（lastRefresh は Dispatch を読む前に進む）なら終わりを待つ。チャットの担当は Dispatch から引くため。
+      if (refreshing || Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
+      const to = talkTarget(ws, c, card)
+      // 開けないのに話し中へ移すと、カードが私の番から消えたまま誰とも話せない。
+      if ('reason' in to) return { opened: false, how: to.how, reason: to.reason }
+      // 前に出せてから記録する（調べた直後に端末が閉じられても、話し中にだけ移らないように）。
+      try {
+        if ('terminal' in to) await orca.switchTerminal(to.terminal)
+        else await orca.activate(to.worktree)
+      } catch (e) {
+        return { opened: false, how: to.how, reason: `Orca が前に出せませんでした: ${(e as Error).message}` }
       }
-      if (Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
-      const o = ownerOf(c, card, { workers: workersOf(ws.root, ws.files), owners })
-      const name = o.how === 'main' ? '窓口' : o.title
-      if (o.terminal && [...terms.values()].includes(o.terminal)) {
-        await orca.switchTerminal(o.terminal)
-        return { opened: true, how: `${name}の端末` }
+      // 私の番のときだけ話し中にする（取り消したあとにもう一度押したときも記録する）。
+      const status = overlay(c, ws.files.log).find((v) => v.card.id === card.id)?.status
+      if (status === 'mine' && card.kind !== 'report' && typeof b.item_rev === 'number' && b.item_rev === card.rev) {
+        ws.files = { ...ws.files, log: await appendOp(ws.root, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk' }) }
+        mine.add(`${ws.root}#${ws.files.log.ops.at(-1)!.op_id}`)
+        broadcast()
+        void autoSignal(ws).then(broadcast, (e) => console.error(e))
       }
-      // 端末の担当の端末が閉じられたら、無いチャットのタブへは案内しない。
-      if (o.terminal && o.how !== 'main') return { opened: false, how: `${name}の端末` }
-      // Orca にはチャットを前に出す手段が無いので、チャットのあるワークスペースを開く（チャットはそのタブにある）。
-      const chat = o.owner?.session ? owners.find((x) => x.session === o.owner!.session) : undefined
-      const where = chat?.worktree && rowOf(chat.worktree) ? chat.worktree : ws.root
-      await orca.activate(where)
-      return { opened: true, how: `ワークスペース「${path.basename(where)}」`, tab: chat?.title ?? (o.how === 'main' ? '窓口' : agentTitle(o.title, '担当')) }
+      return 'terminal' in to ? { opened: true, how: to.how } : { opened: true, how: to.how, tab: to.tab }
     },
     async notify(b) {
       const ws = knownWs(b.root)
@@ -451,24 +487,25 @@ export function createServer(opts: Options) {
       broadcast()
       return r
     },
-    async open(b) {
+    async open(b): Promise<OpenResult> {
       const ws = knownWs(b.root)
       const href = str(b.path)
-      if (!href) return { opened: false }
-      const { file, line } = splitLine(href)
+      if (!href) return { opened: false, reason: '開く先がありません' }
+      const { file, line } = splitLine(href.startsWith('file://') ? fileURLToPath(href) : href)
       // 開けるのは、操縦席のある本線と、orca worktree ps で本線の子と分かる worktree の中のファイルだけ。
       const row = rowOf(ws.root)
       const roots = [ws.root, ...ps.filter((r) => row && r.parentWorktreeId === row.worktreeId).map((r) => r.path)]
       const real = await fsp.realpath(path.resolve(ws.root, file)).catch(() => '')
-      if (!real) return { opened: false }
+      if (!real) return { opened: false, reason: `ファイルが見つかりません: ${file}` }
       for (const root of roots) {
         const base = await fsp.realpath(root).catch(() => '')
-        if (base && real.startsWith(base + path.sep) && (await fsp.stat(real)).isFile()) {
+        if (base && real.startsWith(base + path.sep)) {
+          if (!(await fsp.stat(real)).isFile()) return { opened: false, reason: `ファイルではありません（フォルダ）: ${file}` }
           await orca.openFile(root, real, line)
           return { opened: true }
         }
       }
-      return { opened: false }
+      return { opened: false, reason: `ワークスペースとその worker の worktree の外のファイルは開きません: ${file}` }
     },
     async openurl(b) {
       const url = str(b.url)
@@ -488,16 +525,16 @@ export function createServer(opts: Options) {
       await orca.activate(root)
       return { ok: true }
     },
-    async focus(b) {
+    async focus(b): Promise<FocusResult> {
       const terminal = str(b.terminalId)
-      if (terminal && [...terms.values()].includes(terminal)) {
+      if (liveTerminal(terminal)) {
         await orca.switchTerminal(terminal)
-        return { focused: true }
+        return { focused: true, how: '端末' }
       }
       const wt = str(b.worktree)
       if (wt && rowOf(wt)) {
         await orca.activate(wt)
-        return { focused: true }
+        return { focused: true, how: wsName(wt) }
       }
       return { focused: false }
     }

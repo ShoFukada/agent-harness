@@ -66,6 +66,8 @@ export type Owner = {
 /** 連絡を拾う経路（Slack・Teams・メール）。見張りが読んだ時刻を書く。止まっていれば画面が「見ていない」と出す。 */
 export type Route = { id: string; label: string; read_at?: string; error?: string; stale_minutes?: number }
 
+/** 利用者に頼む手作業。command か steps のどちらかは書く（state.ts の checks が名指しする）。 */
+export type Manual = { where?: string; command?: string; steps?: string[]; check?: string }
 export type Option = { id: string; label: string; recommended?: boolean; example?: string; body?: string }
 export type Link = { label: string; href: string }
 export type DecisionContext = { what?: string; now?: string; how?: string; gain?: string; cost?: string }
@@ -127,6 +129,11 @@ export type Card = {
   undo?: string
   /** permit: 繰り返す許可の種類（push など）。「この案件では任せる」の単位。 */
   scope?: string
+  /**
+   * permit: 利用者の手作業を頼むカード（darwin-rebuild switch・プラグインの承認・ログインなど）。どこで・打つコマンド・手順・窓口の確かめ方を、
+   * そのまま写せる形で書く。ボタンは「済ませた」（sent の操作）と担当と話すだけにする。
+   */
+  manual?: Manual
 
   /** stuck: 止まった理由（原文）と、止まった時刻。 */
   reason?: string
@@ -174,6 +181,7 @@ export type Cockpit = {
 }
 
 /**
+ * talk に text があれば、見ての「直してほしいことを書く」で書いた直しの指示（原文）。カードは話し中（直し待ち）になる。
  * 利用者の操作。decide は選択肢（option_id）か別の答え（option_id "other" と text）、accept は見ての「これでよい」、
  * sent は送った・済ませた、skip は送らない・返事は要らない・止める、delegate は「この案件では任せる」（許したうえで以後を任せる）、
  * talk は担当と話し始めた（カードは話し中になる）、ack は報告を読んだ、revert は報告の n 番目を戻して、undo は取り消し。
@@ -220,8 +228,57 @@ export const chatMain = (c: Cockpit | undefined) => !c?.main?.terminal
 const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-/** 壊れた JSON・形の違うファイル・古い版は例外にし、呼び出し側が前回の表示を保てるようにする。 */
-export function parseCockpit(text: string): Cockpit {
+type Shape = (v: unknown) => boolean
+const str: Shape = (v) => typeof v === 'string'
+const strs: Shape = (v) => Array.isArray(v) && v.every(str)
+/** オブジェクトで、need の欄が文字列、opt の欄が無いか文字列。 */
+const obj = (need: string[], opt: string[] = []): Shape => (v) =>
+  isObj(v) && need.every((k) => str(v[k])) && opt.every((k) => v[k] === undefined || str(v[k]))
+const list = (one: Shape): Shape => (v) => Array.isArray(v) && v.every(one)
+/** 画面と状態の計算が読むカードの欄の形。種類・状態・id は parseCockpit が先に断る。 */
+const CARD_SHAPE: Record<string, Shape> = {
+  ...Object.fromEntries(['at', 'due', 'stream', 'owner', 'purpose', 'asked', 'routed', 'why', 'fallback', 'figure', 'request', 'href', 'diff', 'target', 'effect', 'undo',
+    'scope', 'reason', 'since', 'unblock', 'next', 'quote', 'resolved_at', 'resolved_option', 'resolved_text'].map((k) => [k, str])),
+  reply: (v) => v === 'needed' || v === 'none',
+  resolved_by: (v) => v === 'user' || v === 'owner',
+  answerable: (v) => typeof v === 'boolean',
+  manual: (v) => obj([], ['where', 'command', 'check'])(v) && ((v as Manual).steps === undefined || strs((v as Manual).steps)),
+  tasks: strs, look_for: strs, evidence: strs,
+  from: obj(['who'], ['via', 'at', 'href']),
+  draft: obj(['to', 'text'], ['via', 'href']),
+  context: obj([], CONTEXT_FIELDS.map(([k]) => k)),
+  options: list((v) => obj(['id', 'label'], ['example', 'body'])(v) && ((v as { recommended?: unknown }).recommended === undefined || typeof (v as { recommended?: unknown }).recommended === 'boolean')),
+  compare: (v) => str(v) || (isObj(v) && strs(v.columns) && list(strs)(v.rows)),
+  background: obj(['text'], ['quote', 'date']),
+  last: obj(['text'], ['at', 'by']),
+  done: list(obj(['what'], ['why', 'undo', 'task'])),
+  awaiting: obj(['who', 'what', 'since'], ['resumes', 'remind_at']),
+  links: list(obj(['label', 'href'])),
+  repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
+}
+
+/**
+ * 形の違う欄を外し、外したことを 1 行ずつ返す。カードは窓口（エージェント）が書くので、1 枚の欄の書き間違い（evidence を文字列で書くなど）で
+ * 窓全体の描画を止めず、そのカードを名指しして欄を出さずに表示する（2026-11-21 に v88・v89 の evidence で見てのカードが押せなくなった）。
+ */
+export function dropBadFields(cards: Card[], where: string): string[] {
+  const out: string[] = []
+  for (const c of cards) {
+    const rec = c as unknown as Record<string, unknown>
+    const bad = Object.keys(CARD_SHAPE).filter((k) => rec[k] !== undefined && rec[k] !== null && !CARD_SHAPE[k]!(rec[k]))
+    for (const k of Object.keys(CARD_SHAPE)) if (rec[k] === null) delete rec[k]
+    // 手作業の頼みは、形が違っても「済ませた」で返す票のままにする（消すと許す・任せるが押せてしまう）。正しい下の欄だけを残す。
+    const m = rec.manual
+    for (const k of bad) delete rec[k]
+    if (bad.includes('manual'))
+      rec.manual = isObj(m) ? Object.fromEntries(Object.entries(m).filter(([k, x]) => (k === 'steps' ? strs(x) : ['where', 'command', 'check'].includes(k) && str(x)))) : {}
+    if (bad.length) out.push(`${where}のカード ${c.id}「${c.title}」の ${bad.join('・')} の形が違うので、その欄を出さずに表示しています`)
+  }
+  return out
+}
+
+/** 壊れた JSON・形の違うファイル・古い版は例外にし、呼び出し側が前回の表示を保てるようにする。problems には外した欄を足す。 */
+export function parseCockpit(text: string, problems: string[] = []): Cockpit {
   const v: unknown = JSON.parse(text)
   if (!isObj(v)) throw new Error('cockpit.json がオブジェクトではありません')
   if (v.version !== VERSION)
@@ -233,6 +290,9 @@ export function parseCockpit(text: string): Cockpit {
     const w = t.worker
     if (w !== undefined && !(isObj(w) && typeof w.task_id === 'string' && typeof w.dispatch_id === 'string'))
       throw new Error(`tasks の worker の形が不正です（{ task_id, dispatch_id }。workerctl の頃の { worktree_id, terminal } は書き換える）: ${String(t.id)}`)
+    const bad = ['next', 'waiting_on', 'waiting_since'].filter((k) => t[k] != null && !str(t[k]))
+    for (const k of bad) delete t[k]
+    if (bad.length) problems.push(`cockpit.json のタスク ${String(t.id)} の ${bad.join('・')} の形が違うので、その欄を出さずに表示しています`)
   }
   // 列挙値は画面で class 名や印に使うので、知らない値は読み込みの時点で断る。
   for (const c of v.cards as Record<string, unknown>[]) {
@@ -243,6 +303,7 @@ export function parseCockpit(text: string): Cockpit {
   for (const key of ['owners', 'routes', 'requests'] as const)
     if (v[key] !== undefined && (!Array.isArray(v[key]) || (v[key] as unknown[]).some((x) => !isObj(x) || typeof x.id !== 'string')))
       throw new Error(`cockpit.json の ${key} の形が不正です`)
+  problems.push(...dropBadFields(v.cards as Card[], 'cockpit.json '))
   return v as unknown as Cockpit
 }
 
@@ -252,10 +313,14 @@ export function parseUserLog(text: string): UserLog {
   return v as unknown as UserLog
 }
 
-export function parseArchive(text: string): Archive {
+export function parseArchive(text: string, problems: string[] = []): Archive {
   const v: unknown = JSON.parse(text)
   if (!isObj(v) || !Array.isArray(v.cards)) throw new Error('cockpit.archive.json に cards がありません（古い形なら migrate.ts で移し替えてください）')
-  return v as unknown as Archive
+  // 片付いたの列も同じ描画を通るので、id・題・種類が読めないカードは外し、欄の形も確かめる。
+  const cards = (v.cards as Record<string, unknown>[]).filter((c) => isObj(c) && str(c.id) && str(c.title) && KINDS.includes(c.kind as CardKind))
+  if (cards.length < v.cards.length) problems.push(`cockpit.archive.json の id・title・kind が読めないカード ${v.cards.length - cards.length} 枚を出していません`)
+  problems.push(...dropBadFields(cards as unknown as Card[], 'cockpit.archive.json '))
+  return { cards: cards as unknown as Card[] }
 }
 
 export function nextOp(log: UserLog, op: Omit<Op, 'op_id'>): Op {
@@ -282,6 +347,8 @@ export type CardView = {
   how?: string
   when?: string
   chosen?: Option
+  /** 見ての「直してほしいことを書く」で頼んだ直し（本文つきの talk の操作の text）。 */
+  fix?: string
 }
 
 const CLOSING: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'ack']
@@ -326,7 +393,7 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardVie
     }
     const talk = ops.filter((o) => o.type === 'talk' && o.item_rev === card.rev).at(-1)
     if (card.kind === 'talk' || talk)
-      out.push({ card, status: 'talking', pending: !!talk && !applied.has(talk.op_id), undoOp: talk && !applied.has(talk.op_id) ? talk : undefined, when: talk?.at ?? card.last?.at })
+      out.push({ card, status: 'talking', pending: !!talk && !applied.has(talk.op_id), undoOp: talk && !applied.has(talk.op_id) ? talk : undefined, when: talk?.at ?? card.last?.at, fix: talk?.text })
     else out.push({ card, status: 'mine', pending: false })
   }
   for (const card of archive) {

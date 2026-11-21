@@ -14,7 +14,7 @@ export function signalText(ops: Op[]): string {
   const said = ops.filter((o) => o.type === 'talk' || o.type === 'repeat' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
   if (!said) return SIGNAL
   const t = (said.text ?? '').replace(/\s+/g, ' ').trim()
-  const what = said.type === 'talk' ? '担当と話す' : said.type === 'repeat' ? '前にも言った' : '別の答え'
+  const what = said.type === 'talk' ? (t ? '直してほしい' : '担当と話す') : said.type === 'repeat' ? '前にも言った' : '別の答え'
   return `${SIGNAL}（${what}${said.item_id ? ` ${said.item_id}` : ''}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
 }
 
@@ -72,13 +72,13 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   }
   await one('cockpit.json', '（前回の表示のまま）', (text) => {
     next.missing = text === undefined
-    next.cockpit = text === undefined ? undefined : parseCockpit(text)
+    next.cockpit = text === undefined ? undefined : parseCockpit(text, next.errors)
   })
   await one('cockpit.user.json', '', (text) => {
     next.log = text === undefined ? { ops: [] } : parseUserLog(text)
   })
   await one('cockpit.archive.json', '', (text) => {
-    next.archive = text === undefined ? [] : parseArchive(text).cards
+    next.archive = text === undefined ? [] : parseArchive(text, next.errors).cards
   })
   await one('cockpit/handoff.json', '', (text) => {
     next.handoff = text === undefined ? undefined : parseHandoff(text)
@@ -155,6 +155,7 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
   if (CLOSING.has(input.type) && (status === 'closed' || status === 'waiting')) throw conflict(`「${card.title}」はもう片付いています`)
   const bad = textError(input.text)
   if (bad) throw invalid(bad)
+  if (card.kind === 'permit' && card.manual && (input.type === 'decide' || input.type === 'accept' || input.type === 'delegate')) throw invalid(`「${card.title}」は手作業の頼みです。済ませたら「済ませた」を押してください`)
   if (input.type === 'decide' && input.option_id === OTHER && !input.text?.trim()) throw invalid('別の答えを書いてください')
   if (input.type === 'decide' && input.option_id !== OTHER && !card.options?.some((o) => o.id === input.option_id))
     throw invalid(`${KIND_LABEL[card.kind]}「${card.title}」に選択肢 ${String(input.option_id)} がありません`)

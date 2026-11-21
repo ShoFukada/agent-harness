@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
+import { parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
 import { boardsOf, linkKind, newUi, preface, render, rich, talkMessage, type Model, type Ui } from './view.ts'
 
@@ -91,6 +92,49 @@ test('担当と話すの知らせは、次に押す場所を名前で言う', ()
   assert.equal(talkMessage({ opened: true, how: 'ワークスペース「aoba」', tab: 'AWS 構成案（担当）' }, true), 'ワークスペース「aoba」を前に出しました。チャットの「AWS 構成案（担当）」を開き、書き出しをコピーしたので、貼って話してください')
   assert.equal(talkMessage({ opened: true, how: '窓口の端末' }, false), '窓口の端末を開きました。話してください')
   assert.equal(talkMessage({ opened: false, how: '窓口の端末' }, true), '窓口の端末を開けませんでした。Orca で開き、書き出しをコピーしたので、貼って話してください')
+  // 開けなかった理由があれば、何も起きなかったように見せず、理由を出す。
+  assert.equal(talkMessage({ opened: false, how: '窓の版 3のチャット', reason: '担当「窓の版 3」のチャットの居場所の worktree（gone）が Orca にありません。片付けられたようです' }, true),
+    '開けませんでした: 担当「窓の版 3」のチャットの居場所の worktree（gone）が Orca にありません。片付けられたようです')
+})
+
+test('見て: 「直してほしいことを書く」で書く欄を開き、本文が空のうちは頼めない。頼んだら直し待ちになり、頼んだ文を出す', () => {
+  const k = '/ws/aoba#r5'
+  const acts = (ui: Ui, vs = views()) => {
+    const h = html(model({}, vs), ui)
+    return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
+  }
+  const open = { ...newUi(), sel: k, otherOpen: { [k]: true }, other: { [k]: ' ' } }
+  assert.deepEqual(acts(open), ['accept:これでよい', 'other:書くのをやめる', 'decide:この直しを頼む', 'talk:直してほしい（担当と話す）', 'url:開く'])
+  assert.match(html(model(), open), /data-act="decide"[^>]*disabled>この直しを頼む/)
+  assert.match(html(model(), open), /直してほしいこと（書いた文のまま担当か窓口に届きます）/)
+  const vs = views()
+  vs[0]!.log.ops.push({ op_id: 9, at: new Date(NOW).toISOString(), item_id: 'r5', item_rev: 1, type: 'talk', text: '凡例を上に寄せてほしい' })
+  const m = model({}, vs)
+  assert.ok(!m.boards[0]!.d.queue.some((r) => r.card.id === 'r5'), '件数から外れる')
+  const h = html(m, { ...newUi(), sel: k })
+  assert.match(h, /<span>直しを頼んだ（受け取り待ち）<\/span>/)
+  assert.match(text(h), /頼んだ直し 凡例を上に寄せてほしい/)
+})
+
+test('カードの欄の形が違っても全体の描画を止めず、その欄を外してカードを名指しする', () => {
+  const raw = JSON.parse(JSON.stringify(sample(NOW)[0]!.cockpit)) as { cards: Record<string, unknown>[]; tasks: Record<string, unknown>[] }
+  // 2026-11-21 に窓口が v88・v89 の evidence を文字列で書き、見てのカードが押せなくなった。
+  const wrong: Record<string, unknown> = { evidence: '確かめた', look_for: 'x', options: 'x', compare: 3, from: 'x', draft: 'x', context: 'x', background: 'x', last: 'x',
+    done: 'x', awaiting: 'x', links: 'x', tasks: 'x', due: 5, purpose: 5, href: 5, answerable: 'x', reply: 'x', repo: 5, since: 5, manual: 'x' }
+  for (const c of raw.cards) Object.assign(c, wrong)
+  raw.tasks[0]!.next = 5
+  raw.cards[1]!.manual = { command: 'sudo darwin-rebuild switch', steps: '実行後に確認' }
+  const problems: string[] = []
+  const cockpit = parseCockpit(JSON.stringify(raw), problems)
+  assert.equal(cockpit.cards.length, raw.cards.length)
+  assert.ok(problems.some((p) => /カード r5「[^」]+」の .*evidence/.test(p)), problems.join('\n'))
+  assert.ok(problems.some((p) => /タスク t1 の next/.test(p)), problems.join('\n'))
+  const vs = views()
+  vs[0]!.cockpit = cockpit
+  // 手作業の頼みは、形の違う下の欄だけを外し、「済ませた」で返す票のままにする。
+  assert.deepEqual(cockpit.cards[1]!.manual, { command: 'sudo darwin-rebuild switch' })
+  assert.deepEqual(cockpit.cards[0]!.manual, {})
+  for (const c of cockpit.cards) assert.doesNotThrow(() => html(model({}, vs), { ...newUi(), sel: `/ws/aoba#${c.id}` }), c.id)
 })
 
 test('詰まりの題に仕事の名前があれば、上の行に同じ名前を出さない', () => {
@@ -105,9 +149,18 @@ test('種類ごとの返答: 送る前はコピーしてスレッドを開く・
     return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
   }
   assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送った', 'talk:担当と直す', 'skip:送らない'])
-  assert.deepEqual(acts('/ws/aoba#r5'), ['accept:これでよい', 'talk:直してほしい（担当と話す）', 'url:開く'])
+  assert.deepEqual(acts('/ws/aoba#r5'), ['accept:これでよい', 'other:直してほしいことを書く', 'talk:直してほしい（担当と話す）', 'url:開く'])
   assert.deepEqual(acts('/ws/konan#p7'), ['accept:許す', 'delegate:この案件の 本番 は任せる', 'skip:止める', 'talk:担当と話す'])
   assert.deepEqual(acts('/ws/aoba#i3'), ['talk:担当と話す', 'skip:返事は要らない', 'url:元の連絡を開く'])
+  // 手作業を頼む許す（manual）は、どこで・打つコマンド・手順を先に出し、「済ませた」を主にする（2026-11-21 に switch を頼むカードで、コマンドが無く、打ったあと押すボタンも無かった）。
+  const vs = views()
+  const p7 = vs[1]!.cockpit!.cards.find((c) => c.id === 'p7')!
+  p7.manual = { where: 'ターミナル', command: 'sudo darwin-rebuild switch --flake ~/.config/nix-darwin', steps: ['パスワードを入れる', '終わったら「済ませた」を押す'], check: '窓口が launchctl list で確かめる' }
+  const h = html(model({}, vs), { ...newUi(), sel: '/ws/konan#p7' })
+  assert.deepEqual([...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`), ['copycmd:コピー', 'sent:済ませた', 'talk:担当と話す'])
+  const t = text(h.slice(h.indexOf('data-strip="/ws/konan#p7"')))
+  const order = ['どこで ターミナル', '打つコマンド sudo darwin-rebuild switch --flake ~/.config/nix-darwin', '手順 パスワードを入れる', '済ませたあと 窓口が launchctl list で確かめる'].map((x) => t.indexOf(x))
+  assert.ok(order.every((n) => n >= 0) && [...order].sort((a, b) => a - b).join() === order.join(), t)
   assert.deepEqual(acts('/ws/konan#a4').slice(0, 3), ['revert:戻して', 'revert:戻して', 'revert:戻して'])
 })
 

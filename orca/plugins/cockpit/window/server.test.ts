@@ -29,7 +29,7 @@ const cockpit = (name: string, over: Record<string, unknown> = {}) => {
 }
 const agent = (paneKey: string, over: Partial<PsAgent> = {}): PsAgent => ({ paneKey, state: 'working', stateStartedAt: 1, hasLivePty: true, ...over })
 
-function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], owners: OwnerLive[] = [], shows: Record<string, WorkerShow> = {}) {
+function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], owners: OwnerLive[] = [], shows: Record<string, WorkerShow> = {}, showDelay = 0) {
   const calls: string[][] = []
   const showCalls: string[] = []
   const orca: Orca = {
@@ -43,6 +43,7 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
     agents: async () => owners,
     show: async (dispatch) => {
       showCalls.push(dispatch)
+      if (showDelay) await new Promise((r) => setTimeout(r, showDelay))
       return shows[dispatch] ?? null
     },
     send: async (t, text) => void calls.push(['send', t, text]),
@@ -59,12 +60,12 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
   if (focusPath) setFocus(focusPath)
-  const fake = fakeOrca(rows, plugins, owners, shows)
+  const fake = fakeOrca(rows, plugins, owners, shows, showDelay)
   const s = createServer({ port: 0, dir, orca: fake.orca })
   servers.push(s)
   const port = await s.listen()
@@ -202,8 +203,8 @@ test('.orca の外へ出るパスとシンボリックリンクは読まず、�
   const v = await listen(port, s.token).until((w) => !!board(w, a)?.cockpit)
   assert.equal(board(v, a)!.figures['.orca/cockpit/figures/leak.svg'], undefined)
   assert.ok(board(v, a)!.errors.some((e) => /\.orca の外は読みません/.test(e)))
-  assert.deepEqual((await post('open', { root: a, path: '../outside/secret.svg' })).body, { opened: false })
-  assert.deepEqual((await post('open', { root: a, path: '/etc/passwd' })).body, { opened: false })
+  assert.equal((await post('open', { root: a, path: '../outside/secret.svg' })).body.opened, false)
+  assert.equal((await post('open', { root: a, path: '/etc/passwd' })).body.opened, false)
   assert.deepEqual((await post('open', { root: outside, path: 'secret.svg' })).status, 409)
   assert.deepEqual((await post('open', { root: a, path: 'docs/x.md' })).body, { opened: true })
   assert.equal(calls.filter((x) => x[0] === 'open').length, 1)
@@ -256,12 +257,134 @@ test('担当と話す: 話し中の操作を 1 度だけ記録し、担当の端
   assert.equal((await post('talk', { root: a, item_id: 'nope' })).status, 409)
 })
 
+/** 担当 o1 を、worker-start --agent で立てたチャットにする。窓口は受け取りの terminal（structworker_…）を terminal に書いた。 */
+function chatOwner(chatWorktree: string | undefined) {
+  const { a, child, rows } = workspaces()
+  const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
+  c.owners[0] = { id: 'o1', title: '窓の版 3', stream: 's2', agent: 'claude', terminal: 'structworker_lead' }
+  c.tasks[1].worker = { task_id: 'task_lead', dispatch_id: 'ctx_lead' }
+  writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
+  const shows: Record<string, WorkerShow> = {
+    ctx_lead: {
+      projection: { stage: { worker: 'ready' }, liveness: { verdict: 'live' } }, terminal: null, observation: { agentWait: null },
+      worker: { agentTerminalHandle: 'structworker_lead' }, terminalResource: { terminalHandle: 'structworker_lead', endpointIncarnation: 'structured:sess-lead' }
+    }
+  }
+  const owners: OwnerLive[] = [{ session: 'sess-lead', kind: 'chat', state: 'done', title: '窓の版 3（担当）', worktree: chatWorktree ?? child }]
+  return { a, child, rows, shows, owners }
+}
+const talkLog = (root: string) => {
+  try {
+    return JSON.parse(readFileSync(path.join(root, '.orca/cockpit.user.json'), 'utf8')).ops.map((o: { item_id: string; type: string }) => `${o.item_id}:${o.type}`)
+  } catch {
+    return []
+  }
+}
+
+test('担当と話す: チャットの担当（terminal に structworker_ を書かれた）は、Dispatch からチャットを引き、その worktree を開いてチャットの題を案内する', async () => {
+  const { a, child, rows, shows, owners } = chatOwner(undefined)
+  const { s, port, post, calls } = await start(rows, a, undefined, owners, shows)
+  await listen(port, s.token).until((w) => ready(w) && !!board(w, a)?.dispatches?.ctx_lead)
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd21', item_rev: 1 })).body, { opened: true, how: `ワークスペース「${path.basename(child)}」`, tab: '窓の版 3（担当）' })
+  assert.deepEqual(calls.filter((x) => x[0] !== 'send'), [['activate', child]])
+  assert.deepEqual(talkLog(a), ['d21:talk'])
+})
+
+test('担当と話す: 窓を開いた直後（Dispatch を読んでいる途中）に押しても、読み終わるのを待ってチャットの担当を開く', async () => {
+  const { a, child, rows, shows, owners } = chatOwner(undefined)
+  const { s, port, post } = await start(rows, a, undefined, owners, shows, 400)
+  listen(port, s.token)
+  let r = await post('talk', { root: a, item_id: 'd21', item_rev: 1 })
+  for (let n = 0; r.status === 409 && n < 200; n++) r = await post('talk', { root: a, item_id: 'd21', item_rev: 1 })
+  assert.deepEqual(r.body, { opened: true, how: `ワークスペース「${path.basename(child)}」`, tab: '窓の版 3（担当）' })
+})
+
+test('担当と話す: 担当の worktree が消えた・チャットが閉じた・端末が閉じたときは、何も開かず理由を返し、カードを話し中にしない', async () => {
+  const gone = chatOwner('/Users/x/orca/workspaces/nix/gone-lead')
+  const one = await start(gone.rows, gone.a, undefined, gone.owners, gone.shows)
+  await listen(one.port, one.s.token).until((w) => ready(w) && !!board(w, gone.a)?.dispatches?.ctx_lead)
+  const r = (await one.post('talk', { root: gone.a, item_id: 'd21', item_rev: 1 })).body
+  assert.equal(r.opened, false)
+  assert.match(r.reason, /担当「窓の版 3」のチャットの居場所の worktree（gone-lead）が Orca にありません/)
+  assert.deepEqual(one.calls.filter((x) => x[0] !== 'send'), [])
+  assert.deepEqual(talkLog(gone.a), [])
+
+  const closed = chatOwner(undefined)
+  const two = await start(closed.rows, closed.a, undefined, [], closed.shows)
+  await listen(two.port, two.s.token).until((w) => ready(w) && !!board(w, closed.a)?.dispatches?.ctx_lead)
+  assert.match((await two.post('talk', { root: closed.a, item_id: 'd21', item_rev: 1 })).body.reason, /チャットが Orca にありません/)
+
+  const { a, rows } = workspaces()
+  const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
+  c.owners[1].terminal = 'term_closed'
+  writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
+  const three = await start(rows, a)
+  await listen(three.port, three.s.token).until(ready)
+  const t = (await three.post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body
+  assert.equal(t.opened, false)
+  assert.match(t.reason, /担当「配車画面の改修」の端末（term_closed）が Orca にありません/)
+  assert.deepEqual(talkLog(a), [])
+})
+
+test('担当と話す: 取り消したあとにもう一度押せば、また話し中にする。前に出せなかったら記録しない', async () => {
+  const { a, rows } = workspaces()
+  const { s, port, post } = await start(rows, a)
+  await listen(port, s.token).until(ready)
+  await post('talk', { root: a, item_id: 'r5', item_rev: 1 })
+  await post('op', { root: a, item_id: 'r5', item_rev: 1, type: 'undo', undo_of: 1 })
+  await post('talk', { root: a, item_id: 'r5', item_rev: 1 })
+  assert.deepEqual(talkLog(a), ['r5:talk', 'r5:undo', 'r5:talk'])
+})
+
+test('担当と話す: 調べた直後に端末が閉じられて Orca が前に出せなければ、理由を返して記録しない', async () => {
+  const { a, rows } = workspaces()
+  const dir = tmp('cockpit-dir-')
+  const fake = fakeOrca(rows)
+  fake.orca.switchTerminal = async (t) => {
+    throw new Error(`${t} is not a terminal`)
+  }
+  const s = createServer({ port: 0, dir, orca: fake.orca })
+  servers.push(s)
+  const port = await s.listen()
+  const origin = `http://127.0.0.1:${port}`
+  await listen(port, s.token).until(ready)
+  const r = await fetch(`${origin}/api/talk`, { method: 'POST', headers: { 'content-type': 'application/json', origin, 'x-cockpit-token': s.token }, body: JSON.stringify({ root: a, item_id: 'r5', item_rev: 1 }) })
+  assert.deepEqual(await r.json(), { opened: false, how: '配車画面の改修の端末', reason: 'Orca が前に出せませんでした: term_aoba_w1 is not a terminal' })
+  assert.deepEqual(talkLog(a), [])
+})
+
+test('手作業の票（manual）には、決める・許す・任せるを記録しない', async () => {
+  const c = JSON.parse(cockpit('案件A'))
+  c.cards.push({ id: 'm1', rev: 1, kind: 'permit', state: 'open', title: 'switch を打つ', manual: { command: 'sudo darwin-rebuild switch' }, options: [{ id: 'a', label: 'A' }] })
+  const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(c) })
+  const { s, port, post } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
+  await listen(port, s.token).until((w) => !!board(w, a)?.cockpit)
+  for (const type of ['decide', 'accept', 'delegate']) assert.equal((await post('op', { root: a, item_id: 'm1', item_rev: 1, type, option_id: 'a' })).status, 400, type)
+  assert.equal((await post('op', { root: a, item_id: 'm1', item_rev: 1, type: 'sent' })).status, 200)
+})
+
+test('担当と話す: 窓口がチャットなら本線を開き、本線で動いているチャットの題を案内する（済んだ古いチャットより先）', async () => {
+  const { a, rows } = workspaces()
+  const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
+  c.main = { agent: 'claude', terminal: '' }
+  writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
+  rows[0]!.agents = []
+  const owners: OwnerLive[] = [
+    { session: 'old', kind: 'chat', state: 'done', title: '前の窓口', worktree: a, updatedAt: 9 },
+    { session: 'now', kind: 'chat', state: 'working', title: '窓口（配車）', worktree: a, updatedAt: 5 }
+  ]
+  const { s, port, post, calls } = await start(rows, a, undefined, owners)
+  await listen(port, s.token).until(ready)
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: `ワークスペース「${path.basename(a)}」`, tab: '窓口（配車）' })
+  assert.deepEqual(calls, [['activate', a]])
+})
+
 test('帯の印は端末を前に出し、端末が無ければ worktree を開く。知らない端末と worktree は扱わない', async () => {
   const { a, child, rows } = workspaces()
   const { s, port, post, calls } = await start(rows, a)
   await listen(port, s.token).until(ready)
-  assert.deepEqual((await post('focus', { terminalId: 'term_w1', worktree: child })).body, { focused: true })
-  assert.deepEqual((await post('focus', { terminalId: '', worktree: child })).body, { focused: true })
+  assert.deepEqual((await post('focus', { terminalId: 'term_w1', worktree: child })).body, { focused: true, how: '端末' })
+  assert.deepEqual((await post('focus', { terminalId: '', worktree: child })).body, { focused: true, how: `ワークスペース「${path.basename(child)}」` })
   assert.deepEqual((await post('focus', { terminalId: 'term_x', worktree: '/etc' })).body, { focused: false })
   assert.deepEqual(calls, [['switch', 'term_w1'], ['activate', child]])
 })
@@ -352,6 +475,7 @@ test('Orca に無い Dispatch は null で渡して詰まりの票にし、済�
 test('開けるのは本線と本線の子の worktree の中のファイルだけ。日本語の名前と path:行 も開く', async () => {
   const { a, child, rows } = workspaces()
   writeFileSync(path.join(a, '一覧画面.md'), 'x')
+  mkdirSync(path.join(a, 'docs'))
   writeFileSync(path.join(child, 'out.md'), 'x')
   const other = rows.find((r) => r.worktreeId === 'r::c-w1')!.path
   writeFileSync(path.join(other, 'secret.md'), 'x')
@@ -359,12 +483,17 @@ test('開けるのは本線と本線の子の worktree の中のファイルだ�
   await listen(port, s.token).until(ready)
   assert.deepEqual((await post('open', { root: a, path: '一覧画面.md:12' })).body, { opened: true })
   assert.deepEqual((await post('open', { root: a, path: path.join(child, 'out.md') })).body, { opened: true })
-  assert.deepEqual((await post('open', { root: a, path: path.join(other, 'secret.md') })).body, { opened: false }, '別の本線の子は開かない')
-  assert.deepEqual((await post('open', { root: a, path: 'nope.md' })).body, { opened: false })
+  assert.equal((await post('open', { root: a, path: path.join(other, 'secret.md') })).body.opened, false, '別の本線の子は開かない')
+  // 開けないときは、画面に出す理由を返す（黙って何も起きないようにしない）。
+  assert.match((await post('open', { root: a, path: path.join(other, 'secret.md') })).body.reason, /外のファイルは開きません/)
+  assert.deepEqual((await post('open', { root: a, path: 'nope.md' })).body, { opened: false, reason: 'ファイルが見つかりません: nope.md' })
+  assert.match((await post('open', { root: a, path: 'docs' })).body.reason, /フォルダ/)
+  assert.deepEqual((await post('open', { root: a, path: `file://${path.join(a, '一覧画面.md')}` })).body, { opened: true }, 'file:// の URL もパスとして開く')
   const real = (p: string) => realpathSync(p)
   assert.deepEqual(calls.filter((x) => x[0] === 'open'), [
     ['open', a, real(path.join(a, '一覧画面.md')), '12'],
-    ['open', child, real(path.join(child, 'out.md'))]
+    ['open', child, real(path.join(child, 'out.md'))],
+    ['open', a, real(path.join(a, '一覧画面.md'))]
   ])
 })
 
@@ -377,6 +506,19 @@ test('URL は http と https だけを既定のブラウザで開く', async () 
     assert.equal((await post('openurl', { url })).body.opened, false, url)
   assert.equal((await post('openurl', { url: 'https://x.example' }, { 'x-cockpit-token': 'wrong' })).status, 403)
   assert.deepEqual(calls.filter((x) => x[0] === 'url'), [['url', 'https://docs.google.com/document/d/x/edit']])
+})
+
+test('見ての「直してほしいこと」は本文つきの talk として記録し、合図の 1 行に本文の頭を載せる', async () => {
+  const old = new Date(Date.now() - 60_000).toISOString()
+  const a = workspace('a', {
+    '.orca/cockpit.json': cockpit('案件A'),
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 5, at: old, item_id: 'r5', item_rev: 1, type: 'talk', text: '凡例を上に寄せ、色の意味を 1 行で書いてほしい' }] })
+  })
+  const rows: PsRow[] = [{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main', { state: 'done' })] }]
+  const { s, port, calls, post } = await start(rows, a)
+  await listen(port, s.token).until((w) => board(w, a)?.notifiedOp === 5)
+  assert.deepEqual(calls, [['send', 'term_main', `${SIGNAL}（直してほしい r5: 凡例を上に寄せ、色の意味を 1 行で書いてほしい）`]])
+  assert.equal((await post('op', { root: a, item_id: 'r5', item_rev: 1, type: 'talk', text: 'あ'.repeat(4001) })).status, 400, '本文の上限は別の答えと同じ')
 })
 
 test('4000 字を超える別の答えは切り詰めずに断り、ちょうど 4000 字は通す。本文の無い別の答えも断る', async () => {

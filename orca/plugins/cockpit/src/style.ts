@@ -138,6 +138,8 @@ body { margin:0; }
 .ck .rich p { margin:0 0 4px; }
 .ck .msg { border:1px solid var(--rule); border-radius:10px; background:var(--sunk); padding:10px 12px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--fs-s); max-height:22em; overflow:auto; }
 .ck .msg-to { font-size:var(--fs-xs); color:var(--ink2); }
+.ck .cmd { display:flex; gap:8px; align-items:flex-start; }
+.ck .cmd pre { margin:0; flex:1; min-width:0; }
 .ck .msg-to b { color:var(--ink); }
 .ck .quote { border-left:3px solid var(--rule); padding:2px 0 2px 10px; color:var(--ink2); font-size:var(--fs-s); white-space:pre-wrap; overflow-wrap:anywhere; }
 .ck .opts { display:grid; gap:6px; margin:0; padding:0; border:0; min-width:0; }
