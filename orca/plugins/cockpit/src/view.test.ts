@@ -16,10 +16,11 @@ const model = (over: Partial<Model> = {}, vs = views()): Model => ({ boards: boa
 const html = (m: Model = model(), ui: Ui = newUi()) => render(m, ui, NOW, svg)
 const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 
-test('上の帯: 全案件の私の番の合計と 5 種類の内訳。届いたは「数えない」で区切る', () => {
+test('上の帯: 全案件の私の番の合計と 5 種類の内訳。届いたは区切りの外に出し、合計に入れない', () => {
   const t = text(html())
   assert.match(t, /9 全案件の私の番/)
-  assert.match(t, /許す 2 決める 3 送る前 1 見て 2 数えない 届いた 1/)
+  assert.match(t, /許す 2 決める 3 送る前 1 見て 2 届いた 1/)
+  assert.match(html(), /class="kc ref k-inbox"/)
 })
 
 test('1 列: 止まっている → 期限切れ → 今の線 → 今日 → 明日 → 今週 → 期限なし の順で、期限切れは今の線より上', () => {
@@ -85,7 +86,8 @@ test('右の列: 話し中・顧客待ち（催促の日を過ぎたら朱）・
   const t = text(h)
   assert.match(t, /話し中 1/)
   assert.match(t, /顧客待ち 1/)
-  assert.match(h, /class="r hot">森さん・.* から・催促の日を過ぎた/)
+  assert.match(h, /class="r sp hot"><span class="pt">森さん<\/span><span class="pt">.* から<\/span><span class="pt">催促の日を過ぎた<\/span>/)
+  assert.ok(!/class="r[^"]*">[^<]*・/.test(h), '補足を「・」で繋がない')
   assert.match(t, /片付いた 2/)
   assert.match(t, /受け取り待ち これでよい/)
 })
@@ -145,4 +147,10 @@ test('片付いた票を開いても片付ける操作は出さない。版 1 �
   assert.ok(!/data-act="accept"/.test(strip.slice(0, strip.indexOf('</article>'))))
   const t = text(html(model({ unseen: [{ name: 'old', path: '/ws/old', why: 'cockpit.json を読めません: 版 1 です' }] }, [])))
   assert.match(t, /私の番はありません。ただし見ていないものがあります old: cockpit.json を読めません: 版 1 です/)
+})
+
+test('コミット・ブランチ・識別子・ID は等幅にし、URL のボタンの中は触らない', () => {
+  const r = rich('release/2026-11-21（a1b2c3d..e4f5a6b） fk_unresolved ADR-0002 `claude auth login` https://example.com/a_b/c1', 'example/repo')
+  for (const x of ['release/2026-11-21', 'a1b2c3d..e4f5a6b', 'fk_unresolved', 'ADR-0002', 'claude auth login']) assert.ok(r.includes(`<span class="code">${x}</span>`), x)
+  assert.match(r, /data-url="https:\/\/example.com\/a_b\/c1"/)
 })

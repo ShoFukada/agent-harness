@@ -84,12 +84,21 @@ const linkBtn = (label: string, href: string) =>
   `<button class="lk" type="button" ${isWebUrl(href) ? `data-url="${esc(href)}"` : `data-file="${esc(href)}"`}><i>${esc(linkKind(href))}</i><span>${esc(label)}</span></button>`
 
 /** 本文の URL と #123（リポジトリが 1 つのとき）を押せる形にし、「- 」の行を箇条にする。 */
+/** タグ ｜ `囲み` ｜ コミット（範囲も） ｜ スラッシュと数字を含むブランチ ｜ snake_case ｜ ADR-12 のような ID。 */
+const CODE = /(<[^>]+>)|`([^`<]+)`|\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?:\.\.[0-9a-f]{7,40})?\b|\b[A-Za-z][\w-]*\/[\w./-]*\d[\w./-]*|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b|\b[A-Z]{2,}-\d+\b/g
+
+const monoPart = (m: string, tag?: string, quoted?: string) => (tag ? tag : `<span class="code">${quoted ?? m}</span>`)
+/** HTML の中のコミット・ブランチ・識別子・ID を等幅にする（タグの中は触らない）。 */
+const mono = (html: string) => html.replace(CODE, monoPart)
+
 export function rich(text: string | undefined, repo?: Repo): string {
   if (!text) return ''
   const inline = (s: string) =>
     esc(s)
       .replace(/https?:\/\/[^\s<>"'）)]+/g, (u) => `<button class="inl" type="button" data-url="${u}">${linkKind(u.replace(/&#38;/g, '&')) === 'PR' ? 'PR' : 'リンク'}</button>`)
       .replace(/(^|[\s（(、])#(\d+)\b/g, (m, pre, n) => (typeof repo === 'string' ? `${pre}<button class="inl" type="button" data-url="https://github.com/${esc(repo)}/pull/${n}">#${n}</button>` : m))
+      .replace(CODE, monoPart)
+      // コミット・ブランチ・識別子・ID は等幅にする（タグの中は触らない）。
   const lines = text.split('\n')
   const out: string[] = []
   let list: string[] = []
@@ -146,11 +155,14 @@ function peek(c: Card, now: number): string {
     }
     case 'review': return esc(c.look_for?.[0] ?? c.purpose ?? '')
     case 'permit': return esc(c.target && c.target !== c.title ? c.target : c.effect ?? '')
-    case 'stuck': return esc(`${c.answerable ? '答えれば進む' : '私では直せない'}${c.since ? `・止まって ${ago(c.since, now)}` : ''}`)
+    case 'stuck': return sp([esc(c.answerable ? '答えれば進む' : '私では直せない'), c.since && esc(`止まって ${ago(c.since, now)}`)])
     case 'talk': return esc(c.next ?? c.last?.text ?? '')
     case 'report': return esc(c.done?.map((d) => d.what).join(' / ') ?? '')
   }
 }
+
+/** 補足の並び。「・」で繋がず、余白で区切る（html を受ける）。 */
+const sp = (xs: (string | false | undefined)[]) => xs.filter(Boolean).map((x) => `<span class="pt">${x}</span>`).join('')
 
 const fld = (label: string, html: string) => (html ? `<div class="fld"><span class="lb">${esc(label)}</span><div>${html}</div></div>` : '')
 
@@ -192,14 +204,14 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
   if (c.purpose) parts.push(`<div class="purpose"><b>何のため</b>　${esc(c.purpose)}</div>`)
   switch (c.kind) {
     case 'inbox':
-      if (c.from) parts.push(fld('届いた連絡', `${esc(c.from.who)}${c.from.via ? `・${esc(c.from.via)}` : ''}${c.from.at ? `・${esc(fmtDate(c.from.at))}` : ''}`))
+      if (c.from) parts.push(fld('届いた連絡', `<span class="sp">${sp([esc(c.from.who), c.from.via && esc(c.from.via), c.from.at && esc(fmtDate(c.from.at))])}</span>`))
       parts.push(fld('聞かれていること', esc(c.asked)), fld('振り分け', esc(c.routed)))
       if (c.reply) parts.push(fld('返事', c.reply === 'needed' ? '要る（担当が下書きを作る）' : '要らない'))
       break
     case 'send':
       if (c.why) parts.push(fld('なぜ今', rich(c.why, c.repo)))
       if (c.draft)
-        parts.push(`<div class="fld"><span class="lb">送る前の文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b>${c.draft.via ? `・${esc(c.draft.via)}` : ''}</div><div class="msg">${esc(c.draft.text)}</div></div>`)
+        parts.push(`<div class="fld"><span class="lb">送る前の文面</span><div class="msg-to"><span class="sp">${sp([`宛先 <b>${esc(c.draft.to)}</b>`, c.draft.via && esc(c.draft.via)])}</span></div><div class="msg">${esc(c.draft.text)}</div></div>`)
       parts.push(optionsHtml(r, ui))
       break
     case 'decide':
@@ -287,12 +299,12 @@ export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => st
   const meta = [
     `<span class="kind">${glyph(c.kind)}${KIND_LABEL[c.kind]}</span>`,
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
-    r.stream ? `<span>${esc(r.stream.title)}</span>` : '',
+    r.stream ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
     r.status === 'talking' ? `<span>${r.pending ? '担当に渡した（受け取り待ち）' : '話し中'}</span>` : ''
   ].filter(Boolean).join('')
   return `<article class="strip k-${c.kind}${isHot(c.due, now) ? ' hot' : ''}" aria-expanded="${open}" data-strip="${esc(k)}" id="s-${esc(k)}">
     <button class="head" type="button" data-sel="${esc(k)}" aria-label="${esc(KIND_LABEL[c.kind])}: ${esc(c.title)}">
-      <span class="meta">${meta}</span>${dueHtml(c.due, now)}<span class="title">${esc(c.title)}</span>${open ? '' : `<span class="peek">${peek(c, now)}</span>`}
+      <span class="meta">${meta}</span>${dueHtml(c.due, now)}<span class="title">${esc(c.title)}</span>${open ? '' : `<span class="peek sp">${mono(peek(c, now))}</span>`}
     </button>
     ${open ? `<div class="body">${bodyHtml(r, ui, now, svg, fig)}${actsHtml(r, ui)}</div>` : ''}
   </article>`
@@ -333,9 +345,9 @@ function casesHtml(m: Model, ui: Ui, now: number): string {
   const row = (b: Board) => {
     const next = b.d.queue.find((r) => COUNTED.includes(r.card.kind))
     const stuck = b.d.counts.stuck
-    const sub = [next?.card.due ? `最短 ${fmtDate(next.card.due)}` : '', stuck ? `詰まり ${stuck}` : '', b.d.talking.length ? `話し中 ${b.d.talking.length}` : ''].filter(Boolean).join('・')
+    const sub = [next?.card.due ? `最短 ${fmtDate(next.card.due)}` : '', stuck ? `詰まり ${stuck}` : '', b.d.talking.length ? `話し中 ${b.d.talking.length}` : ''].filter(Boolean).map((x) => `<span class="pt">${esc(x)}</span>`).join('')
     return `<button class="case${b.d.total ? '' : ' zero'}" type="button" data-filter="${esc(b.root)}" aria-current="${ui.filter === b.root}">
-      <span class="nm">${esc(b.v.cockpit!.workspace.name)}${m.focused === b.root ? '<span class="here" title="Orca で表示中"></span>' : ''}</span><span class="n">${b.d.total}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</button>`
+      <span class="nm">${esc(b.v.cockpit!.workspace.name)}${m.focused === b.root ? '<span class="here" title="Orca で表示中"></span>' : ''}</span><span class="n">${b.d.total}</span>${sub ? `<span class="sub sp">${sub}</span>` : ''}</button>`
   }
   const sorted = [...m.boards].sort((a, b) => b.d.total - a.d.total || a.v.cockpit!.workspace.name.localeCompare(b.v.cockpit!.workspace.name, 'ja'))
   const routes = m.boards.flatMap((b) => (b.v.cockpit?.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x).map((x) => `${b.v.cockpit!.workspace.name}: ${x}`))
@@ -356,7 +368,7 @@ function jobsHtml(b: Board, now: number, label: string): string {
   const live = b.d.jobs.filter((j) => j.state !== 'done')
   const done = b.d.jobs.length - live.length
   const job = (j: JobView) => `<li class="job ${j.state}"><span class="js" aria-hidden="true"></span><span class="t">${esc(j.title)}</span><span class="st">${esc(j.label)}${j.since ? `（${esc(fmtDate(j.since.slice(0, 10)))} から）` : ''}</span>
-    ${j.next || j.owner ? `<span class="nx">${j.next ? `<b class="pl">次</b>${esc(j.next)}` : ''}${j.owner ? `${j.next ? '　' : ''}<b class="pl">担当</b>${esc(j.owner.title)}${j.owner.state ? `（${OWNER_STATE[j.owner.state] ?? esc(j.owner.state)}）` : ''}` : ''}</span>` : ''}</li>`
+    ${j.next || j.owner ? `<span class="nx">${j.next ? `<b class="pl">次</b>${mono(esc(j.next))}` : ''}${j.owner ? `${j.next ? '　' : ''}<b class="pl">担当</b>${esc(j.owner.title)}${j.owner.state ? `（${OWNER_STATE[j.owner.state] ?? esc(j.owner.state)}）` : ''}` : ''}</span>` : ''}</li>`
   return `<section class="pane" aria-label="案件の今"><h2>${esc(c.workspace.name)} <small>${esc(label)}</small></h2>
     ${ms.length ? `<ul class="ms">${ms.map((x) => `<li><b>${x.left === 0 ? '今日' : `あと ${x.left} 日`}</b><span>${esc(x.label)}</span></li>`).join('')}</ul>` : ''}
     ${live.length ? `<ul class="jobs">${live.map(job).join('')}</ul>` : '<p class="mut">動いている仕事はありません</p>'}
@@ -385,9 +397,9 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const signal = m.panel ? signalHtml(shown[0]?.v) : ''
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
-    <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${glyph(k)}${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox">数えない ${glyph('inbox')}届いた <b>${inbox}</b></span>` : ''}</div>
+    <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${glyph(k)}${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox" title="届いたは私の番の数に入れない">${glyph('inbox')}届いた <b>${inbox}</b></span>` : ''}</div>
     <div class="flags">${unseenCount ? `<span class="flag warn">見ていない ${unseenCount}</span>` : ''}${m.live !== undefined ? `<span class="flag">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
-      ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : 'Mac'}</button>`).join('')}</span>`}</div>
+      ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : '自動'}</button>`).join('')}</span>`}</div>
   </header>`
   const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
   const sideCount = { talking: all('talking').length, waiting: all('waiting').length, late }
@@ -399,10 +411,10 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
     miniList('waiting', '顧客待ち', all('waiting'), ui, now, svg, showWs, (r) => {
       const a = r.card.awaiting
       const late = a?.remind_at && Date.parse(a.remind_at) < now
-      return `<span class="r${late ? ' hot' : ''}">${a ? `${esc(a.who)}・${esc(fmtDate(a.since.slice(0, 10)))} から${late ? '・催促の日を過ぎた' : ''}` : ''}</span>${a?.resumes ? `<small><b class="pl">返事で再開</b>${esc(a.resumes)}</small>` : ''}`
+      return `<span class="r sp${late ? ' hot' : ''}">${a ? sp([esc(a.who), `${esc(fmtDate(a.since.slice(0, 10)))} から`, late && '催促の日を過ぎた']) : ''}</span>${a?.resumes ? `<small><b class="pl">返事で再開</b>${esc(a.resumes)}</small>` : ''}`
     }, true),
     miniList('reports', '報告', all('reports'), ui, now, svg, showWs, (r) => `<span class="r">${esc(fmtDate(r.card.at))}</span>`, false),
-    miniList('closed', '片付いた', all('closed').slice(0, 40), ui, now, svg, showWs, (r) => `<span class="r ${r.pending ? 'pend' : 'recv'}">${r.pending ? '受け取り待ち' : '受け取った'}</span><small>${esc(r.how)}${r.when ? `・${esc(fmtDate(r.when))}` : ''}</small>`, false)
+    miniList('closed', '片付いた', all('closed').slice(0, 40), ui, now, svg, showWs, (r) => `<span class="r ${r.pending ? 'pend' : 'recv'}">${r.pending ? '受け取り待ち' : '受け取った'}</span><small class="sp">${sp([esc(r.how), r.when && esc(fmtDate(r.when))])}</small>`, false)
   ].join('')
   const msg = ui.toast && ui.toast.until > now ? `<div class="toast" role="status"><span>${esc(ui.toast.text)}</span></div>` : ''
   const undo = ui.undos
@@ -449,14 +461,14 @@ function repeatHtml(m: Model, ui: Ui, shown: Board[]): string {
 function handoffHtml(shown: Board[], now: number): string {
   const lines = shown
     .filter((b) => b.v.handoff && now - Date.parse(b.v.handoff.at) < 86_400_000)
-    .map((b) => `<div>${esc(b.v.cockpit?.workspace.name ?? '')}: 窓口を新しいチャットに引き継ぎました（${esc(fmtDate(b.v.handoff!.at))}・${esc(b.v.handoff!.reason)}）。Orca のチャットの一覧から新しいチャットを開いてください</div>`)
+    .map((b) => `<div>${esc(b.v.cockpit?.workspace.name ?? '')}: 窓口を新しいチャットに引き継ぎました（${esc(fmtDate(b.v.handoff!.at))} ${esc(b.v.handoff!.reason)}）。Orca のチャットの一覧から新しいチャットを開いてください</div>`)
   return lines.length ? `<div class="notes" role="status">${lines.join('')}</div>` : ''
 }
 
 function signalHtml(v: CockpitView | undefined): string {
   if (!v?.cockpit) return ''
   if (chatMain(v.cockpit)) return ''
-  if (v.signal?.state === 'failed') return `<button class="flag err" type="button" data-act="notify">メインに届いていません（${esc(v.signal.reason ?? '')}）・もう一度送る</button>`
+  if (v.signal?.state === 'failed') return `<button class="flag err" type="button" data-act="notify">メインに届いていません（${esc(v.signal.reason ?? '')}）。もう一度送る</button>`
   if (v.signal?.state === 'waiting') return '<span class="flag">メインの手が空いたら届けます</span>'
   return ''
 }

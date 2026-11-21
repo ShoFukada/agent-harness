@@ -11,7 +11,7 @@ export const CSS = `
   font-size:var(--fs-m); line-height:1.65; font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased;
   background:var(--bg); color:var(--ink); min-height:100vh; container-type:inline-size; }
 .ck[data-theme="dark"] { color-scheme: dark;
-  --bg:#0e141a; --surface:#172029; --sunk:#121a21; --ink:#e4eaef; --ink2:#a6b3bf; --ink3:#7d8a96; --rule:#2a3641; --rule2:#212c36;
+  --bg:#0e141a; --surface:#172029; --sunk:#121a21; --ink:#e4eaef; --ink2:#b1bdc8; --ink3:#94a1ad; --rule:#2a3641; --rule2:#212c36;
   --focus:#7fb0ff; --hot:#ff7a56; --hot-bg:#3a1d15; --ok:#6cc58f;
   --k-inbox:#3fc1b3; --k-send:#a68bff; --k-decide:#8fb0e8; --k-review:#4fb6e3; --k-permit:#e0a640; --k-stuck:#d3dbe3; --k-talk:#9fb0c2; --k-report:#98a3ad;
   --shadow:0 1px 0 rgba(0,0,0,.3); }
@@ -26,7 +26,7 @@ body { margin:0; }
 
 /* ── 上の帯 ── */
 .ck .top { position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--rule);
-  display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; padding:12px 20px; }
+  display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; padding:16px 20px; }
 .ck .tally { display:flex; align-items:baseline; gap:10px; }
 .ck .tally b { font-size:var(--fs-xxl); line-height:1; font-weight:700; letter-spacing:-.01em; }
 .ck .tally span { font-size:var(--fs-s); color:var(--ink2); }
@@ -43,7 +43,7 @@ body { margin:0; }
 .ck .seg button[aria-pressed="true"] { background:var(--ink); color:var(--surface); }
 
 /* ── 3 つの列 ── */
-.ck .board { display:grid; grid-template-columns:220px minmax(0,1fr) 360px; gap:0 28px; padding:16px 20px 80px; max-width:1560px; margin:0 auto; align-items:start; }
+.ck .board { display:grid; grid-template-columns:248px minmax(0,1fr) 360px; gap:0 20px; padding:16px 20px 80px; max-width:1560px; margin:0 auto; align-items:start; }
 .ck .board.panel { grid-template-columns:minmax(0,1fr); padding:10px 12px 72px; }
 .ck .paneswitch { display:none; position:sticky; top:0; z-index:4; gap:4px; padding:6px 12px; background:var(--bg); border-bottom:1px solid var(--rule); }
 .ck .paneswitch button { flex:1; border:1px solid var(--rule); background:none; border-radius:7px; padding:4px 8px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
@@ -93,19 +93,26 @@ body { margin:0; }
 .ck .now-line { grid-column:1 / -1; display:grid; grid-template-columns:88px minmax(0,1fr); gap:0 14px; align-items:center; margin:6px 0; }
 .ck .now-line span { text-align:right; font-size:var(--fs-xs); font-weight:700; color:var(--focus); }
 .ck .now-line i { height:2px; background:var(--focus); opacity:.55; border-radius:1px; }
-.ck .strips { display:grid; gap:8px; padding:6px 0; min-width:0; }
+/* 区分ごとに 1 つの面。票は区切り線で並べ、1 件ずつの囲みにしない。 */
+.ck .strips { display:grid; margin:6px 0; min-width:0; background:var(--surface); border:1px solid var(--rule2); border-radius:8px; box-shadow:var(--shadow); overflow:hidden; }
 @container (max-width:520px) { .ck .lane { grid-template-columns:minmax(0,1fr); } .ck .when { text-align:left; padding:10px 0 0; } .ck .when::after { display:none; }
-  .ck .when small { display:inline; margin-left:6px; } .ck .now-line { grid-template-columns:auto minmax(0,1fr); } }
+  .ck .when small { display:inline; margin-left:6px; } .ck .now-line { grid-template-columns:auto minmax(0,1fr); }
+  /* 狭い幅で案件名と仕事の名前が並ぶと、どちらも数文字に削られるので、案件名があるときは仕事の名前を出さない。 */
+  .ck .strip .meta .ws ~ .jobname { display:none; } .ck .strip .ws { max-width:none; } }
 
-.ck .strip { position:relative; background:var(--surface); border-radius:8px; box-shadow:var(--shadow); border:1px solid var(--rule2);
-  border-left:4px solid var(--kc); min-width:0; }
-.ck .strip[aria-expanded="true"] { border-color:var(--rule); box-shadow:0 0 0 1px var(--kc), 0 6px 20px rgba(21,33,44,.10); }
+.ck .strip { position:relative; min-width:0; }
+.ck .strip + .strip { border-top:1px solid var(--rule2); }
+.ck .strip[aria-expanded="true"] { box-shadow:inset 0 0 0 2px var(--kc); }
 .ck .strip.hot { --hotline:var(--hot); }
-.ck .strip .head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; width:100%; text-align:left; border:0; background:none; padding:10px 14px 10px 12px; }
+.ck .strip .head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:1px 12px; width:100%; text-align:left; border:0; background:none; padding:8px 14px; }
+.ck .sp > .pt + .pt { margin-left:.9em; }
 .ck .pl { font-weight:600; color:var(--ink2); margin-right:.6em; }
-.ck .strip .meta { display:flex; flex-wrap:wrap; align-items:center; gap:2px 10px; font-size:var(--fs-xs); color:var(--ink3); min-width:0; }
+/* 種類・案件・仕事は 1 行に固定し、長い仕事の名前は末尾を省く（題の書き出しの位置をそろえる）。 */
+.ck .strip .meta { display:flex; flex-wrap:nowrap; align-items:center; gap:2px 10px; font-size:var(--fs-xs); color:var(--ink3); min-width:0; white-space:nowrap; overflow:hidden; }
+.ck .strip .meta > * { flex-shrink:0; }
+.ck .strip .meta > :last-child:not(.kind) { flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .ck .strip .kind { display:inline-flex; align-items:center; gap:5px; color:var(--kc); font-weight:700; }
-.ck .strip .ws { color:var(--ink2); font-weight:600; }
+.ck .strip .ws { color:var(--ink2); font-weight:600; max-width:45%; overflow:hidden; text-overflow:ellipsis; }
 .ck .strip .title { grid-column:1 / -1; font-size:var(--fs-l); font-weight:600; line-height:1.45; color:var(--ink); }
 .ck .strip .due { grid-row:1; grid-column:2; align-self:start; text-align:right; font-size:var(--fs-s); font-weight:600; color:var(--ink2); white-space:nowrap; }
 .ck .due.hot { color:var(--hot); }
@@ -178,10 +185,12 @@ body { margin:0; }
 .ck kbd { font:inherit; font-size:var(--fs-xs); border:1px solid var(--rule); border-radius:4px; padding:0 4px; }
 
 /* ── 右の列: 案件の今・話し中・顧客待ち・報告・片付いた ── */
-.ck .side { display:grid; gap:14px; align-content:start; min-width:0; }
-.ck .pane { background:var(--surface); border:1px solid var(--rule2); border-radius:10px; padding:12px 14px; min-width:0; }
-.ck .pane > h2 { margin:0 0 6px; font-size:var(--fs-m); font-weight:700; display:flex; align-items:baseline; gap:8px; }
-.ck .pane > h2 small { font-weight:400; color:var(--ink3); font-size:var(--fs-xs); }
+/* 右の列は 1 つの面。区分は区切り線で分け、区分ごとの囲みにしない。 */
+.ck .side { display:grid; align-content:start; min-width:0; background:var(--surface); border:1px solid var(--rule2); border-radius:10px; box-shadow:var(--shadow); }
+.ck .pane { padding:12px 14px; min-width:0; }
+.ck .pane + .pane { border-top:1px solid var(--rule); }
+.ck .pane > h2 { margin:0 0 6px; font-size:var(--fs-m); font-weight:700; display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; }
+.ck .pane > h2 small { font-weight:400; color:var(--ink3); font-size:var(--fs-xs); white-space:nowrap; }
 .ck .pane .src { font-size:var(--fs-xs); color:var(--focus); font-weight:600; }
 .ck .ms { display:grid; gap:2px; margin:0 0 8px; padding:0; list-style:none; font-size:var(--fs-s); }
 .ck .ms li { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; }
