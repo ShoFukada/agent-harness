@@ -284,7 +284,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
 /** 出した指示（新しい順）。withCard はどのカードへの指示かを頭に出す（タスクの詳細）。 */
 function sentHtml(xs: Sent[], withCard = false): string {
   if (!xs.length) return ''
-  return `<div class="sent fld"><span class="lb">出した指示</span><ol>${xs.map((s) => `<li><span class="sl"><span class="tm">${esc(fmtDate(s.op.at))}</span>${withCard ? `<span class="code">${esc(s.card.id)}</span>` : ''}<b>${esc(s.label)}</b>${s.applied ? tag('反映済み') : tag('未反映', 'wait')}</span>${s.text ? `<div class="quote">${esc(s.text)}</div>` : ''}</li>`).join('')}</ol></div>`
+  return `<div class="sent fld"><span class="lb">出した指示</span><ol>${xs.map((s) => `<li><span class="sl"><span class="tm">${esc(fmtDate(s.op.at))}</span>${withCard ? `<span class="code">${esc(s.card.id)}</span>` : ''}<b>${esc(s.label)}</b>${s.applied ? tag('反映済み') : tag('未反映', 'wait')}</span>${s.text ? `<div class="quote verb">${esc(s.text)}</div>` : ''}</li>`).join('')}</ol></div>`
 }
 
 const CARD_STATE = { mine: '要対応', fixing: '修正待ち', waiting: '顧客待ち', closed: '対応済み' } as const
@@ -309,7 +309,7 @@ function taskDetail(b: Board, t: TaskView): string {
   const reqHtml = reqs.map((r) => {
     const quote = r.req.utterances?.map((u) => u.quote).join('\n') || r.req.quote || ''
     return `<div class="rqd"><div><span class="code">${esc(r.req.id)}</span> ${esc(r.req.title)}<span class="rst">${esc(r.state)}</span></div>
-      ${quote ? `<div class="quote">${esc(quote)}</div>` : ''}
+      ${quote ? `<div class="quote verb">${esc(quote)}</div>` : ''}
       ${r.req.done_when?.length ? `<ol class="dw">${r.req.done_when.map((w, i) => `<li class="${r.covered[i] ? 'ok' : ''}"><span>${r.covered[i] ? '済' : '未'}</span>${esc(w)}</li>`).join('')}</ol>` : ''}</div>`
   }).join('')
   const worker = task.worker

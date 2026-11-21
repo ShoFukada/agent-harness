@@ -542,11 +542,14 @@ export function sentOps(cards: Card[], log: UserLog, appliedOps: number[] = []):
     .filter((o) => byId.has(o.item_id) && !SILENT.includes(o.type) && !undone.has(o.op_id))
     .map((o): Sent => {
       const c = byId.get(o.item_id)!
+      // 選択肢の文言と戻す作業は、押した版が今のカードと同じときだけ今のカードから引く（版が変わると同じ id が別の中身を指す）。
+      const same = o.item_rev === c.rev
+      const old = same ? '' : `（版 ${o.item_rev}）`
       const [label, text] = o.type === 'decide' && o.option_id === OTHER ? ['別の回答', o.text]
-        : o.type === 'decide' ? [closedLabel(c, 'decide', c.options?.find((x) => x.id === o.option_id) ?? { id: o.option_id ?? '', label: o.option_id ?? '?' }), o.text]
+        : o.type === 'decide' ? [`${closedLabel(c, 'decide', (same && c.options?.find((x) => x.id === o.option_id)) || { id: o.option_id ?? '', label: o.option_id ?? '?' })}${old}`, o.text]
         : o.type === 'talk' ? (o.text?.trim() ? ['修正を依頼', o.text] : ['協議を開始', undefined])
-        : o.type === 'revert' ? ['戻すよう依頼', c.done?.[o.target ?? -1]?.what]
-        : [closedLabel(c, o.type), o.text]
+        : o.type === 'revert' ? [`戻すよう依頼${old}`, same ? c.done?.[o.target ?? -1]?.what : `${(o.target ?? 0) + 1} 件目`]
+        : [`${closedLabel(c, o.type)}${old}`, o.text]
       return { op: o, card: c, label, text: text?.trim() || undefined, applied: applied.has(o.op_id) }
     })
     .sort((a, b) => timeOf(b.op.at) - timeOf(a.op.at) || b.op.op_id - a.op.op_id)

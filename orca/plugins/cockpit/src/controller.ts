@@ -264,13 +264,21 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     app.querySelector<HTMLButtonElement>(`[data-strip="${CSS_ESC(k)}"] [data-act="decide"]`)?.focus()
   }
 
+  const tabOf = (): Tab => (win ? ui.tab ?? 'todo' : 'todo')
+  /** 今のタブで右に出しているもの（j・k の今の位置）。全体はタスクの id。 */
+  const current = () => ({ todo: ui.sel, whole: ui.task, done: ui.doneSel })[tabOf()]
+  /** キーで返答・協議する票。全体では開いている受信だけ（要対応で選んだまま隠れた票に返答しない）。 */
+  const cardKey = () => ({ todo: ui.sel, whole: rows.get(ui.sel ?? '')?.card.kind === 'inbox' ? ui.sel : undefined, done: ui.doneSel })[tabOf()]
+
   function select(k: string | undefined): void {
-    if (win && ui.tab === 'done') ui.doneSel = k
-    else if (win && ui.tab === 'whole') ui.task = k
-    // 窓の要対応は詳細を常に開くので、押し直しても閉じない。
-    else ui.sel = win && (ui.tab ?? 'todo') === 'todo' ? k : ui.sel === k ? undefined : k
+    const tb = tabOf()
+    const task = tb === 'whole' && !!k && order.includes(k)
+    if (tb === 'done') ui.doneSel = k
+    else if (task) ui.task = k
+    // 窓の要対応は詳細を常に開くので、押し直しても閉じない。全体の受信の票は開け閉めする。
+    else ui.sel = win && tb === 'todo' ? k : ui.sel === k ? undefined : k
     draw()
-    const shown = win && ui.tab === 'whole' ? `[data-task="${CSS_ESC(ui.task ?? '')}"]` : ui.sel && `[data-strip="${CSS_ESC(ui.sel)}"],[data-sel="${CSS_ESC(ui.sel)}"].cardrow`
+    const shown = task ? `[data-task="${CSS_ESC(k)}"]` : tb === 'done' ? k && `[data-dsel="${CSS_ESC(k)}"]` : ui.sel && `[data-strip="${CSS_ESC(ui.sel)}"],[data-sel="${CSS_ESC(ui.sel)}"].cardrow`
     if (shown) app.querySelector(shown)?.scrollIntoView({ block: 'nearest' })
   }
 
@@ -364,13 +372,15 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
     if (typing) return
     // 片付いた・顧客待ちの票は読み返すだけ。キーで選んだり決めたりしない。
-    const cur = ui.sel ? rows.get(ui.sel) : undefined
+    const ck = cardKey()
+    const cur = ck ? rows.get(ck) : undefined
     const sel = cur && (cur.status === 'mine' || cur.status === 'fixing') ? cur : undefined
     if (e.key === 'j' || e.key === 'k') {
       if (!order.length) return
-      const i = ui.sel ? order.indexOf(ui.sel) : -1
+      const at = current()
+      const i = at ? order.indexOf(at) : -1
       const n = i < 0 ? 0 : Math.min(order.length - 1, Math.max(0, i + (e.key === 'j' ? 1 : -1)))
-      ui.sel = undefined
+      if (tabOf() === 'todo') ui.sel = undefined
       e.preventDefault()
       return select(order[n])
     }

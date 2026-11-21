@@ -182,3 +182,15 @@ test('仕事の見出しの要対応は、タブと同じく修正待ちを数�
   assert.match(head, /修正待ち 1/)
   assert.doesNotMatch(head, /要対応/)
 })
+
+test('Codex 13-4・5: 出した指示の本文は空白を詰めず、古い版への返答は今の選択肢の文言で読み替えない', () => {
+  const m = aoba((v) => {
+    v.cockpit!.cards.find((x) => x.id === 'd21')!.rev = 2
+    v.log.ops.push(
+      { op_id: 2, at: '2026-11-21T09:40:00+09:00', item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' },
+      { op_id: 3, at: '2026-11-21T09:50:00+09:00', item_id: 'd21', item_rev: 2, type: 'talk', text: 'cd 資料 を 開く' })
+  })
+  const h = tighten(page(m, { sel: '/ws/aoba#d21' }))
+  assert.match(h, /<div class="quote verb">cd 資料 を 開く<\/div>/)
+  assert.match(text(h), /決定: keep（版1） 未反映/)
+})
