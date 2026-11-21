@@ -359,7 +359,8 @@ export function createServer(opts: Options) {
     return (refreshing ??= (async () => {
       try {
         const [rowsNow, tl, plugins, ags] = await Promise.all([orca.ps(), orca.terminals(), orca.plugins().catch(() => undefined), orca.agents().catch(() => undefined)])
-        pluginNote = plugins && pluginProblem(plugins)
+        // 窓には深田さんの手が要るもの（承認待ち・入っていない・止まった）だけを出す。写しの入れ直しと開発用の読み込みは窓口の仕事（初見 8）。
+        pluginNote = plugins && pluginProblem(plugins, true)
         if (ags) owners = ags
         ownersStale = !ags
         ps = rowsNow

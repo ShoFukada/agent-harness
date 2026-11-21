@@ -65,7 +65,7 @@ body { margin:0; }
 .ck .case { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 8px; align-items:center; text-align:left;
   border:0; background:none; padding:7px 10px; border-radius:6px; color:var(--ink2); }
 .ck .case:hover { background:var(--rule2); }
-.ck .case[aria-current="true"] { background:var(--surface); color:var(--ink); box-shadow:var(--shadow); }
+.ck .case[aria-current="true"] { background:var(--surface); color:var(--ink); box-shadow:inset 3px 0 0 var(--focus); }
 .ck .case .nm { font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ck .case .n { font-weight:700; color:var(--ink); }
 .ck .case .sub { grid-column:1 / -1; font-size:var(--fs-xs); color:var(--ink3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -96,8 +96,8 @@ body { margin:0; }
 .ck .now-line { grid-column:1 / -1; display:grid; grid-template-columns:88px minmax(0,1fr); gap:0 14px; align-items:center; margin:6px 0; }
 .ck .now-line span { text-align:right; font-size:var(--fs-xs); font-weight:700; color:var(--focus); }
 .ck .now-line i { height:2px; background:var(--focus); opacity:.55; border-radius:1px; }
-/* 区分ごとに 1 つの面。票は区切り線で並べ、1 件ずつの囲みにしない。 */
-.ck .strips { display:grid; margin:6px 0; min-width:0; background:var(--surface); border:1px solid var(--rule2); border-radius:8px; box-shadow:var(--shadow); overflow:clip; }
+/* 票は区切り線で並べ、囲みの箱にしない（R111）。 */
+.ck .strips { display:grid; margin:6px 0; min-width:0; background:var(--surface); border-block:1px solid var(--rule2); }
 @container (max-width:520px) { .ck .lane { grid-template-columns:minmax(0,1fr); } .ck .when { text-align:left; padding:10px 0 0; } .ck .when::after { display:none; }
   .ck .when small { display:inline; margin-left:6px; } .ck .now-line { grid-template-columns:auto minmax(0,1fr); }
   /* 狭い幅で案件名と仕事の名前が並ぶと、どちらも数文字に削られるので、案件名があるときは仕事の名前を出さない。 */
@@ -106,7 +106,7 @@ body { margin:0; }
 
 .ck .strip { position:relative; min-width:0; scroll-margin:84px 0 16px; }
 .ck .strip + .strip { border-top:1px solid var(--rule2); }
-.ck .strip[aria-expanded="true"] { box-shadow:inset 0 0 0 2px var(--kc); }
+.ck .strip[aria-expanded="true"] { box-shadow:inset 3px 0 0 var(--focus); }
 .ck .strip.hot { --hotline:var(--hot); }
 .ck .strip .head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:1px 12px; width:100%; text-align:left; border:0; background:none; padding:8px 14px; }
 .ck .sp > .pt + .pt { margin-left:.9em; }
@@ -178,7 +178,7 @@ body { margin:0; }
 /* 返答の列。低い窓でも見えるよう、開いた票の下に留める。 */
 .ck .acts { position:sticky; bottom:0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:10px 14px; margin:0 -14px -12px -12px;
   background:var(--surface); border-top:1px solid var(--rule2); border-radius:0 0 8px 8px; }
-.ck .btn { border:1px solid var(--rule); background:var(--surface); border-radius:7px; padding:5px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
+.ck .btn { white-space:nowrap; border:1px solid var(--rule); background:var(--surface); border-radius:7px; padding:5px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
 .ck .btn:hover { border-color:var(--ink3); }
 .ck .btn.pri { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink3); cursor:default; }
@@ -188,8 +188,8 @@ body { margin:0; }
 .ck kbd { font:inherit; font-size:var(--fs-xs); border:1px solid var(--rule); border-radius:4px; padding:0 4px; }
 
 /* ── 右の列: 案件の今・話し中・顧客待ち・報告・片付いた ── */
-/* 右の列は 1 つの面。区分は区切り線で分け、区分ごとの囲みにしない。 */
-.ck .side { display:grid; align-content:start; min-width:0; background:var(--surface); border:1px solid var(--rule2); border-radius:10px; box-shadow:var(--shadow); }
+/* 右の列は区切り線で区分を分け、囲みの箱にしない（R111）。 */
+.ck .side { display:grid; align-content:start; min-width:0; border-top:1px solid var(--rule); }
 .ck .pane { padding:12px 14px; min-width:0; }
 .ck .pane + .pane { border-top:1px solid var(--rule); }
 .ck .pane > h2 { margin:0 0 6px; font-size:var(--fs-m); font-weight:700; display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; }
@@ -254,6 +254,8 @@ body { margin:0; }
   @keyframes ck-up { from { transform:translateY(8px); opacity:0; } }
 }
 .ck svg text { font-family:inherit; }
+/* fill の無い文字は既定で黒になり、暗では読めないので地の文字色にする。 */
+.ck svg text:not([fill]) { fill:currentColor; }
 
 /* ══ 窓の 3 タブ（window-view.ts）。パネルの部品（.fld・.opt・.btn・.acts）は上の決まりを使う ══ */
 /*
@@ -273,21 +275,23 @@ body { margin:0; }
 .ck.win .tabs { display:flex; gap:2px; align-self:end; }
 .ck.win .tabs button { border:0; background:none; padding:7px 14px 9px; font-size:var(--fs-m); color:var(--ink2); border-bottom:3px solid transparent; display:flex; gap:7px; align-items:center; }
 .ck.win .tabs button[aria-selected="true"] { color:var(--ink); font-weight:700; border-bottom-color:var(--ink); }
-.ck.win .tabs .n { font-size:var(--fs-xs); min-width:20px; text-align:center; border-radius:999px; padding:0 6px; background:var(--ink); color:var(--surface); font-weight:600; }
+.ck.win .tabs .n { font-size:var(--fs-s); color:var(--ink); font-weight:700; }
 .ck.win .tabs .n.z { background:none; color:var(--ink3); font-weight:400; }
 .ck.win .flags { padding-bottom:10px; }
 .ck.win .flags .err { color:var(--hot); font-weight:600; }
 .ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
 .ck.win .wnotes { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
 .ck.win .wnotes summary { cursor:pointer; }
-.ck.win .wbody { display:grid; flex:1; min-height:0; }
+.ck.win .wbody { display:grid; flex:1; min-height:0; background:var(--surface); }
 .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
-.ck.win .wpane { overflow-y:auto; padding:10px 16px 60px; display:grid; align-content:start; gap:10px; min-height:0; min-width:0; }
+/* 狭い幅では詳細の幅を決めて、一覧の幅を残す（初見 14）。 */
+@media (max-width:1100px) { .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) 380px; } }
+.ck.win .wpane { overflow-y:auto; padding:10px 16px 60px; display:grid; align-content:start; gap:18px; min-height:0; min-width:0; }
 .ck.win .wside { overflow-y:auto; border-left:1px solid var(--rule); background:var(--surface); min-height:0; min-width:0; }
 .ck.win .wpane > p { margin:0; font-size:var(--fs-s); }
 .ck.win .calm { padding:24px 4px; }
 @media (max-width:900px) {
-  .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(320px,46%); } }
+  .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) 320px; } }
 @media (max-width:640px) {
   .ck.win { height:auto; overflow:visible; }
   .ck.win .wbody.split { grid-template-columns:minmax(0,1fr); }
@@ -295,18 +299,26 @@ body { margin:0; }
   .ck.win .wpane { padding-bottom:20px; } }
 
 /* 要対応・対応済み: 仕事のまとまりと行 */
-.ck.win .sgrp { display:grid; gap:6px; }
+.ck.win .sgrp { display:grid; gap:4px; }
+.ck.win details.sgrp > summary { cursor:pointer; list-style:none; }
+.ck.win details.sgrp > summary::-webkit-details-marker { display:none; }
+.ck.win details.sgrp > summary .gh::before { content:"＋"; color:var(--ink3); }
+.ck.win details.sgrp[open] > summary .gh::before { content:"－"; }
+.ck.win details.sgrp[open] > summary { margin-bottom:4px; }
 .ck.win .gh { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:var(--fs-s); padding:2px 2px 0; }
 .ck.win .gh .prog { margin-left:auto; }
 .ck.win .gh b { font-size:var(--fs-m); }
 .ck.win .gh .mut { font-size:var(--fs-xs); }
 .ck.win .subh { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; }
-/* 一覧は 1 つの枠に区切り線で並べる（1 件ずつ角丸の箱にしない）。種類は印と名前の色で示し、左端の色の線は使わない。 */
-.ck.win .rows { display:grid; background:var(--surface); border:1px solid var(--rule); border-radius:8px; overflow:clip; }
-.ck.win .cardrow { display:grid; grid-template-columns:76px minmax(0,1fr) auto; gap:10px; align-items:center; border:0; border-radius:0; padding:6px 12px; background:var(--surface); text-align:left; width:100%; }
+/*
+ * 一覧は行を細い線で区切ったリスト（枠・影・角丸の箱にしない。R111）。見出しの下に濃い線、行の間に薄い線。
+ * 選んでいる行は、薄い地の色と左の細い線で示す（枠で囲まない）。
+ */
+.ck.win .rows { display:grid; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule2); }
+.ck.win .cardrow { display:grid; grid-template-columns:64px minmax(0,1fr) auto; gap:12px; align-items:center; border:0; border-radius:0; padding:9px 10px; background:none; text-align:left; width:100%; }
 .ck.win .cardrow + .cardrow { border-top:1px solid var(--rule2); }
 .ck.win .cardrow:hover { background:var(--sunk); }
-.ck.win .cardrow[aria-current="true"] { background:var(--sunk); box-shadow:inset 0 0 0 2px var(--focus); }
+.ck.win .cardrow[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .cardrow.cl .ti, .ck.win .cardrow.cl .kd { color:var(--ink2); font-weight:400; }
 .ck.win .cardrow.k-stuck:not(.cl) .kd { color:var(--hot); }
 .ck.win .kd { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--kc); white-space:nowrap; }
@@ -318,12 +330,17 @@ body { margin:0; }
 .ck.win .cardrow .tl .tag { flex:none; }
 .ck.win .cardrow .crumb { display:block; font-size:var(--fs-xs); color:var(--ink3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .cardrow .du { font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; text-align:right; display:grid; justify-items:end; }
-.ck.win .cardrow .du.cl { white-space:normal; max-width:220px; }
+.ck.win .cardrow .du.cl { max-width:240px; }
+.ck.win .cardrow .du .how { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .cardrow .du .hot { color:var(--hot); font-weight:600; }
-.ck.win .tag { display:inline-block; font-size:var(--fs-xs); font-weight:400; padding:0 6px; border-radius:4px; background:var(--sunk); color:var(--ink2); border:1px solid var(--rule2); white-space:nowrap; }
-.ck.win .tag.wait { background:var(--amber-bg); color:var(--amber); border-color:transparent; }
-.ck.win .tag.talk { background:var(--focus); color:var(--surface); border-color:transparent; }
-.ck.win .tag.miss { background:var(--hot-bg); color:var(--hot); border-color:transparent; }
+.ck.win .cardrow .du .soon { color:var(--ink); font-weight:600; }
+/* 窓の協議は副の操作なので、主のボタンの青と分ける。 */
+.ck.win .btn.talk { border-color:var(--rule); color:var(--ink); }
+/* 札は語だけ（丸枠・地の色の印を並べない。初見 4・15）。協議中は強調の色、確認なしは危険の色。 */
+.ck.win .tag { display:inline-block; font-size:var(--fs-xs); font-weight:400; color:var(--ink3); white-space:nowrap; }
+.ck.win .tag.wait { color:var(--ink2); }
+.ck.win .tag.talk { color:var(--focus); font-weight:600; }
+.ck.win .tag.miss { color:var(--hot); }
 .ck.win .gaps { border:1px solid var(--hot); border-radius:8px; background:var(--surface); padding:8px 12px; font-size:var(--fs-s); display:grid; gap:2px; }
 .ck.win .gaps b { color:var(--hot); }
 .ck.win .gaps ul { margin:4px 0 0; padding-left:1.2em; }
@@ -338,7 +355,12 @@ body { margin:0; }
 .ck.win .note { margin:8px 16px 0; padding:8px 10px; border-radius:6px; background:var(--sunk); font-size:var(--fs-s); }
 .ck.win .note.wait { background:var(--amber-bg); } .ck.win .note.wait b { color:var(--amber); }
 .ck.win .note.ok { background:var(--ok-bg); } .ck.win .note.ok b { color:var(--ok); }
-.ck.win .first { margin:10px 16px 0; padding:10px 12px; border:1px solid var(--rule); border-radius:8px; display:grid; gap:8px; font-size:var(--fs-s); }
+/* 詳細の塊は囲まず、塊の間を線で区切る（R111。囲みと引用の線が二重にならない。初見 13）。 */
+.ck.win .first { margin:12px 16px 0; padding:0; border:0; display:grid; gap:10px; font-size:var(--fs-s); }
+.ck.win .first + .first, .ck.win .wdet > .first + .sent, .ck.win .wdet > .sent + .first { border-top:1px solid var(--rule2); padding-top:12px; }
+.ck.win .rid { margin:14px 16px 0; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); color:var(--ink3); }
+.ck.win .links.main .lk { border-color:var(--ink3); padding:5px 14px; font-size:var(--fs-s); font-weight:600; border-radius:7px; }
+.ck.win .links.main .lk i { display:none; }
 .ck.win .first ol.rich, .ck.win .first ul.rich { margin:0; padding-left:1.4em; }
 .ck.win details.more-d { margin:6px 16px 0; }
 .ck.win details.more-d summary { cursor:pointer; font-size:var(--fs-s); color:var(--focus); padding:6px 0; }
@@ -350,19 +372,26 @@ body { margin:0; }
 
 /* 全体: 形ごとの置き場所と仕事の箱 */
 .ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }
-.ck.win .fm { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--fc); white-space:nowrap; }
-.ck.win .fm::before { content:""; width:10px; height:10px; border-radius:2px; background:var(--fc); }
+/* 仕事の形は見出しの語だけで分ける（色の四角を付けない。初見 11）。 */
+.ck.win .fm { display:inline-flex; align-items:center; font-size:var(--fs-s); font-weight:700; color:var(--ink); white-space:nowrap; }
 .ck.win .fsec { display:grid; gap:8px; }
 .ck.win .fsec > h3 { margin:4px 0 0; font-size:var(--fs-m); display:flex; gap:10px; align-items:baseline; }
 .ck.win .fsec > h3 .mut { font-weight:400; font-size:var(--fs-xs); }
 .ck.win .fsec > p { margin:0; font-size:var(--fs-s); }
-.ck.win .st { background:var(--surface); border:1px solid var(--rule); border-radius:8px; }
-.ck.win .st > .sh { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; padding:8px 12px; }
-.ck.win .st .t { font-weight:700; font-size:var(--fs-l); display:flex; gap:8px; align-items:center; flex-wrap:wrap; border:0; background:none; padding:0; text-align:left; }
-.ck.win .st .tw { font-size:var(--fs-xs); color:var(--ink3); font-weight:400; }
+/* 仕事は線で区切った一覧の 1 行（箱にしない。R111）。 */
+.ck.win .fsec > .st:first-of-type { border-top:1px solid var(--rule); }
+.ck.win .st { border-bottom:1px solid var(--rule2); }
+.ck.win .st > .sh { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 16px; padding:10px 4px; }
+.ck.win .st .t { font-weight:700; font-size:var(--fs-l); display:flex; gap:10px; align-items:baseline; flex-wrap:nowrap; min-width:0; border:0; background:none; padding:0; text-align:left; }
+.ck.win .st .t .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .ck.win .st .right { display:flex; align-items:center; gap:10px; }
-.ck.win .st .meta { grid-column:1 / -1; display:flex; gap:6px 16px; flex-wrap:wrap; font-size:var(--fs-s); color:var(--ink2); align-items:center; }
-.ck.win .st .nxt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60ch; }
+/* 次にやることを 2 行まで、工程より濃く読ませる（初見 5）。 */
+.ck.win .st .nxt { grid-column:1 / -1; font-size:var(--fs-s); color:var(--ink); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+.ck.win .st .meta { grid-column:1 / -1; font-size:var(--fs-xs); color:var(--ink3); }
+/* 状態は語 1 つ。色は要対応と停止だけ（初見 4・11）。 */
+.ck.win .pst { flex:none; font-size:var(--fs-xs); font-weight:400; color:var(--ink3); white-space:nowrap; }
+.ck.win .pst.mine { color:var(--focus); font-weight:700; }
+.ck.win .pst.stopped { color:var(--hot); font-weight:700; }
 /* 工程の進み（工程 n/5 と段の名前）。上下の箱で位置がそろうよう幅を決める。 */
 .ck.win .pbar { display:inline-block; min-width:9.5em; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win .prog { display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
@@ -373,23 +402,23 @@ body { margin:0; }
 .ck.win .pill.customer { background:var(--amber-bg); color:var(--amber); }
 .ck.win .pill.idle { background:var(--sunk); color:var(--ink2); }
 .ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
-.ck.win .st .inner { border-top:1px solid var(--rule2); padding:2px 12px 8px; display:grid; gap:0; }
+.ck.win .st .inner { padding:0 4px 10px 16px; display:grid; gap:0; }
 .ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:6px 0 0; display:flex; gap:8px; align-items:center; }
-.ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); border-radius:5px; margin:0 -6px; padding-right:6px; }
+.ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); margin:0 -6px; padding-right:6px; }
 .ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:3px 6px; font:inherit; color:inherit; min-width:0; }
 .ck.win .task:hover { background:var(--sunk); }
-.ck.win .task[aria-current="true"] { background:var(--sunk); box-shadow:inset 0 0 0 2px var(--focus); }
+.ck.win .task[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .task .wk { padding-top:3px; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
-.ck.win .tst.s-run { color:var(--focus); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
+.ck.win .tst.s-run { color:var(--ink); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
 .ck.win .task .tn { display:grid; min-width:0; }
 .ck.win .cardrow .kd small, .ck.win .task .id, .ck.win .rid { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
-.ck.win .task .nx { color:var(--ink3); font-size:var(--fs-xs); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .task .nx { color:var(--ink2); font-size:var(--fs-xs); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 .ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 /* 状態の印は押せる見た目にしない（枠を付けない）。枠を持つのは押せるもの（.act と仕事のカードへ移る .kc）だけ。 */
 .ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:0; padding:0; background:none; color:var(--ink2); white-space:nowrap; }
-.ck.win .chip.live { color:var(--focus); font-weight:600; }
+.ck.win .chip.live { color:var(--ink); font-weight:600; }
 .ck.win .chip.bad { color:var(--hot); font-weight:600; }
 .ck.win .chip.kc { border:1px solid var(--rule); border-radius:5px; padding:0 6px; color:var(--ink); background:var(--surface); font-weight:600; }
 .ck.win .act { border:1px solid var(--rule); background:var(--surface); border-radius:5px; padding:0 8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; line-height:1.9; }
@@ -403,11 +432,11 @@ body { margin:0; }
 .ck.win .watch { display:grid; gap:6px; }
 .ck.win .watch ul { margin:0; padding-left:1.2em; font-size:var(--fs-s); }
 .ck.win .watch p { margin:0; font-size:var(--fs-s); }
-.ck.win .watch .strips { margin:0; }
+.ck.win .watch .strips { margin:0; background:none; }
 
 /* 全体の右: タスクの詳細 */
 .ck.win .wk2 { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
-.ck.win .lc { display:grid; grid-template-columns:3.4em 3.6em minmax(0,1fr) auto; gap:8px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
+.ck.win .lc { display:grid; grid-template-columns:3.4em minmax(0,1fr) auto; gap:8px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
 .ck.win button.lc:hover { background:var(--sunk); }
 .ck.win .lc .ti { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis; }
@@ -422,10 +451,14 @@ body { margin:0; }
 .ck.win .facts .fld > .lb { font-size:var(--fs-xs); }
 .ck.win .rqd + .rqd { border-top:1px solid var(--rule2); padding-top:8px; margin-top:4px; }
 .ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:2px; }
-.ck.win .dw li { display:grid; grid-template-columns:1.4em minmax(0,1fr); color:var(--ink2); }
-.ck.win .dw li.ok { color:var(--ink); }
+.ck.win .dw li { display:grid; grid-template-columns:1.6em minmax(0,1fr); align-items:baseline; color:var(--ink); }
+.ck.win .dw li.ok { color:var(--ink2); }
+/* 済の条件のチェックの形。済は塗り、未は枠だけ。 */
+.ck.win .dw .cb { width:12px; height:12px; border:1.5px solid var(--ink3); border-radius:2px; display:inline-block; position:relative; top:1px; }
+.ck.win .dw li.ok .cb { background:var(--ink2); border-color:var(--ink2); }
+.ck.win .dw li.ok .cb::after { content:""; position:absolute; left:3px; top:0; width:3px; height:7px; border:solid var(--surface); border-width:0 2px 2px 0; transform:rotate(45deg); }
 .ck.win .purp { margin:8px 16px 0; font-size:var(--fs-s); color:var(--ink2); line-height:1.6; }
-.ck.win .recm { flex:0 1 auto; min-width:0; font-size:var(--fs-xs); color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .recm { display:block; min-width:0; font-size:var(--fs-xs); color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win details.cont summary { cursor:pointer; font-size:var(--fs-xs); color:var(--focus); padding:2px 0; }
 .ck.win .ntr { font-size:var(--fs-s); color:var(--ink2); }
 .ck.win .ntr summary { cursor:pointer; color:var(--focus); }

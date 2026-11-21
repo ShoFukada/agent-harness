@@ -41,7 +41,7 @@ test('見てほしい点の「1 …」の番号は一覧の番号にし（二重
   assert.match(h, /<li value="1">一覧の幅<\/li><li value="2">「担当と話す」の位置<\/li><\/ol><p class="mut">6 点ともおすすめなら「これでよい」<\/p>/)
 })
 
-test('全体: 一緒に作る → 任せる → 見張る → 形の無い仕事 の順に置き、見張るに届いた連絡を件数外で並べる。右に未対応の一覧を出さない（R91）', () => {
+test('全体: 一緒に作る → 任せる → 形の無い仕事 → 見張る の順に置き（仕事を先に）、見張るに届いた連絡を並べる。右に未対応の一覧を出さない（R91）', () => {
   const m = aoba((v) => {
     const s = v.cockpit!.streams
     s[0]!.form = 'delegate'
@@ -50,10 +50,11 @@ test('全体: 一緒に作る → 任せる → 見張る → 形の無い仕事
     v.cockpit!.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '配車画面を直す', tasks: ['t1'], legacy: true }]
   })
   const t = text(page(m, { tab: 'whole' }))
-  const order = ['一緒に作る 話しながら', '任せる 任せている', '見張る 届いたもの', '形が書かれていない仕事'].map((x) => t.indexOf(x))
+  const order = ['一緒に作る 話しながら', '任せる 任せている', '形が書かれていない仕事', '見張る 届いたもの'].map((x) => t.indexOf(x))
   assert.ok(order.every((n) => n >= 0), t)
   assert.deepEqual([...order].sort((a, b) => a - b), order)
-  assert.match(t, /届いた連絡 1 件・件数外/)
+  assert.match(t, /届いた連絡 1 件/)
+  assert.doesNotMatch(t, /件数外/, '意味の伝わらない語は出さない（初見 12）')
   assert.doesNotMatch(t, /未完了の依頼/)
 })
 
@@ -75,9 +76,13 @@ test('全体: タスクを押すと右に詳細（工程・状態・goal・next�
   const t = text(side)
   assert.match(h, /class="task" aria-current="true"><button type="button" class="tsel" data-task="t1"/)
   assert.match(h, /data-toggle="s:s1" aria-expanded="true"/)
-  for (const x of ['t1 作業中 工程 3/5 作る', '何のため 配車の一覧で探す手間を減らす', '済の条件 未 並べ替えができる 未 絞り込みができる', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
+  for (const x of ['作業中 工程 3/5 作る', '何のため 配車の一覧で探す手間を減らす', '済の条件 並べ替えができる 絞り込みができる', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
     assert.ok(t.includes(x), x)
   assert.match(side, /data-jump="\/ws\/aoba#r5"/)
+  assert.match(side, /<span class="cb" role="img" aria-label="未"><\/span>並べ替えができる/)
+  // 番号は一覧の行に出さず、詳細の下に小さく置く（初見 2）。
+  assert.doesNotMatch(all, /class="id"/)
+  assert.match(side, /<p class="rid">t1<\/p>/)
   assert.match(t, /出した指示 .*r5 修正を依頼 未反映 幅を 1280 でも崩れないように/)
   assert.doesNotMatch(h, /data-rq=/)
 })
@@ -279,8 +284,8 @@ test('Codex 13-4・5: 出した指示の本文は空白を詰めず、古い版�
   assert.match(text(h), /決定: keep（版1） 未反映/)
 })
 
-test('info-needs Q1・Q2: 判断の一覧の 1 行におすすめの案を出し、本文の判断の記録の番号の括弧は表示から除く', () => {
-  assert.match(page(aoba()), /<span class="ti">構成案の本番の図に、社内向けの入口を描き足すか<\/span><span class="recm">おすすめ: 図はこのまま、本文で説明する<\/span>/)
+test('info-needs Q1・Q2: 判断の一覧の行の 2 行目におすすめの案を出し、本文の判断の記録の番号の括弧は表示から除く', () => {
+  assert.match(page(aoba()), /<span class="ti">構成案の本番の図に、社内向けの入口を描き足すか<\/span><\/span><span class="recm">おすすめ: 図はこのまま、本文で説明する<\/span>/)
   assert.equal(dropRulings('<p>窓の版 3（R46・R47、R83）を入れる（2 件）</p>'), '<p>窓の版 3を入れる（2 件）</p>')
   assert.equal(dropRulings('止めないため（21:40 の依頼、R79）。（R12、11/20）'), '止めないため（21:40 の依頼）。（11/20）')
 })

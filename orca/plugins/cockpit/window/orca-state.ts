@@ -221,16 +221,17 @@ export const PLUGIN_KEY = 'local.cockpit'
  * 操縦席のプラグインが動いていないときの理由。Orca に合わせた切り替え（focus.json）はプラグインの worker が書くので、止まると窓が前面に追いつかない
  * （2026-11-16 に、開発用の読み込みを消したあと承認待ちになり、理由が分からないまま切り替わらなくなった）。
  */
-export function pluginProblem(plugins: PluginRow[]): string | undefined {
+export function pluginProblem(plugins: PluginRow[], forUser = false): string | undefined {
   const mine = plugins.filter((p) => p.pluginKey === PLUGIN_KEY)
   const dev = mine.find((p) => p.isDev)
+  if (dev && forUser) return undefined
   if (dev) return `Orca の操縦席のプラグインが開発用の読み込み（${dev.source?.reference ?? '場所不明'}）に置き換わっています。Orca に合わせた切り替えはその版が受け持ちます`
   const p = mine[0]
   if (!p) return 'Orca に操縦席のプラグインが入っていないため、Orca に合わせた切り替えが止まっています'
   if (p.status === 'pending' || p.needsReconsent) return 'Orca のプラグインが承認待ちのため、Orca に合わせた切り替えが止まっています'
   if (p.status !== 'running' && p.status !== 'idle') return `Orca のプラグインが止まっている（${p.status}）ため、Orca に合わせた切り替えが止まっています`
   // Orca はフォルダではなく入れた時点の写しを動かす。main に直しを入れても写しは古いまま（2026-11-16 に 13:17 の写しが前面の知らせを書かなかった）。
-  if (p.folderHash && p.source?.contentHash && p.folderHash !== p.source.contentHash)
+  if (!forUser && p.folderHash && p.source?.contentHash && p.folderHash !== p.source.contentHash)
     return 'Orca の操縦席のプラグインが、フォルダの今の中身より古い写しのまま動いています（orca plugin update local.cockpit で入れ直す）'
   return undefined
 }
