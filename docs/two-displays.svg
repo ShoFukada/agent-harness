@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 510" font-family="'IBM Plex Sans JP','Hiragino Sans',sans-serif" role="img" aria-label="2 枚のディスプレイでの操縦席と workerctl の使い方">
+  <style>
+    .t{font-size:14px;fill:#1f2328}
+    .s{font-size:12px;fill:#57606a}
+    .h{font-size:16px;font-weight:600;fill:#1f2328}
+    .box{fill:#fff;stroke:#8c959f;stroke-width:1.5}
+    .scr{fill:#f6f8fa;stroke:#1f2328;stroke-width:2}
+    .hot{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}
+    .ln{stroke:#0969da;stroke-width:1.8;fill:none}
+    .ln2{stroke:#bf3989;stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+    .flow{stroke-dasharray:6 6;animation:f 1.6s linear infinite}
+    @keyframes f{to{stroke-dashoffset:-24}}
+    @media (prefers-reduced-motion: reduce){.flow{animation:none}}
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0969da"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#bf3989"/></marker>
+  </defs>
+  <rect width="960" height="510" fill="#fff"/>
+
+  <!-- 左のディスプレイ -->
+  <text class="h" x="40" y="34">左のディスプレイ</text>
+  <rect class="scr" x="40" y="48" width="360" height="300" rx="8"/>
+  <rect class="hot" x="56" y="64" width="328" height="150" rx="6"/>
+  <text class="t" x="70" y="88">操縦席の窓（ブラウザのタブ）</text>
+  <text class="s" x="70" y="110">左の列: 操縦席のある全ワークスペース</text>
+  <text class="s" x="70" y="128">右: 選んだワークスペースの要対応・全体</text>
+  <text class="s" x="70" y="146">決める・聞く・見てを押して返す</text>
+  <text class="s" x="70" y="164">Orca の前面に合わせて切り替わる</text>
+  <text class="s" x="70" y="196">127.0.0.1:47231（window/server.ts）</text>
+  <rect class="box" x="56" y="226" width="328" height="106" rx="6"/>
+  <text class="t" x="70" y="250">エージェントの端末やチャット</text>
+  <text class="s" x="70" y="272">メインのエージェントと話す</text>
+
+  <!-- 右（主）のディスプレイ -->
+  <text class="h" x="500" y="34">主のディスプレイ</text>
+  <rect class="scr" x="500" y="48" width="420" height="300" rx="8"/>
+  <rect class="box" x="516" y="64" width="250" height="268" rx="6"/>
+  <text class="t" x="530" y="88">Orca</text>
+  <rect class="box" x="530" y="102" width="222" height="76" rx="4"/>
+  <text class="t" x="542" y="124">本線のメイン</text>
+  <text class="s" x="542" y="144">.orca/cockpit.json を書く</text>
+  <rect class="box" x="530" y="182" width="222" height="40" rx="4"/>
+  <text class="s" x="542" y="206">worker 1（別の worktree）</text>
+  <rect class="box" x="530" y="230" width="222" height="40" rx="4"/>
+  <text class="s" x="542" y="254">worker 2（別の worktree）</text>
+  <rect class="box" x="530" y="278" width="222" height="40" rx="4"/>
+  <text class="s" x="542" y="302">worker 3 …</text>
+  <rect class="hot" x="776" y="64" width="128" height="268" rx="6"/>
+  <text class="t" x="790" y="88">操縦席の</text>
+  <text class="t" x="790" y="106">パネル</text>
+  <text class="s" x="790" y="130">右のサイドバー</text>
+  <text class="s" x="790" y="148">前面の 1 件だけ</text>
+
+  <!-- 流れ -->
+  <path class="ln" d="M530 130 C 450 130, 440 140, 388 140" marker-end="url(#a)"/>
+  <text class="s" x="412" y="122">cockpit.json</text>
+  <path class="ln2 flow" d="M384 196 C 450 196, 480 170, 528 170" marker-end="url(#b)"/>
+  <text class="s" x="410" y="238">cockpit.</text><text class="s" x="410" y="254">user.json</text>
+  
+  <text class="s" x="542" y="166">↓ workerctl start / send / wait</text>
+
+  <!-- 凡例 -->
+  <line x1="40" y1="422" x2="80" y2="422" class="ln"/>
+  <text class="s" x="90" y="426">メインが書いたものを出す・worker に指示する</text>
+  <line x1="40" y1="450" x2="80" y2="450" class="ln2"/>
+  <text class="s" x="90" y="454">人が押した操作をメインに返す</text>
+  <rect class="hot" x="40" y="470" width="40" height="18" rx="3"/>
+  <text class="s" x="90" y="484">このリポジトリの操縦席（orca/plugins/cockpit）</text>
+</svg>

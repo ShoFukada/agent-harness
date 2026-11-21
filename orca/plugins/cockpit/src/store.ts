@@ -1,0 +1,246 @@
+// パネルの worker と窓の常駐のプロセス（window/server.ts）が同じ関数を使う。
+import { promises as fsp } from 'node:fs'
+import path from 'node:path'
+import {
+  OTHER, nextOp, textError, parseArchive, parseCockpit, parseTalk, parseUserLog, unappliedOps, TALK_MAX, UNDO_GRACE_MS,
+  type Cockpit, type Item, type Op, type Reply, type UserLog
+} from './model.ts'
+import type { NotifyResult, OpInput } from './protocol.ts'
+
+export const SIGNAL = '【操縦席】未反映の操作があります'
+
+/** 合図の 1 行。話したいの発言があれば、端末のメインが読めるよう本文の頭を載せる（端末に送るので改行は空白にする）。 */
+export function signalText(ops: Op[]): string {
+  const talk = ops.filter((o) => (o.type === 'talk' && o.text) || o.type === 'need_context' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
+  if (!talk) return SIGNAL
+  const t = (talk.text ?? '').replace(/\s+/g, ' ').trim()
+  const what = talk.type === 'need_context' ? '情報が足りない' : talk.type === 'decide' ? '別の答え' : talk.to_main ? 'メインに渡す' : '話したい'
+  return `${SIGNAL}（${what} ${talk.item_id}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
+}
+
+/** 回答を .orca/cockpit.talk.json に追記する。窓の常駐のプロセスとメインが書くので、操作ログと同じロックで 1 つずつ。 */
+export async function appendReply(root: string, reply: Reply): Promise<Reply[]> {
+  const release = await lock(path.join(root, '.orca', 'cockpit.talk.json.lock'))
+  try {
+    const text = await readInOrca(root, '.orca/cockpit.talk.json')
+    const talk = text === undefined ? { replies: [] } : parseTalk(text)
+    talk.replies.push(reply)
+    await writeAtomic(path.join(root, '.orca', 'cockpit.talk.json'), JSON.stringify(talk, null, 2) + '\n')
+    return talk.replies
+  } finally {
+    await release()
+  }
+}
+const FIGURE_PATH = /^\.orca\/cockpit\/figures\/[\w.-]+\.svg$/
+
+export type Files = {
+  cockpit?: Cockpit
+  log: UserLog
+  archive: Item[]
+  figures: Record<string, string>
+  errors: string[]
+  missing: boolean
+  replies: Reply[]
+}
+
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, replies: [] })
+
+const conflict = (msg: string) => Object.assign(new Error(msg), { code: 'conflict' })
+
+async function readText(p: string): Promise<string | undefined> {
+  try {
+    return await fsp.readFile(p, 'utf8')
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw e
+  }
+}
+
+/** root/.orca の中のファイルだけを読む。`..` やシンボリックリンクで外へ出るものは断る。 */
+export async function readInOrca(root: string, rel: string): Promise<string | undefined> {
+  const dir = path.join(root, '.orca')
+  const abs = path.resolve(root, rel)
+  if (!abs.startsWith(dir + path.sep)) throw new Error(`.orca の外は読みません: ${rel}`)
+  let real: string, realDir: string
+  try {
+    ;[real, realDir] = await Promise.all([fsp.realpath(abs), fsp.realpath(dir)])
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw e
+  }
+  if (!real.startsWith(realDir + path.sep)) throw new Error(`.orca の外は読みません: ${rel}`)
+  return readText(real)
+}
+
+/** 読めたファイルだけ差し替え、壊れたものは prev の中身を保ってエラーを 1 行残す。 */
+export async function loadFiles(root: string, prev: Files): Promise<Files> {
+  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, replies: prev.replies }
+  /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
+  async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
+    try {
+      apply(await readInOrca(root, `.orca/${name}`))
+    } catch (e) {
+      next.errors.push(`${name} を読めません${label}: ${(e as Error).message}`)
+    }
+  }
+  await one('cockpit.json', '（前回の表示のまま）', (text) => {
+    next.missing = text === undefined
+    next.cockpit = text === undefined ? undefined : parseCockpit(text)
+  })
+  await one('cockpit.user.json', '', (text) => {
+    next.log = text === undefined ? { ops: [] } : parseUserLog(text)
+  })
+  await one('cockpit.archive.json', '', (text) => {
+    next.archive = text === undefined ? [] : parseArchive(text).items
+  })
+  await one('cockpit.talk.json', '', (text) => {
+    next.replies = text === undefined ? [] : parseTalk(text).replies
+  })
+  const figures: Record<string, string> = {}
+  const refs = [...(next.cockpit?.tasks ?? []), ...(next.cockpit?.items ?? []), ...next.archive]
+    .map((x) => x.figure)
+    .filter((f): f is string => !!f && FIGURE_PATH.test(f))
+  for (const ref of new Set(refs)) {
+    const svg = await readInOrca(root, ref).catch((e: Error) => {
+      next.errors.push(e.message)
+      return null
+    })
+    if (svg === undefined) next.errors.push(`図が見つかりません: ${ref}`)
+    else if (svg !== null) figures[ref] = svg
+  }
+  next.figures = figures
+  return next
+}
+
+/** 同じ保存先への追記は 1 つずつ行う（同じ op_id で片方を失わない）。 */
+const writing = new Map<string, Promise<unknown>>()
+
+/** 操作を cockpit.user.json に追記し、追記後のログを返す。cockpit は呼び出し側が表示していた中身。 */
+export function appendOp(root: string, cockpit: Cockpit | undefined, input: OpInput): Promise<UserLog> {
+  if (input.root !== root) return Promise.reject(conflict('表示中のワークスペースが変わりました。もう一度押してください'))
+  const run = (writing.get(root) ?? Promise.resolve()).then(() => write(root, cockpit, input))
+  writing.set(root, run.catch(() => undefined))
+  return run
+}
+
+async function write(root: string, cockpit: Cockpit | undefined, { root: _root, ...input }: OpInput): Promise<UserLog> {
+  if (!cockpit) throw conflict('操縦席がありません')
+  // 話したいはタスクにも書ける。それ以外の操作は項目だけ。
+  const known = cockpit.items.some((i) => i.id === input.item_id) || (input.type === 'talk' && cockpit.tasks.some((t) => t.id === input.item_id))
+  if (!known) throw Object.assign(new Error(`項目 ${input.item_id} がありません`), { code: 'invalid_params' })
+  const invalid = (msg: string) => Object.assign(new Error(msg), { code: 'invalid_params' })
+  const bad = textError(input.text)
+  if (bad) throw invalid(bad)
+  if (input.type === 'decide' && input.option_id === OTHER && !input.text?.trim()) throw invalid('別の答えを書いてください')
+  if (input.type === 'talk' && input.handoff_of === undefined && !input.text?.trim()) throw invalid('話したいことを書いてください')
+  if (input.handoff_of !== undefined && (input.type !== 'talk' || !input.to_main)) throw invalid('引き継ぎの形が違います')
+  const release = await lock(path.join(root, '.orca', 'cockpit.user.json.lock'))
+  try {
+    // 押した瞬間のファイルに追記する（メインが書き換えた直後でも操作を失わない）。
+    const text = await readInOrca(root, '.orca/cockpit.user.json')
+    const log = text === undefined ? { ops: [] } : parseUserLog(text)
+    if (input.handoff_of !== undefined) {
+      // メインが元の発言を探さずに読めるよう、元の本文を写す。
+      const orig = log.ops.find((o) => o.op_id === input.handoff_of && o.type === 'talk' && o.item_id === input.item_id && o.text && o.handoff_of === undefined)
+      if (!orig) throw invalid(`引き継ぐ発言 ${input.handoff_of} がありません`)
+      input = { ...input, text: orig.text }
+    }
+    log.ops.push(nextOp(log, { at: new Date().toISOString(), ...input }))
+    await writeAtomic(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify(log, null, 2) + '\n')
+    return log
+  } finally {
+    await release()
+  }
+}
+
+/**
+ * パネルの worker と窓の常駐のプロセスは別のプロセスなので、同じログへの追記をロックファイルで 1 つずつにする
+ * （同時に読んで同じ op_id を付け、後の rename が先の操作を消すのを防ぐ）。落ちたプロセスが残したロックは 10 秒で外す。
+ */
+async function lock(file: string): Promise<() => Promise<void>> {
+  await fsp.mkdir(path.dirname(file), { recursive: true })
+  for (let i = 0; ; i++) {
+    try {
+      await (await fsp.open(file, 'wx')).close()
+      return () => fsp.rm(file, { force: true })
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+      const age = Date.now() - ((await fsp.stat(file).catch(() => null))?.mtimeMs ?? Date.now())
+      if (age > 10_000) await fsp.rm(file, { force: true })
+      else if (i > 150) throw conflict('ほかの画面が記録中です。もう一度押してください')
+      else await new Promise((r) => setTimeout(r, 20))
+    }
+  }
+}
+
+/** 端末に文字を送る。送れなければ理由を返す。パネルは Orca の host API、窓は orca CLI で送る。 */
+export type SendText = (terminal: string, text: string) => Promise<NotifyResult>
+
+/** メインの端末に合図の 1 行を送る。送れたら、合図に含めた最後の op_id を返す。 */
+export async function notifyMain(cockpit: Cockpit | undefined, log: UserLog, send: SendText): Promise<NotifyResult & { lastOp?: number }> {
+  const main = cockpit?.main
+  if (!main?.terminal) return { sent: false, reason: 'cockpit.json に main がありません' }
+  try {
+    const r = await send(main.terminal, signalText(unappliedOps(cockpit, log)))
+    if (!r.sent) return r
+  } catch (e) {
+    return { sent: false, reason: (e as Error).message }
+  }
+  return { sent: true, lastOp: log.ops.reduce((n, o) => Math.max(n, o.op_id), 0) }
+}
+
+let tmpSeq = 0
+export async function writeAtomic(file: string, text: string): Promise<void> {
+  await fsp.mkdir(path.dirname(file), { recursive: true })
+  const tmp = `${file}.${process.pid}.${Date.now()}.${tmpSeq++}.tmp`
+  await fsp.writeFile(tmp, text)
+  await fsp.rename(tmp, file)
+}
+
+/**
+ * 自動で合図を送る操作と、次に送れるようになる時刻。取り消しの猶予が過ぎ、まだ知らせていない未反映の操作が対象。
+ * 未反映どうしの取り消しの組は除く。話したいも同じく猶予のあとに送る（本文の頭を合図に載せる）。
+ * パネルの worker と窓の常駐のプロセスが同じ操作に二重に送らないよう、自分が書いた操作（mine）は猶予だけ、
+ * ほかの画面が書いた操作はその 3 倍待つ（書いた側が送れなかったときだけ拾う）。
+ */
+export function signalPlan(c: Cockpit, log: UserLog, notified: number, now: number, mine: (op: Op) => boolean): { due: Op[]; nextAt?: number } {
+  const un = unappliedOps(c, log)
+  const cancelled = new Set(un.filter((o) => o.type === 'undo' && un.some((x) => x.op_id === o.undo_of)).flatMap((o) => [o.op_id, o.undo_of!]))
+  const due: Op[] = []
+  let nextAt: number | undefined
+  for (const o of un) {
+    if (o.op_id <= notified || cancelled.has(o.op_id)) continue
+    const at = Date.parse(o.at) + (mine(o) ? UNDO_GRACE_MS : UNDO_GRACE_MS * 3)
+    if (at <= now) due.push(o)
+    else nextAt = Math.min(nextAt ?? Infinity, at)
+  }
+  return { due, nextAt }
+}
+
+/** どの操作までメインに知らせたか。パネルと窓が共有する（~/Library/Application Support/cockpit/notified.json）。 */
+export async function readNotified(dir: string, root: string): Promise<number> {
+  try {
+    const v = JSON.parse(await fsp.readFile(path.join(dir, 'notified.json'), 'utf8')) as Record<string, unknown>
+    return typeof v[root] === 'number' ? v[root] : 0
+  } catch {
+    return 0
+  }
+}
+
+export async function writeNotified(dir: string, root: string, op: number): Promise<void> {
+  const file = path.join(dir, 'notified.json')
+  let v: Record<string, number> = {}
+  try {
+    v = JSON.parse(await fsp.readFile(file, 'utf8'))
+  } catch {
+    // 無い・壊れているときは作り直す（失うのは「どこまで知らせたか」だけで、もう一度合図が届くだけ）。
+  }
+  v[root] = Math.max(v[root] ?? 0, op)
+  await writeAtomic(file, JSON.stringify(v) + '\n')
+}
+
+/** 「path:12」を ファイルと行に分ける。行の無いパスと、名前に : を含むだけのパスはそのまま。 */
+export function splitLine(href: string): { file: string; line?: number } {
+  const m = /^(.*\S):(\d+)$/.exec(href)
+  return m ? { file: m[1]!, line: Number(m[2]) } : { file: href }
+}

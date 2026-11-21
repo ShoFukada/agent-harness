@@ -1,0 +1,957 @@
+#!/usr/bin/env python3
+"""Orca の worker（別の worktree の端末で動く Claude Code / Codex）を台帳に登録し、止まった・質問した・消えたを知らせとして残す。
+
+メインは start / send で worker を立てて指示を送り、wait を Bash の run_in_background で走らせて、知らせが出たら起こされる。
+hook（worker 側は settings.worker.json、メイン側は settings.json）が知らせを記録し、未処理の知らせと見張りの切れをメインに差し込む。
+台帳は ~/Library/Application Support/orca-worker-watch/（WORKERCTL_HOME で差し替え）:
+  workers.json  worker の端末 handle → 持ち主・worktree・題名・状態・指示の世代
+  events.jsonl  知らせの追記だけの記録（書き換えない）
+  resolved.json 処理済みにした知らせの id → 時刻・メモ
+"""
+
+import argparse
+import fcntl
+import filecmp
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from contextlib import contextmanager
+
+HOME = os.environ.get("WORKERCTL_HOME") or os.path.expanduser("~/Library/Application Support/orca-worker-watch")
+EXCERPT = 300
+# Claude の worker は Stop hook が先に記録する。Orca の状態の変化だけを見る記録は、hook の記録と重ならないよう少し待つ。
+SETTLE_MS = 20000
+# Orca が状態の変わった時刻を送った時刻より前のまま返すときは、送ってからこれだけたって working でなければ拾う。
+QUIET_MS = 60000
+HOOK_POLL_SEC = 60
+KINDS = ("stopped", "asking", "permission", "exited", "idle")
+LABEL = {"started": "立ち上げ済み（指示前）", "working": "作業中", "stopped": "止まった", "asking": "質問で停止",
+         "permission": "許可待ち", "exited": "端末が消えた", "idle": "入力待ち", "closed": "片付け済み"}
+
+
+def p(name):
+    return os.path.join(HOME, name)
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+def owner_id():
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE")
+    if handle:
+        return handle
+    # Orca のチャットで動くメインは端末を持たず、セッション ID だけを持つ（Orca の injectedSessionAddress と同じ形）。
+    session = os.environ.get("ORCA_AGENT_SESSION_ID")
+    return "orca_session_id:" + session if session else None
+
+
+def need_owner():
+    owner = owner_id()
+    if not owner:
+        sys.exit("workerctl: ORCA_TERMINAL_HANDLE も ORCA_AGENT_SESSION_ID も無い。Orca の外では使えない")
+    return owner
+
+
+@contextmanager
+def locked():
+    os.makedirs(HOME, exist_ok=True)
+    with open(p("lock"), "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        yield
+
+
+def load(name, default):
+    try:
+        with open(p(name), encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return default
+
+
+def save(name, data):
+    tmp = p("%s.tmp.%d" % (name, os.getpid()))
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, p(name))
+
+
+def events():
+    out = []
+    try:
+        with open(p("events.jsonl"), encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def snapshot():
+    with locked():
+        return load("workers.json", {}), events(), load("resolved.json", {})
+
+
+def mine(ws, owner):
+    return {h: w for h, w in ws.items() if w.get("owner") == owner and w.get("state") != "closed"}
+
+
+def pending_events(ws, evs, done, owner):
+    """前の指示の世代の止まりは、新しい指示の完了と取り違えないよう数えない。端末が消えたのは世代に関係なく数える。"""
+    ms = mine(ws, owner)
+    return [e for e in evs if e["worker"] in ms and str(e["id"]) not in done
+            and (e["gen"] == ms[e["worker"]]["gen"] or e["kind"] == "exited")]
+
+
+def record(handle, kind, text, only_if_working=False, observed_gen=None, from_turn=False):
+    """observed_gen: 見張りがその世代のときに見た様子。記録の時点で世代が進んでいたら古い観測なので捨てる。
+    from_turn: worker の hook の記録。応答を始めたとき（UserPromptSubmit）に固定した世代で記録する。"""
+    with locked():
+        ws = load("workers.json", {})
+        w = ws.get(handle)
+        if only_if_working and (w is None or w.get("state") != "working"):
+            return None
+        if w and observed_gen is not None and observed_gen != w["gen"]:
+            return None
+        gen = (w.get("turn_gen", w["gen"]) if from_turn else w["gen"]) if w else 0
+        evs = events()
+        ev = {"id": max([e["id"] for e in evs] or [0]) + 1, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+              "worker": handle, "kind": kind, "gen": gen,
+              "excerpt": " ".join((text or "").split())[:EXCERPT]}
+        with open(p("events.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        if w and w.get("state") != "closed" and gen == w["gen"]:
+            w["state"] = kind
+            save("workers.json", ws)
+        return ev
+
+
+def start_turn(handle):
+    with locked():
+        ws = load("workers.json", {})
+        if handle in ws:
+            ws[handle]["turn_gen"] = ws[handle]["gen"]
+            save("workers.json", ws)
+
+
+def safe(owner):
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", owner)
+
+
+def pid_path(owner):
+    return p("wait.%s.pid" % safe(owner))
+
+
+def wait_alive(owner):
+    try:
+        with open(pid_path(owner)) as fh:
+            pid = int(fh.read().strip())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return False
+    cmd = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
+    return "workerctl" in cmd and "wait" in cmd
+
+
+def short(handle):
+    return handle[:13]
+
+
+def event_line(e, ws, width):
+    w = ws.get(e["worker"], {})
+    return "#%d %s「%s」%s %s: %s" % (e["id"], short(e["worker"]), w.get("title", "?"), LABEL.get(e["kind"], e["kind"]),
+                                     e["at"][11:16], e["excerpt"][:width])
+
+
+def orca(*args):
+    return subprocess.run([os.environ.get("ORCA_CLI_COMMAND") or "orca"] + list(args), capture_output=True, text=True)
+
+
+def orca_json(*args):
+    r = orca(*args)
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        return None
+    return d.get("result") if d.get("ok") else None
+
+
+# ---- 指示を出す側（メイン）のコマンド ----
+
+def register(ws, handle, owner, title, worktree, state, gen, worktree_path):
+    """worktree_path: 端末が実際にいる worktree の絶対パス。done はこれで引く（branch: や name: は別リポジトリの同名に当たる）。"""
+    ws[handle] = {"owner": owner, "title": title, "worktree": worktree, "worktree_path": worktree_path,
+                  "state": state, "gen": gen, "registered_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                  "sent_at_ms": now_ms()}
+
+
+def terminal_path(handle):
+    t = orca_json("terminal", "show", "--terminal", handle, "--json")
+    return ((t or {}).get("terminal") or {}).get("worktreePath") or ""
+
+
+def cmd_start(a):
+    owner = need_owner()
+    command = " ".join(a.command)
+    if not command:
+        sys.exit("workerctl start: -- のあとに起動コマンドを書く")
+    r = orca("terminal", "create", "--worktree", a.worktree, "--title", a.title, "--command", command, "--json")
+    try:
+        handle = json.loads(r.stdout)["result"]["terminal"]["handle"]
+    except (ValueError, KeyError, TypeError):
+        sys.stderr.write(r.stdout + r.stderr)
+        sys.exit("workerctl start: orca terminal create が handle を返さなかった（登録していない）")
+    path = terminal_path(handle)
+    with locked():
+        ws = load("workers.json", {})
+        register(ws, handle, owner, a.title, a.worktree, "started", 0, path)
+        save("workers.json", ws)
+    print(handle)
+    print("登録した。指示は workerctl send --terminal %s --text-file <brief>" % handle, file=sys.stderr)
+
+
+def cmd_answer(a):
+    # 信頼・許可の確認の画面は、本文と Enter を 1 回で送ると Orca が agent_prompt_blocked で断る。
+    # 指示ではないので世代も状態も変えない。
+    for args in (["--text", a.text], ["--enter"]):
+        r = orca("terminal", "send", "--terminal", a.terminal, *args, "--json")
+        if r.returncode != 0:
+            sys.stderr.write(r.stdout + r.stderr)
+            sys.exit("workerctl answer: 送れなかった")
+    print("答えた。%s の確認の画面に「%s」と Enter を送った" % (a.terminal, a.text))
+
+
+def cmd_send(a):
+    owner = need_owner()
+    if a.text_file:
+        with open(a.text_file, encoding="utf-8") as fh:
+            text = fh.read()
+    else:
+        text = a.text
+    # 送る前に世代を上げる。送った直後に止まった記録が古い世代で入ると、完了を取りこぼすため。
+    # 持ち主は変えない（変えると持ち主の wait から worker が消える）。持ち主を移すのは adopt だけ。
+    with locked():
+        ws = load("workers.json", {})
+        w = ws.get(a.terminal)
+        before = dict(w) if w else None
+        if w:
+            # turn_gen の無い行（応答の始まりを hook で記録していない worker）は、今の応答を変更前の世代に固定する。
+            w.setdefault("turn_gen", w["gen"])
+            w.update(gen=w["gen"] + 1, state="working", sent_at_ms=now_ms())
+            save("workers.json", ws)
+    r = orca("terminal", "send", "--terminal", a.terminal, "--text", text, "--enter", "--json")
+    if r.returncode != 0:
+        if before:
+            with locked():
+                ws = load("workers.json", {})
+                cur = ws.get(a.terminal)
+                # 待つ間に別の send が世代を進めていたら、そちらを生かす。
+                if cur and cur["gen"] == w["gen"]:
+                    cur.update(gen=before["gen"], state=before["state"], sent_at_ms=before["sent_at_ms"])
+                    save("workers.json", ws)
+        sys.stderr.write(r.stdout + r.stderr)
+        sys.exit("workerctl send: 送れなかった（世代と状態は送る前に戻した）")
+    if w:
+        mine_note = "" if w["owner"] == owner else "（持ち主は %s のまま）" % w["owner"]
+        print("送った。%s は作業中（指示 %d 回目）%s。workerctl wait を run_in_background で仕掛ける"
+              % (a.terminal, w["gen"], mine_note))
+    else:
+        print("送った。%s は未登録なので見張らない（見張るなら workerctl adopt）" % a.terminal)
+
+
+def cmd_adopt(a):
+    owner = need_owner()
+    t = orca_json("terminal", "show", "--terminal", a.terminal, "--json")
+    t = (t or {}).get("terminal") or {}
+    ps = orca_json("worktree", "ps", "--json") or {}
+    pane = "%s:%s" % (t.get("tabId"), t.get("leafId"))
+    agent = next((ag for wt in ps.get("worktrees", []) for ag in (wt.get("agents") or []) if ag.get("paneKey") == pane), None)
+    with locked():
+        ws = load("workers.json", {})
+        register(ws, a.terminal, owner, a.title, a.worktree or t.get("worktreePath", ""), "working", 1,
+                 t.get("worktreePath") or "")
+        save("workers.json", ws)
+    if agent and agent.get("state") != "working":
+        record(a.terminal, "idle", "登録した時点で作業していない（Orca の状態: %s）。%s" % (
+            agent.get("state"), agent.get("lastAssistantMessage") or ""))
+        print("登録した。%s は今作業していないので、知らせを 1 件出した（workerctl pending）" % a.terminal)
+    else:
+        print("登録した。%s は作業中。workerctl wait を run_in_background で仕掛ける" % a.terminal)
+
+
+def cmd_pending(a):
+    owner = a.owner or need_owner()
+    ws, evs, done = snapshot()
+    ms = mine(ws, owner)
+    pend = pending_events(ws, evs, done, owner)
+    if not ms and not pend:
+        print("登録した worker は無い")
+        return
+    print("worker %d 件" % len(ms))
+    for h, w in ms.items():
+        print("- %s「%s」%s（指示 %d 回目）" % (h, w["title"], LABEL.get(w["state"], w["state"]), w["gen"]))
+    print("未処理の知らせ %d 件" % len(pend))
+    for e in pend:
+        print("- " + event_line(e, ws, EXCERPT))
+
+
+def cmd_resolve(a):
+    with locked():
+        known = {str(e["id"]) for e in events()}
+        done = load("resolved.json", {})
+        for i in a.ids:
+            if i.lstrip("#") not in known:
+                print("#%s は無い" % i.lstrip("#"), file=sys.stderr)
+                continue
+            done[i.lstrip("#")] = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "note": a.note or ""}
+        save("resolved.json", done)
+    print("処理済みにした: %s" % " ".join("#" + i.lstrip("#") for i in a.ids))
+
+
+def cmd_done(a):
+    with locked():
+        ws = load("workers.json", {})
+        if a.terminal not in ws:
+            sys.exit("workerctl done: %s は登録されていない" % a.terminal)
+        ws[a.terminal]["state"] = "closed"
+        save("workers.json", ws)
+        done = load("resolved.json", {})
+        for e in events():
+            if e["worker"] == a.terminal and str(e["id"]) not in done:
+                done[str(e["id"])] = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "note": "done"}
+        save("resolved.json", done)
+        w = dict(ws[a.terminal])
+    print("登録を閉じた: %s" % a.terminal)
+    shown = w.get("worktree_path") or w.get("worktree") or "（登録に無い）"
+    if a.keep:
+        print("--keep なので worktree は残した: %s" % shown)
+        return
+    rows = ps_worktrees()
+    found = rows_for(w, rows)
+    if len(found) > 1:
+        print("登録の worktree %s が %d つの worktree に当たる（%s）。取り違えて消さないよう残した。"
+              "消すなら orca worktree rm --worktree path:<path> --delete-branch で直接消す"
+              % (shown, len(found), "、".join(r["path"] for r in found)))
+        return
+    if not found:
+        print("worktree %s は Orca の一覧に無い（消えているか、選び方を解決できない）" % shown)
+        return
+    info = inspect(found[0], rows)
+    if not removable(info, a.discard):
+        print("worktree を残した: %s（%s）。残っているもの: %s" % (info["path"], info["branch"], describe(info)))
+        if (info["unmerged"] or info["merges"] or info["detached"]) and not info["dirty"] and not info["error"]:
+            print("取り込むなら %s へ入れてから、捨てると決めたなら workerctl done --terminal %s --discard で消す"
+                  % (info["base"], a.terminal))
+        elif info["dirty"]:
+            print("未 commit の変更は git -C %s diff で控えて、commit するか捨ててから done し直す" % info["path"])
+        return
+    if not unload_dev_plugins(info["path"]):
+        return
+    remove_worktree(info, a.discard)
+
+
+def unload_dev_plugins(path):
+    """path の下を読み込み元にした Orca の開発用プラグインを外す。外せなければ False（worktree を残す）。
+    開発用の読み込みは同じ名前の本物のプラグインを置き換えるので、読み込み元を消すとプラグインの worker が止まり、
+    戻った本物は承認待ちになる（2026-11-16 に操縦席の窓が Orca の前面に追いつかなくなった）。"""
+    listed = orca_json("plugin", "list", "--json")
+    if listed is None:
+        print("orca plugin list を読めず、開発用に読み込んだプラグインがあるかを確かめられなかった")
+        return True
+    root = path.rstrip("/") + "/"
+    for p in listed.get("plugins") or []:
+        src = ((p.get("source") or {}).get("reference") or "")
+        if not p.get("isDev") or not (src.rstrip("/") + "/").startswith(root):
+            continue
+        r = orca("plugin", "dev", "unload", src, "--json")
+        if r.returncode != 0:
+            sys.stderr.write(r.stdout + r.stderr)
+            print("worktree を残した: %s。開発用に読み込んだプラグイン %s（%s）を外せなかった。"
+                  "orca plugin dev unload %s で外してから done し直す" % (path, p.get("pluginKey"), src, src))
+            return False
+        print("開発用に読み込んでいたプラグイン %s（%s）を外した。同じ名前の本物のプラグインが戻る（承認待ちなら利用者に頼む）"
+              % (p.get("pluginKey"), src))
+    return True
+
+
+# ---- worktree の片付け ----
+
+STALE_SEC = 24 * 3600
+
+
+def ps_worktrees():
+    return (orca_json("worktree", "ps", "--limit", "1000", "--json") or {}).get("worktrees") or []
+
+
+def rows_for(w, rows):
+    """登録の worktree に当たる ps の行をすべて返す。worktree_path が無い古い登録は選び方で当て、
+    name:・branch: は別リポジトリの同名にも当たるので、呼び手は 2 行以上なら消さない。"""
+    s = w.get("worktree_path") or w.get("worktree") or ""
+    path = s[5:] if s.startswith("path:") else s.split("::", 1)[1] if s.startswith("id:") and "::" in s \
+        else "" if s.startswith(("name:", "branch:")) else s
+    return [r for r in rows if r.get("path") and (
+        (path and r["path"].rstrip("/") == path.rstrip("/"))
+        or (s.startswith("name:") and r.get("displayName") == s[5:])
+        or (s.startswith("branch:") and short_branch(r.get("branch")) == short_branch(s[7:])))]
+
+
+def short_branch(ref):
+    ref = ref or ""
+    return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+
+
+def git(path, *args):
+    return subprocess.run(["git", "-C", path] + list(args), capture_output=True, text=True)
+
+
+def default_branch(path):
+    """origin/HEAD、無ければローカルの main、master。ルートで checkout しているブランチは review などのことがあるので使わない。"""
+    r = git(path, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if r.returncode == 0 and "/" in r.stdout:
+        return r.stdout.strip().split("/", 1)[1]
+    for name in ("main", "master"):
+        if git(path, "rev-parse", "--verify", "--quiet", "refs/heads/" + name).returncode == 0:
+            return name
+    return None
+
+
+def inspect(row, rows):
+    """消してよいかを決める材料。ルートと作業中の worktree には git を呼ばない。"""
+    info = {"path": row["path"], "branch": short_branch(row.get("branch")) or "（detached）",
+            "root": bool(row.get("isMainWorktree")) or row.get("workspaceKind", "git") != "git",
+            "working": any(ag.get("state") == "working" for ag in row.get("agents") or []),
+            "dirty": [], "copies": [], "unmerged": [], "merges": [], "detached": False, "error": None, "base": None}
+    if info["root"] or info["working"]:
+        return info
+    st = git(row["path"], "status", "--porcelain", "--branch", "--untracked-files=all")
+    if st.returncode != 0:
+        info["error"] = "git status が失敗した（%s）" % " ".join(st.stderr.split())[:120]
+        return info
+    # worktree を作るときにルートから写される CLAUDE.local.md・.claude/settings.local.json は、ルートと中身が同じなら作業の跡ではない。
+    root = next((w["path"] for w in rows if w.get("isMainWorktree") and w.get("repoId") == row.get("repoId")
+                 and w.get("path")), None)
+    for line in st.stdout.splitlines():
+        rel = line[3:]
+        if line.startswith("## "):
+            info["detached"] = line.startswith("## HEAD (no branch)")
+        elif line.startswith("?? ") and root and os.path.isfile(os.path.join(root, rel)) \
+                and filecmp.cmp(os.path.join(row["path"], rel), os.path.join(root, rel), shallow=False):
+            info["copies"].append(rel)
+        else:
+            info["dirty"].append(line)
+    info["base"] = base = default_branch(row["path"])
+    if not base:
+        info["error"] = "default ブランチを決められない（origin/HEAD も main も master も無い）"
+        return info
+    # ローカルの default と origin の default のどちらかに入っていれば入っている扱いにする（PR でマージして pull 前の場合）。
+    # git cherry はマージコミットを並べないので、比較先から届かないマージコミット（競合の解決などを含みうる）は別に数える。
+    plus = merges = None
+    for upstream in (base, "origin/" + base):
+        r = git(row["path"], "cherry", "-v", upstream, "HEAD")
+        if r.returncode != 0:
+            continue
+        lines = [l[2:] for l in r.stdout.splitlines() if l.startswith("+ ")]
+        plus = lines if plus is None else [l for l in plus if l in lines]
+        m = git(row["path"], "rev-list", "--merges", upstream + "..HEAD").stdout.split()
+        merges = m if merges is None else [c for c in merges if c in m]
+    if plus is None:
+        info["error"] = "%s と比べられない" % base
+    else:
+        info["unmerged"], info["merges"] = plus, merges
+    return info
+
+
+def removable(info, discard=False):
+    """--discard でも、未 commit の変更・ルート・作業中・判定できないものは消さない。"""
+    return not (info["root"] or info["working"] or info["error"] or info["dirty"]) \
+        and (discard or not (info["unmerged"] or info["merges"] or info["detached"]))
+
+
+def describe(info):
+    parts = []
+    if info["root"]:
+        parts.append("リポジトリのルート")
+    if info["working"]:
+        parts.append("作業中のエージェントがいる")
+    if info["error"]:
+        parts.append(info["error"])
+    if info["dirty"]:
+        parts.append("未 commit のファイル %d 件" % len(info["dirty"]))
+    if info["unmerged"]:
+        shown = "、".join(c[:7] + c[40:][:50] for c in info["unmerged"][:3])
+        parts.append("%s に無い commit %d 件（%s%s）" % (info["base"], len(info["unmerged"]), shown,
+                                                    "、ほか" if len(info["unmerged"]) > 3 else ""))
+    if info["merges"]:
+        parts.append("%s に無いマージコミット %d 件（%s。マージコミットにだけある変更は git cherry では見えない）"
+                     % (info["base"], len(info["merges"]), "、".join(c[:7] for c in info["merges"][:3])))
+    if info["detached"]:
+        parts.append("detached HEAD（その commit を指すブランチが無い）")
+    return "・".join(parts) or "無し"
+
+
+def remove_worktree(info, discard):
+    path, branch = info["path"], "" if info["detached"] else info["branch"]
+    common = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+    head = git(path, "rev-parse", "HEAD").stdout.strip() if info["detached"] else ""
+    # git worktree remove は未追跡のファイルがあると断る。残っているのがルートの写しだけのときに限って --force を付ける。
+    force = ["--force"] if info["copies"] else []
+    r = orca("worktree", "rm", "--worktree", "path:" + path, "--delete-branch", *force, "--json")
+    if r.returncode != 0:
+        sys.stderr.write(r.stdout + r.stderr)
+        print("worktree を消せなかった: %s" % path)
+        return False
+    note = ""
+    sha = subprocess.run(["git", "--git-dir", common, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+                         capture_output=True, text=True).stdout.strip() if common and branch else ""
+    if sha and discard:
+        # Orca の --delete-branch は main に入ったと示せないブランチを残すので、捨てると決めたものはここで消す。
+        subprocess.run(["git", "--git-dir", common, "branch", "-D", branch], capture_output=True)
+        note = "。ブランチ %s（%s）も消した。戻すなら git branch %s %s" % (branch, sha[:12], branch, sha)
+    elif sha:
+        note = "。ブランチ %s は Orca が残した" % branch
+    if head:
+        note = "。detached HEAD は %s だった。戻すなら git branch <名前> %s" % (head, head)
+    print("worktree を消した: %s（%s）%s" % (path, branch, note))
+    return True
+
+
+def leftovers(owner, cwd):
+    """片付け忘れ（消してよいのに残っている）と放置（消せないまま 24 時間動きが無い）の worktree を返す。
+    対象は、自分の一覧に載った worker の worktree（閉じたものと別リポジトリを含む）と、cwd のリポジトリのルート以外の worktree。"""
+    rows = ps_worktrees()
+    if not rows:
+        return [], []
+    targets = {}
+    for w in snapshot()[0].values():
+        if w.get("owner") == owner:
+            found = rows_for(w, rows)
+            if len(found) == 1:
+                targets[found[0]["path"]] = found[0]
+    cwd = os.path.abspath(cwd) if cwd else ""
+    here = max((r for r in rows if r.get("path") and (cwd == r["path"] or cwd.startswith(r["path"].rstrip("/") + "/"))),
+               key=lambda r: len(r["path"]), default=None)
+    if here and here.get("repoId"):
+        targets.update((r["path"], r) for r in rows if r.get("path") and r.get("repoId") == here["repoId"])
+    forgot, stale = [], []
+    now = time.time()
+    for row in targets.values():
+        info = inspect(row, rows)
+        if info["root"] or info["working"]:
+            continue
+        if removable(info):
+            forgot.append(info)
+        else:
+            last = (row.get("lastActivityAt") or 0) / 1000
+            if not last:
+                ct = git(row["path"], "log", "-1", "--format=%ct").stdout.strip()
+                last = int(ct) if ct.isdigit() else 0
+            if now - last >= STALE_SEC:
+                stale.append(info)
+    return sorted(forgot, key=lambda i: i["path"]), sorted(stale, key=lambda i: i["path"])
+
+
+def leftover_lines(forgot, stale):
+    forgot_line = stale_line = None
+    if forgot:
+        forgot_line = ("【worker】片付け忘れの worktree %d 件（作業中のエージェントがいない・未 commit も default ブランチに無い commit も無い）: %s。"
+                       "workerctl done --terminal <handle> か orca worktree rm --worktree path:<path> --delete-branch で消す"
+                       % (len(forgot), "、".join("%s（%s）" % (i["path"], i["branch"]) for i in forgot[:5])
+                          + ("、ほか %d 件" % (len(forgot) - 5) if len(forgot) > 5 else "")))
+    if stale:
+        stale_line = ("【worker】放置の worktree %d 件（作業中のエージェントがいないまま 24 時間以上）: %s。"
+                      "取り込むか捨てるかを決める（捨てるなら workerctl done --discard）"
+                      % (len(stale), "、".join("%s（%s: %s）" % (i["path"], i["branch"], describe(i)) for i in stale[:5])
+                         + ("、ほか %d 件" % (len(stale) - 5) if len(stale) > 5 else "")))
+    return forgot_line, stale_line
+
+
+def poll(ws, handles):
+    """端末が消えたら exited、送ったあとに Orca で working でなくなった worker を idle として記録する。
+    遷移を見ていなくても、今の様子と送った時刻だけで決める（wait が止まっていた間に終わった worker も拾う）。"""
+    agents = None
+    for h in handles:
+        r = orca("terminal", "show", "--terminal", h, "--json")
+        try:
+            d = json.loads(r.stdout)
+        except ValueError:
+            continue
+        if not d.get("ok"):
+            if (d.get("error") or {}).get("code") == "terminal_handle_stale":
+                record(h, "exited", "端末が Orca から消えた", only_if_working=True, observed_gen=ws[h]["gen"])
+            continue
+        t = (d.get("result") or {}).get("terminal") or {}
+        if agents is None:
+            ps = orca_json("worktree", "ps", "--json") or {}
+            agents = {ag.get("paneKey"): ag for wt in ps.get("worktrees", []) for ag in (wt.get("agents") or [])}
+        # terminal list の tabId・leafId は "pty:…" の仮の値になることがあり、worktree ps の paneKey と合わない。
+        # terminal show は本物の tabId・leafId を返す（2026-11-16 に list で引いて完了を 1 時間取りこぼした）。
+        ag = agents.get("%s:%s" % (t.get("tabId"), t.get("leafId")))
+        if ag and ag.get("state") == "working":
+            continue
+        sent, now, started = ws[h]["sent_at_ms"], now_ms(), (ag or {}).get("stateStartedAt")
+        if started and started >= sent:
+            if now - started < SETTLE_MS:
+                continue
+            text = "Orca の状態: %s（送ったあとに作業を終えた）。%s" % (ag.get("state"), ag.get("lastAssistantMessage") or "")
+        elif now - sent >= QUIET_MS:
+            text = ("Orca の状態: %s（送ってから %d 秒、作業中になっていない）。%s"
+                    % ((ag or {}).get("state", "agent が見当たらない"), (now - sent) // 1000,
+                       (ag or {}).get("lastAssistantMessage") or ""))
+        else:
+            continue
+        record(h, "idle", text, only_if_working=True, observed_gen=ws[h]["gen"])
+
+
+def poll_if_due(owner):
+    """wait が動いていなくても拾えるよう、メインの hook から間隔を空けて照合する。"""
+    stamp = p("poll.%s" % safe(owner))
+    try:
+        if time.time() - os.path.getmtime(stamp) < HOOK_POLL_SEC:
+            return
+    except OSError:
+        pass
+    ws = snapshot()[0]
+    working = [h for h, w in mine(ws, owner).items() if w["state"] == "working"]
+    if working:
+        with open(stamp, "w"):
+            pass
+        poll(ws, working)
+
+
+def find_cockpit(start):
+    """periodic-reminder.sh の find_cockpit_root と同じ。.git のあるフォルダで止める（その中の .orca は見る）。"""
+    d = os.path.abspath(start) if start else ""
+    while d and d != "/":
+        if os.path.isfile(os.path.join(d, ".orca", "cockpit.json")):
+            return d
+        if os.path.exists(os.path.join(d, ".git")):
+            return None
+        d = os.path.dirname(d)
+    return None
+
+
+def cockpit_line(root):
+    """窓で利用者が押した操作のうち、cockpit.json の applied_ops に無いもの。無ければ None。"""
+    try:
+        with open(os.path.join(root, ".orca", "cockpit.json"), encoding="utf-8") as fh:
+            applied = set(json.load(fh).get("applied_ops") or [])
+    except (OSError, ValueError, AttributeError):
+        applied = set()
+    try:
+        with open(os.path.join(root, ".orca", "cockpit.user.json"), encoding="utf-8") as fh:
+            ops = json.load(fh).get("ops") or []
+    except (OSError, ValueError, AttributeError):
+        return None
+    pend = [o for o in ops if isinstance(o, dict) and o.get("op_id") not in applied]
+    if not pend:
+        return None
+    shown = "、".join("・".join(str(x) for x in (o.get("item_id"), o.get("type"), " ".join(str(o.get("text") or "").split())[:40]) if x)
+                     for o in pend[:5]) + ("、ほか %d 件" % (len(pend) - 5) if len(pend) > 5 else "")
+    return "【操縦席】未反映の操作 %d 件（%s）。cockpit skill に従って反映する" % (len(pend), shown)
+
+
+def cmd_wait(a):
+    owner = need_owner()
+    # 窓の操作でもメインを起こせるよう、操縦席があれば worker が作業中でなくても待つ。
+    cockpit = find_cockpit(os.getcwd())
+    deadline = time.time() + a.timeout_min * 60
+    os.makedirs(HOME, exist_ok=True)
+    with open(pid_path(owner), "w") as fh:
+        fh.write(str(os.getpid()))
+    try:
+        while True:
+            ws = snapshot()[0]
+            working = [h for h, w in mine(ws, owner).items() if w["state"] == "working"]
+            if working:
+                poll(ws, working)
+            ws, evs, done = snapshot()
+            pend = pending_events(ws, evs, done, owner)
+            ops_line = cockpit_line(cockpit) if cockpit else None
+            if ops_line:
+                print(ops_line)
+            if pend:
+                print("【worker】未処理の知らせ %d 件" % len(pend))
+                for e in pend:
+                    print("- " + event_line(e, ws, EXCERPT))
+                print("各 worker の端末を orca terminal read --terminal <handle> --limit 40 で読み、取り込んだら "
+                      "workerctl resolve <id…>。続きを workerctl send したら wait を仕掛け直す")
+            if pend or ops_line:
+                print("済ませたら workerctl wait を run_in_background で仕掛け直す")
+                return
+            working = [h for h, w in mine(ws, owner).items() if w["state"] == "working"]
+            if not working and not cockpit:
+                print("【worker】作業中の worker がいないので見張りを終えた")
+                return
+            if time.time() >= deadline:
+                print("【worker】%d 分たって知らせが無い。作業中の worker %d 件%s。workerctl wait を run_in_background で仕掛け直す"
+                      % (a.timeout_min, len(working), "・操縦席あり" if cockpit else ""))
+                return
+            time.sleep(max(0, min(a.interval, deadline - time.time())))
+    finally:
+        try:
+            with open(pid_path(owner)) as fh:
+                if fh.read().strip() == str(os.getpid()):
+                    os.remove(pid_path(owner))
+        except OSError:
+            pass
+
+
+# ---- hook ----
+
+def last_text_from_transcript(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except (OSError, TypeError):
+        return ""
+    for line in reversed(lines):
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if m.get("type") == "assistant":
+            content = (m.get("message") or {}).get("content") or []
+            text = " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+            if text:
+                return text
+    return ""
+
+
+def hook_worker(inp):
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE")
+    if not handle:
+        return
+    event = inp.get("hook_event_name")
+    # 応答の途中で次の指示が送られても、この応答の止まりを次の指示の完了と取り違えないよう、始めたときの世代で記録する。
+    if event == "UserPromptSubmit":
+        start_turn(handle)
+    elif event == "Stop":
+        record(handle, "stopped", inp.get("last_assistant_message") or last_text_from_transcript(inp.get("transcript_path")),
+               from_turn=True)
+    elif event == "PreToolUse" and inp.get("tool_name") == "AskUserQuestion":
+        qs = (inp.get("tool_input") or {}).get("questions") or []
+        record(handle, "asking", " / ".join(q.get("question", "") for q in qs if isinstance(q, dict)), from_turn=True)
+    elif event == "Notification":
+        kind = inp.get("notification_type")
+        if kind == "permission_prompt":
+            record(handle, "permission", inp.get("message"), from_turn=True)
+        elif kind == "idle_prompt":
+            # Stop のあとにも idle_prompt が来るので、止まった記録が無いときだけ残す。
+            record(handle, "idle", inp.get("message"), only_if_working=True, from_turn=True)
+
+
+def watch(owner, background_wait=False):
+    """未処理の知らせの行と、見張りが切れている行（無ければ None）を返す。"""
+    ws, evs, done = snapshot()
+    pend = pending_events(ws, evs, done, owner)
+    working = [w["title"] for w in mine(ws, owner).values() if w["state"] == "working"]
+    pend_line = wait_line = None
+    if pend:
+        shown = "、".join(event_line(e, ws, 60) for e in pend[:3]) + ("、ほか %d 件" % (len(pend) - 3) if len(pend) > 3 else "")
+        pend_line = ("【worker】未処理の知らせ %d 件: %s。worker の端末を読んで結果を取り込み、workerctl resolve <id…> する"
+                     % (len(pend), shown))
+    if working and not background_wait and not wait_alive(owner):
+        wait_line = ("【worker】作業中の worker が %d 件（%s）あり、見張りが動いていない。workerctl wait を Bash の run_in_background で仕掛ける"
+                     % (len(working), " / ".join(working)))
+    return pend, pend_line, wait_line
+
+
+def hook_main_context(inp):
+    owner = owner_id()
+    if owner:
+        poll_if_due(owner)
+        _, pend_line, wait_line = watch(owner)
+        forgot_line, stale_line = leftover_lines(*leftovers(owner, inp.get("cwd") or os.getcwd()))
+        lines = [l for l in (pend_line, wait_line, forgot_line, stale_line) if l]
+        if lines:
+            print("\n".join(lines))
+
+
+def hook_main_stop(inp):
+    owner = owner_id()
+    if not owner or inp.get("stop_hook_active"):
+        return
+    # 同じセッションの背景タスクに wait があれば、pid ファイルを書く前でも見張りは動いている。
+    bg = any("workerctl" in (t.get("command") or "") and "wait" in (t.get("command") or "")
+             for t in inp.get("background_tasks") or [] if isinstance(t, dict))
+    pend, pend_line, wait_line = watch(owner, background_wait=bg)
+    key = sorted(e["id"] for e in pend)
+    name = "stopblock.%s.json" % safe(owner)
+    forgot = leftovers(owner, inp.get("cwd") or os.getcwd())[0]
+    tidy_key = [i["path"] for i in forgot]
+    tidy_name = "tidyblock.%s.json" % safe(owner)
+    with locked():
+        fresh = bool(pend) and load(name, None) != key
+        if fresh:
+            save(name, key)
+        # 同じ顔ぶれの片付け忘れでは 1 回だけ止める（消せない事情があっても止まり続けないように）。
+        tidy_fresh = bool(forgot) and load(tidy_name, None) != tidy_key
+        if tidy_fresh:
+            save(tidy_name, tidy_key)
+    forgot_line = leftover_lines(forgot, [])[0] if tidy_fresh else None
+    if not wait_line and not bg and find_cockpit(inp.get("cwd") or os.getcwd()) and not wait_alive(owner):
+        wait_line = ("【操縦席】操縦席があるのに見張りが動いていない。窓の操作で起こされるよう、"
+                     "workerctl wait を操縦席のあるフォルダから Bash の run_in_background で仕掛ける")
+    lines = [l for l in (pend_line if fresh else None, wait_line, forgot_line) if l]
+    if lines:
+        print(json.dumps({"decision": "block", "reason": "\n".join(lines) + "\nこれを済ませてから終える"}, ensure_ascii=False))
+
+
+# 直後の語がコマンドの位置になる語。
+LEADERS = {"command", "exec", "env", "time", "nohup", "builtin", "if", "then", "do", "else", "elif", "while", "until",
+           "!", "{"}
+UNPARSABLE = "解析できない Bash"
+
+
+def strip_heredocs(command):
+    out, ends = [], []
+    for line in command.split("\n"):
+        if ends:
+            if line.strip() == ends[0]:
+                ends.pop(0)
+            continue
+        out.append(line)
+        ends += [m.group(1) for m in re.finditer(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)]
+    return "\n".join(out)
+
+
+def direct_worker_ops(command):
+    """Bash の 1 行から、コマンドの位置にある orca terminal send と、claude / codex を起動する orca terminal create を探す。
+    引用符の中（workerctl send --text の本文など）、echo などの引数、ヒアドキュメントの本文は実行ではないので当たらない。"""
+    text = strip_heredocs(command.replace("\\\n", " ")).replace("\n", ";")
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
+        lex.whitespace_split = True
+        tokens = list(lex)
+    except ValueError:
+        # 引用符が閉じないと実行の位置を決められない。Bash は閉じない行の手前までは実行するので、語として現れれば止める。
+        w = re.findall(r"[^\s'\"`;&|()]+", text)
+        hit = any((os.path.basename(w[i]) == "orca" or "ORCA_CLI_COMMAND" in w[i]) and w[i + 1] == "terminal"
+                  and (w[i + 2] == "send" or (w[i + 2] == "create" and any(t.startswith("--command") for t in w[i + 3:])))
+                  for i in range(len(w) - 2))
+        return [UNPARSABLE] if hit else []
+    found, cmd = [], []
+    for tok in tokens + [";"]:
+        if not (tok and set(tok) <= set(";&|()")):
+            cmd.append(tok)
+            continue
+        words = list(cmd)
+        cmd = []
+        while words and (words[0] in LEADERS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])):
+            words.pop(0)
+        if len(words) < 3 or words[1] != "terminal":
+            continue
+        head = words[0].lstrip("`")
+        if os.path.basename(head) != "orca" and "ORCA_CLI_COMMAND" not in head:
+            continue
+        verb = words[2].rstrip("`")
+        if verb == "send":
+            found.append("orca terminal send")
+        elif verb == "create":
+            rest = words[3:]
+            values = [rest[j + 1] for j in range(len(rest) - 1) if rest[j] == "--command"]
+            values += [t[len("--command="):] for t in rest if t.startswith("--command=")]
+            if any(re.search(r"\b(claude|codex)\b", v) for v in values):
+                found.append("orca terminal create --command <agent>")
+    return found
+
+
+def hook_main_pretool(inp):
+    if not owner_id() or inp.get("tool_name") != "Bash":
+        return
+    found = direct_worker_ops((inp.get("tool_input") or {}).get("command") or "")
+    if found == [UNPARSABLE]:
+        reason = ("引用符が閉じないなどで Bash のコマンドを解析できず、orca terminal send か --command 付きの orca terminal create を含む。"
+                  "解析できないので、orca を呼ぶ行を分けて workerctlで打ち直す")
+    elif found:
+        reason = ("%s を直接打たない。workerctlを使う。worker の起動は workerctl start --worktree <selector> --title <題名> -- <起動コマンド>、"
+                  "指示は workerctl send --terminal <handle> --text-file <path>（worker 以外の端末にもこれで送れる）。"
+                  "workerctl の一覧に載せないと完了の知らせを取りこぼす（worktree-flow skill）" % "・".join(found))
+    if found:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": reason}}, ensure_ascii=False))
+
+
+HOOKS = {"worker": hook_worker, "main-context": hook_main_context, "main-stop": hook_main_stop,
+         "main-pretool": hook_main_pretool}
+
+
+def cmd_hook(a):
+    try:
+        inp = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return
+    HOOKS[a.name](inp)
+
+
+def cmd_record(a):
+    handle = a.terminal or os.environ.get("ORCA_TERMINAL_HANDLE")
+    if not handle:
+        sys.exit("workerctl record: --terminal か ORCA_TERMINAL_HANDLE が要る")
+    ev = record(handle, a.kind, a.text or "")
+    print("記録した: #%d" % ev["id"])
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="workerctl", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("start", help="worker の端末を立てて登録する")
+    s.add_argument("--worktree", required=True)
+    s.add_argument("--title", required=True)
+    s.add_argument("command", nargs=argparse.REMAINDER)
+    s.set_defaults(func=cmd_start)
+    s = sub.add_parser("send", help="worker に指示を送り、作業中にする")
+    s.add_argument("--terminal", required=True)
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--text-file")
+    s.set_defaults(func=cmd_send)
+    s = sub.add_parser("answer", help="worker の信頼・許可の確認の画面に答える（世代は変えない）")
+    s.add_argument("--terminal", required=True)
+    s.add_argument("--text", required=True)
+    s.set_defaults(func=cmd_answer)
+    s = sub.add_parser("adopt", help="既に立っている worker を登録する")
+    s.add_argument("--terminal", required=True)
+    s.add_argument("--title", required=True)
+    s.add_argument("--worktree")
+    s.set_defaults(func=cmd_adopt)
+    s = sub.add_parser("wait", help="自分の worker の知らせか操縦席の未反映の操作が出るまで待つ（run_in_background で使う）")
+    s.add_argument("--timeout-min", type=float, default=110)
+    s.add_argument("--interval", type=float, default=30)
+    s.set_defaults(func=cmd_wait)
+    s = sub.add_parser("pending", help="自分の worker と未処理の知らせを出す")
+    s.add_argument("--owner")
+    s.set_defaults(func=cmd_pending)
+    s = sub.add_parser("resolve", help="知らせを処理済みにする")
+    s.add_argument("ids", nargs="+")
+    s.add_argument("--note")
+    s.set_defaults(func=cmd_resolve)
+    s = sub.add_parser("done", help="登録を閉じ、消してよい worktree ならブランチごと消す")
+    s.add_argument("--terminal", required=True)
+    s.add_argument("--keep", action="store_true", help="worktree を残す")
+    s.add_argument("--discard", action="store_true",
+                   help="default ブランチに無い commit があっても消す（取り込まないと決めたとき。未 commit の変更があれば消さない）")
+    s.set_defaults(func=cmd_done)
+    s = sub.add_parser("record", help="知らせを記録する（hook と試験用）")
+    s.add_argument("kind", choices=KINDS)
+    s.add_argument("--terminal")
+    s.add_argument("--text")
+    s.set_defaults(func=cmd_record)
+    s = sub.add_parser("hook", help="Claude Code の hook から呼ぶ")
+    s.add_argument("name", choices=sorted(HOOKS))
+    s.set_defaults(func=cmd_hook)
+    a = ap.parse_args()
+    if getattr(a, "command", None) and a.command[:1] == ["--"]:
+        a.command = a.command[1:]
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()
