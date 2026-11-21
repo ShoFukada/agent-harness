@@ -120,6 +120,10 @@ export function tighten(html: string): string {
   return parts.join('')
 }
 
+const RULINGS = /[（(]\s*R\d+(?:\s*[・、,，]\s*R\d+)*\s*[）)]/g
+/** 本文の判断の記録の番号の括弧（「（R46・R47）」）を表示から除く。窓から開けない場所を指すため（info-needs Q2）。帳簿は書き換えない。 */
+export const dropRulings = (html: string) => html.replace(RULINGS, '')
+
 export function rich(text: string | undefined, repo?: Repo): string {
   if (!text) return ''
   const inline = (s: string) =>

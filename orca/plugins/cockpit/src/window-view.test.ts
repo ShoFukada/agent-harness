@@ -4,7 +4,7 @@ import { sample } from '../fixtures/sample.ts'
 import { parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
 import { copyMessage } from './controller.ts'
-import { boardsOf, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
+import { boardsOf, dropRulings, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
 import { renderWindow, taskOrder, todoOrder } from './window-view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -75,10 +75,9 @@ test('全体: タスクを押すと右に詳細（工程・状態・goal・next�
   const t = text(side)
   assert.match(h, /class="task" aria-current="true"><button type="button" class="tsel" data-task="t1"/)
   assert.match(h, /data-toggle="s:s1" aria-expanded="true"/)
-  for (const x of ['工程 3/5 作る（実装）', '状態 作業中', '何のため 配車の一覧で探す手間を減らす', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
+  for (const x of ['t1 作業中 工程 3/5 作る', '何のため 配車の一覧で探す手間を減らす', '済の条件 未 並べ替えができる 未 絞り込みができる', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
     assert.ok(t.includes(x), x)
   assert.match(side, /data-jump="\/ws\/aoba#r5"/)
-  assert.match(side, /<li class=""><span>未<\/span>並べ替えができる<\/li>/)
   assert.match(t, /出した指示 .*r5 修正を依頼 未反映 幅を 1280 でも崩れないように/)
   assert.doesNotMatch(h, /data-rq=/)
 })
@@ -167,7 +166,7 @@ test('追加 14: 許可の対象は本文の書体にし、` で囲んだ所と 
     v.cockpit!.cards.push({ id: 'p9', rev: 1, kind: 'permit', state: 'open', at: '2026-11-21T09:00:00+09:00', stream: 's1', title: '本番に流す', purpose: '一覧を出す', target: '本番の DB に `migrate 0042` を流す（a1b2c3d）', effect: '一覧の列が増える', undo: '0041 に戻す', why: '今日出す', fallback: '待つ', quote: '出して' })
   })
   const h = page(m, { sel: '/ws/aoba#p9' })
-  const f = h.slice(h.indexOf('>対象<'), h.indexOf('>何が変わるか<'))
+  const f = h.slice(h.indexOf('>対象<'), h.indexOf('>戻し方<'))
   assert.match(f, /<p>本番の DB に <span class="code">migrate 0042<\/span> を流す（<span class="code">a1b2c3d<\/span>）<\/p>/)
   assert.doesNotMatch(f, /<div><span class="code">本番/)
   const panel = render({ ...m, panel: true }, { ...newUi(), sel: '/ws/aoba#p9' }, NOW, (x) => x)
@@ -193,4 +192,9 @@ test('Codex 13-4・5: 出した指示の本文は空白を詰めず、古い版�
   const h = tighten(page(m, { sel: '/ws/aoba#d21' }))
   assert.match(h, /<div class="quote verb">cd 資料 を 開く<\/div>/)
   assert.match(text(h), /決定: keep（版1） 未反映/)
+})
+
+test('info-needs Q1・Q2: 判断の一覧の 1 行におすすめの案を出し、本文の判断の記録の番号の括弧は表示から除く', () => {
+  assert.match(page(aoba()), /<span class="ti">構成案の本番の図に、社内向けの入口を描き足すか<\/span><span class="recm">おすすめ: 図はこのまま、本文で説明する<\/span>/)
+  assert.equal(dropRulings('<p>窓の版 3（R46・R47、R83）を入れる（2 件）</p>'), '<p>窓の版 3を入れる（2 件）</p>')
 })

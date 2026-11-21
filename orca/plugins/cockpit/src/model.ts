@@ -659,8 +659,9 @@ const has = (v: unknown): boolean =>
   Array.isArray(v) ? v.some(has) : isObj(v) ? Object.values(v).some(has) : typeof v === 'boolean' || typeof v === 'number' || !!String(v ?? '').trim()
 type Need = [key: string, label: string, ok: (c: Card) => boolean]
 const COMMON_NEEDS: Need[] = [
-  ['stream', 'どの仕事の話か', (c) => has(c.stream)],
+  // 並びは窓で見せる順（何のためを題の直下に置く。info-needs 3.10）。
   ['purpose', '何のため', (c) => has(c.purpose)],
+  ['stream', 'どの仕事の話か', (c) => has(c.stream)],
   ['why|due', 'なぜ今・期限', (c) => has(c.why) || has(c.due)],
   ['fallback', '返事が無いとき', (c) => has(c.fallback)],
   // 出典は、資料・原文・依頼の原文・成果物のほか、送る前の元のスレッド・届いた連絡・いきさつの原文でも足りる。
@@ -673,12 +674,12 @@ const KIND_NEEDS: Partial<Record<CardKind, Need[]>> = {
     ['options.recommended', 'おすすめ 1 つ', (c) => c.options?.filter((o) => o.recommended).length === 1]
   ],
   review: [
-    ['request', '依頼の原文', (c) => has(c.request)], ['href', '成果物', (c) => has(c.href)],
-    ['look_for', '見てほしい点', (c) => has(c.look_for)], ['evidence', '確かめた結果', (c) => has(c.evidence)]
+    ['href', '成果物', (c) => has(c.href)], ['look_for', '見てほしい点', (c) => has(c.look_for)],
+    ['request', '依頼の原文', (c) => has(c.request)], ['evidence', '確かめた結果', (c) => has(c.evidence)]
   ],
   permit: [
-    ['target|context.what', '対象', (c) => has(c.target) || has(c.context?.what)],
     ['effect|context.gain', '何が変わるか', (c) => has(c.effect) || has(c.context?.gain)],
+    ['target|context.what', '対象', (c) => has(c.target) || has(c.context?.what)],
     ['undo', '戻し方', (c) => has(c.undo)]
   ],
   send: [['draft.to', '宛先', (c) => has(c.draft?.to)], ['draft.via', '経路', (c) => has(c.draft?.via)], ['draft.text', '本文', (c) => has(c.draft?.text)], ['draft.href', '元のスレッド', (c) => has(c.draft?.href)]],

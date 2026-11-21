@@ -424,6 +424,15 @@ body { margin:0; }
 .ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:2px; }
 .ck.win .dw li { display:grid; grid-template-columns:1.4em minmax(0,1fr); color:var(--ink2); }
 .ck.win .dw li.ok { color:var(--ink); }
+.ck.win .purp { margin:8px 16px 0; font-size:var(--fs-s); color:var(--ink2); line-height:1.6; }
+.ck.win .recm { flex:0 1 auto; min-width:0; font-size:var(--fs-xs); color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win details.cont summary { cursor:pointer; font-size:var(--fs-xs); color:var(--focus); padding:2px 0; }
+.ck.win .ntr { font-size:var(--fs-s); color:var(--ink2); }
+.ck.win .ntr summary { cursor:pointer; color:var(--focus); }
+.ck.win .ntr ul { margin:4px 0 0; padding:0; list-style:none; display:grid; gap:2px; font-size:var(--fs-s); }
+.ck.win .ntr .code { margin-right:6px; }
+.ck.win .ntr .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
+.ck.win .wk2 + .wk2 { margin-top:4px; }
 /* 出した指示（新しい順） */
 .ck.win .wdet > .sent { margin:10px 16px 0; }
 .ck.win .sent ol { margin:0; padding:0; list-style:none; display:grid; }

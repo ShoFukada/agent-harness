@@ -5,7 +5,7 @@ import type { CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkR
 import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
-import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
+import { boardsOf, chosenOption, dropRulings, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
 import { boardOf, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
 
 export type Transport = {
@@ -98,7 +98,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   function draw(): void {
     const now = Date.now()
     if (ui.filter && !feed.views.some((v) => v.root === ui.filter)) ui.filter = undefined
-    const html = tighten(win ? renderWindow(model(now), ui, now, svg) : render(model(now), ui, now, svg))
+    const html = dropRulings(tighten(win ? renderWindow(model(now), ui, now, svg) : render(model(now), ui, now, svg)))
     const tpl = document.createElement('template')
     tpl.innerHTML = html
     morph(app, tpl.content, document.activeElement)
