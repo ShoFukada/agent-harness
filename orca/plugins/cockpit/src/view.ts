@@ -1,5 +1,5 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, dismissable, type Card, type CardKind, type Repo } from './model.ts'
+import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, dismissable, permitEffect, permitTarget, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, countsText, derive, dueAt, fmtDate, hhmm, isHot, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -121,14 +121,21 @@ export function tighten(html: string): string {
 }
 
 const RULINGS = /[（(]\s*R\d+(?:\s*[・、,，]\s*R\d+)*\s*[）)]/g
-/** 本文の判断の記録の番号の括弧（「（R46・R47）」）を表示から除く。窓から開けない場所を指すため（info-needs Q2）。帳簿は書き換えない。 */
+/**
+ * 窓口が書いた説明の文（何のため・なぜ今・判断の材料など）から、判断の記録の番号の括弧（「（R46・R47）」）を除く。窓から開けない場所を指すため（info-needs Q2）。
+ * HTML にする前の文にだけかける。送る文面・コマンド・引用の原文・対象・パス・リンクの値は帳簿のまま出す（「対象機種（R2）」を消すと、見た文と写す文が食い違う）。
+ */
 // 括弧の中で他の語と並んだ番号（「（21:40 の依頼、R79）」「（R79、21:40）」）は番号だけを除く。
 const RULING_TAIL = /\s*[・、,，]\s*R\d+(?:\s*[・、,，]\s*R\d+)*(?=\s*[）)])/g
 const RULING_HEAD = /(?<=[（(])\s*R\d+(?:\s*[・、,，]\s*R\d+)*\s*[・、,，]\s*/g
-export const dropRulings = (html: string) => html.replace(RULINGS, '').replace(RULING_TAIL, '').replace(RULING_HEAD, '')
+export const dropRulings = (text: string) => text.replace(RULINGS, '').replace(RULING_TAIL, '').replace(RULING_HEAD, '')
+/** 説明の文を表示の形にする（判断の記録の番号を除いて esc）。 */
+export const note = (text: string | undefined) => esc(text ? dropRulings(text) : text)
 
-export function rich(text: string | undefined, repo?: Repo): string {
+/** 本文。keep は対象など帳簿の値をそのまま見せる欄（判断の記録の番号を除かない）。 */
+export function rich(text: string | undefined, repo?: Repo, keep = false): string {
   if (!text) return ''
+  if (!keep) text = dropRulings(text)
   const inline = (s: string) =>
     esc(s)
       .replace(/https?:\/\/[^\s<>"'）)]+/g, (u) => `<button class="inl" type="button" data-url="${u}">${linkKind(u.replace(/&#38;/g, '&')) === 'PR' ? 'PR' : 'リンク'}</button>`)
@@ -276,7 +283,7 @@ function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<strin
 function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, figures: Record<string, string>): string {
   const c = r.card
   const parts: string[] = []
-  if (c.purpose) parts.push(`<div class="purpose"><b>何のため</b>　${esc(c.purpose)}</div>`)
+  if (c.purpose) parts.push(`<div class="purpose"><b>何のため</b>　${note(c.purpose)}</div>`)
   switch (c.kind) {
     case 'inbox':
       if (c.from) parts.push(fld('届いた連絡', `<span class="sp">${sp([esc(c.from.who), c.from.via && esc(c.from.via), c.from.at && esc(fmtDate(c.from.at))])}</span>`))
@@ -294,14 +301,14 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       if (c.context?.what) parts.push(fld('これは何か', rich(c.context.what, c.repo)))
       if (c.why) parts.push(fld('なぜ今決めるか', rich(c.why, c.repo)))
       parts.push(optionsHtml(r, ui))
-      if (c.fallback) parts.push(fld('返事が無いとき', esc(c.fallback)))
+      if (c.fallback) parts.push(fld('返事が無いとき', note(c.fallback)))
       // これは何かは選択肢の前に出したので、ここでは重ねない。
       if (c.context && CONTEXT_FIELDS.some(([k]) => k !== 'what' && c.context?.[k]))
         parts.push(`<dl class="ctx">${CONTEXT_FIELDS.filter(([k]) => k !== 'what' && c.context?.[k]).map(([k, l]) => `<dt>${esc(l)}</dt><dd>${rich(c.context![k], c.repo)}</dd>`).join('')}</dl>`)
       if (c.draft) parts.push(`<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b></div><div class="msg">${esc(c.draft.text)}</div></div>`)
       break
     case 'review':
-      if (c.look_for?.length) parts.push(fld('確認事項', `<ul class="rich">${c.look_for.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
+      if (c.look_for?.length) parts.push(fld('確認事項', `<ul class="rich">${c.look_for.map((x) => `<li>${note(x)}</li>`).join('')}</ul>`))
       if (c.request) parts.push(fld('依頼の原文', `<div class="quote">${esc(c.request)}</div>`))
       if (c.evidence?.length) parts.push(fld('確かめた結果', `<ul class="rich">${c.evidence.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
       if (r.fix) parts.push(fld('頼んだ直し', `<div class="quote">${esc(r.fix)}</div>`))
@@ -311,7 +318,8 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
         parts.push(manualHtml(r))
         break
       }
-      parts.push(fld('影響', rich(c.effect, c.repo)), fld('対象', rich(c.target, c.repo)), fld('戻し方', esc(c.undo)))
+      // 版 2 の許可は対象と影響を判断の材料（context）に書いたものがある。必須の判定と同じ選び方で出す。
+      parts.push(fld('影響', rich(permitEffect(c), c.repo)), fld('対象', rich(permitTarget(c), c.repo, true)), fld('戻し方', esc(c.undo)))
       parts.push(optionsHtml(r, ui))
       break
     case 'stuck':
@@ -321,7 +329,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       parts.push(optionsHtml(r, ui))
       break
     case 'consult':
-      parts.push(fld('論点', esc(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)))
+      parts.push(fld('論点', note(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)))
       if (c.known?.length) parts.push(fld('分かっていること', `<ul class="rich">${c.known.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
       if (c.undecided?.length) parts.push(fld('決めかねていること', `<ul class="rich">${c.undecided.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
       break
@@ -479,7 +487,7 @@ function jobsHtml(b: Board, now: number, label: string): string {
   const job = (j: JobView) => {
     const who = ownerText(j)
     return `<li class="job ${j.state}"><span class="js" aria-hidden="true"></span><span class="t">${esc(j.title)}</span><span class="st">${esc(j.label)}${j.since ? `（${esc(fmtDate(j.since.slice(0, 10)))} から）` : ''}</span>
-    ${j.next || who ? `<span class="nx sp">${sp([j.next && `<b class="pl">次</b>${mono(esc(j.next))}`, who && `<span class="nw"><b class="pl">担当</b>${esc(who)}</span>`])}</span>` : ''}</li>`
+    ${j.next || who ? `<span class="nx sp">${sp([j.next && `<b class="pl">次</b>${mono(note(j.next))}`, who && `<span class="nw"><b class="pl">担当</b>${esc(who)}</span>`])}</span>` : ''}</li>`
   }
   return `<section class="pane" aria-label="案件の今"><h2>${esc(c.workspace.name)} <small>${esc(label)}</small></h2>
     ${ms.length ? `<ul class="ms">${ms.map((x) => `<li><b>${x.left === 0 ? '今日' : `あと ${x.left} 日`}</b><span>${esc(x.label)}</span></li>`).join('')}</ul>` : ''}

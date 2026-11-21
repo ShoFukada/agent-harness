@@ -199,3 +199,41 @@ test('info-needs Q1・Q2: 判断の一覧の 1 行におすすめの案を出し
   assert.equal(dropRulings('<p>窓の版 3（R46・R47、R83）を入れる（2 件）</p>'), '<p>窓の版 3を入れる（2 件）</p>')
   assert.equal(dropRulings('止めないため（21:40 の依頼、R79）。（R12、11/20）'), '止めないため（21:40 の依頼）。（11/20）')
 })
+
+test('Codex 17-1・2: 判断の記録の番号を除くのは説明の文だけ。送る文面・コマンド・対象・リンクの値は帳簿のまま（窓とパネル）', () => {
+  const m = aoba((v) => {
+    const d = v.cockpit!.cards.find((x) => x.id === 'd22')!
+    d.purpose = '議事録をそろえる（R46・R47）'
+    d.draft!.text = '対象機種（R2、R3）を交換します'
+    const r = v.cockpit!.cards.find((x) => x.id === 'r5')!
+    r.href = '/tmp/仕様(R2).pdf'
+  })
+  const send = tighten(page(m, { sel: '/ws/aoba#d22' }))
+  assert.match(send, /<div class="msg">対象機種（R2、R3）を交換します<\/div>/)
+  assert.match(send, /<p class="purp">議事録をそろえる<\/p>/)
+  assert.match(page(m, { sel: '/ws/aoba#r5' }), /data-file="\/tmp\/仕様\(R2\)\.pdf"/)
+  const panel = render({ ...m, panel: true }, { ...newUi(), sel: '/ws/aoba#d22' }, NOW, (x) => x)
+  assert.match(panel, /対象機種（R2、R3）を交換します/)
+  assert.doesNotMatch(panel, /（R46・R47）/)
+  const manual = page(aoba((v) => { v.cockpit!.cards.find((c) => c.id === 'd22')!.manual = { where: 'x', command: "tool '部品(R2)'", check: 'y' } }), { sel: '/ws/aoba#d22' })
+  assert.match(manual, /tool &#39;部品\(R2\)&#39;/)
+})
+
+test('Codex 17-3: 旧形式の許可（context.what・context.gain）も、パネルと窓で対象と影響を出し、窓の詳細で重ねない', () => {
+  const m = aoba((v) => {
+    v.cockpit!.cards.push({ id: 'p8', rev: 1, kind: 'permit', state: 'open', at: '2026-11-21T09:00:00+09:00', stream: 's1', title: '旧テーブルを消す', purpose: 'p', why: 'w', fallback: 'f', quote: 'q', undo: '戻せない', context: { what: '本番 DB', gain: '旧テーブルを削除' } })
+  })
+  const panel = render({ ...m, panel: true }, { ...newUi(), sel: '/ws/aoba#p8' }, NOW, (x) => x)
+  assert.match(text(panel), /影響 旧テーブルを削除 対象 本番 DB/)
+  const win = text(page(m, { sel: '/ws/aoba#p8' }))
+  assert.match(win, /何が変わるか 旧テーブルを削除 対象 本番 DB/)
+  assert.equal(win.match(/本番 DB/g)!.length, 1)
+})
+
+test('Codex 17-4: 依頼の原文の「続き」と済んだことの残りは、開いた状態を再描画のあとも保つ', () => {
+  const m = aoba((v) => { v.cockpit!.cards.find((x) => x.id === 'r5')!.request = '1 行目\n2 行目\n3 行目' })
+  assert.match(page(m, { sel: '/ws/aoba#r5' }), /<details class="cont" data-fold="cont:\/ws\/aoba#r5"><summary>続き/)
+  assert.match(page(m, { sel: '/ws/aoba#r5', open: { 'cont:/ws/aoba#r5': true } }), /data-fold="cont:\/ws\/aoba#r5" open>/)
+  const t = aoba((v) => { v.cockpit!.tasks.find((x) => x.id === 't1')!.done = ['a', 'b', 'c', 'd'] })
+  assert.match(page(t, { tab: 'whole', task: 't1', open: { 'done:t1': true } }), /data-fold="done:t1" open><summary>残り 1 件/)
+})

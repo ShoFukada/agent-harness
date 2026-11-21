@@ -235,6 +235,10 @@ test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ�
   assert.match(applyChange(c, { main: { run_id: 'ctx_1' } }).errors.join(), /main は \{ run_id \} だけ/)
   assert.match(applyChange(c, { main: { run_id: 'run_1', terminal: 'x' } }).errors.join(), /main は \{ run_id \} だけ/)
   assert.equal(applyChange({ ...c, main: undefined }, { main: { run_id: null } }).next!.main, undefined)
+  // main の無い帳簿に Run を書いて消すと、main の無い帳簿に戻る（空の main を残さない。Codex 17 軽微）。
+  const set = applyChange({ ...c, main: undefined }, { main: { run_id: 'run_1' } }).next!
+  assert.deepEqual(set.main, { run_id: 'run_1' })
+  assert.ok(!('main' in applyChange(set, { main: { run_id: null } }).next!))
   const problems: string[] = []
   assert.equal(parseCockpit(JSON.stringify(r.next), problems).main?.run_id, 'run_abc123')
   assert.equal(parseCockpit(JSON.stringify({ ...c, main: { ...c.main, run_id: 3 } }), problems).main?.run_id, undefined)

@@ -230,8 +230,8 @@ export type Utterance = { id?: string; at: string; prompt?: string }
 export type Cockpit = {
   version: 2
   workspace: { name: string; milestones?: Milestone[] }
-  /** 窓口。run_id は窓口の orchestration の Run（カードの相談と窓からの質問の返しの宛先）。 */
-  main?: { agent: string; terminal: string; run_id?: string }
+  /** 窓口。run_id は窓口の orchestration の Run（カードの相談と窓からの質問の返しの宛先）。main の無かった帳簿に Run だけを書くと run_id だけになる。 */
+  main?: { agent?: string; terminal?: string; run_id?: string }
   phases?: string[]
   streams: Stream[]
   tasks: Task[]
@@ -665,6 +665,10 @@ export function shownTask(t: Task, fact: DispatchFact | null | undefined): TaskS
 const has = (v: unknown): boolean =>
   Array.isArray(v) ? v.some(has) : isObj(v) ? Object.values(v).some(has) : typeof v === 'boolean' || typeof v === 'number' || !!String(v ?? '').trim()
 type Need = [key: string, label: string, ok: (c: Card) => boolean]
+/** 許可の影響と対象。版 2 の許可は判断の材料（context.gain・context.what）に書いたものがある。必須の判定と窓・パネルの表示で同じ選び方をする。 */
+export const permitEffect = (c: Pick<Card, 'effect' | 'context'>) => (c.effect?.trim() ? c.effect : c.context?.gain)
+export const permitTarget = (c: Pick<Card, 'target' | 'context'>) => (c.target?.trim() ? c.target : c.context?.what)
+
 const COMMON_NEEDS: Need[] = [
   // 並びは窓で見せる順（何のためを題の直下に置く。info-needs 3.10）。
   ['purpose', '何のため', (c) => has(c.purpose)],
@@ -685,8 +689,8 @@ const KIND_NEEDS: Partial<Record<CardKind, Need[]>> = {
     ['request', '依頼の原文', (c) => has(c.request)], ['evidence', '確かめた結果', (c) => has(c.evidence)]
   ],
   permit: [
-    ['effect|context.gain', '何が変わるか', (c) => has(c.effect) || has(c.context?.gain)],
-    ['target|context.what', '対象', (c) => has(c.target) || has(c.context?.what)],
+    ['effect|context.gain', '何が変わるか', (c) => has(permitEffect(c))],
+    ['target|context.what', '対象', (c) => has(permitTarget(c))],
     ['undo', '戻し方', (c) => has(c.undo)]
   ],
   send: [['draft.to', '宛先', (c) => has(c.draft?.to)], ['draft.via', '経路', (c) => has(c.draft?.via)], ['draft.text', '本文', (c) => has(c.draft?.text)], ['draft.href', '元のスレッド', (c) => has(c.draft?.href)]],

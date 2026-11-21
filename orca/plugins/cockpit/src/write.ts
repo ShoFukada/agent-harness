@@ -279,15 +279,17 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   const next: Cockpit = {
     ...c, streams, tasks, cards, ...(c.owners || ch.owners ? { owners } : {}), ...(c.requests || ch.requests ? { requests } : {}),
     ...(intake ? { intake } : {}),
-    ...(ch.main && (c.main || ch.main.run_id) ? { main: withRun(c.main, ch.main.run_id) } : {}),
+    ...(ch.main ? { main: withRun(c.main, ch.main.run_id) } : {}),
     applied_ops: [...new Set([...(c.applied_ops ?? []), ...(ch.applied_ops ?? [])])]
   }
+  // Run だけの main を消したら、空の main を残さない（main の無い帳簿に戻す）。
+  if (next.main && !Object.keys(next.main).length) delete next.main
   return { next, errors, warnings }
 }
 
 function withRun(main: Cockpit['main'], run: string | null): NonNullable<Cockpit['main']> {
-  const { run_id: _, ...rest } = main ?? ({} as NonNullable<Cockpit['main']>)
-  return (run === null ? rest : { ...rest, run_id: run }) as NonNullable<Cockpit['main']>
+  const { run_id: _, ...rest } = main ?? {}
+  return run === null ? rest : { ...rest, run_id: run }
 }
 
 export type SortRow = { id: string; title: string; tasks: string; last?: string }
