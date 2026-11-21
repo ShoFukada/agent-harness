@@ -380,10 +380,10 @@ body { margin:0; }
 .ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
 .ck.win .st .inner { border-top:1px solid var(--rule2); padding:4px 14px 12px; display:grid; gap:2px; }
 .ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:8px 0 2px; display:flex; gap:8px; align-items:center; }
-.ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); }
-.ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:4px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; min-width:0; }
-.ck.win .tsel:hover { background:var(--sunk); }
-.ck.win .task[aria-current="true"] .tsel { background:var(--sunk); box-shadow:inset 0 0 0 2px var(--focus); }
+.ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); border-radius:5px; margin:0 -6px; padding-right:6px; }
+.ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:4px 6px; font:inherit; color:inherit; min-width:0; }
+.ck.win .task:hover { background:var(--sunk); }
+.ck.win .task[aria-current="true"] { background:var(--sunk); box-shadow:inset 0 0 0 2px var(--focus); }
 .ck.win .task .wk { padding-top:4px; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
 .ck.win .tst.s-run { color:var(--focus); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
@@ -416,6 +416,7 @@ body { margin:0; }
 .ck.win .lc .ti { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; }
 .ck.win .rqd { display:grid; gap:6px; }
+.ck.win .rqd .code { margin-right:6px; }
 .ck.win .rqd + .rqd { border-top:1px solid var(--rule2); padding-top:8px; margin-top:4px; }
 .ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:2px; }
 .ck.win .dw li { display:grid; grid-template-columns:1.4em minmax(0,1fr); color:var(--ink2); }

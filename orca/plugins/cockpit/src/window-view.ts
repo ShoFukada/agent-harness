@@ -131,7 +131,8 @@ function firstOfKind(r: VRow, ui: Ui, list: (xs: string[] | undefined, ordered?:
   const c = r.card
   switch (c.kind) {
     case 'review':
-      return [c.href ? `<div class="links">${linkBtn('成果物を開く', c.href)}</div>` : '', fld('確認事項', points(c.look_for)), r.fix ? fld('頼んだ直し（原文）', `<div class="quote">${esc(r.fix)}</div>`) : ''].join('')
+      // 頼んだ直しの原文は「出した指示」に出す（二重にしない）。
+      return [c.href ? `<div class="links">${linkBtn('成果物を開く', c.href)}</div>` : '', fld('確認事項', points(c.look_for))].join('')
     case 'decide':
       return [optionsHtml(r, ui), fld('得られること', rich(c.context?.gain, c.repo)), fld('失うこと', rich(c.context?.cost, c.repo))].join('')
     case 'permit':
@@ -326,7 +327,7 @@ function taskDetail(b: Board, t: TaskView): string {
   const talk = task.stream ? `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(task.stream)}">${b.d.jobs.find((j) => j.id === task.stream)?.owner ? '担当と協議' : '窓口と協議'}</button></div>` : ''
   return `<div class="wdet">
     <div class="dh"><div class="crumbs">${[c.workspace.name, s?.title ?? '仕事の割り当てなし'].map((x) => `<span>${esc(x)}</span>`).join('<i>›</i>')}</div>
-      <div class="kl"><span class="code mut">${esc(task.id)}</span><span class="tst s-${t.state}">${TSTATE[t.state]}</span></div>
+      <div class="kl"><span class="code mut">${esc(task.id)}</span></div>
       <h2>${esc(task.title)}</h2></div>
     <div class="first">${fields}</div>${sent}
     ${talk ? `<div class="dbtn">${talk}</div>` : ''}</div>`

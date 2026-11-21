@@ -107,7 +107,7 @@ test('見て: 「直してほしいことを書く」で書く欄を開き、本
   const open = { ...newUi(), sel: k, otherOpen: { [k]: true }, other: { [k]: ' ' } }
   assert.deepEqual(acts(open), ['accept:承認する', 'other:記入をやめる', 'decide:この修正を依頼', 'talk:担当と修正を協議', 'url:開く'])
   assert.match(html(model(), open), /data-act="decide"[^>]*disabled>この修正を依頼/)
-  assert.match(html(model(), open), /直してほしいこと（書いた文のまま担当か窓口に届きます）/)
+  assert.match(html(model(), open), /<label class="lb" for="other-[^"]+">修正点<\/label>/)
   const vs = views()
   vs[0]!.log.ops.push({ op_id: 9, at: new Date(NOW).toISOString(), item_id: 'r5', item_rev: 1, type: 'talk', text: '凡例を上に寄せてほしい' })
   const m = model({}, vs)

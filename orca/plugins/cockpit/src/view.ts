@@ -228,7 +228,7 @@ export function otherHtml(r: Row, ui: Ui): string {
   const k = keyOf(r)
   if (!ui.otherOpen[k]) return ''
   const text = ui.other[k] ?? ''
-  const label = r.card.kind === 'review' ? '直してほしいこと（書いた文のまま担当か窓口に届きます）' : '別の答え（選択肢に無い答え・「もう手で済ませた」など）'
+  const label = r.card.kind === 'review' ? '修正点' : '別の回答'
   return `<div class="other fld"><label class="lb" for="other-${esc(k)}">${label}</label>
     <textarea id="other-${esc(k)}" data-other="${esc(k)}" maxlength="${TEXT_MAX + 200}">${esc(text)}</textarea>
     <span class="cnt">あと ${TEXT_MAX - text.length} 字</span></div>`
