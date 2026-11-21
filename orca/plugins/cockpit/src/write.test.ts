@@ -224,3 +224,19 @@ test('書く道具（Codex 2 回目）: 欄の順だけ違う閉じ方は中身�
   assert.match(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['A', 'C'] }] }, utter).errors.join('\n'), /カード v9: 要素 1 の行き先 r1#2 の済の条件が変わる/)
   assert.deepEqual(applyChange(c, { requests: [{ ...c.requests[0]!, done_when: ['A', 'B', 'C2'] }] }, utter).errors, [])
 })
+
+test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ。null で消し、run_ で始まらない値・ほかの欄は断る。読み込みも受ける', () => {
+  const c = aoba()
+  c.main = { agent: 'claude', terminal: 'term_main' }
+  const r = applyChange(c, { main: { run_id: 'run_abc123' } })
+  assert.deepEqual(r.errors, [])
+  assert.deepEqual(r.next!.main, { agent: 'claude', terminal: 'term_main', run_id: 'run_abc123' })
+  assert.deepEqual(applyChange(r.next!, { main: { run_id: null } }).next!.main, { agent: 'claude', terminal: 'term_main' })
+  assert.match(applyChange(c, { main: { run_id: 'ctx_1' } }).errors.join(), /main は \{ run_id \} だけ/)
+  assert.match(applyChange(c, { main: { run_id: 'run_1', terminal: 'x' } }).errors.join(), /main は \{ run_id \} だけ/)
+  assert.equal(applyChange({ ...c, main: undefined }, { main: { run_id: null } }).next!.main, undefined)
+  const problems: string[] = []
+  assert.equal(parseCockpit(JSON.stringify(r.next), problems).main?.run_id, 'run_abc123')
+  assert.equal(parseCockpit(JSON.stringify({ ...c, main: { ...c.main, run_id: 3 } }), problems).main?.run_id, undefined)
+  assert.match(problems.join(), /main\.run_id（3）の形が違う/)
+})

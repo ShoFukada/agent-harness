@@ -1,7 +1,7 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  badFields, CARD_SHAPE, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
+  badFields, CARD_SHAPE, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
   type Card, type Cockpit, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 
@@ -17,8 +17,10 @@ export type Change = {
   owners?: Owner[]
   intake?: Intake
   applied_ops?: number[]
+  /** 窓口の Run だけを置き換える（null で消す）。main のほかの欄（agent・terminal）は今の値を保つ。 */
+  main?: { run_id: string | null }
 }
-const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops']
+const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops', 'main']
 
 export type WriteResult = { next?: Cockpit; errors: string[]; warnings: string[] }
 
@@ -101,6 +103,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       errors.push(`${k} は id のある行の配列で渡す`)
   if (change.applied_ops !== undefined && !(Array.isArray(change.applied_ops) && change.applied_ops.every((n) => Number.isInteger(n) && n > 0)))
     errors.push('applied_ops は op_id（正の整数）の配列で渡す')
+  if (change.main !== undefined && !(isObj(change.main) && Object.keys(change.main).join() === 'run_id' && (change.main.run_id === null || RUN_ID(change.main.run_id))))
+    errors.push('main は { run_id } だけを渡す（run_id は run_ で始まる文字列か、消すなら null）')
   if (change.intake !== undefined && !INTAKE_SHAPE(change.intake)) errors.push('intake は { through, none, checked_through } の形で渡す（none は発言の id の配列）')
   if (errors.length) return { errors, warnings }
   const ch = change as Change
@@ -275,9 +279,15 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   const next: Cockpit = {
     ...c, streams, tasks, cards, ...(c.owners || ch.owners ? { owners } : {}), ...(c.requests || ch.requests ? { requests } : {}),
     ...(intake ? { intake } : {}),
+    ...(ch.main && (c.main || ch.main.run_id) ? { main: withRun(c.main, ch.main.run_id) } : {}),
     applied_ops: [...new Set([...(c.applied_ops ?? []), ...(ch.applied_ops ?? [])])]
   }
   return { next, errors, warnings }
+}
+
+function withRun(main: Cockpit['main'], run: string | null): NonNullable<Cockpit['main']> {
+  const { run_id: _, ...rest } = main ?? ({} as NonNullable<Cockpit['main']>)
+  return (run === null ? rest : { ...rest, run_id: run }) as NonNullable<Cockpit['main']>
 }
 
 export type SortRow = { id: string; title: string; tasks: string; last?: string }

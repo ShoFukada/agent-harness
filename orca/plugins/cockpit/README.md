@@ -141,7 +141,7 @@ bin/cockpit-write --dry-run <root> < change.json  # 書かずに検査だけ（�
 bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write が無ければ結果を出すだけ）
 ```
 
-- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...] }` を id 単位で足すか置き換える。全体を置き換える入口は無い
+- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." } }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換え、`null` で消す（agent・terminal は今の値を保つ）
 - 検査: 欄の形・参照（仕事・タスク・担当・依頼の id）・`rev`（開いたカードの中身を変えたら 1 上げる。片付けるだけ・要素の行き先を書くだけなら据え置き）・依頼の欄・仕分けの位置・要素の行き先。通らなければ書かずに理由を返す
 - 必須の欄が欠けたカードは書くが、注意で名指しする（窓には出ない）
 - migrate-v3: 開いた `talk` を `consult` に、`created_at` を `at` に写し、worker に `run_id` を補う。今ある依頼に `legacy` を付け、タスクとカードが全部済で深田さんの返答が残るものだけ済にし、ほかは窓口が仕分ける一覧に出す。閉じたカードの `resolved_at` を補い（`resolved_at_inferred`）、深田さんの操作の無いまま閉じた見てに `closed_without_review` を付ける。元は `cockpit.v2.json` に控える

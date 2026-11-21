@@ -230,7 +230,8 @@ export type Utterance = { id?: string; at: string; prompt?: string }
 export type Cockpit = {
   version: 2
   workspace: { name: string; milestones?: Milestone[] }
-  main?: { agent: string; terminal: string }
+  /** 窓口。run_id は窓口の orchestration の Run（カードの相談と窓からの質問の返しの宛先）。 */
+  main?: { agent: string; terminal: string; run_id?: string }
   phases?: string[]
   streams: Stream[]
   tasks: Task[]
@@ -394,6 +395,8 @@ export const timeOf = (s: string | undefined): number => {
   return Number.isNaN(t) ? 0 : t
 }
 
+/** orchestration の Run の id（run_ で始まる）。 */
+export const RUN_ID = (v: unknown): v is string => typeof v === 'string' && /^run_\S+$/.test(v)
 export const WORKER_SHAPE: Shape = (w) => isObj(w) && str(w.task_id) && (str(w.run_id) || str(w.dispatch_id)) && [w.run_id, w.dispatch_id].every((x) => x === undefined || str(x))
 const EVIDENCE_SHAPE: Shape = (e) => isObj(e) && Number.isInteger(e.when) && EVIDENCE_KINDS.includes(e.kind as EvidenceKind) && str(e.ref)
   && (e.card === undefined || str(e.card)) && (e.rev === undefined || Number.isInteger(e.rev))
@@ -457,6 +460,10 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
     const bad = Object.keys(REQUEST_SHAPE).filter((k) => r[k] !== undefined && !REQUEST_SHAPE[k]!(r[k]))
     for (const k of bad) delete r[k]
     if (bad.length) problems.push(`cockpit.json の依頼 ${String(r.id)} の ${bad.join('・')} の形が違うので、その欄を外して読んでいます`)
+  }
+  if (isObj(v.main) && v.main.run_id !== undefined && !RUN_ID(v.main.run_id)) {
+    problems.push(`cockpit.json の main.run_id（${String(v.main.run_id)}）の形が違うので、その欄を外して読んでいます`)
+    delete v.main.run_id
   }
   if (v.intake !== undefined && !INTAKE_SHAPE(v.intake)) {
     problems.push('cockpit.json の intake の形が違うので、発言の仕分けの検査を止めています')
