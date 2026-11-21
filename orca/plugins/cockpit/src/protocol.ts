@@ -79,6 +79,8 @@ export type CockpitView = {
   current?: Record<string, string>
   /** Orca にある端末の handle（Orca を読めていなければ無い）。カードの相談のタブが閉じたら話し中を外すのに使う。 */
   terminals?: string[]
+  /** 端末の一覧が上限で切れているかもしれない。 */
+  terminalsPartial?: boolean
   /** カードの相談のメモ。パネルは持たない。 */
   consults?: ConsultMemo[]
 }

@@ -301,6 +301,18 @@ test('担当と協議: 担当のいないカードはカードの相談のタブ
   assert.deepEqual(asked.length, 4)
 })
 
+test('担当と協議: 最初の連打でも記録は 1 つ。相談に回すときも、consult が失敗して窓口に回すときも（Codex 2 回目 中 1・2）', async () => {
+  for (const fail of [undefined, 'consult: 失敗']) {
+    const { a, rows } = workspaces()
+    const terms: string[] = []
+    const { consult } = fakeConsult(terms, fail)
+    const { s, port, post } = await start(rows, a, undefined, undefined, undefined, undefined, { consult, terms })
+    await listen(port, s.token).until(ready)
+    await Promise.all([post('talk', { root: a, item_id: 'd22', item_rev: 2 }), post('talk', { root: a, item_id: 'd22', item_rev: 2 }), post('talk', { root: a, item_id: 'd22', item_rev: 2 })])
+    assert.deepEqual(talkOps(a), [['d22', 'talk', fail ? null : 'term_consult']])
+  }
+})
+
 test('担当と協議: consult が失敗したら理由を返して窓口に回し、handle の無い話し中として記録する', async () => {
   const { a, rows } = workspaces()
   const { consult, asked } = fakeConsult([], 'consult: 操縦席が見つからない')

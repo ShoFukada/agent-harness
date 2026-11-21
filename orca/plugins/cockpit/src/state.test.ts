@@ -270,6 +270,10 @@ test('カードの相談: タブ（talk の terminal）が Orca にある間だ�
   const closed = report(w.cockpit, log, [], facts([]), 'ok', NOW)
   assert.deepEqual(closed.talking, [], 'タブが閉じたら話し中を外す')
   assert.deepEqual(closed.checks.stale_consults, [])
+  // 一覧が上限で切れているかもしれないときは、無い handle を閉じたと言い切らず、ある handle は stale に使う（Codex 2 回目 中 4）。
+  const partial = report(w.cockpit, log, [], { workers: [], terminals: ['term_c19'], terminalsPartial: true }, 'ok', NOW)
+  assert.deepEqual(partial.talking.map((x) => x.id), ['d22'])
+  assert.deepEqual(partial.checks.stale_consults, [{ id: 'd19', terminal: 'term_c19' }])
   const unknown = report(w.cockpit, log, [], undefined, 'error', NOW)
   assert.deepEqual(unknown.talking.map((x) => x.id), ['d22'])
   assert.deepEqual(unknown.checks.stale_consults, [])
@@ -289,7 +293,8 @@ function consultRoot(): string {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
     writeFileSync(path.join(root, rel), text)
   }
-  put('.orca/cockpit.json', JSON.stringify(c))
+  // 題の無いカードは画面から外すが、保留の照合には数える（Codex 2 回目 重大 1）。
+  put('.orca/cockpit.json', JSON.stringify({ ...c, cards: [...c.cards, { id: 'd1', rev: 1, kind: 'decide', state: 'open', held_returns: ['d1-1'] }] }))
   put('.orca/cockpit.archive.json', JSON.stringify({ cards: [{ id: 'x9', rev: 1, kind: 'decide', state: 'done', title: '移したカード', held_returns: ['x9-1'] }] }))
   put('.orca/cockpit/rulings.jsonl', [{ id: 'R1', from_return: 'd21-1' }, { from_return: 'd21-2' }, { id: 'R3', from_return: 'd22-1' }, { id: 'R4' }].map((x) => JSON.stringify(x)).join('\n') + '\n')
   const block = (v: unknown) => '```json\n' + JSON.stringify(v, null, 1) + '\n```\n'
@@ -306,11 +311,12 @@ test('相談の返し: メモにあって判断の記録か帳簿に無いもの
   const root = consultRoot()
   const f = await loadFiles(root, emptyFiles())
   const memo = (card: string) => path.join(root, '.orca', 'consult', `${card}.md`)
-  assert.deepEqual(unreflectedReturns([...f.cockpit!.cards, ...f.archive], f.rulings, f.consults), [
+  assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), [
     { id: 'd21-2', card: 'd21', missing: ['帳簿'], memo: memo('d21') },
     { id: 'd21-3', card: 'd21', missing: ['判断の記録', '帳簿', '保留'], memo: memo('d21') },
     { id: 'd22-1', card: 'd22', missing: ['帳簿'], memo: memo('d22') },
     { id: 'd22-２', card: 'd22', missing: ['判断の記録', '帳簿'], memo: memo('d22') },
+    { id: 'd1-1', card: 'd1', missing: ['保留'], memo: null },
     { id: 'x9-1', card: 'x9', missing: ['保留'], memo: null }
   ])
 })
@@ -321,7 +327,7 @@ test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結
   const root = consultRoot()
   const f = await loadFiles(root, emptyFiles())
   const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
-  assert.deepEqual(unreflectedReturns([...f.cockpit!.cards, ...f.archive], f.rulings, f.consults), py)
+  assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), py)
 })
 
 test('片付いたものは時刻で新しい順に並べる（操作の UTC の時刻と、窓口が書いた +09:00 の時刻が混ざっても）', () => {

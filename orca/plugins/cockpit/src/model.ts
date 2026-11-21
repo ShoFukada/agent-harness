@@ -266,6 +266,8 @@ export type ConsultReturn = {
   return_id: string; card?: unknown; rev?: number; choice?: string | null
   decisions?: { text?: string; quote?: string; utterance?: string }[]; requests?: { quote?: string; utterance?: string }[]; open?: string[]
 }
+/** 返しの照合に使う、帳簿と移したカードの生の欄（画面の形の検査で外したカードも含める。compaction-keep.py の ledger_cards と同じ）。 */
+export type ReturnMark = { id: unknown; from_returns?: unknown[]; held_returns?: unknown[] }
 /** 相談のメモ（<root>/.orca/consult/<カード id>.md）。path は絶対パス。 */
 export type ConsultMemo = { card: string; path: string; returns: ConsultReturn[] }
 /** .orca/cockpit/utterances.jsonl の 1 行（hook が書く）。id の無い古い行は仕分けの検査に入れない。 */

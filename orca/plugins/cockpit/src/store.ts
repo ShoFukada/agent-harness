@@ -3,7 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   dismissable, isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  RETURN_ID, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
+  RETURN_ID, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -36,9 +36,25 @@ export type Files = {
   rulings: Ruling[]
   /** カードの相談のメモ（.orca/consult/*.md）と、その中の窓口への返し。 */
   consults: ConsultMemo[]
+  /** cockpit.json と cockpit.archive.json の生のカードの返しの印（形の崩れたカードも数える）。 */
+  marks: ReturnMark[]
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [], consults: [] })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [], consults: [], marks: [] })
+
+/** ファイルの生のカードから返しの印を抜く。読めなければ空（python の read_json の既定と同じ）。 */
+function returnMarks(text: string | undefined): ReturnMark[] {
+  let v: unknown
+  try {
+    v = JSON.parse(text ?? '')
+  } catch {
+    return []
+  }
+  const cards = typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as { cards?: unknown }).cards : undefined
+  return (Array.isArray(cards) ? cards : [])
+    .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x))
+    .map((x) => ({ id: x.id, ...(Array.isArray(x.from_returns) && { from_returns: x.from_returns }), ...(Array.isArray(x.held_returns) && { held_returns: x.held_returns }) }))
+}
 
 /**
  * 相談のメモの「## 窓口に返したもの」の節にある ```json の塊のうち、return_id を持つもの（同じ id は先のもの）。
@@ -150,8 +166,9 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
   const next: Files = {
     cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff,
-    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings, consults: prev.consults
+    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings, consults: prev.consults, marks: []
   }
+  const marks: ReturnMark[][] = [[], []]
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
     try {
@@ -162,12 +179,14 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   }
   await one('cockpit.json', '（前回の表示のまま）', (text) => {
     next.missing = text === undefined
+    marks[0] = returnMarks(text)
     next.cockpit = text === undefined ? undefined : parseCockpit(text, next.errors)
   })
   await one('cockpit.user.json', '', (text) => {
     next.log = text === undefined ? { ops: [] } : parseUserLog(text)
   })
   await one('cockpit.archive.json', '', (text) => {
+    marks[1] = returnMarks(text)
     next.archive = text === undefined ? [] : parseArchive(text, next.errors).cards
   })
   await one('cockpit/handoff.json', '', (text) => {
@@ -179,6 +198,7 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   await one('cockpit/rulings.jsonl', '', (text) => {
     next.rulings = text === undefined ? [] : parseRulings(text)
   })
+  next.marks = marks.flat()
   try {
     next.consults = await readConsults(root)
   } catch (e) {
@@ -209,13 +229,18 @@ const writing = new Map<string, Promise<unknown>>()
 
 /** 操作を cockpit.user.json に追記し、追記後のログを返す。cockpit は呼び出し側が表示していた中身。 */
 export function appendOp(root: string, cockpit: Cockpit | undefined, input: OpInput): Promise<UserLog> {
+  return appendOpOnce(root, cockpit, input).then((r) => r.log)
+}
+
+/** 追記して、追記した操作を返す。同じ協議の重なりで追記を省いたときは added が無い（合図を送るのは追記した呼び出しだけ）。 */
+export function appendOpOnce(root: string, cockpit: Cockpit | undefined, input: OpInput): Promise<{ log: UserLog; added?: Op }> {
   if (input.root !== root) return Promise.reject(conflict('表示中のワークスペースが変わりました。もう一度押してください'))
   const run = (writing.get(root) ?? Promise.resolve()).then(() => write(root, cockpit, input))
   writing.set(root, run.catch(() => undefined))
   return run
 }
 
-async function write(root: string, _shown: Cockpit | undefined, { root: _root, ...input }: OpInput): Promise<UserLog> {
+async function write(root: string, _shown: Cockpit | undefined, { root: _root, ...input }: OpInput): Promise<{ log: UserLog; added?: Op }> {
   const release = await lockLog(root)
   try {
     // 画面が持つ中身は古いことがある（窓口が書き換えた直後・版 1 に戻した直後）。押した瞬間のファイルで確かめる。
@@ -223,11 +248,16 @@ async function write(root: string, _shown: Cockpit | undefined, { root: _root, .
     const text = await readInOrca(root, '.orca/cockpit.user.json')
     const log = text === undefined ? { ops: [] } : parseUserLog(text)
     check(cockpit, log, input)
-    // 同じタブでの協議は 1 回だけ記録する（連打や、consult が開いているタブを前に出した 2 回目）。ロックの中の最新のログで見る。
-    if (input.type === 'talk' && input.terminal && lastTalk(log, input.item_id, input.item_rev)?.terminal === input.terminal) return log
-    log.ops.push(nextOp(log, { at: new Date().toISOString(), ...input }))
+    // 同じ相手（同じタブか、どちらも窓口・担当）との本文の無い協議は 1 回だけ記録する（連打や、consult が開いているタブを前に出した 2 回目）。
+    // ロックの中の最新のログで見る。本文つきの修正依頼は別の操作として残す。
+    if (input.type === 'talk' && !input.text?.trim()) {
+      const last = lastTalk(log, input.item_id, input.item_rev)
+      if (last && !last.text?.trim() && last.terminal === input.terminal) return { log }
+    }
+    const added = nextOp(log, { at: new Date().toISOString(), ...input })
+    log.ops.push(added)
     await writeAtomic(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify(log, null, 2) + '\n')
-    return log
+    return { log, added }
   } finally {
     await release()
   }

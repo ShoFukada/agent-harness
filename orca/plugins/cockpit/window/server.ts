@@ -14,10 +14,12 @@ import type { ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, 
 import { agentTitle, ownerOf } from '../src/state.ts'
 import { currentDispatches, descendants, failuresOf, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type Failure, type InboxMessage, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
-import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, recordFirstSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
+import { appendOp, appendOpOnce, emptyFiles, loadFiles, notifyMain, readNotified, recordFirstSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
 const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts'])
+/** カードの詳細に出す、相談で決まったことの件数（window-view.ts の consultHtml と同じ）。 */
+const SHOWN_DECISIONS = 3
 /** 窓に送る片付いたカードの日数。古いものは cockpit.archive.json に移っている。 */
 const CLOSED_DAYS = 14
 /** ページが表示されている間に Orca の状態を確かめる間隔。プロセスが落ちた worker は Orca から知らせが来ないため。 */
@@ -229,25 +231,30 @@ export function createServer(opts: Options) {
       notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen,
-      terminals: lastRefresh && !orcaError && terms.size < TERMINAL_LIMIT ? [...terms.values()] : undefined,
+      terminals: lastRefresh && !orcaError ? [...terms.values()] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
       consults: consultsFor(files.consults, cockpit, archive)
     }
   }
 
   /**
-   * 窓に送る相談のメモ。送るカードのメモだけにし、返しは表示に使う欄（return_id・選んだ案・決まったことの文）の新しい 10 件に絞る
-   * （メモは相談スレッドが書くので、知らない欄に長文があっても毎回の配信に載せない）。
+   * 窓に送る相談のメモ。送るカードのメモだけにし、返しは窓が出す分（新しい返しから、選んだ案と決まったことの文を 3 件まで）に絞る
+   * （メモは相談スレッドが書くので、知らない欄や長い返しを毎回の配信に載せない）。
    */
   function consultsFor(memos: ConsultMemo[], c: Cockpit | undefined, archive: Card[]): ConsultMemo[] {
     const ids = new Set([...(c?.cards ?? []), ...archive].map((x) => x.id))
-    return memos.filter((m) => ids.has(m.card)).map((m) => ({
-      ...m,
-      returns: m.returns.slice(-10).map((x) => ({
-        return_id: x.return_id,
-        ...(typeof x.choice === 'string' && { choice: x.choice }),
-        decisions: (Array.isArray(x.decisions) ? x.decisions : []).filter((d) => typeof d?.text === 'string').map((d) => ({ text: d.text }))
-      }))
-    }))
+    return memos.filter((m) => ids.has(m.card)).map((m) => {
+      const out: ConsultMemo['returns'] = []
+      let left = SHOWN_DECISIONS
+      for (const x of [...m.returns].reverse()) {
+        if (left <= 0) break
+        const choice = typeof x.choice === 'string' && x.choice ? x.choice : undefined
+        if (choice) left--
+        const decisions = (Array.isArray(x.decisions) ? x.decisions : []).filter((d) => typeof d?.text === 'string' && d.text.trim()).slice(0, Math.max(left, 0)).map((d) => ({ text: d.text }))
+        left -= decisions.length
+        if (choice || decisions.length) out.unshift({ return_id: x.return_id, ...(choice && { choice }), decisions })
+      }
+      return { ...m, returns: out }
+    })
   }
 
   /** 窓に送る量を減らす。片付いて日のたったカードと、タスクの済んだ作業の記録は画面に出さない。 */
@@ -533,13 +540,11 @@ export function createServer(opts: Options) {
     await recordTalk(ws, c, { root: ws.root, item_id: card.id, item_rev: rev, type: 'talk', terminal })
   }
   async function recordTalk(ws: Ws, c: Cockpit, input: OpInput): Promise<void> {
-    const known = new Set(ws.files.log.ops.map((o) => o.op_id))
-    const log = await appendOp(ws.root, c, input)
+    const { log, added } = await appendOpOnce(ws.root, c, input)
     ws.files = { ...ws.files, log }
-    // 同じタブの記録が既にあれば追記は省かれる。省かれたときは合図も送らない。
-    const op = log.ops.at(-1)
-    if (!op || known.has(op.op_id) || op.type !== 'talk' || op.item_id !== input.item_id || op.terminal !== input.terminal) return
-    mine.add(`${ws.root}#${op.op_id}`)
+    // 同じ協議の記録が既にあれば追記は省かれる。省かれた呼び出しは合図を送らない。
+    if (!added) return
+    mine.add(`${ws.root}#${added.op_id}`)
     broadcast()
     void autoSignal(ws).then(broadcast, (e) => console.error(e))
   }

@@ -2,7 +2,7 @@
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
   COUNTED, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
-  type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
+  type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
 
@@ -89,8 +89,11 @@ export const isHot = (due: string | undefined, now: number) => !!due && !Number.
  * Orca から分かること。パネルは orchestration を読まないので dispatches が無い（タスクはメインの書いた state のまま）。null は Orca に無い。
  * current はタスクの id → 今の Dispatch（Run の Task の続きをたどった先）。無ければ worker の記録の dispatch_id（版 2）を使う。
  */
-/** terminals は Orca にある端末の handle（読めていなければ無い。カードの相談のタブの生死に使う）。 */
-export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string>; terminals?: string[] }
+/**
+ * terminals は Orca にある端末の handle（読めていなければ無い。カードの相談のタブの生死に使う）。terminalsPartial は一覧が上限で切れているかもしれない印で、
+ * そのときは一覧に無い handle を「閉じた」と言い切らない（一覧にある handle は生きていると使える）。
+ */
+export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean }
 
 /** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
 export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
@@ -153,7 +156,7 @@ export type RequestView = {
   /** 済の条件ごとに証拠があるか。 */
   covered: boolean[]
 }
-export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[] }
+export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[]; marks?: ReturnMark[] }
 /** 帳簿の不備を窓口に直させる猶予。過ぎても欠けたままなら、窓の要対応の上に「抜けている」として出す（R47）。 */
 export const GAP_GRACE_MS = 30 * 60_000
 
@@ -273,7 +276,7 @@ const CLOSED_DAYS = 14
 
 export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, facts: OrcaFacts | undefined, now: number, opts: DeriveOpts = {}): Derived {
   const terms = facts?.terminals && new Set(facts.terminals)
-  const views = overlay(c, log, archive, terms ? (t) => terms.has(t) : undefined)
+  const views = overlay(c, log, archive, terms ? (t) => terms.has(t) || !!facts?.terminalsPartial : undefined)
   const row = (v: CardView): Row => ({ ...v, root, ws: c.workspace.name, owner: ownerOf(c, v.card, facts), stream: c.streams.find((s) => s.id === v.card.stream) })
   const rows = views.map(row)
   const written = new Set(c.cards.filter((x) => x.kind === 'stuck' && x.state === 'open').flatMap((x) => [...(x.tasks ?? []), ...(x.stream ? [x.stream] : [])]))
@@ -501,10 +504,10 @@ export type Unreflected = { id: string; card: unknown; missing: ('判断の記�
  * 相談のメモにあって、判断の記録の from_return か帳簿のカード（片付けて移したものも）の from_returns のどちらかに無い返しと、
  * カードの held_returns に残る返し。compaction-keep.py の unreflected と同じ判定・同じ並び（window/state.test.ts で突き合わせる）。
  */
-export function unreflectedReturns(cards: Card[], rulings: Ruling[], memos: ConsultMemo[]): Unreflected[] {
-  const inRulings = new Set(rulings.map((r) => r.from_return))
+export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos: ConsultMemo[]): Unreflected[] {
+  const inRulings = new Set<unknown>(rulings.map((r) => r.from_return))
   const inLedger = new Set(cards.flatMap((x) => x.from_returns ?? []))
-  const held = new Map<string, string>()
+  const held = new Map<unknown, unknown>()
   for (const x of cards) for (const id of x.held_returns ?? []) held.set(id, x.id)
   const out: Unreflected[] = []
   for (const m of memos)
@@ -514,8 +517,8 @@ export function unreflectedReturns(cards: Card[], rulings: Ruling[], memos: Cons
     }
   // メモに書き損ねた返しでも、保留にしたものは相談が返し直すまで名指しする。
   const named = new Set(out.map((x) => x.id))
-  const rest = [...held].filter(([id]) => !named.has(id)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-  return [...out, ...rest.map(([id, card]): Unreflected => ({ id, card, missing: ['保留'], memo: null }))]
+  const rest = [...held].filter(([id]) => !named.has(id as string)).sort(([a], [b]) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
+  return [...out, ...rest.map(([id, card]): Unreflected => ({ id: id as string, card, missing: ['保留'], memo: null }))]
 }
 
 /** python の `x or 既定値` の偽（None・False・0・空の文字列・空の配列と辞書）。 */
@@ -600,7 +603,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       affected_tasks: (opts.rulings ?? []).flatMap((ru) => (ru.affects ?? [])
         .filter((id) => c.tasks.some((t) => t.id === id && !t.reviewed_for?.includes(ru.id)))
         .map((task) => ({ ruling: ru.id, task }))),
-      unreflected_returns: unreflectedReturns([...c.cards, ...archive], opts.rulings ?? [], opts.consults ?? []),
+      unreflected_returns: unreflectedReturns(opts.marks ?? [...c.cards, ...archive], opts.rulings ?? [], opts.consults ?? []),
       stale_consults: staleConsults(d.views, log, facts?.terminals)
     },
     overview: `全体: ${countsText(d.counts, d.total)}・話し中 ${d.talking.length}・顧客待ち ${d.waiting.length}・動いている worker ${running.length}${names(running.map((t) => t.task.title))}`,

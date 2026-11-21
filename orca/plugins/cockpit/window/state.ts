@@ -21,7 +21,7 @@ export async function orcaFacts(root: string, c: Cockpit, ps: () => Promise<PsRo
     // 失敗の理由（利用枠・ログイン切れ）は inbox にしかないので、失敗で止まったエージェントがいるときだけ読む（窓と同じ）。
     const fails = failures && rows.some((r) => r.agents.some((a) => a.mainAgent?.outcome === 'failure')) ? await failures().catch(() => ({})) : {}
     const agents = orcaAgents(root, rows, byPane, c, dispatches, current, fails).workers
-    return { facts: { workers: agents, dispatches, current, terminals: terms.length < TERMINAL_LIMIT ? terms.map((t) => t.handle) : undefined }, state: 'ok' }
+    return { facts: { workers: agents, dispatches, current, terminals: terms.map((t) => t.handle), terminalsPartial: terms.length >= TERMINAL_LIMIT }, state: 'ok' }
   } catch {
     return { state: 'error' }
   }
@@ -35,7 +35,7 @@ export async function stateOf(root: string, orca = orcaCli(process.env.COCKPIT_O
     orcaFacts(root, files.cockpit, orca.ps, orca.terminals, orca.show, { tasks: orca.runTasks, link: orca.taskLink }, orca.failures),
     orca.plugins().catch((): PluginRow[] | undefined => undefined)
   ])
-  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, firstSeen: files.firstSeen, rulings: files.rulings, consults: files.consults })
+  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, firstSeen: files.firstSeen, rulings: files.rulings, consults: files.consults, marks: files.marks })
 }
 
 if (import.meta.main) {

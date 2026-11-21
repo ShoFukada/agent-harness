@@ -450,7 +450,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       e.preventDefault()
       return void decide(sel)
     }
-    if (e.key === 't' && cur) return void talk(cur)
+    // 協議のボタンを出さない票（片付いた・顧客待ち）では、キーでも協議を始めない。
+    if (e.key === 't' && cur && cur.status !== 'closed' && cur.status !== 'waiting') return void talk(cur)
     if (e.key === 'u' && ui.undos.length) return onAct('undo', undefined, app)
   })
 
