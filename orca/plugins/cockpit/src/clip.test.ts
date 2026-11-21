@@ -93,6 +93,18 @@ test('コピーの書式: 操縦席から入れた中身は、同じ本文を cl
   }
 })
 
+test('コピーの書式: 期限が切れたら clip-draft が起こした swift ごと止め、あとからクリップボードに書かせない', { skip }, async () => {
+  const slow = path.join(dir, 'slow')
+  mkdirSync(slow)
+  writeFileSync(path.join(slow, 'swift'), '#!/bin/sh\nsleep 1\necho late > "$FAKE_SWIFT_OUT"\n')
+  chmodSync(path.join(slow, 'swift'), 0o755)
+  const out = path.join(dir, 'late.json')
+  const r = await clipDraft('本文', 'teams', { bin: BIN, pasteboard: PB, timeoutMs: 300, env: { ...process.env, PATH: `${slow}:${process.env.PATH}`, FAKE_SWIFT_OUT: out } })
+  assert.deepEqual(r, { copied: false, reason: 'clip-draft が時間内に終わりませんでした' })
+  await new Promise((res) => setTimeout(res, 1500))
+  assert.equal(existsSync(out), false)
+})
+
 test('コピーの書式: clip-draft が無い・失敗したときは入れたことにせず理由を返す', async () => {
   const r = await clipDraft('本文', 'teams', { bin: path.join(dir, 'missing') })
   assert.equal(r.copied, false)

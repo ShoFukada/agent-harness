@@ -101,8 +101,11 @@ test('送る文面の書式: format が先、無ければ経路、それでも�
   assert.equal(draftFormat({ ...d, via: 'メール（Gmail）' }), 'mail')
   assert.equal(draftFormat({ ...d, via: '顧客', href: 'https://teams.microsoft.com/l/message/1' }), 'teams')
   assert.equal(draftFormat({ ...d, href: 'mailto:mori@example.com' }), 'mail')
-  // リンクはホストだけを見る（Slack のパスに mail が入っていてもメールにしない）。
+  // リンクはホストを決まったドメインとそのサブドメインだけで見る（パスやほかのサービスの名前に mail が入っていてもメールにしない）。
   assert.equal(draftFormat({ ...d, href: 'https://example.com/mail/1' }), undefined)
+  assert.equal(draftFormat({ ...d, via: 'LINE', href: 'https://mailchimp.com/' }), undefined)
+  assert.equal(draftFormat({ ...d, href: 'https://acme.slack.com/archives/C1' }), 'slack')
+  assert.equal(draftFormat({ ...d, href: 'https://outlook.office.com/mail/inbox' }), 'mail')
   assert.equal(draftFormat({ ...d, via: 'LINE', href: 'not a url' }), undefined)
   // 形の違う format は読み込みで欄ごと外れる（帳簿の欄の形の違いに出る）。
   const c = structuredClone(sample()[0]!.cockpit)

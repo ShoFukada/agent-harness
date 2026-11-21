@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit } from './model.ts'
-import type { CockpitView } from './protocol.ts'
-import { copyMessage } from './controller.ts'
+import { parseCockpit, type DraftFormat } from './model.ts'
+import type { ClipResult, CockpitView } from './protocol.ts'
+import { copyDraft, copyMessage } from './controller.ts'
 import { boardsOf, dropRulings, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
 import { renderWindow, taskOrder, todoOrder } from './window-view.ts'
 
@@ -159,6 +159,44 @@ test('Codex v3 4・5: 属性の値の中の > でタグを切らず、コピー�
   assert.equal(tighten('<div title="x > 資料 A">文 A</div>'), '<div title="x > 資料 A">文A</div>')
   assert.match(page(aoba(), { sel: '/ws/aoba#d22' }), new RegExp(`data-act="sent"[^>]*>${SENT_LABEL}<`))
   assert.match(copyMessage({ opened: true }), new RegExp(`「${SENT_LABEL}」を押して`))
+})
+
+test('追加 20: コピーは素の文字列とスレッドを押したその場で始め、書式の決まる宛先だけ clip-draft で上書きする', async () => {
+  const run = async (d: Parameters<typeof copyDraft>[0], o: { clip?: ClipResult | Error; write?: Error } = {}) => {
+    const log: string[] = []
+    const said: string[] = []
+    const t = {
+      openUrl: async (url: string) => (log.push(`open ${url}`), { opened: true }),
+      clip: async (text: string, format: DraftFormat) => {
+        log.push(`clip ${format}`)
+        if (o.clip instanceof Error) throw o.clip
+        return o.clip ?? { copied: true }
+      }
+    }
+    const done = copyDraft(d, t, async (text) => {
+      log.push(`write ${text}`)
+      if (o.write) throw o.write
+    }, (x) => said.push(x))
+    // await の前に、素の文字列の書き込みとスレッドを開くのが始まっている。
+    const sync = [...log]
+    await done
+    return { sync, log, said }
+  }
+  const teams = await run({ to: 'a', via: 'Teams', text: '- **a**', href: 'https://teams.microsoft.com/l/1' })
+  assert.deepEqual(teams.sync, ['write - **a**', 'open https://teams.microsoft.com/l/1'])
+  assert.deepEqual(teams.log, [...teams.sync, 'clip teams'])
+  assert.match(teams.said.at(-1)!, /^本文をTeamsの書式でコピーし、スレッドを開きました/)
+  // 書式の決まらない宛先は clip-draft を呼ばない。
+  const line = await run({ to: 'a', via: 'LINE', text: 't', href: 'https://line.me/x' })
+  assert.deepEqual([line.sync, line.log, line.said], [['write t', 'open https://line.me/x'], ['write t', 'open https://line.me/x'], [copyMessage({ opened: true })]])
+  // clip-draft が失敗しても素の文字列は入っている。両方とも失敗したら、押し直しを促す。
+  const fallback = await run({ to: 'a', via: 'Slack', text: 't' }, { clip: new Error('pandoc が無い') })
+  assert.equal(fallback.said.at(-1), '本文を素の文字列でコピーしました。書式に直せませんでした: pandoc が無い')
+  const both = await run({ to: 'a', via: 'Slack', text: 't' }, { clip: { copied: false, reason: 'swift が無い' }, write: new Error('Document is not focused') })
+  assert.equal(both.said.at(-1), '本文をコピーできませんでした: swift が無い。もう一度押してください')
+  // 素の文字列を断られても、書式つきで入れば成功として知らせる。
+  const blocked = await run({ to: 'a', via: 'メール', text: '件名: x\n\n本文' }, { clip: { copied: true, subject: 'x' }, write: new Error('Document is not focused') })
+  assert.equal(blocked.said.at(-1), '本文をメールの書式でコピーしました。件名は「x」です（本文からは外しました）')
 })
 
 test('追加 20: コピーの知らせは宛先の書式・素の文字列に戻した理由・メールの件名を添える', () => {

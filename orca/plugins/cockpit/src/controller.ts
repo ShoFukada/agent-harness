@@ -1,5 +1,5 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
-import { draftFormat, OTHER, UNDO_GRACE_MS, type DraftFormat, type OpType } from './model.ts'
+import { draftFormat, OTHER, UNDO_GRACE_MS, type Draft, type DraftFormat, type OpType } from './model.ts'
 import { morph } from './morph.ts'
 import type { ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
@@ -41,6 +41,25 @@ export function copyMessage(res?: OpenResult, clip?: ClipResult & { format: Draf
     clip?.subject !== undefined && `件名は「${clip.subject}」です（本文からは外しました）`
   ].filter(Boolean)
   return [head, ...notes].join('。')
+}
+
+/**
+ * 送る文面をコピーし、元のスレッドを開く。素の文字列とスレッドは呼んだその場で始める（ブラウザは操作の外のクリップボードへの書き込みを、
+ * パネルは操作の外で外部のブラウザを開くのを断る）。書式の決まる宛先は、そのあと clip-draft が書式つきで上書きする。
+ * 押すたびに素の文字列から入れるので、失敗しても押し直せば写せる。
+ */
+export async function copyDraft(d: Draft | undefined, t: Pick<Transport, 'openUrl' | 'clip'>, write: (text: string) => Promise<void>, say: (text: string) => void): Promise<void> {
+  const format = d && draftFormat(d)
+  const plain = write(d?.text ?? '').then(() => undefined, (e: Error) => e)
+  const opening = d?.href ? t.openUrl(d.href).catch((e: Error): OpenResult => ({ opened: false, reason: e.message })) : undefined
+  const plainError = await plain
+  let clip: (ClipResult & { format: DraftFormat }) | undefined
+  if (d && format) {
+    say(`本文を${FORMAT_LABEL[format]}の書式に直しています`)
+    clip = { ...(await t.clip(d.text, format).catch((e: Error): ClipResult => ({ copied: false, reason: e.message }))), format }
+  }
+  if (plainError && !clip?.copied) return say(`本文をコピーできませんでした: ${clip?.reason ?? plainError.message}。もう一度押してください`)
+  say(copyMessage(await opening, clip))
 }
 
 const focusResult = (x: FocusResult, title: string): TalkResult =>
@@ -184,25 +203,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
   }
 
-  async function copy(r: VRow): Promise<void> {
-    const d = r.card.draft
-    const format = d && draftFormat(d)
-    try {
-      if (!d || !format) {
-        await navigator.clipboard.writeText(d?.text ?? '')
-        return toast(copyMessage(d?.href ? await t.openUrl(d.href) : undefined))
-      }
-      // 宛先の書式（Teams の HTML など）は clip-draft が入れる。スレッドはクリックの中で開き始める（パネルは操作の外で外部のブラウザを開けない）。
-      toast(`本文を${FORMAT_LABEL[format]}の書式に直しています`)
-      const opening = d.href ? t.openUrl(d.href) : undefined
-      const clip = await t.clip(d.text, format).catch((e: Error): ClipResult => ({ copied: false, reason: e.message }))
-      // 素の文字列で写し直す。スレッドが前に出て窓が前面でなくなると、ブラウザは書き込みを断る。そのときは clip-draft の理由を出す。
-      if (!clip.copied) await navigator.clipboard.writeText(d.text).catch(() => Promise.reject(new Error(clip.reason ?? '書式に直せませんでした')))
-      toast(copyMessage(await opening, { ...clip, format }))
-    } catch (e) {
-      fail(e)
-    }
-  }
+  const copy = (r: VRow) => copyDraft(r.card.draft, t, (text) => navigator.clipboard.writeText(text), toast)
 
   async function decide(r: VRow): Promise<void> {
     const k = keyOf(r)

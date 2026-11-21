@@ -89,22 +89,27 @@ export type DraftFormat = 'slack' | 'teams' | 'mail'
 export const DRAFT_FORMATS: DraftFormat[] = ['slack', 'teams', 'mail']
 export type Draft = { to: string; via?: string; text: string; href?: string; format?: DraftFormat }
 
+/** 元のスレッドのホスト（そのサブドメインも）→ 書式。部分一致にすると mailchimp.com のような別のサービスをメールと取り違える。 */
+const FORMAT_HOSTS: [string, DraftFormat][] = [
+  ['slack.com', 'slack'], ['teams.microsoft.com', 'teams'], ['teams.live.com', 'teams'],
+  ['mail.google.com', 'mail'], ['outlook.office.com', 'mail'], ['outlook.office365.com', 'mail'], ['outlook.live.com', 'mail']
+]
+
 /** 貼る先の書式。format が無ければ経路（via）、それでも決まらなければ元のスレッドのリンクから決める。決まらなければ素の文字列で写す。 */
 export function draftFormat(d: Draft): DraftFormat | undefined {
   if (d.format) return d.format
-  let host = ''
+  const via = d.via ?? ''
+  if (/slack/i.test(via)) return 'slack'
+  if (/teams/i.test(via)) return 'teams'
+  if (/メール|mail|outlook/i.test(via)) return 'mail'
+  let u: URL
   try {
-    const u = new URL(d.href ?? '')
-    host = u.protocol === 'mailto:' ? 'mail' : u.hostname
+    u = new URL(d.href ?? '')
   } catch {
-    // リンクが無いか読めないときは経路だけで決める。
+    return undefined
   }
-  for (const s of [d.via ?? '', host]) {
-    if (/slack/i.test(s)) return 'slack'
-    if (/teams/i.test(s)) return 'teams'
-    if (/メール|mail|outlook/i.test(s)) return 'mail'
-  }
-  return undefined
+  if (u.protocol === 'mailto:') return 'mail'
+  return FORMAT_HOSTS.find(([h]) => u.hostname === h || u.hostname.endsWith(`.${h}`))?.[1]
 }
 
 export type Card = {
