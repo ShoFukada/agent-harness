@@ -5,7 +5,7 @@ import type { CockpitView } from './protocol.ts'
 const ctl = mount(
   {
     op: (input) => orca.plugin.request('cockpit.op', input),
-    talk: (_root, item_id) => orca.plugin.request('cockpit.talk', { item_id }),
+    talk: (root, item_id, item_rev) => orca.plugin.request('cockpit.talk', { root, item_id, item_rev }),
     notify: () => orca.plugin.request('cockpit.notify'),
     open: (_root, path) => orca.plugin.request('cockpit.open', { path }),
     // 押した操作の中で呼ぶ（Orca はクリックやキー操作の中でしか外部のブラウザを開かせない）。初めてのホストは Orca が確かめる。

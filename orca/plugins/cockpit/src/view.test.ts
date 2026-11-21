@@ -136,3 +136,13 @@ test('担当に貼る書き出しは、カードの id・種類・題・何の�
   const r = b.d.queue.find((x) => x.card.id === 'd21')!
   assert.equal(preface(r), '【操縦席 d21・決める】構成案の本番の図に、社内向けの入口を描き足すか\n何のため: 構成案の図が決まり、送る版を作れる\nこの件で: ')
 })
+
+test('片付いた票を開いても片付ける操作は出さない。版 1 のままの案件は「見ていない」に理由つきで出す', () => {
+  const vs = views()
+  vs[0]!.log.ops.push({ op_id: 2, at: new Date(NOW).toISOString(), item_id: 'r5', item_rev: 1, type: 'accept' })
+  const h = html(model({}, vs), { ...newUi(), sel: '/ws/aoba#r5' })
+  const strip = h.slice(h.indexOf('data-strip="/ws/aoba#r5"'))
+  assert.ok(!/data-act="accept"/.test(strip.slice(0, strip.indexOf('</article>'))))
+  const t = text(html(model({ unseen: [{ name: 'old', path: '/ws/old', why: 'cockpit.json を読めません: 版 1 です' }] }, [])))
+  assert.match(t, /私の番はありません。ただし見ていないものがあります old: cockpit.json を読めません: 版 1 です/)
+})

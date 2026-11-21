@@ -10,7 +10,8 @@ export type Board = { root: string; v: CockpitView; d: Derived }
 export type Model = {
   boards: Board[]
   focused?: string
-  unseen: { name: string; path: string }[]
+  /** 見ていない本線。why があれば操縦席はあるが読めない（版 1 のままなど）。 */
+  unseen: { name: string; path: string; why?: string }[]
   live?: number
   errors: string[]
   /** パネル（Orca の右のサイドバー、前面の案件 1 つ）。 */
@@ -271,6 +272,8 @@ function actsHtml(r: Row, ui: Ui): string {
     case 'talk': btns = [talk('続きを話す')]; break
     case 'report': btns = [b('ack', '読んだ', 'pri'), talk()]; break
   }
+  // 片付いた・顧客待ちの票には、片付ける操作を出さない（開いて読み返すだけ）。
+  if (r.status === 'closed' || r.status === 'waiting') btns = btns.filter((x) => x.includes('data-act="url"'))
   if (r.status !== 'mine' && c.kind !== 'talk') btns = btns.filter((x) => !x.includes('data-act="talk"')).concat(talk('続きを話す'))
   const hint = c.options?.length ? '<span class="hint"><kbd>1</kbd>〜<kbd>9</kbd> で選び <kbd>Enter</kbd></span>' : ''
   return `<div class="acts">${btns.join('')}${hint}</div>`
@@ -338,7 +341,7 @@ function casesHtml(m: Model, ui: Ui, now: number): string {
   const routes = m.boards.flatMap((b) => (b.v.cockpit?.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x).map((x) => `${b.v.cockpit!.workspace.name}: ${x}`))
   const unseen = m.unseen.length || routes.length
     ? `<details class="unseen"><summary>見ていない ${m.unseen.length + routes.length}</summary><ul>${[
-        ...m.unseen.map((u) => `<li>操縦席の無い案件: ${esc(u.name)}</li>`),
+        ...m.unseen.map((u) => `<li>${u.why ? `${esc(u.name)}: ${esc(u.why)}` : `操縦席の無い案件: ${esc(u.name)}`}</li>`),
         ...routes.map((x) => `<li>${esc(x)}</li>`)
       ].join('')}</ul></details>`
     : ''
@@ -378,7 +381,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const inbox = shown.reduce((n, b) => n + b.d.counts.inbox, 0)
   const routes = m.boards.flatMap((b) => (b.v.cockpit?.routes ?? []).filter((r) => routeProblem(r, now)))
-  const unseenCount = (m.panel ? 0 : m.unseen.length) + routes.length
+  const unseenCount = m.unseen.length + routes.length
   const signal = m.panel ? signalHtml(shown[0]?.v) : ''
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
@@ -407,11 +410,11 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
     .map((u) => `<div class="toast undo" role="status"><span>${esc(u.text)}。担当に届けます</span><button type="button" data-act="undo" data-op="${u.opId}" data-root="${esc(u.root)}">元に戻す（${Math.max(1, Math.ceil((u.until - now) / 1000))}）</button></div>`)
     .join('')
   const toast = msg || undo ? `<div class="toasts">${msg}${undo}</div>` : ''
-  const empty = !m.boards.length
+  const empty = !m.boards.length && !m.unseen.length
     ? `<div class="calm${m.panel ? '' : ' warn'}"><b>${m.panel ? 'この案件には操縦席がありません' : '操縦席のある案件がありません'}</b><p>メインに「操縦席を作って」と頼むと、ここに私の番が並びます。</p></div>`
     : queueHtml(queue, m, ui, now, svg, [
         ...shown.flatMap((b) => (b.v.cockpit?.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x)),
-        ...(m.panel || ui.filter ? [] : m.unseen.map((u) => `${u.name}: 操縦席がない`))
+        ...(ui.filter ? [] : m.unseen.map((u) => `${u.name}: ${u.why ?? '操縦席がない'}`))
       ], showWs)
   return `<div class="ck" data-theme="${ui.dark ? 'dark' : 'light'}">${top}
     ${paneSwitch(ui, total, sideCount)}

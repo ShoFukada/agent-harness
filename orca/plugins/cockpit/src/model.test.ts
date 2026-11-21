@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { nextOp, overlay, parseCockpit, shownTask, taskOfWorker, unappliedOps, type Cockpit, type Op, type UserLog } from './model.ts'
-import { SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
+import { appendOp, SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
@@ -129,4 +129,22 @@ test('worker の記録があるタスクは Orca の状態から、外の相手�
   assert.deepEqual(shownTask(t, [], false), { state: 'stop', why: 'missing' })
   assert.deepEqual(shownTask(t, [], undefined), { state: 'idle', why: 'record' })
   assert.deepEqual(shownTask({ ...t, state: 'wait' }, [{ state: 'working' }], true), { state: 'wait', why: 'record' })
+})
+
+test('操作は押した瞬間のファイルで確かめる: 画面が古くても書き換え後の版には記録せず、片付いたカードと版 1 のファイルにも記録しない', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-append-'))
+  mkdirSync(path.join(root, '.orca'))
+  const shown = aoba()
+  const onDisk = aoba()
+  onDisk.cards.find((x) => x.id === 'r5')!.rev = 2
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(onDisk))
+  await assert.rejects(appendOp(root, shown, { root, item_id: 'r5', item_rev: 1, type: 'accept' }), /担当が書き換えました/)
+  await assert.rejects(appendOp(root, shown, { root, item_id: 'd19', item_rev: 1, type: 'decide', option_id: 'a' }), /もう片付いています/)
+  // 決めて受け取り待ちのカードに、もう一度決める操作を重ねない。
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify({ ...shown, applied_ops: [] }))
+  await appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' })
+  await assert.rejects(appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }), /もう片付いています/)
+  await assert.rejects(appendOp(root, shown, { root, item_id: 'w1', item_rev: 2, type: 'sent' }), /もう片付いています/)
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify({ workspace: { name: 'x' }, streams: [], tasks: [], items: [] }))
+  await assert.rejects(appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'talk' }), /migrate\.ts/)
 })

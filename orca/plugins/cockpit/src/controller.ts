@@ -59,7 +59,11 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       for (const k of ['queue', 'talking', 'waiting', 'reports', 'closed'] as const) for (const r of b.d[k]) rows.set(keyOf(r), { ...r, v: b.v })
     const shown = ui.filter ? boards.filter((b) => b.root === ui.filter) : boards
     order = shown.flatMap((b) => b.d.queue.map((r) => ({ ...r, v: b.v }))).sort(byUrgency).map(keyOf)
-    return { boards, focused: feed.focused, unseen: feed.unseen ?? [], live: feed.live, errors: feed.errors ?? [], panel: opts.panel }
+    // 操縦席はあるが読めない案件（版 1 のまま・壊れた JSON）は、黙って外さず「見ていない」に理由つきで出す。
+    const unreadable = feed.views
+      .filter((v) => v.root && !v.cockpit && v.state === 'ok')
+      .map((v) => ({ name: v.root!.split('/').pop() ?? v.root!, path: v.root!, why: v.errors[0] ?? '操縦席が読めません' }))
+    return { boards, focused: feed.focused, unseen: [...(feed.unseen ?? []), ...unreadable], live: feed.live, errors: feed.errors ?? [], panel: opts.panel }
   }
 
   function draw(): void {
@@ -273,7 +277,9 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       return draw()
     }
     if (typing) return
-    const sel = ui.sel ? rows.get(ui.sel) : undefined
+    // 片付いた・顧客待ちの票は読み返すだけ。キーで選んだり決めたりしない。
+    const cur = ui.sel ? rows.get(ui.sel) : undefined
+    const sel = cur && (cur.status === 'mine' || cur.status === 'talking') ? cur : undefined
     if (e.key === 'j' || e.key === 'k') {
       if (!order.length) return
       const i = ui.sel ? order.indexOf(ui.sel) : -1
@@ -292,7 +298,7 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       e.preventDefault()
       return void decide(sel)
     }
-    if (e.key === 't' && sel) return void talk(sel)
+    if (e.key === 't' && cur) return void talk(cur)
     if (e.key === 'u' && ui.undos.length) return onAct('undo', undefined, app)
   })
 

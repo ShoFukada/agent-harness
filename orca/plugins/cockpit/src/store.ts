@@ -2,7 +2,7 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  KIND_LABEL, OTHER, nextOp, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
+  KIND_LABEL, OTHER, nextOp, overlay, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
   type Card, type Cockpit, type Op, type UserLog
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
@@ -106,25 +106,14 @@ export function appendOp(root: string, cockpit: Cockpit | undefined, input: OpIn
   return run
 }
 
-async function write(root: string, cockpit: Cockpit | undefined, { root: _root, ...input }: OpInput): Promise<UserLog> {
-  if (!cockpit) throw conflict('操縦席がありません')
-  const invalid = (msg: string) => Object.assign(new Error(msg), { code: 'invalid_params' })
-  const card = cockpit.cards.find((c) => c.id === input.item_id)
-  if (!card) throw invalid(`カード ${input.item_id} がありません`)
-  // 担当が書き換えたあとの古い画面で押した操作は、新しい版に効かせない。
-  if (input.type !== 'undo' && card.rev !== input.item_rev) throw conflict(`「${card.title}」は担当が書き換えました。読み直してからもう一度押してください`)
-  const bad = textError(input.text)
-  if (bad) throw invalid(bad)
-  if (input.type === 'decide' && input.option_id === OTHER && !input.text?.trim()) throw invalid('別の答えを書いてください')
-  if (input.type === 'decide' && input.option_id !== OTHER && !card.options?.some((o) => o.id === input.option_id))
-    throw invalid(`${KIND_LABEL[card.kind]}「${card.title}」に選択肢 ${String(input.option_id)} がありません`)
-  if (input.type === 'revert' && (input.target === undefined || !card.done?.[input.target])) throw invalid('戻す項目がありません')
-  if (input.type === 'undo' && input.undo_of === undefined) throw invalid('取り消す操作がありません')
-  const release = await lock(path.join(root, '.orca', 'cockpit.user.json.lock'))
+async function write(root: string, _shown: Cockpit | undefined, { root: _root, ...input }: OpInput): Promise<UserLog> {
+  const release = await lockLog(root)
   try {
-    // 押した瞬間のファイルに追記する（メインが書き換えた直後でも操作を失わない）。
+    // 画面が持つ中身は古いことがある（窓口が書き換えた直後・版 1 に戻した直後）。押した瞬間のファイルで確かめる。
+    const cockpit = await readCockpit(root)
     const text = await readInOrca(root, '.orca/cockpit.user.json')
     const log = text === undefined ? { ops: [] } : parseUserLog(text)
+    check(cockpit, log, input)
     log.ops.push(nextOp(log, { at: new Date().toISOString(), ...input }))
     await writeAtomic(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify(log, null, 2) + '\n')
     return log
@@ -132,6 +121,40 @@ async function write(root: string, cockpit: Cockpit | undefined, { root: _root, 
     await release()
   }
 }
+
+async function readCockpit(root: string): Promise<Cockpit> {
+  const text = await readInOrca(root, '.orca/cockpit.json')
+  if (text === undefined) throw conflict('操縦席がありません')
+  try {
+    return parseCockpit(text)
+  } catch (e) {
+    throw conflict((e as Error).message)
+  }
+}
+
+/** 片付ける操作。取り消し・戻して・担当と話すは、片付いたカードにも受ける。 */
+const CLOSING = new Set(['decide', 'accept', 'sent', 'skip', 'delegate', 'ack'])
+
+function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): void {
+  const invalid = (msg: string) => Object.assign(new Error(msg), { code: 'invalid_params' })
+  const card = cockpit.cards.find((c) => c.id === input.item_id)
+  if (!card) throw invalid(`カード ${input.item_id} がありません`)
+  // 担当が書き換えたあとの古い画面で押した操作は、新しい版に効かせない。
+  if (input.type !== 'undo' && card.rev !== input.item_rev) throw conflict(`「${card.title}」は担当が書き換えました。読み直してからもう一度押してください`)
+  // 片付いた・顧客待ち・決めて受け取り待ちのカードに、もう一度片付ける操作を重ねない（ログと状態が食い違うため）。
+  const status = overlay(cockpit, log).find((v) => v.card.id === card.id)?.status
+  if (CLOSING.has(input.type) && (status === 'closed' || status === 'waiting')) throw conflict(`「${card.title}」はもう片付いています`)
+  const bad = textError(input.text)
+  if (bad) throw invalid(bad)
+  if (input.type === 'decide' && input.option_id === OTHER && !input.text?.trim()) throw invalid('別の答えを書いてください')
+  if (input.type === 'decide' && input.option_id !== OTHER && !card.options?.some((o) => o.id === input.option_id))
+    throw invalid(`${KIND_LABEL[card.kind]}「${card.title}」に選択肢 ${String(input.option_id)} がありません`)
+  if (input.type === 'revert' && (input.target === undefined || !card.done?.[input.target])) throw invalid('戻す項目がありません')
+  if (input.type === 'undo' && input.undo_of === undefined) throw invalid('取り消す操作がありません')
+}
+
+/** cockpit.user.json への追記と、移し替え（window/migrate.ts）が同じロックを取る。 */
+export const lockLog = (root: string) => lock(path.join(root, '.orca', 'cockpit.user.json.lock'))
 
 /**
  * パネルの worker と窓の常駐のプロセスは別のプロセスなので、同じログへの追記をロックファイルで 1 つずつにする

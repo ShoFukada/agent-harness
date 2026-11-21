@@ -57,7 +57,7 @@ export type WindowView = {
   /** 操縦席のある案件の全部。 */
   boards: CockpitView[]
   /** Orca にあって操縦席の無い案件（見ていない案件）。 */
-  unseen: { name: string; path: string }[]
+  unseen: { name: string; path: string; why?: string }[]
   /** プロセスが生きているエージェントの総数。 */
   live: number
   /** Orca に繋がらないなど、窓全体の 1 行の知らせ。 */
@@ -73,7 +73,8 @@ declare module 'orca' {
     'cockpit.open': { input: { path: string }; output: { opened: boolean } }
     'cockpit.focus': { input: { terminalId: string }; output: { focused: boolean } }
     /** カードの担当を開く（担当の端末を前に出す。チャットの担当はワークスペースを開く）。 */
-    'cockpit.talk': { input: { item_id: string }; output: TalkResult }
+    /** root と item_rev は画面が表示していたもの。前面が変わったあと・担当が書き換えたあとの要求は断る。 */
+    'cockpit.talk': { input: { root: string; item_id: string; item_rev: number }; output: TalkResult }
   }
   interface PluginPanelEvents {
     'cockpit.changed': CockpitView

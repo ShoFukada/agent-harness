@@ -150,7 +150,8 @@ export type Card = {
   resolved_text?: string
 }
 
-export type Request = { id: string; at: string; title: string; quote: string; state: 'open' | 'done'; tasks?: string[] }
+/** deliverables は版 1 から写した成果物の記録。画面は読まない。 */
+export type Request = { id: string; at: string; title: string; quote: string; state: 'open' | 'done'; tasks?: string[]; deliverables?: unknown[] }
 
 export type Cockpit = {
   version: 2

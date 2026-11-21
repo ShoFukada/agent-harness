@@ -80,7 +80,8 @@ export function migrate(v1: V1): Cockpit {
   return {
     ...rest,
     version: VERSION,
-    requests: requests?.map(({ deliverables: _d, ...r }) => r),
+    // 成果物はカードに写したうえで依頼にも残す（項目から指されていない成果物を落とさないため）。
+    requests,
     cards: items.map((i) => migrateItem(i, v1))
   } as Cockpit
 }

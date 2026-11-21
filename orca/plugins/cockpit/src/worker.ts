@@ -239,11 +239,14 @@ export default function activate(api: OrcaWorkerApi): void {
     await orca.host.call('editor.open', target)
     return { opened: true }
   })
-  orca.panels.handle('cockpit.talk', async ({ item_id }) => {
+  orca.panels.handle('cockpit.talk', async ({ root, item_id, item_rev }) => {
     await ensure()
     const st = s
+    const conflict = (msg: string) => Object.assign(new Error(msg), { code: 'conflict' })
+    if (st.root !== root) throw conflict('表示中のワークスペースが変わりました。もう一度押してください')
     const card = st.cockpit?.cards.find((c) => c.id === item_id)
-    if (!st.root || !st.cockpit || !card) throw Object.assign(new Error('カードが見つかりません'), { code: 'conflict' })
+    if (!st.root || !st.cockpit || !card) throw conflict('カードが見つかりません')
+    if (card.rev !== item_rev) throw conflict(`「${card.title}」は担当が書き換えました。読み直してからもう一度押してください`)
     const talked = st.log.ops.some((o) => o.type === 'talk' && o.item_id === card.id && o.item_rev === card.rev)
     if (card.state === 'open' && card.kind !== 'talk' && card.kind !== 'report' && !talked) {
       st.log = await appendOp(st.root, st.cockpit, { root: st.root, item_id: card.id, item_rev: card.rev, type: 'talk' })
