@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""Orca が作った worker・担当の worktree のうち、取り込み済みで使い終わったものを見つけて片付ける。
+
+worktree-flow skill の決まりでは、メインが取り込んだその場で worktree を消す。この見回りは、そこで取りこぼしたものを拾う 2 段目。
+launchd が毎晩 --apply で起こす。Orca は終わった worker の端末を閉じるが worktree は消さないので、Orca の外に置く。モデルは呼ばない。
+既定は一覧を出すだけ。--apply で「消してよい」だけを消す。人が決めるもの（判断が要る）は JSON にも書き、メインの hook が読む。
+"""
+
+import argparse
+import filecmp
+import json
+import os
+import subprocess
+import sys
+import time
+
+HOME = os.environ.get("WORKTREE_SWEEP_HOME") or os.path.expanduser("~/Library/Application Support/worktree-sweep")
+IDLE_MS = 24 * 3600_000
+# Task が終わったことを表す dispatch の state。これ以外（ready など）は担当や worker がまだその worktree を使っている。
+DISPATCH_DONE = {"succeeded", "failed", "abandoned", "cancelled", "canceled"}
+REMOVE, DECIDE, KEEP = "消してよい", "判断が要る", "触らない"
+# worktree を作るときにルートから写されるファイル。ルートと中身が同じなら作業の跡ではない。
+COPIED = {"CLAUDE.local.md", ".claude/settings.local.json"}
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+def orca(*args, env=None):
+    """(result, エラーの 1 行)。"""
+    try:
+        r = subprocess.run([os.environ.get("ORCA_CLI_COMMAND") or "orca"] + list(args) + ["--json"],
+                           capture_output=True, text=True, timeout=120, env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        return None, " ".join((r.stderr or r.stdout or "出力なし").split())[:160]
+    if not d.get("ok"):
+        return None, ((d.get("error") or {}).get("message") or "ok でない")[:160]
+    return d.get("result") or {}, None
+
+
+def real(path):
+    return os.path.realpath(path).rstrip("/")
+
+
+def live_dispatch_paths():
+    """担当や worker の dispatch がまだ生きている worktree の実体パスの集合。読めなければ None。
+    端末に紐づいた Run があると一覧がその Run に絞られるので、端末の印を外して全部の Run を読む。"""
+    env = {k: v for k, v in os.environ.items() if k not in ("ORCA_TERMINAL_HANDLE", "ORCA_PANE_KEY", "ORCA_AGENT_PANE")}
+    paths, cursor = set(), None
+    while True:
+        res, err = orca("orchestration", "worker-list", "--limit", "100", *(["--cursor", cursor] if cursor else []), env=env)
+        if res is None or (res.get("scope") or {}).get("source") != "all":
+            return None
+        for w in res.get("workers") or []:
+            if w.get("state") not in DISPATCH_DONE or w.get("liveness") == "live":
+                ws = (w.get("workspace") or "").split("::", 1)[-1]
+                paths |= {ws.rstrip("/"), real(ws)}
+        cursor = res.get("nextCursor")
+        if not cursor:
+            return paths
+
+
+def dev_plugin_sources():
+    """開発用に読み込んだ Orca のプラグインの読み込み元。登録のパスと実体のパスの両方を返す（どちらかが worktree の下なら守る）。読めなければ None。"""
+    res, _ = orca("plugin", "list")
+    if res is None:
+        return None
+    refs = [(p.get("source") or {}).get("reference") or "/" for p in res.get("plugins") or [] if p.get("isDev")]
+    return sorted({r.rstrip("/") for r in refs} | {real(r) for r in refs})
+
+
+def git(path, *args):
+    return subprocess.run(["git", "-C", path] + list(args), capture_output=True, text=True)
+
+
+def failed(r, what):
+    return "git %s が通らない（%s）" % (what, " ".join(r.stderr.split())[:120])
+
+
+def short_branch(ref):
+    ref = ref or ""
+    return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+
+
+def same_file(a, b):
+    """a が b の写し（別の実体で中身が同じ通常ファイル）か。b が a を指すリンクなら写しではない。"""
+    return all(os.path.isfile(x) and not os.path.islink(x) for x in (a, b)) and not os.path.samefile(a, b) \
+        and filecmp.cmp(a, b, shallow=False)
+
+
+def entries(out):
+    """git status --porcelain -z の 1 件ずつ。改名とコピーの元のパスは飛ばす。"""
+    parts, out_ = out.split("\0"), []
+    i = 0
+    while i < len(parts):
+        if parts[i]:
+            out_.append(parts[i])
+            i += 1 if not parts[i].startswith("## ") and set(parts[i][:2]) & {"R", "C"} else 0
+        i += 1
+    return out_
+
+
+def cache(path, rel):
+    """rel が、中身が「*」だけの .gitignore を置いたディレクトリ（.pytest_cache・.husky/_ など道具が作り直す置き場）の下にあるか。"""
+    d = os.path.dirname(rel)
+    while d:
+        try:
+            with open(os.path.join(path, d, ".gitignore"), encoding="utf-8") as fh:
+                if [l.strip() for l in fh if l.strip() and not l.startswith("#")] == ["*"]:
+                    return True
+        except (OSError, UnicodeDecodeError):
+            pass
+        d = os.path.dirname(d)
+    return False
+
+
+def inspect(row, root):
+    """未 commit・default に無い commit などの残っている理由の一覧と、ルートの写しの未追跡ファイルの一覧を返す。"""
+    path, reasons, copies = row["path"], [], []
+    st = git(path, "status", "--porcelain", "-z", "--branch", "--untracked-files=all")
+    if st.returncode != 0:
+        return [failed(st, "status")], []
+    dirty = 0
+    for line in entries(st.stdout):
+        rel = line[3:]
+        if line.startswith("## "):
+            head = line[3:].split("...", 1)[0]
+            if head.startswith("HEAD (no branch)"):
+                reasons.append("detached HEAD（その commit を指すブランチが無い）")
+            elif head != short_branch(row.get("branch")):
+                reasons.append("Orca の記録のブランチ %s と実際のブランチ %s が違う" % (short_branch(row.get("branch")), head))
+        elif line.startswith("?? ") and rel in COPIED and root and same_file(os.path.join(path, rel), os.path.join(root, rel)):
+            copies.append(rel)
+        else:
+            dirty += 1
+    if dirty:
+        reasons.append("未 commit のファイル %d 件" % dirty)
+    # git の外の .env などは worktree と一緒に消えて戻せない（2026-11-21 に local-dev の worktree の .env がルートと違っていた）。
+    # 無視の規則に当たったディレクトリ（node_modules・.venv など）は作り直せるので見ない。
+    # matching にするのは、未追跡のディレクトリの中の無視されたファイル（config/.env）が config/ に畳まれないようにするため。
+    ig = git(path, "status", "--porcelain", "-z", "--ignored=matching", "--untracked-files=all")
+    if ig.returncode != 0:
+        return reasons + [failed(ig, "status --ignored")], copies
+    own = [l[3:] for l in entries(ig.stdout) if l.startswith("!! ") and not l.endswith("/")
+           and os.path.basename(l[3:]) != ".DS_Store" and not cache(path, l[3:])
+           and not (root and same_file(os.path.join(path, l[3:]), os.path.join(root, l[3:])))]
+    if own:
+        reasons.append("gitignore されたファイルがルートと違うかルートに無い（%s%s）" % ("、".join(own[:3]), "、ほか" if len(own) > 3 else ""))
+    r = git(path, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    base = r.stdout.strip()[len("refs/remotes/origin/"):] if r.returncode == 0 and r.stdout.startswith("refs/remotes/origin/") else ""
+    if not base:
+        return reasons + ["default ブランチを決められない（origin/HEAD が無い）"], copies
+    # ローカルの default と origin の default のどちらか一方に全部入っていれば入っている扱いにする（PR でマージして pull 前の場合）。
+    # 2 つに分かれて入っているものは、どちらにもそろっていないので入っていない扱い。タグと取り違えないよう完全な ref で比べる。
+    # git cherry はマージコミットを並べないので、比較先から届かないマージコミット（競合の解決などを含みうる）は別に数える。
+    found = None
+    for upstream in ("refs/heads/" + base, "refs/remotes/origin/" + base):
+        if git(path, "rev-parse", "--verify", "--quiet", upstream).returncode != 0:
+            continue
+        c, m = git(path, "cherry", "-v", upstream, "HEAD"), git(path, "rev-list", "--merges", upstream + "..HEAD")
+        if c.returncode != 0 or m.returncode != 0:
+            return reasons + [failed(c if c.returncode else m, "cherry")], copies
+        plus, merges = [l[2:] for l in c.stdout.splitlines() if not l.startswith("- ")], m.stdout.split()
+        if found is None or not (plus or merges):
+            found = (plus, merges)
+    if found is None:
+        return reasons + ["%s と比べられない（ローカルにも origin にも無い）" % base], copies
+    plus, merges = found
+    if plus:
+        reasons.append("%s に無い commit %d 件（%s%s。squash で入れたものもここに出る）" % (
+            base, len(plus), "、".join(c[:7] + c[40:][:40] for c in plus[:3]), "、ほか" if len(plus) > 3 else ""))
+    if merges:
+        reasons.append("%s に無いマージコミット %d 件（%s）" % (base, len(merges), "、".join(c[:7] for c in merges[:3])))
+    return reasons, copies
+
+
+def same_branch_count(path, branch):
+    """git が知っている全部の worktree（Orca の一覧の外を含む）のうち、branch を checkout しているものの数。読めなければ None。"""
+    r = git(path, "worktree", "list", "--porcelain")
+    return r.stdout.splitlines().count("branch refs/heads/" + branch) if r.returncode == 0 else None
+
+
+def idle_ms(row, now):
+    last = row.get("lastActivityAt") or 0
+    if not last:
+        ct = git(row["path"], "log", "-1", "--format=%ct").stdout.strip()
+        last = int(ct) * 1000 if ct.isdigit() else 0
+    return now - last
+
+
+def classify(rows, under, live, plugins, now, only=None):
+    """Orca が under の下に作った worktree を (分類, 行, 理由, ルートの写しの一覧) に分ける。only を渡すとそのパスだけを調べる。"""
+    under = real(under) + "/"
+    roots = {r.get("repoId"): r["path"] for r in rows if r.get("isMainWorktree") and r.get("path")}
+    seen = {}
+    for r in rows:  # 取り違えは、ルートと under の外を含む Orca の全部の行で数える
+        for key in (("path", real(r.get("path") or "/")), ("branch", r.get("repoId"), short_branch(r.get("branch")))):
+            seen[key] = seen.get(key, 0) + 1
+    targets = [r for r in rows if r.get("path") and real(r["path"]).startswith(under) and not r.get("isMainWorktree")
+               and r.get("workspaceKind", "git") == "git" and r.get("hostId", "local") == "local"
+               and (only is None or r["path"] == only)]
+    out = []
+    for r in sorted(targets, key=lambda r: r["path"]):
+        path, branch = real(r["path"]), short_branch(r.get("branch"))
+        forms = {path, r["path"].rstrip("/")}  # 一覧の側の登録のパスと実体のパスのどちらで書かれていても当てる
+        agents = r.get("agents") or []
+        if any(a.get("state") == "working" for a in agents):
+            out.append((KEEP, r, ["作業中のエージェントがいる"], []))
+            continue
+        if r.get("workspaceStatus") == "completed":
+            out.append((KEEP, r, ["completed（残すと印を付けた）"], []))
+            continue
+        if live is not None and forms & live:
+            out.append((KEEP, r, ["担当か worker の dispatch が生きている"], []))
+            continue
+        src = [s for s in plugins or [] if any(s == f or s.startswith(f + "/") for f in forms)]
+        if src:
+            out.append((KEEP, r, ["開発用プラグインの読み込み元（%s）" % "、".join(src)], []))
+            continue
+        reasons, copies = inspect(r, roots.get(r.get("repoId")))
+        twins = same_branch_count(r["path"], branch) if branch else 1
+        if seen[("path", path)] > 1 or seen[("branch", r.get("repoId"), branch)] > 1 or twins != 1:
+            reasons.insert(0, "同じリポジトリに同じブランチかパスの worktree が 2 つ以上ある、または git の一覧を読めない（取り違えを避けて消さない）")
+            out.append((DECIDE, r, reasons, copies))
+        elif reasons:
+            idle = idle_ms(r, now)
+            if idle >= IDLE_MS:
+                out.append((DECIDE, r, ["%d 時間動きが無い" % (idle // 3600_000)] + reasons, copies))
+            else:
+                out.append((KEEP, r, ["動きが無くなって 24 時間たっていない"] + reasons, copies))
+        elif agents:
+            # 担当のチャットや人が開いた会話は Orca が閉じないので、開いている間は使っている途中と見なす。
+            out.append((KEEP, r, ["エージェントの会話が開いている"], copies))
+        elif live is None or plugins is None:
+            out.append((KEEP, r, ["Orca の dispatch かプラグインの一覧を読めず、使われていないと確かめられない"], copies))
+        else:
+            out.append((REMOVE, r, [], copies))
+    return out
+
+
+def look(under, only=None):
+    """Orca の今の様子を読んで分類する。(分類の一覧, ps の行, dispatch とプラグインの一覧を読めたか)。ps を読めなければ None。"""
+    res, err = orca("worktree", "ps", "--limit", "1000")
+    if res is None:
+        print("orca worktree ps を読めない（%s）" % err)
+        return None
+    rows = res.get("worktrees") or []
+    live, plugins = live_dispatch_paths(), dev_plugin_sources()
+    return classify(rows, under, live, plugins, now_ms(), only), rows, live is not None and plugins is not None
+
+
+def remove(row, copies):
+    """cleanup.md の手順 3。(消せたか, 1 行)。"""
+    path, branch = row["path"], short_branch(row.get("branch"))
+    common = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+    # git worktree remove は未追跡のファイルがあると断る。--force を使うと読み直した後に書かれたものまで消すので、
+    # ルートと同じ中身の写しだけを先に消し、ほかに何かあれば git に断らせる。
+    for rel in copies:
+        os.remove(os.path.join(path, rel))
+    res, err = orca("worktree", "rm", "--worktree", "path:" + path, "--delete-branch")
+    if res is None:
+        return False, "消せなかった: %s（%s）: %s" % (path, branch, err)
+    left = subprocess.run(["git", "--git-dir", common, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch],
+                          capture_output=True, text=True).stdout.strip() if common and branch else ""
+    return True, "消した: %s（%s）%s" % (path, branch, "。ブランチは Orca が残した（%s）" % left[:12] if left else "")
+
+
+def main_of(row, by_id, under):
+    """親を辿って最初に当たる、under の外の worktree（窓口のワークスペース）のパス。担当の下の worker も窓口に届くようにする。"""
+    seen = set()
+    while row and row.get("path", "").startswith(under.rstrip("/") + "/") and row.get("worktreeId") not in seen:
+        seen.add(row.get("worktreeId"))
+        pid = row.get("parentWorktreeId")
+        row = by_id.get(pid) or ({"path": pid.split("::", 1)[-1]} if pid else None)
+    return row and row.get("path")
+
+
+def entry(row, reasons, by_id, under):
+    return {"path": row["path"], "repo": row.get("repo"), "branch": short_branch(row.get("branch")),
+            "name": row.get("displayName"), "parent": (row.get("parentWorktreeId") or "").split("::", 1)[-1] or None,
+            "main": main_of(row, by_id, under), "reasons": reasons}
+
+
+def save(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="worktree-sweep", description=__doc__.split("\n")[0])
+    ap.add_argument("--apply", action="store_true", help="「消してよい」を消す。付けなければ一覧を出すだけ")
+    ap.add_argument("--under", default=os.path.expanduser("~/orca/workspaces"),
+                    help="Orca が worktree を作る場所。この下だけを見る（リポジトリのルートと、Orca 以外で作った checkout を外す）")
+    a = ap.parse_args()
+    now = now_ms()
+    first = look(a.under)
+    if first is None:
+        sys.exit(1)
+    rows, worktrees, readable = first
+    by_id = {w.get("worktreeId"): w for w in worktrees}
+    removed, decide, failed_rm, kinds = [], [], [], []
+    for kind, row, reasons, copies in rows:
+        if kind == REMOVE and a.apply and readable:
+            # 分類してから消すまでの間に、作業が始まったり残す印が付いたりしたものを消さないよう、その 1 件だけを読み直す。
+            again = look(a.under, only=row["path"])
+            if again is None or not again[2]:
+                readable = False  # 読み直しで Orca を読めなくなったら、この回はもう消さない
+                kind, reasons = KEEP, ["読み直しで Orca の一覧を読めなかった"]
+            else:
+                hit = [(k, why, c) for k, r, why, c in again[0]]
+                if not hit:
+                    kind, reasons = KEEP, ["読み直したら Orca の一覧に無い"]
+                elif hit[0][0] != REMOVE:
+                    kind, reasons = hit[0][0], hit[0][1]
+                else:
+                    copies = hit[0][2]
+        elif kind == REMOVE and a.apply:
+            kind, reasons = KEEP, ["この回は Orca の一覧を読めなくなったので消さない"]
+        if kind == REMOVE and a.apply:
+            ok, line = remove(row, copies)
+            (removed if ok else failed_rm).append(entry(row, [] if ok else [line], by_id, a.under))
+            print(line)
+        elif kind == REMOVE:
+            print("%s: %s（%s）" % (REMOVE, row["path"], short_branch(row.get("branch"))))
+        else:
+            if kind == DECIDE:
+                decide.append(entry(row, reasons, by_id, a.under))
+            print("%s: %s（%s）: %s" % (kind, row["path"], short_branch(row.get("branch")), "・".join(reasons)))
+        kinds.append(kind)
+    removable = [entry(r, [], by_id, a.under) for k, r, _, _ in rows if k == REMOVE and not a.apply]
+    save(os.path.join(HOME, "sweep.json"), {"checkedAt": now, "applied": a.apply, "readable": readable, "decide": decide,
+                                             "removable": removable, "removed": removed, "notRemoved": failed_rm})
+    print("%s %d 件・%s %d 件・%s %d 件%s%s" % (
+        "消した" if a.apply else REMOVE, len(removed) if a.apply else len(removable), DECIDE, len(decide),
+        KEEP, kinds.count(KEEP), "・消せなかった %d 件" % len(failed_rm) if failed_rm else "",
+        "" if readable else "・Orca の dispatch かプラグインの一覧を読めなかったので消していない"))
+    sys.exit(0 if readable and not failed_rm else 1)
+
+
+if __name__ == "__main__":
+    main()
