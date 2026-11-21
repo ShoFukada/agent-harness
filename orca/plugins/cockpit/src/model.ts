@@ -271,7 +271,7 @@ export function textError(text: string | undefined): string | undefined {
 /** メインが Orca のチャットで動いていて、合図を送る端末が無い。 */
 export const chatMain = (c: Cockpit | undefined) => !c?.main?.terminal
 
-const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
+export const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 type Shape = (v: unknown) => boolean
@@ -304,6 +304,12 @@ const CARD_SHAPE: Record<string, Shape> = {
   repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
 }
 
+/** 形の違う欄の名前（書く道具は書く前に断り、読み込みは外して名指しする）。 */
+export function badFields(c: Card): string[] {
+  const rec = c as unknown as Record<string, unknown>
+  return Object.keys(CARD_SHAPE).filter((k) => rec[k] !== undefined && rec[k] !== null && !CARD_SHAPE[k]!(rec[k]))
+}
+
 /**
  * 形の違う欄を外し、外したことを 1 行ずつ返す。カードは窓口（エージェント）が書くので、1 枚の欄の書き間違い（evidence を文字列で書くなど）で
  * 窓全体の描画を止めず、そのカードを名指しして欄を出さずに表示する（2026-11-21 に v88・v89 の evidence で見てのカードが押せなくなった）。
@@ -312,7 +318,7 @@ export function dropBadFields(cards: Card[], where: string): string[] {
   const out: string[] = []
   for (const c of cards) {
     const rec = c as unknown as Record<string, unknown>
-    const bad = Object.keys(CARD_SHAPE).filter((k) => rec[k] !== undefined && rec[k] !== null && !CARD_SHAPE[k]!(rec[k]))
+    const bad = badFields(c)
     for (const k of Object.keys(CARD_SHAPE)) if (rec[k] === null) delete rec[k]
     // 手作業の頼みは、形が違っても「済ませた」で返す票のままにする（消すと許す・任せるが押せてしまう）。正しい下の欄だけを残す。
     const m = rec.manual
@@ -338,7 +344,7 @@ export function upgradeCard(c: Card): Card {
   return c
 }
 
-const WORKER_SHAPE: Shape = (w) => isObj(w) && str(w.task_id) && (str(w.run_id) || str(w.dispatch_id)) && [w.run_id, w.dispatch_id].every((x) => x === undefined || str(x))
+export const WORKER_SHAPE: Shape = (w) => isObj(w) && str(w.task_id) && (str(w.run_id) || str(w.dispatch_id)) && [w.run_id, w.dispatch_id].every((x) => x === undefined || str(x))
 const EVIDENCE_SHAPE: Shape = (e) => isObj(e) && Number.isInteger(e.when) && EVIDENCE_KINDS.includes(e.kind as EvidenceKind) && str(e.ref)
   && (e.card === undefined || str(e.card)) && (e.rev === undefined || Number.isInteger(e.rev))
 /** 依頼の帳簿の欄の形。id は parseCockpit が先に断る。 */

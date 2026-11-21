@@ -194,6 +194,8 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
 
 /** cockpit.user.json への追記と、移し替え（window/migrate.ts）が同じロックを取る。 */
 export const lockLog = (root: string) => lock(path.join(root, '.orca', 'cockpit.user.json.lock'))
+/** cockpit.json を書く道具（window/write.ts）と移し替え（migrate-v3）が取るロック。 */
+export const lockCockpit = (root: string) => lock(path.join(root, '.orca', 'cockpit.json.lock'))
 
 /**
  * パネルの worker と窓の常駐のプロセスは別のプロセスなので、同じログへの追記をロックファイルで 1 つずつにする
