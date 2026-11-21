@@ -86,6 +86,51 @@ def orca(*args, timeout=30):
     return d.get("result") or {}, None, (d.get("_meta") or {}).get("runtimeId")
 
 
+# Claude Code が起動のときに出して入力を止める画面。上から順に当てる。
+STARTUP_SCREENS = (
+    ("ログインの画面（この席はログインし直しが要る）",
+     re.compile(r"(?i)select login method|please run /login|not logged in|invalid api key|oauth token (?:has )?(?:expired|revoked)")),
+    ("フォルダを信頼するかの確認（この席で初めて開く作業場所）", re.compile(r"(?i)do you trust|trust this folder|trust the files in this")),
+    ("auto mode を既定にするかの確認", re.compile(r"(?i)set auto mode as my default")),
+    ("bypass permissions の同意の確認", re.compile(r"(?i)yes, i accept")),
+    ("初回の設定の画面", re.compile(r"(?i)choose the text style|let's get started")),
+)
+# 画面の下のこの行数だけを見る。上には開き直した会話の文が残り、確認の画面の文言を含むことがある。
+SCREEN_LINES = 25
+
+
+def screen_tail(handle):
+    """端末の今の画面の、空でない最後の行（最大 SCREEN_LINES 行）。読めなければ []。"""
+    t = (orca("terminal", "read", "--terminal", handle, "--screen")[0] or {}).get("terminal") or {}
+    return [l.rstrip() for l in t.get("tail") or [] if l.strip()][-SCREEN_LINES:]
+
+
+def startup_screen(lines):
+    """画面の行から、起動時の確認の画面の名前。当たらなければ None。"""
+    text = " ".join(" ".join(lines).split())
+    return next((name for name, pat in STARTUP_SCREENS if pat.search(text)), None)
+
+
+def seat_screens(home):
+    """席の置き場所（Orca の席の home）の設定から、その席で claude を対話で起こすと出て入力を止める確認の画面の名前の一覧。
+    フォルダの信頼は作業場所ごとなのでここでは見ない。.claude.json と settings.json の読み方は Claude Code 2.1 の条件に合わせている。"""
+    if not home:
+        return []
+    path = os.path.join(home, ".claude.json")
+    if not os.path.exists(path):
+        return ["初回の設定の画面"]  # その席でまだ一度も claude を起こしていない
+    cfg, settings = load(path, None), load(os.path.join(home, "settings.json"), {})
+    if not isinstance(cfg, dict):
+        return []  # 書きかけなどで読めないだけのときは、外さない
+    out = []
+    if not cfg.get("hasCompletedOnboarding"):
+        out.append("初回の設定の画面")
+    mode = ((settings if isinstance(settings, dict) else {}).get("permissions") or {}).get("defaultMode")
+    if mode and mode != "auto" and not cfg.get("hasSeenAutoDefaultNudge"):
+        out.append("auto mode を既定にするかの確認")
+    return out
+
+
 def pick_main(agents):
     """本線にいるエージェントのうちメインに当たるもの。1 人ならその人、複数ならチャット、それも複数なら最近動いた方。
     窓（orca-state.ts）は cockpit.json の main.terminal で引くが、チャットのメインは端末を持たないので、ここでは形で選ぶ。"""

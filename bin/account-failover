@@ -7,6 +7,11 @@ launchd が 1 分おきに 1 回ずつ起こす。モデルは呼ばず、トー
 起動し直した端末は会話を開き直すだけで止まっているので、上限で止まっていたものにだけ続きを頼む。
 チャットは切り替えでは起動し直らず、外から「続ける」を押す口も無いので、知らせるだけにする。
 知らせは通知と、stallwatch が窓の帯に合流させる failover.json に出す。
+
+Orca は起動し直すとき古い端末を閉じるので、そこで動いていた worker の Dispatch は lost（operator_close）になる。
+新しい端末は同じ枠（tabId:leafId）に開くので、`worker-start --task <task> --retry-of <dispatch> --terminal <新しい端末>` で結び直せる。
+ただし Orca はこれを Run の coordinator にしか許さず、launchd から打つと送り主が決まらず断られる。そこで切り替えでは結び直す相手を
+知らせるだけにし、coordinator（窓口・担当）が `account-failover --after-switch` を打って結び直す。手で切り替えたあとも同じコマンドを打つ。
 """
 
 import argparse
@@ -47,6 +52,13 @@ WINDOWS = ("session", "weekly")
 # 端末の画面に出る Claude Code の上限の 1 行。stallwatch の LIMIT は「rate limit」も拾い、開発サーバーのログにも当たるので狭める。
 TERMINAL_LIMIT = re.compile(r"(?i)\b(?:hit|reached) your [\w -]*limit\b|usage limit")
 SHOWN = {"full": "上限", "free": "空き", "unknown": "使用量不明"}
+# Orca の使用量の失敗のうち、席のログインが切れていることを示すもの。stale-token は「しばらく動いていない席のトークンが古いだけで、
+# 次に Claude が動けば更新される」（Orca の説明）なので入れない。
+LOGIN_NEEDED = {"missing-credentials"}
+NUDGE_LOST = (" この端末の worker の Dispatch は席の切り替えで失われた。coordinator が結び直すと同じ Task が新しい Dispatch ID で届くので、"
+              "報告（worker_done）はその ID で送る。")
+# 起動し直したあと、確認の画面で止まっていないかを見るために入力待ちを待つ時間。
+SETTLE_MS = 20000
 
 
 def back_at(rl, now):
@@ -71,20 +83,37 @@ def seat_states(claude, limits, now):
         fresh = rl.get("status") == "ok" and (acc["id"] != active or now - (rl.get("updatedAt") or 0) <= FRESH_MS)
         back = back_at(rl, now) if fresh else None
         out[acc["id"]] = {"email": acc.get("email"), "state": "unknown" if not fresh else "full" if back else "free",
-                          "back": back, "updatedAt": rl.get("updatedAt") or 0}
+                          "back": back, "updatedAt": rl.get("updatedAt") or 0, "home": acc.get("home"),
+                          "failure": (rl.get("usageMetadata") or {}).get("failureKind")}
     return out
 
 
-def choose(order, active, seats, left, now):
+def unusable(order, active, seats):
+    """行き先にできない席の id → 理由。ログインが切れている席と、起こすと確認の画面で止まる席（端末が起動し直したまま止まる）。"""
+    out = {}
+    for sid in order:
+        s = seats.get(sid)
+        if sid == active or not s:
+            continue
+        if s["failure"] in LOGIN_NEEDED:
+            out[sid] = "ログインが要る（Orca のアカウントの画面でログインし直す）"
+            continue
+        screens = sw.seat_screens(s["home"])
+        if screens:
+            out[sid] = "claude を起こすと「%s」で止まる（その席で一度 claude を対話で起こして答える）" % "」「".join(screens)
+    return out
+
+
+def choose(order, active, seats, left, now, blocked=()):
     """行き先の席の id。優先度順に、分かっている空きを先に、無ければ使用量の分からない席を選ぶ。
-    上限で離れた席は、戻る時刻を過ぎるか、離れたあとに Orca が上限でないと読むまで選ばない。"""
+    上限で離れた席は、戻る時刻を過ぎるか、離れたあとに Orca が上限でないと読むまで選ばない。blocked の席は選ばない。"""
     def usable(sid):
         s = seats[sid]
         gone = left.get(sid)
         if gone and now < gone["back"] and not (s["state"] == "free" and s["updatedAt"] > gone["at"]):
             return False
         return s["state"] != "full"
-    cands = [sid for sid in order if sid != active and sid in seats and usable(sid)]
+    cands = [sid for sid in order if sid != active and sid in seats and sid not in blocked and usable(sid)]
     return next((s for s in cands if seats[s]["state"] == "free"), None) or next(iter(cands), None)
 
 
@@ -101,17 +130,21 @@ def earliest_back(order, active, seats, left, now):
     return min(backs) if backs else None
 
 
+def claude_terms(terms, agents):
+    """前景が Claude の端末（Orca が席の切り替えで起動し直す対象）と、その状態。"""
+    claude = {a.get("paneKey"): a.get("state") for a in agents if a.get("kind") == "terminal" and a.get("agent") == "claude"}
+    return [dict(t, state=claude[pane(t)]) for t in terms if t.get("connected") and claude.get(pane(t))]
+
+
+def pane(t):
+    return "%s:%s" % (t.get("tabId"), t.get("leafId"))
+
+
 def resume_targets(terms, agents):
     """起動し直されたら続きを頼む端末: 画面の最後に上限の 1 行が出ている端末と、作業中の Claude の端末。
     上限の 1 行は戻る時刻を問わない（枠が戻っていても、上限で途切れた作業は誰かが頼むまで再開しない）。
     作業中の端末も入れるのは、前景が Claude なら Orca は応答の途中でも起動し直し、`--resume` はそのターンを続けないため。"""
-    claude = {a.get("paneKey"): a.get("state") for a in agents if a.get("kind") == "terminal" and a.get("agent") == "claude"}
-    out = []
-    for t in terms:
-        state = claude.get("%s:%s" % (t.get("tabId"), t.get("leafId")), "")
-        if t.get("connected") and state and (state == "working" or TERMINAL_LIMIT.search(t.get("preview") or "")):
-            out.append(t)
-    return out
+    return [t for t in claude_terms(terms, agents) if t["state"] == "working" or TERMINAL_LIMIT.search(t.get("preview") or "")]
 
 
 def limit_chats(agents, now):
@@ -144,30 +177,131 @@ def orca_ok(*args):
 
 
 def wait_restarted(before, timeout_s):
-    """控えた端末（tabId・leafId）を Orca が起動し直す（ptyId が変わる）のを待つ。(起動し直した端末, 変わらなかった端末)。"""
-    keys = {(t["tabId"], t["leafId"]): t for t in before}
-    moved = {}
+    """控えた端末を Orca が起動し直す（同じ枠 tabId・leafId で ptyId が変わる）のを待つ。
+    Orca は前の会話を同じ worktree の別の端末で起こし直すこともあるが、そのとき開いた端末は、同じ worktree で別の用事に起こした
+    Claude と見分けられないので、起動し直した先とは見なさない（続きを送らない）。
+    ({古い handle: 新しい端末}, 変わらなかった端末, 切り替えのあとの端末の一覧)。"""
+    moved, now = {}, None
     deadline = time.time() + timeout_s
     while True:
-        # 切り替えたあとなので、一覧を一度読めなくても諦めずに次の回を待つ。
-        for t in (sw.orca("terminal", "list")[0] or {}).get("terminals") or []:
-            k = (t.get("tabId"), t.get("leafId"))
-            if k in keys and t.get("connected") and t.get("ptyId") != keys[k]["ptyId"]:
-                moved[k] = t
-        if len(moved) == len(keys) or time.time() >= deadline:
+        # 切り替えたあとなので、一覧を一度読めなくても諦めずに次の回を待つ（読めた空の一覧は使う）。
+        got = (sw.orca("terminal", "list")[0] or {}).get("terminals")
+        now = got if isinstance(got, list) else now
+        by_pane = {pane(t): t for t in now or [] if t.get("connected")}
+        moved = {t["handle"]: by_pane[pane(t)] for t in before
+                 if pane(t) in by_pane and by_pane[pane(t)].get("ptyId") != t["ptyId"]}
+        if len(moved) == len(before) or time.time() >= deadline:
             break
         time.sleep(5)
-    return list(moved.values()), [t for k, t in keys.items() if k not in moved]
+    return moved, [t for t in before if t["handle"] not in moved], now or []
 
 
-def nudge(t, to_email):
+def stuck(handle, timeout_ms):
+    """端末が入力待ちになるのを待つ。入力待ちなら None、確認の画面で止まっていればその名前、どちらとも分からなければ "" 。
+    auto mode の確認の画面は Orca の blockedReason に出ないので、入力待ちにならなければ画面を読んで見分ける。"""
+    w = (sw.orca("terminal", "wait", "--terminal", handle, "--for", "tui-idle", "--timeout-ms", str(timeout_ms),
+                 timeout=timeout_ms // 1000 + 15)[0] or {}).get("wait") or {}
+    if w.get("satisfied") and not w.get("blockedReason"):
+        return None
+    return sw.startup_screen(sw.screen_tail(handle)) or w.get("blockedReason") or ""
+
+
+def nudge(t, text):
     """起動し直した端末が入力待ちになったら続きを頼む。確認の画面で止まっていれば送らない。"""
-    w = (sw.orca("terminal", "wait", "--terminal", t["handle"], "--for", "tui-idle", "--timeout-ms", "60000", timeout=75)[0]
-         or {}).get("wait") or {}
-    if w.get("blockedReason") or not w.get("satisfied"):
-        return "入力待ちにならなかった（%s）" % (w.get("blockedReason") or w.get("status") or "不明")
-    res, _err, _ = sw.orca("terminal", "send", "--terminal", t["handle"], "--text", NUDGE % to_email, "--enter", "--wait-submit", "10")
+    why = stuck(t["handle"], 60000)
+    if why is not None:
+        return "入力待ちにならなかった（%s）" % (why or "画面は分からない")
+    res, _err, _ = sw.orca("terminal", "send", "--terminal", t["handle"], "--text", text, "--enter", "--wait-submit", "10")
     return None if res is not None else "送れなかった"
+
+
+def worker_rows():
+    """orchestration の Dispatch を新しい順にすべて（1 ページ 100 件をページ送りで）。"""
+    rows, cursor = [], None
+    for _ in range(20):
+        page = orca_ok("orchestration", "worker-list", "--limit", "100", *(["--cursor", cursor] if cursor else []))
+        if not isinstance(page.get("workers"), list):
+            raise RuntimeError("orca orchestration worker-list の形が変わった（workers が無い）")
+        rows += page["workers"]
+        cursor = page.get("nextCursor")
+        if not cursor:
+            return rows
+    raise RuntimeError("orca orchestration worker-list が 2000 件を超えたので、失った worker を調べきれない")
+
+
+def lost_workers(since, terms, agents, moved=None):
+    """since（ms）より後に Orca が端末を閉じて失った worker の Dispatch（worktree ごとに最後の 1 件）と、Orca が起こし直した端末。
+    起こし直した端末は、切り替えで確かめた対応（moved）か、同じ枠（tabId:leafId）に開いた端末。同じ worktree の別の端末で起こし直したらしい
+    ときは、切り替える前からいた別の Claude と見分けられないので候補（maybe）として出すだけにする。
+    同じ worktree で別の worker が今動いていれば、結び直すと 2 つが同じファイルを触るので結び直さない。
+    ([{"dispatch", "task", "run", "old", "worktree", "at", "new"(結び直す端末 or None), "why"(結び直さない理由)}], 詳細を読めなかった Dispatch)。"""
+    rows = worker_rows()
+    busy = {w["terminal"] for w in rows if w.get("outcome") == "in_progress" and w.get("terminal")}
+    # 担当のチャット（structworker_）は同じ worktree にいても、同じファイルを触る worker に数えない。
+    live = [w for w in rows if w.get("outcome") == "in_progress" and w.get("terminal") and not str(w["terminal"]).startswith("structworker_")]
+    # 起こし直した直後の端末は、Orca がまだ Claude と見分けていないことがあるので、同じ枠はどの端末でも拾う。
+    by_pane = {pane(t): t for t in terms if t.get("connected")}
+    claude = claude_terms(terms, agents)
+    out, done, unread = [], set(), []
+    for i, w in enumerate(rows):
+        if w.get("state") != "failed" or not w.get("dispatchId") or w.get("workspace") in done:
+            continue
+        r, err, _ = sw.orca("orchestration", "worker-show", "--dispatch", w["dispatchId"], "--full")
+        d = (r or {}).get("dispatch") or {}
+        if not d:
+            unread.append("%s（%s）" % (w["dispatchId"], err or "dispatch が無い"))
+            done.add(w.get("workspace"))  # 新しい方が分からないまま、その worktree の古い Dispatch を結び直さない
+            continue
+        at = sw.ms_of(d.get("completedAt"))
+        wt = (r.get("worker") or {}).get("worktreeId") or ((r.get("projection") or {}).get("workspace") or {}).get("id") or w.get("workspace")
+        if d.get("terminationReason") != "operator_close" or not at or at < since or not wt:
+            continue
+        done.add(wt)
+        if any(x.get("taskId") == d.get("taskId") for x in rows[:i]):
+            continue  # 同じ Task をもう結び直している（終わったあとも含む）
+        old = d.get("assigneeHandle")
+        same = (moved or {}).get(old) or by_pane.get(d.get("assigneePaneKey"))
+        if same and same["handle"] == old:
+            same = None
+        if same and same["handle"] in busy:
+            continue  # 起こし直した端末に、誰かがもう結び直している
+        others = [x["dispatchId"] for x in live if x.get("workspace") == wt]
+        # 失ったあとに立った Dispatch の端末は、その worker のもので、Orca が起こし直した端末ではない。
+        hosted = {x.get("terminal") for x in rows[:i]}
+        maybe = [t for t in claude if t.get("worktreeId") == wt and t["handle"] not in {old} | busy | hosted]
+        x = {"dispatch": d["id"], "task": d.get("taskId"), "run": d.get("runId"), "old": old, "worktree": wt, "at": at, "new": None, "why": None}
+        if others:
+            restarted = [same] if same else maybe
+            x["why"] = "同じ worktree で worker（%s）が動いている。%s" % (", ".join(others), (
+                "Orca が起こし直した %s は閉じるか確かめる" % ", ".join(t["handle"] for t in restarted) if restarted else
+                "その worker で立て直したなら何もしない。別の仕事なら、この Task は orca-launch で立て直す"))
+        elif same:
+            x["new"] = same
+        elif maybe:
+            x["why"] = "Orca が同じ worktree の別の端末で起こし直したらしい（%s）。この worker の会話か確かめてから打つ: %s" % (
+                ", ".join(label(t) for t in maybe), " / ".join(rebind_command(dict(x, new=t)) for t in maybe))
+        else:
+            x["why"] = "Orca が起こし直した端末が見つからない。立て直していなければ orca-launch で立て直す"
+        out.append(x)
+    return out, unread
+
+
+def rebind_command(x):
+    return "orca orchestration worker-start --task %s --retry-of %s --terminal %s" % (x["task"], x["dispatch"], x["new"]["handle"])
+
+
+def rebind(x):
+    """失った Dispatch の Task を新しい端末に結び直す。結び直せたら None、できなければ理由。"""
+    why = stuck(x["new"]["handle"], 15000)
+    if why is not None:
+        return "端末が入力待ちでない（%s）" % (why or "作業中か、画面が分からない")
+    res, err, _ = sw.orca("orchestration", "worker-start", "--task", x["task"], "--retry-of", x["dispatch"],
+                          "--terminal", x["new"]["handle"], timeout=120)
+    if res is None:
+        return err or "worker-start が失敗した"
+    if res.get("failedStage") or res.get("state") in ("failed", "outcome_unknown"):
+        return "worker-start が %s で止まった（%s）" % (res.get("failedStage") or res.get("state"), res.get("lastError") or "理由なし")
+    return None
 
 
 def write_status(alerts):
@@ -205,6 +339,10 @@ def run(a):
                                      "（%s に戻る）" % clock(seats[s]["back"], now) if seats[s]["back"] else "") for s in order)
     if a.assume_full and active in seats:
         seats[active] = dict(seats[active], state="full", back=seats[active]["back"] or now + UNKNOWN_BACK_MS)
+    blocked = unusable(order, active, seats)
+    blocked_text = "、".join("%s は%s" % (email(sid), why) for sid, why in blocked.items())
+    if a.dry_run and blocked:
+        print("行き先にできない席: " + blocked_text)
     if (seats.get(active) or {}).get("state") != "full":
         blind = None
         # 往復の数え（switches）は 6 時間で消えるので、最後に移った先は別に持つ。
@@ -219,7 +357,9 @@ def run(a):
         state.pop("all_full", None)
         sw.save(STATE, state)
         keep = [x for x in sw.load(STATUS, {}).get("alerts", []) if x.get("until") and now < x["until"]]
-        write_status(keep + ([blind] if blind else []))
+        ahead = [{"id": "failover:seat:%s" % sid, "text": "上限に当たっても Claude の席 %s へは切り替えない: %s" % (email(sid), why)}
+                 for sid, why in blocked.items()]
+        write_status(keep + ([blind] if blind else []) + ahead)
         return
     if active not in order:
         print("今の席 %s は --seat に無いので切り替えない。[%s]" % (email(active), summary))
@@ -228,15 +368,18 @@ def run(a):
     if now - last < GAP_MS and not a.dry_run:
         print("前の切り替えから %d 分なので待つ。[%s]" % ((now - last) // MIN, summary))
         return
-    target = choose(order, active, seats, state["left"], now)
+    target = choose(order, active, seats, state["left"], now, blocked)
     if target is None:
         back = earliest_back(order, active, seats, state["left"], now)
-        text = "Claude の全部の席が利用枠の上限。切り替えずに待つ" + (
-            "（最初に戻るのは %s の %s）" % (back[1], clock(back[0], now)) if back else "（戻る時刻は不明）")
+        when = "（最初に戻るのは %s の %s）" % (back[1], clock(back[0], now)) if back else "（戻る時刻は不明）"
+        # 外した席を除かなければ行き先があった（上限ではないが使えない席がある）。
+        spare = choose(order, active, seats, state["left"], now) is not None
+        text = ("Claude の席 %s が利用枠の上限で、切り替えられる席が無い。%s。切り替えずに待つ%s" % (email(active), blocked_text, when)
+                if spare else "Claude の全部の席が利用枠の上限。切り替えずに待つ" + when)
         if a.dry_run:
             print(text + " [%s]" % summary)
             return
-        aid = "failover:all-full:%s" % (back[0] if back else "")
+        aid = "failover:%s:%s" % ("no-seat" if spare else "all-full", back[0] if back else "")
         if state.get("all_full") != aid:
             sw.notify([text], title="Claude の席")
             log({"event": "all-full", "seats": summary, "text": text})
@@ -261,14 +404,20 @@ def run(a):
     # 形が変わったのを「端末 0 個」と読むと、作業中の端末を起動し直させたうえで続きを頼めなくなるので止める。
     if not isinstance(agents, list) or not isinstance(terms, list):
         raise RuntimeError("orca agent list か terminal list の形が変わった（agents・terminals が無い）")
-    terms = resume_targets(terms, agents)
+    restart = claude_terms(terms, agents)
+    targets = {t["handle"] for t in resume_targets(terms, agents)}
     chats = limit_chats(agents, now)
     plan = {"from": email(active), "to": email(target), "seats": summary,
-            "nudge": [label(t) for t in terms], "chats": [c.get("title") or c.get("orcaSessionId") for c in chats]}
+            "nudge": [label(t) for t in restart if t["handle"] in targets], "chats": [c.get("title") or c.get("orcaSessionId") for c in chats]}
     if a.dry_run:
+        workers = worker_rows()
+        held = {w.get("terminal"): w for w in workers if w.get("outcome") == "in_progress"}
         print("切り替える: %s → %s [%s]" % (plan["from"], plan["to"], summary))
-        print("  Orca が起動し直すもの: %s で前景に Claude がいる端末すべて（Bash などの子プロセスが前景の端末は移らない）" % plan["from"])
+        print("  Orca が起動し直すもの: %s で前景に Claude がいる端末すべて（Bash などの子プロセスが前景の端末は移らない）: %s"
+              % (plan["from"], ", ".join(label(t) for t in restart) or "なし"))
         print("  起動し直されたら続きを頼む端末（上限で止まっているか作業中）: %s" % (", ".join(plan["nudge"]) or "なし"))
+        print("  Dispatch が失われる worker（coordinator が --after-switch で結び直す）: %s"
+              % (", ".join("%s（%s）" % (label(t), held[t["handle"]]["taskId"]) for t in restart if t["handle"] in held) or "なし"))
         print("  「続ける」を押す必要があるチャット（上限で止まっている）: %s" % (", ".join(plan["chats"]) or "なし"))
         return
 
@@ -281,38 +430,135 @@ def run(a):
     state["switches"].append({"at": now, "from": active, "to": target})
     state["moved_to"] = {"id": target, "at": now}
     state.pop("all_full", None)
-    sw.save(STATE, state)
-    moved, stuck = wait_restarted(terms, RESTART_WAIT_S) if terms else ([], [])
-    failed = {}
-    for t in moved:
-        why = nudge(t, plan["to"])
-        if why:
-            failed[label(t)] = why
-    plan.update(nudged=[label(t) for t in moved if label(t) not in failed], nudge_failed=failed,
-                not_moved=[label(t) for t in stuck])
+    # ここから先で失敗しても切り替えは済んでいるので、「切り替えが失敗した」と知らせず、切り替えたことと失敗した後処理を知らせる。
+    try:
+        sw.save(STATE, state)
+        text = after_select(plan, restart, targets, terms, chats, now)
+    except Exception as e:  # launchd は失敗を誰にも見せないので、後処理の失敗も知らせに載せる
+        text = "Claude の席を %s から %s に切り替えた。続きを頼む後処理が失敗した（%s）。coordinator は account-failover --after-switch を打つ" % (
+            plan["from"], plan["to"], e)
+        try:
+            log({"event": "switched", "from": plan["from"], "to": plan["to"], "error": str(e)})
+        except OSError:
+            pass  # 記録に書けないことが後処理の失敗の原因でも、知らせは出す
+    sw.notify([text], title="Claude の席を切り替えた")
+    try:
+        write_status([{"id": "failover:switched:%d" % now, "text": text, "until": now + BAND_MS}])
+    except OSError as e:
+        print("窓の帯に書けなかった: %s" % e, file=sys.stderr)
+
+
+def after_select(plan, restart, targets, terms, chats, now):
+    """席を切り替えたあと、Orca が起動し直した端末に続きを頼み、確認の画面で止まった端末と失った worker を調べる。知らせの文を返す。"""
+    moved, kept, terms = wait_restarted(restart, RESTART_WAIT_S) if restart else ({}, [], terms)
+    lost, unread = [], []
+    if restart:
+        try:
+            lost, unread = lost_workers(now - MIN, terms, (sw.orca("agent", "list")[0] or {}).get("agents") or [], moved)
+        except RuntimeError as e:
+            unread = ["一覧（%s）" % e]
+    rebinds = {x["new"]["handle"] for x in lost if x["new"]}
+    failed, screens = {}, {}
+    for t in restart:
+        new = moved.get(t["handle"])
+        if not new:
+            continue
+        if t["handle"] in targets:
+            why = nudge(new, NUDGE % plan["to"] + (NUDGE_LOST if new["handle"] in rebinds else ""))
+            if why:
+                failed[label(t)] = why
+        else:
+            why = stuck(new["handle"], SETTLE_MS)
+            if why:
+                screens[label(t)] = why
+    handles = {t.get("handle") for t in terms if t.get("connected")}
+    stayed, vanished = [t for t in kept if t["handle"] in handles], [t for t in kept if t["handle"] not in handles]
+    plan.update(nudged=[label(t) for t in restart if t["handle"] in targets and t["handle"] in moved and label(t) not in failed],
+                nudge_failed=failed, stuck=screens, not_moved=[label(t) for t in stayed], vanished=[label(t) for t in vanished],
+                lost=[dict(task=x["task"], dispatch=x["dispatch"], run=x["run"], old=x["old"],
+                           new=(x["new"] or {}).get("handle"), why=x["why"]) for x in lost], unread=unread)
     plan.pop("nudge")
     log(dict(event="switched", **plan))
     lines = ["Claude の席を %s から %s に切り替えた" % (plan["from"], plan["to"])]
     if plan["nudged"]:
         lines.append("止まっていた端末 %d 個を起動し直して続けさせた" % len(plan["nudged"]))
-    if stuck:
+    if stayed:
         lines.append("Orca が起動し直さなかった端末（元の席のまま。作業が終わってから手で起動し直す）: %s" % ", ".join(plan["not_moved"]))
-    if failed:
-        lines.append("起動し直したが続きを頼めなかった端末: %s" % ", ".join("%s %s" % kv for kv in failed.items()))
+    if vanished:
+        lines.append("Orca が閉じたが、起動し直した先が分からない端末: %s" % ", ".join(plan["vanished"]))
+    if failed or screens:
+        lines.append("起動し直したが止まっている端末（端末で答える）: %s" % ", ".join("%s %s" % kv for kv in {**failed, **screens}.items()))
+    ready = [x for x in lost if x["new"]]
+    if ready:
+        lines.append("Dispatch が失われた worker %d 個（%s）。Run の coordinator（窓口・担当）が account-failover --after-switch を打つと、"
+                     "Orca が起こし直した端末に結び直す" % (len(ready), ", ".join(x["task"] for x in ready)))
+    for x in lost:
+        if x["why"]:
+            lines.append("結び直せない worker %s: %s" % (x["task"], x["why"]))
+    if unread:
+        lines.append("失った worker か確かめられなかった（%s）。coordinator が account-failover --after-switch を打つ" % ", ".join(unread))
     if chats:
         lines.append("上限で止まっているチャット: %s（窓口は「続ける」を押す。worker-start で立てた担当は元の席に残るので、作業の状態を確かめて立て直す）"
                      % ", ".join(plan["chats"]))
-    text = "。".join(lines)
-    sw.notify([text], title="Claude の席を切り替えた")
-    write_status([{"id": "failover:switched:%d" % now, "text": text, "until": now + BAND_MS}])
+    return "。".join(lines)
+
+
+def after_switch(a):
+    """席を切り替えたあと（自動でも手でも）、Orca が端末を閉じて失った worker の Dispatch を、Orca が起こし直した端末に結び直す。
+    結び直しは Run の coordinator にしか許されないので、窓口・担当が自分の端末やチャットから打つ。ほかの Run の分はコマンドを出す。
+    あわせて、確認の画面で止まっている Claude の端末と、上限で止まっているチャットを出す。結び直せないものか止まった端末があれば 1 を返す。"""
+    now = sw.now_ms()
+    agents = orca_ok("agent", "list").get("agents")
+    terms = orca_ok("terminal", "list").get("terminals")
+    if not isinstance(agents, list) or not isinstance(terms, list):
+        raise RuntimeError("orca agent list か terminal list の形が変わった（agents・terminals が無い）")
+    screens = {}
+    for t in claude_terms(terms, agents):
+        why = stuck(t["handle"], 1500)
+        if why:
+            screens[t["handle"]] = (label(t), why)
+    lost, unread = lost_workers(now - a.since_min * MIN, terms, agents)
+    done, left = [], ["%s: 詳細を読めず、失ったかどうか確かめていない" % u for u in unread]
+    for x in lost:
+        if not x["why"] and x["new"]["handle"] in screens:
+            x["why"] = "起こし直した端末が「%s」で止まっている（端末で答えてから打ち直す）" % screens[x["new"]["handle"]][1]
+        if x["why"]:
+            left.append("%s（%s）: %s" % (x["task"], x["dispatch"], x["why"]))
+            continue
+        if a.dry_run:
+            done.append("%s（%s）→ %s（打つコマンド: %s）" % (x["task"], x["dispatch"], label(x["new"]), rebind_command(x)))
+            continue
+        why = rebind(x)
+        if why:
+            left.append("%s（%s）: 結び直せなかった（%s）。Run %s の coordinator が打つ: %s" % (x["task"], x["dispatch"], why, x["run"], rebind_command(x)))
+        else:
+            done.append("%s（%s）→ %s" % (x["task"], x["dispatch"], label(x["new"])))
+    chats = [c.get("title") or c.get("orcaSessionId") for c in limit_chats(agents, now)]
+    print("%s: %s" % ("結び直す worker" if a.dry_run else "結び直した worker", "、".join(done) or "なし"))
+    for line in left:
+        print("結び直していない worker " + line)
+    for lab, why in screens.values():
+        print("確認の画面で止まっている端末: %s「%s」（端末で答える）" % (lab, why))
+    if chats:
+        print("上限で止まっているチャット: %s（「続ける」を押す）" % ", ".join(chats))
+    if not a.dry_run:
+        log({"event": "after-switch", "rebound": done, "left": left, "stuck": [" ".join(v) for v in screens.values()], "chats": chats})
+    return 1 if left or screens else 0
 
 
 def main():
     ap = argparse.ArgumentParser(prog="account-failover", description=__doc__.split("\n")[0])
-    ap.add_argument("--seat", action="append", required=True, metavar="EMAIL", help="切り替え先にしてよい席。優先度の高い順に並べる")
-    ap.add_argument("--dry-run", action="store_true", help="何を切り替え、何を起動し直すかを出すだけにする")
+    ap.add_argument("--seat", action="append", metavar="EMAIL", help="切り替え先にしてよい席。優先度の高い順に並べる")
+    ap.add_argument("--dry-run", action="store_true", help="何を切り替え、何を起動し直すか（--after-switch では何を結び直すか）を出すだけにする")
     ap.add_argument("--assume-full", action="store_true", help="試験用。今の席を上限と見なす（--dry-run と合わせて使う）")
+    ap.add_argument("--after-switch", action="store_true",
+                    help="席を切り替えたあと、失った worker の Dispatch を Orca が起こし直した端末に結び直す。Run の coordinator が打つ")
+    ap.add_argument("--since-min", type=int, default=60, help="--after-switch で、この分数より前に失った Dispatch は見ない")
     a = ap.parse_args()
+    if a.after_switch:
+        sys.exit(after_switch(a))
+    if not a.seat:
+        ap.error("--seat が要る")
     if a.assume_full and not a.dry_run:
         ap.error("--assume-full は --dry-run と合わせて使う")
     if a.dry_run:

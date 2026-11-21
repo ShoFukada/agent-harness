@@ -46,6 +46,7 @@ elif cmd == "account select":
         if t["handle"] in restart:
             t["ptyId"] += "-new"
             t["handle"] += "-new"
+    terms = [t for t in terms if not os.path.exists(os.path.join(d, "close-" + t["handle"]))]
     save("terminals.json", terms)
     ok(acc["claude"])
 elif cmd == "terminal list":
@@ -53,7 +54,19 @@ elif cmd == "terminal list":
 elif cmd == "agent list":
     ok({"agents": load("agents.json")} if not os.path.exists(os.path.join(d, "agents-renamed")) else {"sessions": []})
 elif cmd == "terminal wait":
-    ok({"wait": {"satisfied": True, "status": "tui-idle"}})
+    h = a[a.index("--terminal") + 1]
+    screen = load("screens.json").get(h)
+    ok({"wait": {"satisfied": not screen, "status": "running" if screen else "tui-idle"}})
+elif cmd == "terminal read":
+    ok({"terminal": {"tail": load("screens.json").get(a[a.index("--terminal") + 1], [])}})
+elif cmd == "orchestration worker-list":
+    ok({"workers": load("workers.json")})
+elif cmd == "orchestration worker-show":
+    ok(load("shows.json")[a[a.index("--dispatch") + 1]])
+elif cmd == "orchestration worker-start" and os.path.exists(os.path.join(d, "start-fenced")):
+    print(json.dumps({"ok": False, "error": {"code": "consumer_fenced", "message": "This caller is not bound to Run run_1."}}))
+elif cmd == "orchestration worker-start":
+    ok({"state": "ready", "dispatchId": "ctx_re", "taskId": a[a.index("--task") + 1]})
 elif cmd == "terminal send":
     ok({"accepted": True})
 else:
@@ -65,20 +78,34 @@ def now_ms():
     return int(time.time() * 1000)
 
 
-def usage(session=0, weekly=0, session_reset=None, weekly_reset=None, status="ok", updated=None, reading=None):
+def usage(session=0, weekly=0, session_reset=None, weekly_reset=None, status="ok", updated=None, reading=None, failure=None):
     rl = {"status": status, "updatedAt": updated if updated is not None else now_ms() - MIN,
           "session": {"usedPercent": session, "resetsAt": session_reset if session_reset is not None else now_ms() + 2 * HOUR},
           "weekly": {"usedPercent": weekly, "resetsAt": weekly_reset if weekly_reset is not None else now_ms() + 48 * HOUR},
           "fableWeekly": {"usedPercent": 100, "resetsAt": now_ms() + HOUR}}
     if reading:
         rl["usageMetadata"] = {"readingAccount": {"accountId": reading}}
+    if failure:
+        rl.setdefault("usageMetadata", {})["failureKind"] = failure
     return rl
 
 
-def terminal(handle, preview="❯", tab=None):
+def terminal(handle, preview="❯", tab=None, wt=None):
     return {"handle": handle, "ptyId": "pty-" + handle, "tabId": tab or "tab-" + handle, "leafId": "leaf-" + handle,
-            "connected": True, "title": "題 " + handle, "worktreePath": "/w/" + handle, "preview": preview,
-            "lastOutputAt": now_ms() - MIN}
+            "connected": True, "title": "題 " + handle, "worktreePath": "/w/" + (wt or handle), "worktreeId": "r::/w/" + (wt or handle),
+            "preview": preview, "lastOutputAt": now_ms() - MIN}
+
+
+def claude_agent(handle, state="done", tab=None):
+    return {"kind": "terminal", "agent": "claude", "state": state, "paneKey": "%s:leaf-%s" % (tab or "tab-" + handle, handle)}
+
+
+def iso(ms):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ms / 1000)) + ".000Z"
+
+
+AUTO_MODE_SCREEN = ["Auto mode lets Claude handle permission prompts automatically.",
+                    "❯ Yes, set auto mode as my default permission mode", "  No, keep bypass permissions"]
 
 
 class AccountFailoverTest(unittest.TestCase):
@@ -94,6 +121,8 @@ class AccountFailoverTest(unittest.TestCase):
         self.terminals([])
         self.agents([])
         self.restart([])
+        self.put("screens.json", {})
+        self.workers([])
 
     def script(self, name, body):
         path = os.path.join(self.bin, name)
@@ -117,6 +146,33 @@ class AccountFailoverTest(unittest.TestCase):
 
     def agents(self, agents):
         self.put("agents.json", agents)
+
+    def workers(self, lost=(), live=()):
+        """lost: (dispatch, task, 古い handle, 枠, worktree) の失った Dispatch。live: (dispatch, handle, worktree) の動いている worker。"""
+        # worker-list と同じく新しい順に並べる（動いている worker は失ったあとに立てたもの）。
+        rows = [{"dispatchId": d, "taskId": "task_" + d, "state": "ready", "outcome": "in_progress", "terminal": h, "workspace": "r::/w/" + wt}
+                for d, h, wt in live]
+        rows += [{"dispatchId": d, "taskId": t, "state": "failed", "outcome": None, "terminal": h, "workspace": "r::/w/" + wt}
+                 for d, t, h, _p, wt in lost]
+        self.put("workers.json", rows)
+        self.put("shows.json", {d: {"dispatch": {"id": d, "taskId": t, "runId": "run_1", "assigneeHandle": h, "assigneePaneKey": p,
+                                                 "terminationReason": "operator_close", "completedAt": iso(now_ms())},
+                                    "worker": {"worktreeId": "r::/w/" + wt}} for d, t, h, p, wt in lost})
+
+    def seat_home(self, sid, **cfg):
+        """席の置き場所（Orca の席の home）を作り、accounts.json の席に home を付ける。"""
+        home = os.path.join(self.tmp, "seat-" + sid[:8])
+        os.makedirs(home, exist_ok=True)
+        with open(os.path.join(home, ".claude.json"), "w") as fh:
+            json.dump(dict({"hasCompletedOnboarding": True}, **cfg), fh)
+        with open(os.path.join(home, "settings.json"), "w") as fh:
+            json.dump({"permissions": {"defaultMode": "bypassPermissions"}}, fh)
+        with open(os.path.join(self.fake, "accounts.json")) as fh:
+            acc = json.load(fh)
+        for x in acc["claude"]["accounts"]:
+            if x["id"] == sid:
+                x["home"] = home
+        self.put("accounts.json", acc)
 
     def restart(self, handles):
         """account select のときに Orca が起動し直す端末。"""
@@ -178,7 +234,8 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertIn("admin@example.com に切り替えた", self.notes()[0])
 
     def test_tries_a_seat_whose_usage_is_unknown_when_no_seat_is_known_free(self):
-        self.accounts(A, {A: usage(weekly=100), B: usage(session=100), C: usage(status="error")})
+        # stale-token は「しばらく動いていない席のトークンが古いだけ」（Orca の説明）なので、ログインが要るとは見なさない。
+        self.accounts(A, {A: usage(weekly=100), B: usage(session=100), C: usage(status="error", failure="stale-token")})
         self.run_failover()
         self.assertEqual(self.selects(), [C])
 
@@ -216,6 +273,183 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertEqual(h["not_moved"], ["題 t4（t4）"])
         self.assertIn("Orca が起動し直さなかった端末", self.notes()[0])
         self.assertTrue(all("席を admin@example.com に切り替えて" in c for c in self.calls() if c.startswith("terminal send")))
+
+    def test_seat_that_needs_login_is_not_chosen_and_is_named(self):
+        self.accounts(A, {A: usage(session=100), B: usage(session=100), C: usage(status="error", failure="missing-credentials")})
+        self.run_failover()
+        self.run_failover()
+        self.assertEqual(self.selects(), [])
+        self.assertEqual(len(self.notes()), 1)
+        self.assertIn("切り替えられる席が無い。member@example.com はログインが要る", self.notes()[0])
+        self.assertTrue(self.status()[0]["id"].startswith("failover:no-seat:"))
+
+    def test_dry_run_names_the_seat_that_needs_login(self):
+        self.accounts(A, {A: usage(session=10), B: usage(), C: usage(status="error", failure="missing-credentials")})
+        out = self.run_failover("--dry-run")
+        self.assertIn("行き先にできない席: member@example.com はログインが要る", out)
+        self.assertIn("切り替えない", out)
+        # 上限でないあいだも、帯で先に知らせる。
+        self.run_failover()
+        self.assertEqual([x["id"] for x in self.status()], ["failover:seat:" + C])
+
+    def test_seat_whose_claude_stops_at_a_startup_screen_is_not_chosen(self):
+        self.accounts(A, {A: usage(session=100), B: usage(session=100), C: usage()})
+        self.seat_home(C)
+        out = self.run_failover("--dry-run")
+        self.assertIn("member@example.com はclaude を起こすと「auto mode を既定にするかの確認」で止まる", out)
+        self.run_failover()
+        self.assertEqual(self.selects(), [])
+        # その席で一度答えれば（.claude.json に答えが残る）行き先になる。
+        self.seat_home(C, hasSeenAutoDefaultNudge=True)
+        self.run_failover()
+        self.assertEqual(self.selects(), [C])
+
+    def test_switch_names_workers_whose_dispatch_was_lost(self):
+        self.terminals([terminal("t1", LIMIT_LINE)])
+        self.agents([claude_agent("t1")])
+        self.restart(["t1"])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1", "t1")])
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.run_failover()
+        # launchd からは結び直せない（Orca は Run の coordinator にしか許さない）ので、打たずに知らせる。
+        self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
+        self.assertIn("Dispatch が失われた worker 1 個（task_1）", self.notes()[0])
+        self.assertIn("account-failover --after-switch", self.notes()[0])
+        (send,) = [c for c in self.calls() if c.startswith("terminal send")]
+        self.assertIn("Dispatch は席の切り替えで失われた", send)
+        self.assertEqual(self.history()[-1]["lost"][0]["new"], "t1-new")
+
+    def test_restarted_terminal_stuck_at_a_startup_screen_is_named(self):
+        self.terminals([terminal("t3")])
+        self.agents([claude_agent("t3")])
+        self.restart(["t3"])
+        self.put("screens.json", {"t3-new": AUTO_MODE_SCREEN})
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.run_failover()
+        self.assertIn("起動し直したが止まっている端末（端末で答える）: 題 t3（t3） auto mode を既定にするかの確認", self.notes()[0])
+
+    def run_after(self, *args):
+        return subprocess.run([sys.executable, SCRIPT, "--after-switch"] + list(args), env=self.env(), capture_output=True, text=True)
+
+    def test_after_switch_rebinds_lost_workers_to_the_terminals_orca_restarted(self):
+        # t1: 同じ枠に起こし直した。t2: 別の端末（n2）で起こし直したらしい（切り替える前からいた別の Claude と見分けられない）。
+        # t3: 誰かがもう結び直した。t4: 同じ worktree で worker を立て直したのに、Orca が起こし直した端末も残っている。
+        # t5: 起こし直した端末が無く、同じ worktree で別の worker が動いている（立て直しか別の仕事かは分からない）。
+        self.terminals([terminal("t1-new", tab="tab-t1"), terminal("n2", wt="t2"), terminal("t3-new", tab="tab-t3"),
+                        terminal("t4-new", tab="tab-t4"), terminal("w4", wt="t4")])
+        self.agents([claude_agent("t1-new", tab="tab-t1"), claude_agent("n2"), claude_agent("t3-new", tab="tab-t3"),
+                     claude_agent("t4-new", tab="tab-t4"), claude_agent("w4", state="working")])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1", "t1"), ("ctx_2", "task_2", "t2", "tab-t2:leaf-t2", "t2"),
+                           ("ctx_3", "task_3", "t3", "tab-t3:leaf-t3-new", "t3"), ("ctx_4", "task_4", "t4", "tab-t4:leaf-t4-new", "t4")],
+                     live=[("ctx_9", "t3-new", "t3"), ("ctx_8", "w4", "t4"), ("ctx_7", "w5", "t5")])
+        with open(os.path.join(self.fake, "workers.json")) as fh:
+            rows = json.load(fh)
+        rows.append({"dispatchId": "ctx_5", "taskId": "task_5", "state": "failed", "terminal": "t5", "workspace": "r::/w/t5"})
+        self.put("workers.json", rows)
+        with open(os.path.join(self.fake, "shows.json")) as fh:
+            shows = json.load(fh)
+        shows["ctx_5"] = {"dispatch": dict(shows["ctx_1"]["dispatch"], id="ctx_5", taskId="task_5", assigneeHandle="t5",
+                                           assigneePaneKey="tab-t5:leaf-t5"), "worker": {"worktreeId": "r::/w/t5"}}
+        # 同じ枠の端末は leaf も同じ。t1 の枠は tab-t1:leaf-t1-new なので、枠を合わせる。
+        shows["ctx_1"]["dispatch"]["assigneePaneKey"] = "tab-t1:leaf-t1-new"
+        self.put("shows.json", shows)
+        r = self.run_after()
+        starts = [c for c in self.calls() if c.startswith("orchestration worker-start")]
+        self.assertEqual(starts, ["orchestration worker-start --task task_1 --retry-of ctx_1 --terminal t1-new"])
+        self.assertIn("task_2（ctx_2）: Orca が同じ worktree の別の端末で起こし直したらしい（題 n2（t2））。"
+                      "この worker の会話か確かめてから打つ: orca orchestration worker-start --task task_2 --retry-of ctx_2 --terminal n2", r.stdout)
+        self.assertIn("task_4（ctx_4）: 同じ worktree で worker（ctx_8）が動いている。Orca が起こし直した t4-new は閉じるか確かめる", r.stdout)
+        self.assertNotIn("task_3", r.stdout)
+        self.assertIn("task_5（ctx_5）: 同じ worktree で worker（ctx_7）が動いている。その worker で立て直したなら何もしない", r.stdout)
+        self.assertEqual(r.returncode, 1)
+
+    def test_after_switch_is_not_held_back_by_a_finished_worker_in_the_same_worktree(self):
+        # 失った worker が動いているあいだに、同じ worktree で別の Task が始まって終わっていた。
+        self.terminals([terminal("t1-new", tab="tab-t1", wt="t1")])
+        self.agents([claude_agent("t1-new", tab="tab-t1")])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1-new", "t1")])
+        with open(os.path.join(self.fake, "workers.json")) as fh:
+            rows = json.load(fh)
+        self.put("workers.json", [{"dispatchId": "ctx_6", "taskId": "task_6", "state": "succeeded", "outcome": None,
+                                   "terminal": "t9", "workspace": "r::/w/t1"}] + rows)
+        r = self.run_after()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("orchestration worker-start --task task_1 --retry-of ctx_1 --terminal t1-new", self.calls())
+
+    def test_after_switch_leaves_a_task_already_retried(self):
+        # 前の --after-switch で結び直した worker が終わり、端末が入力待ちで残っている。同じ Task をもう一度打たない。
+        self.terminals([terminal("t1-new", tab="tab-t1", wt="t1")])
+        self.agents([claude_agent("t1-new", tab="tab-t1")])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1-new", "t1")])
+        with open(os.path.join(self.fake, "workers.json")) as fh:
+            rows = json.load(fh)
+        self.put("workers.json", [{"dispatchId": "ctx_re", "taskId": "task_1", "state": "succeeded", "outcome": None,
+                                   "terminal": "t1-new", "workspace": "r::/w/t1"}] + rows)
+        r = self.run_after()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
+
+    def test_after_switch_reports_a_dispatch_it_could_not_read(self):
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1", "t1")])
+        self.put("shows.json", {})
+        r = self.run_after()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ctx_1", r.stdout)
+        self.assertIn("確かめていない", r.stdout)
+
+    def test_two_terminals_in_one_worktree_are_not_both_matched_to_one_new_terminal(self):
+        # 同じ worktree の t1・t2 が消え、t2 の枠にだけ新しい端末が開いた。t1 を別の端末の起こし直しと見なして t2 の端末に送らない。
+        self.terminals([terminal("t1", LIMIT_LINE, wt="x"), terminal("t2", "❯", wt="x")])
+        self.agents([claude_agent("t1"), claude_agent("t2")])
+        self.restart(["t2"])
+        with open(os.path.join(self.fake, "restart.json"), "w") as fh:
+            json.dump(["t2"], fh)
+        open(os.path.join(self.fake, "close-t1"), "w").close()
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+        self.assertIn("起動し直した先が分からない端末: 題 t1（x）", self.notes()[0])
+
+    def test_a_failure_after_the_switch_is_reported_as_switched(self):
+        self.terminals([terminal("t1", LIMIT_LINE)])
+        self.agents([claude_agent("t1")])
+        self.restart(["t1"])
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        # 切り替えたあとの記録（履歴）に書けない。
+        os.makedirs(os.path.join(self.home, "failover-history.jsonl"))
+        self.run_failover()
+        self.assertEqual(self.selects(), [B])
+        (note,) = self.notes()
+        self.assertTrue(note.startswith("Claude の席を切り替えた\t"), note)
+        self.assertIn("admin@example.com に切り替えた。続きを頼む後処理が失敗した", note)
+        self.assertEqual(len(self.status()), 1)
+
+    def test_seat_never_started_is_not_chosen(self):
+        self.accounts(A, {A: usage(session=100), B: usage(session=100), C: usage()})
+        self.seat_home(C)
+        os.remove(os.path.join(self.tmp, "seat-" + C[:8], ".claude.json"))
+        self.run_failover()
+        self.assertEqual(self.selects(), [])
+        self.assertIn("「初回の設定の画面」で止まる", self.notes()[0])
+
+    def test_after_switch_outside_the_run_prints_the_command(self):
+        self.terminals([terminal("t1-new", tab="tab-t1")])
+        self.agents([claude_agent("t1-new", tab="tab-t1")])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1-new", "t1")])
+        open(os.path.join(self.fake, "start-fenced"), "w").close()
+        r = self.run_after()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("Run run_1 の coordinator が打つ: orca orchestration worker-start --task task_1 --retry-of ctx_1 --terminal t1-new", r.stdout)
+
+    def test_after_switch_does_not_type_into_a_startup_screen(self):
+        self.terminals([terminal("t1-new", tab="tab-t1")])
+        self.agents([claude_agent("t1-new", tab="tab-t1")])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1-new", "t1")])
+        self.put("screens.json", {"t1-new": AUTO_MODE_SCREEN})
+        r = self.run_after()
+        self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
+        self.assertIn("確認の画面で止まっている端末: 題 t1-new（t1-new）「auto mode を既定にするかの確認」", r.stdout)
+        self.assertEqual(r.returncode, 1)
 
     def test_all_seats_full_waits_and_tells_the_earliest_return_once(self):
         soon = now_ms() + 30 * MIN

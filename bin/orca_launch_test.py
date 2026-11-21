@@ -25,7 +25,10 @@ elif args[:2] == ["terminal", "create"]:
     out({"terminal": {"handle": "term_x"}})
 elif args[:2] == ["terminal", "wait"]:
     blocked = os.environ.get("FAKE_BLOCKED")
-    out({"wait": {"satisfied": not blocked, "status": "running", **({"blockedReason": blocked} if blocked else {})}})
+    stuck = blocked or os.environ.get("FAKE_SCREEN")
+    out({"wait": {"satisfied": not stuck, "status": "running", **({"blockedReason": blocked} if blocked else {})}})
+elif args[:2] == ["terminal", "read"]:
+    out({"terminal": {"tail": json.loads(os.environ.get("FAKE_SCREEN") or "[]")}})
 elif args[:2] == ["account", "list"] and os.environ.get("FAKE_ACCOUNTS"):
     seen = sum(1 for l in open(os.environ["FAKE_LOG"]) if '"account", "list"' in l)
     later = os.environ.get("FAKE_ACCOUNTS_LATER")
@@ -114,6 +117,26 @@ class LaunchTest(unittest.TestCase):
         self.assertIn("agent-trust-workspace", r.stderr)
         # やり直しのコマンドに、呼んだときの --run と --keep-open が残る
         self.assertIn("--terminal term_x --keep-open --run run_9", r.stderr)
+        self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
+
+    def test_blocked_prompt_names_the_seat_and_the_screen(self):
+        accounts = {"activeAccountId": "c", "accounts": [{"id": "c", "home": "/p/c/home", "email": "member@example.com"}]}
+        screen = ["● 前の会話の続き: Do you trust の話をした", "", "Accessing workspace:", "/w/failover-fix",
+                  "Quick safety check: Is this a project you created or one you trust?", "❯ 1. Yes, I trust this folder", "  2. No, exit"]
+        r = self.run_launch(FAKE_ACCOUNTS=json.dumps(accounts), FAKE_BLOCKED="agent-trust-workspace", FAKE_SCREEN=json.dumps(screen))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("席 member@example.com の端末 term_x が「フォルダを信頼するかの確認", r.stderr)
+        self.assertIn("  | ❯ 1. Yes, I trust this folder", r.stderr)
+        self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
+
+    def test_screen_orca_does_not_know_is_named_on_timeout(self):
+        # auto mode の確認の画面は Orca の blockedReason に出ず、入力待ちにならないまま時間切れになる。
+        accounts = {"activeAccountId": "c", "accounts": [{"id": "c", "home": "/p/c/home", "email": "member@example.com"}]}
+        screen = ["Auto mode lets Claude handle permission prompts automatically.", "❯ Yes, set auto mode as my default permission mode",
+                  "  No, keep bypass permissions"]
+        r = self.run_launch(FAKE_ACCOUNTS=json.dumps(accounts), FAKE_SCREEN=json.dumps(screen))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("席 member@example.com の端末 term_x が「auto mode を既定にするかの確認」で止まっている", r.stderr)
         self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
 
     def test_own_worktree_keeps_its_name(self):

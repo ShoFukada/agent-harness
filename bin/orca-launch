@@ -16,20 +16,27 @@ cockpit.json は読むだけで書かない（受け取りの runId・taskId は
 claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなければ呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動する。
 呼んだ側の値をそのまま渡さないのは、account-failover が利用枠の上限で席を切り替えたあとも元の席に残るチャットの担当から立てたとき、
 worker が上限の席で起動するのを避けるため。
-確認の画面（初めてのリポジトリで出る「フォルダを信頼するか」など）で止まったら、Task を渡さずに止めて知らせる
-（渡すと指示の文字が「No, exit」を選ぶことがある）。信頼を設定ファイル（.claude.json）に先に書くことはしない。
+確認の画面（その席で初めて開く作業場所の「フォルダを信頼するか」・席で一度だけ出る「auto mode を既定にするか」・ログインの画面など）で
+止まったら、Task を渡さずに止め、どの席で何の画面かと画面の最後の行を出す（渡すと指示の文字が「No, exit」を選ぶことがある）。
+信頼を設定ファイル（.claude.json）に先に書くことはしない。
 動いている claude も同じファイルを書き換え、排他の手段が無いので、競合するとほかの項目の更新を消す。
 Orca のサイドバーにいつも同じ形で出るよう、端末の題を「<短い題>（worker）」にし、worker の作業場所の表示名を <短い題>・状態を in-progress にする
 （呼んだ側と同じ作業場所に立てるときは、その作業場所の表示は変えない）。
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import shlex
 import subprocess
 import sys
 import tempfile
+from importlib.machinery import SourceFileLoader
+
+_loader = SourceFileLoader("stallwatch", os.path.join(os.path.dirname(os.path.realpath(__file__)), "stallwatch"))
+sw = importlib.util.module_from_spec(importlib.util.spec_from_loader("stallwatch", _loader))
+_loader.exec_module(sw)
 
 WAIT_MS = 90000
 
@@ -45,12 +52,23 @@ def orca(*args):
     return d
 
 
-def config_dir():
-    """Orca で今選ばれている Claude の席の置き場所。システムの既定のログインが選ばれていれば None。Orca が読めなければ呼んだ側の値。"""
+def seat():
+    """Orca で今選ばれている Claude の席の (置き場所, メールアドレス)。システムの既定のログインなら置き場所は None。
+    Orca が読めなければ呼んだ側の CLAUDE_CONFIG_DIR。"""
     r = orca("account", "list", "--agent", "claude").get("result")
     if not isinstance(r, dict) or not isinstance(r.get("accounts"), list):
-        return os.environ.get("CLAUDE_CONFIG_DIR")
-    return next((x.get("home") for x in r["accounts"] if x.get("id") == r.get("activeAccountId")), None)
+        return os.environ.get("CLAUDE_CONFIG_DIR"), None
+    hit = next((x for x in r["accounts"] if x.get("id") == r.get("activeAccountId")), {})
+    return hit.get("home"), hit.get("email")
+
+
+def stopped_at(handle, home, email, why):
+    """確認の画面か入力待ちにならずに止まった端末の、席・画面の名前・画面の最後の行。"""
+    lines = sw.screen_tail(handle)
+    name = sw.startup_screen(lines) or why
+    where = email or (os.path.basename(os.path.dirname(home)) if home else "システムの既定のログイン")
+    tail = "\n".join("  | " + l for l in lines[-8:])
+    return "席 %s の端末 %s が「%s」で止まっている%s" % (where, handle, name, "\n" + tail if tail else "")
 
 
 def command(a, home):
@@ -161,7 +179,7 @@ def main():
     if wt.get("id") and wt["id"] != os.environ.get("ORCA_WORKTREE_ID"):
         meta = ["--comment", plan["comment"], "--parent-worktree", plan["parent"]] if plan else []
         orca("worktree", "set", "--worktree", a.worktree, "--display-name", a.title, "--workspace-status", "in-progress", *meta)
-    home = config_dir() if a.agent == "claude" else None
+    home, email = seat() if a.agent == "claude" else (None, None)
     created = orca("terminal", "create", "--worktree", a.worktree, "--title", "%s（worker）" % a.title, "--command", command(a, home))
     handle = ((created.get("result") or {}).get("terminal") or {}).get("handle")
     if not handle:
@@ -173,17 +191,13 @@ def main():
     retry = shlex.join(["orca", *args])
     wait = ((orca("terminal", "wait", "--terminal", handle, "--for", "tui-idle", "--timeout-ms", str(WAIT_MS))
              .get("result") or {}).get("wait") or {})
-    if wait.get("blockedReason"):
-        print(json.dumps({"terminal": handle, "blockedReason": wait["blockedReason"]}, ensure_ascii=False))
-        sys.exit("orca-launch: %s が確認の画面（%s）で止まっているので Task を渡していない。"
-                 "答えてから %s で渡す（渡さないなら orca terminal close --terminal %s で閉じる）"
-                 % (handle, wait["blockedReason"], retry, handle))
-    if not wait.get("satisfied"):
-        sys.exit("orca-launch: %s が %d 秒で入力待ちにならなかった（%s）。orca terminal read --terminal %s --screen で見て、"
-                 "入力待ちになったら %s で渡す（渡さないなら orca terminal close --terminal %s で閉じる）"
-                 % (handle, WAIT_MS // 1000, wait.get("status"), handle, retry, handle))
+    if wait.get("blockedReason") or not wait.get("satisfied"):
+        why = wait.get("blockedReason") or "%d 秒で入力待ちにならなかった（%s）" % (WAIT_MS // 1000, wait.get("status"))
+        print(json.dumps({"terminal": handle, "blockedReason": wait.get("blockedReason"), "seat": email}, ensure_ascii=False))
+        sys.exit("orca-launch: %s ので Task を渡していない。端末で答えてから %s で渡す（渡さないなら orca terminal close --terminal %s で閉じる）"
+                 % (stopped_at(handle, home, email, why), retry, handle))
     # 席を読んでから端末ができるまでに account-failover が切り替えると、この端末は Orca の起動し直しに入らず古い席に残る。
-    if a.agent == "claude" and config_dir() != home:
+    if a.agent == "claude" and seat()[0] != home:
         orca("terminal", "close", "--terminal", handle)
         sys.exit("orca-launch: 起動の途中で Claude の席が切り替わったので、Task を渡さずに端末を閉じた。同じ orca-launch を打ち直す")
 
