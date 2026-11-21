@@ -6,7 +6,7 @@ import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
-import { boardOf, doneOrder, renderWindow, todoOrder, type Tab } from './window-view.ts'
+import { boardOf, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -81,11 +81,13 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const m: Model = { boards, focused: feed.focused, unseen: win ? unreadable : [...(feed.unseen ?? []), ...unreadable], live: feed.live, errors: feed.errors ?? [], panel: opts.panel }
     if (win) {
       const b = boardOf(m)
-      order = ui.tab === 'done' ? doneOrder(b) : todoOrder(b)
+      order = ui.tab === 'done' ? doneOrder(b) : ui.tab === 'whole' ? taskOrder(b) : todoOrder(b)
       // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
       const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
       if ((ui.tab ?? 'todo') === 'todo' && !(ui.sel && (order.includes(ui.sel) || reports.includes(ui.sel)))) ui.sel = order[0] ?? reports[0]
       if (ui.tab === 'done' && !(ui.doneSel && order.includes(ui.doneSel))) ui.doneSel = order[0]
+      // 全体は右に出しているタスクが消えたら、上から最初のタスクにする（済んだタスクは選んだまま読める）。
+      if (ui.tab === 'whole' && !(ui.task && b?.d.tasks.has(ui.task))) ui.task = order[0]
     }
     return m
   }
@@ -264,10 +266,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
 
   function select(k: string | undefined): void {
     if (win && ui.tab === 'done') ui.doneSel = k
+    else if (win && ui.tab === 'whole') ui.task = k
     // 窓の要対応は詳細を常に開くので、押し直しても閉じない。
     else ui.sel = win && (ui.tab ?? 'todo') === 'todo' ? k : ui.sel === k ? undefined : k
     draw()
-    if (ui.sel) app.querySelector(`[data-strip="${CSS_ESC(ui.sel)}"],[data-sel="${CSS_ESC(ui.sel)}"].cardrow`)?.scrollIntoView({ block: 'nearest' })
+    const shown = win && ui.tab === 'whole' ? `[data-task="${CSS_ESC(ui.task ?? '')}"]` : ui.sel && `[data-strip="${CSS_ESC(ui.sel)}"],[data-sel="${CSS_ESC(ui.sel)}"].cardrow`
+    if (shown) app.querySelector(shown)?.scrollIntoView({ block: 'nearest' })
   }
 
   async function talkStream(root: string, stream: string): Promise<void> {
@@ -279,16 +283,22 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
   }
 
-  /** 窓だけの操作（タブ・畳み・依頼の開閉・要対応へ移る・worker の端末・仕事の担当）。扱ったら true。 */
+  /** 窓だけの操作（タブ・畳み・タスクの詳細・カードへ移る・worker の端末・仕事の担当）。扱ったら true。 */
   function onWindow(el: HTMLElement): boolean {
     const d = el.dataset
     const root = boardOf(model(Date.now()))?.root
     if (d.tab !== undefined) ui.tab = d.tab as Tab
     else if (d.toggle !== undefined) ui.open[d.toggle] = el.getAttribute('aria-expanded') !== 'true'
-    else if (d.rq !== undefined) ui.rq = ui.rq === d.rq ? undefined : d.rq
+    else if (d.task !== undefined) ui.task = d.task
     else if (d.jump !== undefined) {
-      ui.tab = 'todo'
-      ui.sel = d.jump
+      // 済んだカードは対応済みのタブで開く。
+      if (rows.get(d.jump)?.status === 'closed') {
+        ui.tab = 'done'
+        ui.doneSel = d.jump
+      } else {
+        ui.tab = 'todo'
+        ui.sel = d.jump
+      }
     } else if (d.dsel !== undefined) ui.doneSel = d.dsel
     else if (d.term !== undefined) {
       void t.focusAgent(d.term || null, d.wt || undefined).then((x) => toast(x.focused ? `${x.how ?? '端末'}を前に出しました` : '端末も worktree も Orca にありません'), fail)
@@ -302,7 +312,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   app.addEventListener('click', (e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-rq],[data-jump],[data-dsel],[data-term],[data-talkstream]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream]')
     if (!el || !app.contains(el)) return
     if (win && onWindow(el)) return
     if (el.dataset.sel !== undefined) return select(el.dataset.sel)

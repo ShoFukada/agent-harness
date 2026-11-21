@@ -4,8 +4,8 @@ import { sample } from '../fixtures/sample.ts'
 import { parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
 import { copyMessage } from './controller.ts'
-import { boardsOf, newUi, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
-import { renderWindow, todoOrder } from './window-view.ts'
+import { boardsOf, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
+import { renderWindow, taskOrder, todoOrder } from './window-view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
@@ -41,7 +41,7 @@ test('見てほしい点の「1 …」の番号は一覧の番号にし（二重
   assert.match(h, /<li value="1">一覧の幅<\/li><li value="2">「担当と話す」の位置<\/li><\/ol><p class="mut">6 点ともおすすめなら「これでよい」<\/p>/)
 })
 
-test('全体: 一緒に作る → 任せる → 見張る → 形の無い仕事 の順に置き、見張るに届いた連絡を件数外で並べる。右に済んでいない依頼', () => {
+test('全体: 一緒に作る → 任せる → 見張る → 形の無い仕事 の順に置き、見張るに届いた連絡を件数外で並べる。右に未対応の一覧を出さない（R91）', () => {
   const m = aoba((v) => {
     const s = v.cockpit!.streams
     s[0]!.form = 'delegate'
@@ -54,7 +54,48 @@ test('全体: 一緒に作る → 任せる → 見張る → 形の無い仕事
   assert.ok(order.every((n) => n >= 0), t)
   assert.deepEqual([...order].sort((a, b) => a - b), order)
   assert.match(t, /届いた連絡 1 件・件数外/)
-  assert.match(t, /未完了の依頼 1 件/)
+  assert.doesNotMatch(t, /未完了の依頼/)
+})
+
+test('全体: タスクを押すと右に詳細（工程・状態・goal・next・done・worker・結ばれたカード・依頼の原文と済の条件・出した指示）を出し、その箱を開く', () => {
+  const m = aoba((v) => {
+    const t1 = v.cockpit!.tasks.find((x) => x.id === 't1')!
+    t1.goal = '配車の一覧で探す手間を減らす'
+    t1.done = ['並べ替えを入れた']
+    v.cockpit!.cards.find((x) => x.id === 'r5')!.tasks = ['t1']
+    v.cockpit!.requests = [{ id: 'q7', at: '2026-11-21T09:00:00+09:00', title: '一覧を直す', tasks: ['t1'], kind: 'work', utterances: [{ id: 'u1', quote: '一覧で探しにくい' }], done_when: ['並べ替えができる', '絞り込みができる'] }]
+    v.workers = [{ terminalId: 'term_w', title: '一覧の改修（worker）', agent: 'claude', state: 'working', since: NOW, task: 't1', where: 'テストを直している' }]
+    v.log.ops.push({ op_id: 2, at: '2026-11-21T09:40:00+09:00', item_id: 'r5', item_rev: 1, type: 'talk', text: '幅を 1280 でも崩れないように' })
+  })
+  const h = page(m, { tab: 'whole', task: 't1' })
+  // j・k と何も選んでいないときの順は、箱を全部開いたときの画面の上からの順と同じ。
+  const all = page(m, { tab: 'whole', open: { 's:s1': true, 's:s2': true, 's:s3': true } })
+  assert.deepEqual(taskOrder(m.boards[0]), [...all.matchAll(/data-task="(\w+)"/g)].map((x) => x[1]))
+  const side = h.slice(h.indexOf('aria-label="タスクの詳細"'))
+  const t = text(side)
+  assert.match(h, /class="task" aria-current="true"><button type="button" class="tsel" data-task="t1"/)
+  assert.match(h, /data-toggle="s:s1" aria-expanded="true"/)
+  for (const x of ['工程 3/5 作る（実装）', '状態 作業中', '何のため 配車の一覧で探す手間を減らす', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
+    assert.ok(t.includes(x), x)
+  assert.match(side, /data-jump="\/ws\/aoba#r5"/)
+  assert.match(side, /<li class=""><span aria-label="証拠なし">・<\/span>並べ替えができる<\/li>/)
+  assert.match(t, /出した指示 .*r5 修正を依頼 未反映 幅を 1280 でも崩れないように/)
+  assert.doesNotMatch(h, /data-rq=/)
+})
+
+test('出した指示: カードの詳細に、本文と時刻を新しい順に出し、反映済み・未反映を分ける。取り消した操作は出さない', () => {
+  const m = aoba((v) => {
+    v.log.ops.push(
+      { op_id: 2, at: '2026-11-21T09:40:00+09:00', item_id: 'd21', item_rev: 1, type: 'talk' },
+      { op_id: 3, at: '2026-11-21T09:50:00+09:00', item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'draw' },
+      { op_id: 4, at: '2026-11-21T09:50:05+09:00', item_id: 'd21', item_rev: 1, type: 'undo', undo_of: 3 },
+      { op_id: 5, at: '2026-11-21T09:55:00+09:00', item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'other', text: '社内向けは別の図にする' })
+  })
+  const closed = text(page(m, { tab: 'done', doneSel: '/ws/aoba#d21' }))
+  assert.match(closed, /出した指示 11\/21\(土\) 09:55 別の回答 未反映 社内向けは別の図にする 11\/21\(土\) 09:40 協議を開始 未反映/)
+  assert.doesNotMatch(closed, /図に社内向けの入口を描き足す 未反映/)
+  // 窓口が反映した操作（applied_ops）は反映済み。
+  assert.match(text(page(aoba(), { tab: 'done', doneSel: '/ws/aoba#d19' })), /出した指示 .* 決定: 議題だけテキストで送る 反映済み/)
 })
 
 test('対応済み: 確認の返答が無いまま閉じた見てに札を付け、詳細に返した答えと片付けた人を出す', () => {
@@ -115,4 +156,16 @@ test('Codex v3 4・5: 属性の値の中の > でタグを切らず、コピー�
   assert.equal(tighten('<div title="x > 資料 A">文 A</div>'), '<div title="x > 資料 A">文A</div>')
   assert.match(page(aoba(), { sel: '/ws/aoba#d22' }), new RegExp(`data-act="sent"[^>]*>${SENT_LABEL}<`))
   assert.match(copyMessage({ opened: true }), new RegExp(`「${SENT_LABEL}」を押して`))
+})
+
+test('追加 14: 許可の対象は本文の書体にし、` で囲んだ所と SHA だけを等幅にする（窓とパネル）', () => {
+  const m = aoba((v) => {
+    v.cockpit!.cards.push({ id: 'p9', rev: 1, kind: 'permit', state: 'open', at: '2026-11-21T09:00:00+09:00', stream: 's1', title: '本番に流す', purpose: '一覧を出す', target: '本番の DB に `migrate 0042` を流す（a1b2c3d）', effect: '一覧の列が増える', undo: '0041 に戻す', why: '今日出す', fallback: '待つ', quote: '出して' })
+  })
+  const h = page(m, { sel: '/ws/aoba#p9' })
+  const f = h.slice(h.indexOf('>対象<'), h.indexOf('>何が変わるか<'))
+  assert.match(f, /<p>本番の DB に <span class="code">migrate 0042<\/span> を流す（<span class="code">a1b2c3d<\/span>）<\/p>/)
+  assert.doesNotMatch(f, /<div><span class="code">本番/)
+  const panel = render({ ...m, panel: true }, { ...newUi(), sel: '/ws/aoba#p9' }, NOW, (x) => x)
+  assert.match(panel, /<span class="lb">対象<\/span><div><div class="rich"><p>本番の DB に <span class="code">migrate 0042<\/span>/)
 })

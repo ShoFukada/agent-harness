@@ -175,7 +175,7 @@ body { margin:0; }
 .ck .done-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
 .ck .done-list li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; align-items:start; border-bottom:1px solid var(--rule2); padding-bottom:6px; }
 .ck .done-list small { grid-column:1; color:var(--ink3); font-size:var(--fs-xs); }
-.ck .other textarea { width:100%; min-height:5em; resize:vertical; font:inherit; font-size:var(--fs-s); border:1px solid var(--rule); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
+.ck .other textarea { width:100%; field-sizing:content; min-height:calc(6lh + 18px); max-height:50vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--rule); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
 .ck .other .cnt { font-size:var(--fs-xs); color:var(--ink3); }
 
 /* 返答の列。低い窓でも見えるよう、開いた票の下に留める。 */
@@ -282,8 +282,6 @@ body { margin:0; }
 .ck.win .wnotes div { font-size:var(--fs-xs); padding-left:1.2em; }
 .ck.win .wbody { display:grid; flex:1; min-height:0; }
 .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
-/* 全体は右の「済んでいない依頼」を狭い幅でも隠さない（下に押し出さない）。R81 */
-.ck.win .wbody.whole { grid-template-columns:minmax(0,1fr) clamp(280px, 32%, 400px); }
 .ck.win .wpane { overflow-y:auto; padding:14px 18px 80px; display:grid; align-content:start; gap:14px; min-height:0; min-width:0; }
 .ck.win .wside { overflow-y:auto; border-left:1px solid var(--rule); background:var(--surface); min-height:0; min-width:0; }
 .ck.win .wpane > p { margin:0; font-size:var(--fs-s); }
@@ -292,7 +290,7 @@ body { margin:0; }
   .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(320px,46%); } }
 @media (max-width:640px) {
   .ck.win { height:auto; overflow:visible; }
-  .ck.win .wbody.split, .ck.win .wbody.whole { grid-template-columns:minmax(0,1fr); }
+  .ck.win .wbody.split { grid-template-columns:minmax(0,1fr); }
   .ck.win .wside { border-left:0; border-top:1px solid var(--rule); }
   .ck.win .wpane { padding-bottom:20px; } }
 
@@ -382,7 +380,11 @@ body { margin:0; }
 .ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
 .ck.win .st .inner { border-top:1px solid var(--rule2); padding:4px 14px 12px; display:grid; gap:2px; }
 .ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:8px 0 2px; display:flex; gap:8px; align-items:center; }
-.ck.win .task { display:grid; grid-template-columns:4.5em minmax(0,1fr) auto; gap:8px; align-items:start; padding:3px 0; font-size:var(--fs-s); }
+.ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); }
+.ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:4px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; min-width:0; }
+.ck.win .tsel:hover { background:var(--sunk); }
+.ck.win .task[aria-current="true"] .tsel { background:var(--sunk); box-shadow:inset 0 0 0 2px var(--focus); }
+.ck.win .task .wk { padding-top:4px; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
 .ck.win .tst.s-run { color:var(--focus); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
 .ck.win .task .tn { display:grid; min-width:0; }
@@ -390,8 +392,6 @@ body { margin:0; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
 .ck.win .task .nx { color:var(--ink3); font-size:var(--fs-xs); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
-.ck.win .wrow { grid-column:2 / -1; display:flex; gap:8px; align-items:center; font-size:var(--fs-xs); color:var(--ink2); border-left:2px solid var(--run); padding:2px 0 2px 10px; margin:2px 0 4px; flex-wrap:wrap; }
-.ck.win .wrow .wn { font-weight:600; color:var(--ink); }
 .ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:1px solid var(--rule); border-radius:5px; padding:0 6px; background:var(--sunk); color:var(--ink2); white-space:nowrap; }
 .ck.win .chip.live { border-color:var(--run); color:var(--focus); background:var(--run-bg); }
 .ck.win .chip.bad { border-color:var(--hot); color:var(--hot); background:var(--hot-bg); }
@@ -409,17 +409,22 @@ body { margin:0; }
 .ck.win .watch p { margin:0; font-size:var(--fs-s); }
 .ck.win .watch .strips { margin:0; }
 
-/* 全体の右: まだ済んでいない依頼 */
-.ck.win .wside > h3 { margin:0; font-size:var(--fs-s); padding:12px 14px 6px; display:flex; gap:8px; align-items:baseline; }
-.ck.win .wside > h3 .mut { font-weight:400; font-size:var(--fs-xs); }
-.ck.win .wside > .note { font-size:var(--fs-xs); color:var(--ink3); padding:0 14px 8px; margin:0; background:none; }
-.ck.win .rq { border-top:1px solid var(--rule2); }
-.ck.win .rq > button { display:grid; grid-template-columns:36px minmax(0,1fr); gap:2px 6px; width:100%; text-align:left; border:0; background:none; padding:6px 14px; font-size:var(--fs-s); line-height:1.5; }
-.ck.win .rq > button:hover { background:var(--sunk); }
-.ck.win .rq .rid { color:var(--ink3); font-size:var(--fs-xs); padding-top:2px; }
-.ck.win .rq .rt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ck.win .rq .rs { grid-column:2; font-size:var(--fs-xs); color:var(--ink3); display:flex; gap:6px; flex-wrap:wrap; }
-.ck.win .trace { padding:2px 14px 12px 60px; display:grid; gap:4px; font-size:var(--fs-xs); }
-.ck.win .trace .q { white-space:pre-line; color:var(--ink2); border-left:2px solid var(--rule); padding-left:8px; overflow-wrap:anywhere; }
-.ck.win .trace .l { color:var(--ink3); font-weight:600; margin-top:4px; }
+/* 全体の右: タスクの詳細 */
+.ck.win .wk2 { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
+.ck.win .lc { display:grid; grid-template-columns:auto auto minmax(0,1fr) auto; gap:8px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
+.ck.win button.lc:hover { background:var(--sunk); }
+.ck.win .lc .ti { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; }
+.ck.win .rqd { display:grid; gap:6px; }
+.ck.win .rqd + .rqd { border-top:1px solid var(--rule2); padding-top:8px; margin-top:4px; }
+.ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:2px; }
+.ck.win .dw li { display:grid; grid-template-columns:1.4em minmax(0,1fr); color:var(--ink2); }
+.ck.win .dw li.ok { color:var(--ink); }
+/* 出した指示（新しい順） */
+.ck.win .wdet > .sent { margin:12px 18px 0; }
+.ck.win .sent ol { margin:0; padding:0; list-style:none; display:grid; }
+.ck.win .sent li { display:grid; gap:4px; padding:7px 0; font-size:var(--fs-s); }
+.ck.win .sent li + li { border-top:1px solid var(--rule2); }
+.ck.win .sent .sl { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
+.ck.win .sent .tm { font-size:var(--fs-xs); color:var(--ink3); font-variant-numeric:tabular-nums; }
 `

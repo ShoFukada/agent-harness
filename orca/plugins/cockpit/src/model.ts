@@ -516,14 +516,40 @@ export type CardView = {
 const CLOSING: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'ack']
 
 function closedLabel(c: Card, type: OpType | undefined, option?: Option, text?: string): string {
-  if (type === 'decide' && option?.id === OTHER) return `別の答え: ${text ?? ''}`
+  if (type === 'decide' && option?.id === OTHER) return `別の回答: ${text ?? ''}`
   if (type === 'decide' || (!type && option)) return `${c.kind === 'permit' ? '許可' : '決定'}: ${option?.label ?? text ?? '?'}`
   if (type === 'accept') return c.kind === 'permit' ? '許可' : '承認'
   if (type === 'sent') return c.kind === 'send' ? '送信済み' : '対応済み'
-  if (type === 'skip') return c.kind === 'send' ? '送らない' : c.kind === 'inbox' ? '返事は要らない' : c.kind === 'permit' ? '止めた' : '見送った'
-  if (type === 'delegate') return '許して、以後は任せた'
-  if (type === 'ack') return '読んだ'
+  if (type === 'skip') return c.kind === 'send' ? '送信しない' : c.kind === 'inbox' ? '返信不要' : c.kind === 'permit' ? '却下' : '見送り'
+  if (type === 'delegate') return '許可・以後一任'
+  if (type === 'ack') return '既読'
   return '担当が完了'
+}
+
+const SILENT: OpType[] = ['undo', 'repeat', 'dismiss']
+/** 窓から出した指示の 1 件。applied は窓口（担当）が帳簿に反映したか。 */
+export type Sent = { op: Op; card: Card; label: string; text?: string; applied: boolean }
+
+/**
+ * カードへ出した指示（操作の記録から作る。帳簿には書かない）。新しい順。取り消した操作と取り消しそのもの、
+ * カードに結ばれない合図（repeat）、窓だけの記録の詰まりの「済ませた」は出さない。
+ */
+export function sentOps(cards: Card[], log: UserLog, appliedOps: number[] = []): Sent[] {
+  const applied = new Set(appliedOps)
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  const byId = new Map(cards.map((c) => [c.id, c]))
+  return log.ops
+    .filter((o) => byId.has(o.item_id) && !SILENT.includes(o.type) && !undone.has(o.op_id))
+    .map((o): Sent => {
+      const c = byId.get(o.item_id)!
+      const [label, text] = o.type === 'decide' && o.option_id === OTHER ? ['別の回答', o.text]
+        : o.type === 'decide' ? [closedLabel(c, 'decide', c.options?.find((x) => x.id === o.option_id) ?? { id: o.option_id ?? '', label: o.option_id ?? '?' }), o.text]
+        : o.type === 'talk' ? (o.text?.trim() ? ['修正を依頼', o.text] : ['協議を開始', undefined])
+        : o.type === 'revert' ? ['戻すよう依頼', c.done?.[o.target ?? -1]?.what]
+        : [closedLabel(c, o.type), o.text]
+      return { op: o, card: c, label, text: text?.trim() || undefined, applied: applied.has(o.op_id) }
+    })
+    .sort((a, b) => timeOf(b.op.at) - timeOf(a.op.at) || b.op.op_id - a.op.op_id)
 }
 
 const USER_DONE: Record<CardKind, string> = {

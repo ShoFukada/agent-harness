@@ -40,8 +40,8 @@ export type Ui = {
   tab?: 'todo' | 'whole' | 'done'
   /** 窓の対応済みで開いている票（root#id）。要対応の sel と分けて持つ。 */
   doneSel?: string
-  /** 窓の全体で開いている依頼の id。 */
-  rq?: string
+  /** 窓の全体で右に詳細を出しているタスクの id。 */
+  task?: string
   theme: Theme
   dark: boolean
 }
@@ -300,7 +300,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
         parts.push(manualHtml(r))
         break
       }
-      parts.push(fld('対象', c.target ? `<span class="code">${esc(c.target)}</span>` : ''), fld('影響', rich(c.effect, c.repo)), fld('戻し方', esc(c.undo)))
+      parts.push(fld('対象', rich(c.target, c.repo)), fld('影響', rich(c.effect, c.repo)), fld('戻し方', esc(c.undo)))
       parts.push(optionsHtml(r, ui))
       break
     case 'stuck':
