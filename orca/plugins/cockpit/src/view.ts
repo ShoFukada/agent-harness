@@ -192,7 +192,8 @@ export function ownerHtml(o: OwnerRef, owners?: OwnerLive[] | false): string {
   const open = owners && (o.how === 'terminal' ? !!o.terminal : !!wt)
     ? `<button type="button" class="act" data-term="${esc(o.how === 'terminal' ? o.terminal : '')}" data-wt="${esc(wt ?? '')}">${where}を開く</button>`
     : where ? `<span>${where}</span>` : ''
-  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${open}${o.state ? `<span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
+  // 役割・名前・状態・操作の順（全体のタスクの進め手の行と同じ。Neon 追加 23）。
+  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${o.state ? `<span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}${open}</span>`
 }
 
 /** 閉じた票に出す 1 行（HTML）。開くまで中身を読まなくても何の票かが分かるように。 */

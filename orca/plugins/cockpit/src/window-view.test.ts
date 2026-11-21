@@ -348,7 +348,7 @@ test('詳細の担当の行は、端末・チャットを前に出すボタン�
   const m = aoba((v) => {
     v.owners = [{ session: 'sess-aws', kind: 'chat', state: 'working', worktree: '/ws/aoba-aws' }]
   })
-  assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span><b>AWS.?構成案<\/b><button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws">チャットを開く<\/button>/)
+  assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span><b>AWS.?構成案<\/b>(<span>[^<]*<\/span>)?<button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws">チャットを開く<\/button>/)
   assert.match(page(m, { sel: '/ws/aoba#r5' }), /<button type="button" class="act" data-term="term_aoba_w1" data-wt="">端末を開く<\/button>/)
   assert.match(page(aoba(), { sel: '/ws/aoba#d21' }), /<b>AWS.?構成案<\/b><span>チャット<\/span>/)
 })

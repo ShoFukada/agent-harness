@@ -260,7 +260,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
     <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}${nextBtn}</div>
-      <div class="kl"><span class="kd">${kindName(c)}</span>${c.id.startsWith('#') ? '<span class="mut">Orca が検知</span>' : ''}${winDue(c.due, now)}</div>
+      <div class="kl"><span class="kd">${kindName(c)}</span>${winDue(c.due, now)}</div>
       <h2>${esc(c.title)}</h2><div>${r.agent?.ask?.from ? `<span class="owner">${esc(r.agent.ask.from)}</span>` : ownerHtml(r.owner, r.agent ? false : b.v.owners)}</div></div>
     ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}

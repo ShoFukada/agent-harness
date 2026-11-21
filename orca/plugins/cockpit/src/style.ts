@@ -185,7 +185,8 @@ body { margin:0; }
 .ck .btn.pri { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink3); cursor:default; }
 .ck .btn.talk { border-color:var(--focus); color:var(--focus); }
-.ck .btn.quiet { border-color:transparent; color:var(--ink2); font-weight:400; }
+.ck .btn.quiet { border-color:transparent; color:var(--ink2); font-weight:400; text-decoration:underline; text-underline-offset:3px; }
+/* 枠の無い副の操作も、下線で押せると分かるようにする（Neon 追加 23）。 */
 .ck .acts .hint { margin-left:auto; font-size:var(--fs-xs); color:var(--ink3); }
 .ck kbd { font:inherit; font-size:var(--fs-xs); border:1px solid var(--ink3); border-radius:4px; padding:0 4px; }
 
