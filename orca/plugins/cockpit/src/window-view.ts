@@ -302,7 +302,8 @@ function taskDetail(b: Board, t: TaskView): string {
     const k = keyOf(v)
     const state = v.status === 'closed' ? v.how ?? CARD_STATE.closed : v.card.kind === 'consult' ? '相談' : v.card.kind === 'report' ? '報告' : CARD_STATE[v.status]
     const inner = `<span class="kd">${kindName(v.card)}</span><span class="code">${esc(v.card.id.startsWith('#') ? 'Orca' : v.card.id)}</span><span class="ti">${esc(v.card.title)}</span><span class="${v.status === 'mine' || v.status === 'fixing' ? 'now' : 'mut'}">${esc(state)}</span>`
-    return listed.has(k) ? `<button type="button" class="lc" data-jump="${esc(k)}">${inner}</button>` : `<div class="lc">${inner}</div>`
+    const cls = `lc${v.status === 'closed' || v.status === 'waiting' ? ' cl' : ''}`
+    return listed.has(k) ? `<button type="button" class="${cls}" data-jump="${esc(k)}">${inner}</button>` : `<div class="${cls}">${inner}</div>`
   }
   const reqs = b.d.requests.filter((r) => r.req.tasks?.includes(task.id))
   const reqHtml = reqs.map((r) => {

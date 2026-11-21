@@ -407,10 +407,12 @@ body { margin:0; }
 
 /* 全体の右: タスクの詳細 */
 .ck.win .wk2 { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
-.ck.win .lc { display:grid; grid-template-columns:auto auto minmax(0,1fr) auto; gap:8px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
+.ck.win .lc { display:grid; grid-template-columns:4em 3.6em minmax(0,1fr) auto; gap:8px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
 .ck.win button.lc:hover { background:var(--sunk); }
 .ck.win .lc .ti { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; }
+.ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis; }
+/* 済んだカードは弱く、要対応・修正待ちだけを目立たせる。 */
+.ck.win .lc.cl, .ck.win .lc.cl .kd { color:var(--ink3); font-weight:400; }
 .ck.win .rqd { display:grid; gap:6px; }
 .ck.win .rqd .code { margin-right:6px; }
 .ck.win .rqd .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
@@ -428,5 +430,5 @@ body { margin:0; }
 .ck.win .sent li { display:grid; gap:3px; padding:5px 0; font-size:var(--fs-s); }
 .ck.win .sent li + li { border-top:1px solid var(--rule2); }
 .ck.win .sent .sl { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
-.ck.win .sent .tm { font-size:var(--fs-xs); color:var(--ink3); font-variant-numeric:tabular-nums; }
+.ck.win .sent .tm { font-size:var(--fs-xs); color:var(--ink3); font-variant-numeric:tabular-nums; min-width:8.5em; }
 `
