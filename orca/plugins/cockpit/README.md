@@ -1,31 +1,69 @@
 # 操縦席（cockpit）
 
-ワークスペースの `.orca/cockpit.json`（メインのエージェントが書く）を「要対応・全体・対応済み」の 3 つのタブで出す。全体のタブは「大タスクの一覧 → 大タスク → タスク」の順に開き、要対応・対応済みの確認と報告は大タスクごとに並んで、確認の上のたどりから大タスクへ上がれる。利用者がするのは、決める・顧客に聞く・成果物を見るの 3 つで、件数はこの 3 種（画面の印は判断・質問・確認）だけを数える。出す場所は 2 か所あり、主に使うのは窓。
+全案件の「私の番」を期限順の 1 列に並べる画面。各ワークスペースの `.orca/cockpit.json`（窓口のエージェントが書く）を読み、カード（票）を左の期限の軸（止まっている → 期限切れ → 今の線 → 今日 → 明日 → 今週 → それより先 → 期限なし）にぶら下げる。案件を 1 つ選ぶとその案件の票だけに絞り、右に「案件の今」（節目と、仕事ごとの 私待ち・止まっている・作業中・顧客待ち）を出す。出す場所は 2 か所。
 
-- **パネル**: Orca の右のサイドバー。開いているワークスペース 1 つ
-- **窓**: 左のディスプレイの上半分に置くブラウザの窓。左に操縦席のある全ワークスペースの列、右に選んだワークスペースの操縦席。Orca の前面に合わせて切り替わる
+- **窓**: 左のディスプレイに置くブラウザの窓。全案件。幅 1440 で「案件の列｜私の番の 1 列｜案件の今・話し中・顧客待ち・報告・片付いた」の 3 列、狭い幅では 1 列に積む
+- **パネル**: Orca の右のサイドバー。前面の案件 1 つ。Orca の下の帯（statusBar）に前面の案件の「私の番 n」を出し、押すとパネルを開く
 
-利用者が押した操作は `.orca/cockpit.user.json` に追記し、メインがそれを読んで反映する。ファイルの形は `src/model.ts`（リポジトリの README に例）、画面が満たすことは `docs/user-stories.md`。
+利用者が押した操作は `.orca/cockpit.user.json` に追記し、窓口がそれを読んで反映する。画面が満たすことは `docs/user-stories.md`。
+
+## カード
+| 種類 | いつ出るか | 返答 | 件数 |
+|---|---|---|---|
+| 詰まり | 担当が質問・許可待ち・停止（Orca の状態からも作る） | 担当と話す・端末を開く | 数える |
+| 許す | push・本番・データの変更の前 | 許す・この案件では任せる・止める | 数える |
+| 決める | 設計・要件・費用・言い方が分かれる | 数字で選んで Enter・別の答え | 数える |
+| 送る前 | 顧客か社内へ出す文面ができた | コピーしてスレッドを開く・送った・担当と直す・送らない | 数える |
+| 見て | 任せた仕事の出来上がり | これでよい・直してほしい（担当と話す） | 数える |
+| 届いた | 顧客の連絡が拾われた | 担当と話す・返事は要らない | 数えない |
+| 話し中 | 担当と会話で作っている | 続きを話す | 数えない |
+| 報告 | エージェントが決めた・済ませた | 戻して・受け取った | 数えない |
+
+どのカードにも「担当と話す」がある。押すと、カードを引いた書き出し（`【操縦席 d21・決める】題 / 何のため: … / この件で: `）をクリップボードに入れ、担当の端末を前に出す（担当がチャットなら、そのチャットのあるワークスペースを前に出す）。カードは話し中に移って件数から外れ、担当が書き換えて版（`rev`）が上がると私の番に戻る。Orca には既存のチャットを前に出す API が無いので、チャットのタブは利用者が選ぶ。
+
+カードの状態は、`cockpit.json` の `state` に操作ログを重ねて決める（`src/model.ts` の `overlay`）。私の番 → 決めた（受け取り待ち）→ 窓口が受け取る → 片付いた。送ったカードは `awaiting` を持つと顧客待ちになり、催促の日を過ぎると朱になる。
 
 ## 構成
 
 | ファイル | 役割 |
 |---|---|
-| `src/model.ts` | ファイルの形と、cockpit.json に操作ログを重ねる処理 |
-| `src/state.ts` | 依頼・タスク・worker・利用者の番・期限を決める 1 か所。画面・左の列・`window/state.ts` はここを通す |
-| `src/store.ts` | `.orca/` のファイルを読む・操作を追記する・メインに合図を送る。パネルの worker と窓の常駐のプロセスが共有する |
+| `src/model.ts` | ファイルの形（版 2）と、cockpit.json に操作ログを重ねる処理 |
+| `src/migrate.ts` | 版 1（`items`）から版 2（`cards`）への移し替え |
+| `src/state.ts` | 期限の区切り・私の番の 1 列・案件の今・話す相手・Orca のサイドバーの状態を決める 1 か所。画面・`window/state.ts` はここを通す |
+| `src/store.ts` | `.orca/` のファイルを読む・操作を追記する（版と選択肢を確かめる）・窓口に合図を送る。パネルの worker と窓の常駐のプロセスが共有する |
 | `src/view.ts` | 表示の状態から HTML を作る（DOM に触らない） |
+| `src/style.ts` | CSS（明暗のトークン、container query で 1440／760 未満を切り替える） |
 | `src/controller.ts` | クリック・キーボードを操作につなぐ。パネルと窓のページが共有する |
-| `src/window-view.ts` | 窓の上の帯と左の列 |
-| `src/worker.ts` | パネルの worker。前面のワークスペースのファイルを見張ってパネルに送り、前面が変わるたびに `focus.json` を書く |
+| `src/worker.ts` | パネルの worker。前面のワークスペースのファイルを見張ってパネルに送り、下の帯を更新し、前面が変わるたびに `focus.json` を書く |
 | `src/panel.ts` | パネル（controller の送り先を worker にする） |
 | `window/server.ts` | 窓の常駐のプロセス（launchd） |
 | `window/page.ts` | 窓のページ（controller の送り先を常駐のプロセスにする） |
-| `window/assistant.ts` | 話したいことへのすぐの回答（手元の `claude -p` を読むだけの道具で 1 回呼ぶ） |
-| `window/state.ts` | 判定済みの状態を JSON で出すコマンド。hook（periodic-reminder.sh）とメインが、窓と同じ判定で状態を読む |
-| `window/orca-state.ts` | `orca worktree ps`・`terminal list` からメイン・worker・worktree を決める（常駐のプロセスと `window/state.ts` が共有） |
-| `window/reply.ts` | メインが話したいことへの回答を追記するコマンド（窓と同じロックを通す） |
-| `fixtures/sample.json` | 確認用のサンプル（`fixtures/figures/` の図と一緒に `.orca/` に置く） |
+| `window/migrate.ts` | 移し替えのコマンド |
+| `window/state.ts` | 判定済みの状態を JSON で出すコマンド。hook（periodic-reminder.sh）と窓口が、窓と同じ判定で状態を読む |
+| `window/orca-state.ts` | `orca worktree ps`・`terminal list` からメイン・worker・worktree を決める |
+| `fixtures/sample.ts`・`fixtures/demo.ts` | 架空の 4 案件の見本と、偽の Orca で窓を手元で動かす道具 |
+
+## 移し替え（版 1 → 版 2）
+```sh
+node window/migrate.ts <ワークスペースの root>          # 移した結果を出すだけ
+node window/migrate.ts <ワークスペースの root> --write  # 書き換える
+```
+- 未反映の操作が残っていれば書かずに断る。先に窓口に反映させる
+- 元は `cockpit.v1.json`・`cockpit.archive.v1.json` に残す
+- `dec` は中身で分ける（`topic: push` は許す、`draft` があれば送る前、ほかは決める）。`ask` は送る前、`rev` は見て、`ack` は報告。どのカードも `rev` を 1 つ上げるので、古い版に押した操作は効かない
+- `summary`・`deliverables`・`cockpit.talk.json` は移さない。窓は版 1 のファイルを読まず、移し替えのコマンドを添えて断る
+
+## Orca のサイドバーとそろえる
+窓のカードと Orca のサイドバーで、同じ仕事が同じ名前・同じ状態で出るようにする。`node window/state.ts <root>` の `jobs[].orca` に、仕事ごとの表示名（20 字まで）・状態・未読の印が出るので、窓口はそれに合わせて `orca worktree set --display-name / --workspace-status / --unread` を打つ。
+
+| 案件の今 | Orca の状態 |
+|---|---|
+| 私待ち | `in-review`（未読の印を付ける） |
+| 止まっている・作業中・顧客待ち | `in-progress` |
+| 未着手 | `todo` |
+| 済 | `completed`（取り込んだら消す） |
+
+端末とチャットの題は `<短い題>（worker）`・`<短い題>（担当）`、窓口は `窓口（<案件の役割>）`。20 字を超える名前は `checks.long_names` に出る。
 
 ## 窓
 
@@ -34,85 +72,57 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
                                                      │ focus.json（前面のパス・メインの端末・エージェントの変化の時刻）
                                                      ▼  ~/Library/Application Support/cockpit/
    各ワークスペースの .orca/ ──fs.watch──▶ 常駐のプロセス（127.0.0.1:47231）──SSE──▶ 窓のページ
-                                          │  orca worktree ps / terminal list（下の「Orca の状態」）
+                                          │  orca worktree ps / terminal list / agent list
                                           └─ 操作の追記・orca terminal send / switch / worktree activate / file open
 ```
 
-- 起動は launchd などの常駐の仕組みに任せる（リポジトリの README に plist の例）。窓はブラウザの普通のタブで `http://127.0.0.1:47231` を開く
+- 起動は launchd などの常駐の仕組みに任せる。窓はブラウザの普通のタブで `http://127.0.0.1:47231` を開く
 - ブラウザ向けの TS は、配るときに Node の `module.stripTypeScriptTypes` で型を除く。ビルドの手順は無い。配るのは `window/server.ts` の `SERVED` に書いたファイルだけ
-- 手で列の行を選ぶと、次に Orca の前面が変わるまでその行を出す
+- 操縦席の無い本線と、読めていない連絡の経路（`routes`）は「見ていない」として数を出す。見ていないものがあるときは「何もしなくてよい」と出さない
+- 明・暗・Mac に合わせるの切り替えはブラウザに覚えさせる。既定は明るい地
 
 ### Orca の状態
 - 前面のワークスペースは、パネルの worker が書く `focus.json` を見張って取る（ポーリングしない）
-- エージェントの状態と worktree の親子は、Orca のプラグインの API に親子の情報が無いので、`orca worktree ps` と `orca terminal list` で取る。呼ぶのは、窓が表示されている間（ページが隠れると SSE を切る）だけで、(1) 接続したとき、(2) `focus.json` のエージェントの変化の時刻が変わったとき（5 秒に 1 回まで）、(3) 60 秒ごと。60 秒ごとに呼ぶのは、プロセスが落ちた worker は Orca から知らせが来ないため
-- 止まった理由: 許可待ち（blocked）・返事待ち（waiting）・落ちた（端末のプロセスが無い）・中断・エラーは Orca の状態から取る。ログイン切れと利用枠は Orca が状態として持たないので、短い最後の発言の文から推す
-- 見張るファイルは、操縦席のある本線と、いま出しているワークスペースの `.orca/` だけ
+- エージェントの状態と worktree の親子は `orca worktree ps`・`orca terminal list`・`orca agent list` で取る。呼ぶのは窓が表示されている間だけで、(1) 接続したとき、(2) `focus.json` のエージェントの変化の時刻が変わったとき（5 秒に 1 回まで）、(3) 60 秒ごと
+- 止まった worker は詰まりの票になる。名前は仕事の題を先にし、窓口が書いた詰まりと同じ仕事（タスクか担当の端末）なら重ねて出さない。許可待ち・返事待ちは「答えれば進む」、落ちた・ログイン切れは「私では直せない」と分ける
 
 ### セキュリティ
 - 待ち受けは 127.0.0.1 だけ。Host が `127.0.0.1:<port>`・`localhost:<port>` 以外の要求は断る（DNS rebinding）
 - 書き込みと送信（`/api/*`）は、起動のたびに作るトークン（配るページにだけ埋める）と Origin の両方が合うものだけ受ける。SSE もトークンが要る
-- 読むファイルは `.orca/` の中だけで、`..` とシンボリックリンクで外へ出るものは読まない（`src/store.ts` の `readInOrca`。パネルも同じ関数を通る）。開くファイルもワークスペースの中だけ
+- 読むファイルは `.orca/` の中だけで、`..` とシンボリックリンクで外へ出るものは読まない（`src/store.ts` の `readInOrca`）。開くファイルもワークスペースの中だけ
 - figure の SVG は、パネルと同じ取り除き（script・外部参照・イベント属性）を通してから描く
 
 ### メモリ（2026-11-16 に測った値）
-| 対象 | 物理フットプリント（アクティビティモニタの「メモリ」） | RSS |
+| 対象 | 物理フットプリント | RSS |
 |---|---|---|
-| 常駐のプロセス（Orca の実物、窓 1 枚が接続して 60 秒ごとに確かめている間） | 51〜61 MB | 75〜95 MB |
-| 参考: 何もしない Node 24 | 13 MB | 40 MB |
-| 参考: `.ts` を 1 つ読み込んだ Node 24 | 32 MB | 65 MB |
-| 窓 1 枚（Chrome のアプリ表示）で増える renderer | 35 MB（ほかに予備の renderer 12 MB） | |
+| 常駐のプロセス（窓 1 枚が接続して 60 秒ごとに確かめている間） | 51〜61 MB | 75〜95 MB |
+| 窓 1 枚（Chrome のアプリ表示）で増える renderer | 35 MB | |
 
-目安の 50 MB を約 10 MB 超える。超える分のほとんどは、Node が `.ts` を読むときに読み込む型の除去（WebAssembly）で、プロセスが終わるまで残る。
+超える分のほとんどは、Node が `.ts` を読むときに読み込む型の除去（WebAssembly）。
 
 ## 成果物と資料を開く
-`href`・`sources`・`links` などのリンクは、種類の印（Drive・PR・ページ・ファイル）を付けたボタンで出す。種類は URL のドメインから決める。
-- http(s) の URL: 窓は常駐のプロセスが macOS の `open` で既定のブラウザに渡す（http と https 以外は断る）。パネルは Orca の `shell.openExternal`（初めてのホストは Orca が確かめる）
-- ファイル: ワークスペースからの相対パス（日本語の名前も可）と、本線の子の worktree（`orca worktree ps` の親子）の中の絶対パスだけを開く。`path:行` は窓では `orca file open --line` でその行を開く。パネルの `editor.open` は行を受けないので、ファイルだけ開く。パネルが開ける絶対パスは、同じリポジトリ（projectId）の worktree の中だけ
+`href`・`links` は種類の印（Drive・PR・Slack・ページ・ファイル）を付けたボタンで出す。
+- http(s) の URL: 窓は常駐のプロセスが macOS の `open` で既定のブラウザに渡す（http と https 以外は断る）。パネルは Orca の `shell.openExternal`
+- ファイル: ワークスペースからの相対パスと、本線の子の worktree の中の絶対パスだけを開く。`path:行` は窓では `orca file open --line` でその行を開く
 
-## 話したいこと
-「質問する」を押すと、その項目（判断・質問・確認・タスク）の詳細の中に入力欄が開き、やり取りが吹き出しで積まれる。
-- 利用者の発言は `cockpit.user.json` に `talk`（`text` つき）として追記する。回答は `.orca/cockpit.talk.json` に追記し、書くのは窓の常駐のプロセスとメインだけ
-- すぐの回答は、窓の常駐のプロセスが手元の `claude -p` を 1 回呼んで出す（利用者のサブスクの CLI。従量課金の API は呼ばない）。道具は Read・Grep・Glob だけ、MCP は読まず、hook は `disableAllHooks` で止める（`--setting-sources project` だけではそのリポジトリの hook が動いてファイルを書けることを確かめた。`--bare` は Keychain の認証を読まないので使えない。Orca が管理する plugin の hook は止まらない）。作業ディレクトリはそのワークスペース。1 回 90 秒で SIGTERM、5 秒で終わらなければ SIGKILL。失敗したら「回答できませんでした。メインが次に読みます」を残す。CLI は 1 本ずつ起こし、同じ発言には 1 度しか答えに行かない。起動し直したときは 10 分より古い発言に答え直さない
-- アシスタントは判断・作業・変更が要る話なら答えの最後に印を付け、画面に「メインに渡す」を出す（押すと `talk` の `to_main` と、元の発言の `handoff_of`。記録するほうが元の本文を写す）。見ての「直してほしい」は、書き出しを入れた入力欄を開き、送るとメインに渡す
-- 利用者が書く文（質問・選択肢以外の答え・判断材料を求める）は 4000 字まで。超えたら切り詰めずに断り、書きかけは送れるまで残す。入力欄に残りの字数を出す。検証はパネルと窓で同じ関数（`textError`）
-- 書きかけは項目・タスクごとに持つ（別の項目に移っても混ざらない）
-- メインの回答は `window/reply.ts` で追記する（窓と同じロック → 読み直し → 保存。同時に書いても片方が消えない）
-- launchd の環境には `CLAUDE_CONFIG_DIR` と `USER` が無いので、launchd の設定で渡す（`USER` が無いと Keychain の認証を読めず「Not logged in」になる）
-- 2026-11-16 に測った値: 1 回 3〜5 秒、最大 RSS 310 MB（物理フットプリント 217 MB）。終われば消える
-
-## 判断材料と、選択肢以外の答え
-- 決める項目の詳細は、今決める理由（`why`）→ 判断材料（`context` の 5 欄: 概要・現状・対応案・効果・懸念点）→ 送る文面 → 選択肢 の順に出る。判断材料は開いた状態が既定で、欄が欠けていると一覧の行と詳細の頭に「判断材料が足りません（無い欄: …）」と出る
-- 上のタブの並びの「前にも言った」を押すと、項目を持たない `repeat`（`item_id` は空）を追記する。前に伝えたことをメインが落としたという合図で、メイン側の hook が押下を数えて新しいチャットへの引き継ぎに使う。hook が引き継いだときに書く `.orca/cockpit/handoff.json`（`at`・`reason`）を読み、1 日だけ上に「メインを新しいチャットに引き継ぎました」と出す
-- 「判断材料を求める」を押すと `need_context` を追記する（話したいの欄に書きかけがあれば `text` に入れる）。今のバージョンに押してあれば「判断材料を依頼済み」と出し、メインが `rev` を上げると外れる
-- どの項目にも「選択肢以外で決める」の欄がある。選択肢に無い答えや「もう手で送った」を書いて送ると、`decide`・`option_id: "other"`・`text` を追記する。反映待ちのあいだは「送った答え: …（メインが反映待ち）」、反映後は「あなたの答え: …」と対応済みに残る
-
-## worker とタスク
-メインが担当や worker を Orca の orchestration で立てたときに、タスクの `worker` に受け取りの `task_id`・`dispatch_id` を記録する。窓は済んでいないタスクの Dispatch を `orca orchestration worker-show --dispatch <id> --full` で引き（`window/orca-state.ts` の `orcaDispatches`）、Dispatch の端末で `orca worktree ps` のエージェントとタスクを結んで、止まった worker の帯にタスクの名前を出す。記録の無い worker は、worktree の表示名・コメントから名前を取る。
-
-worker の記録があるタスクの状態は、メインの書いた `state` ではなく Dispatch の様子から出す（`model.ts` の `shownTask`）: worker_done を返したら取り込み待ち、起動できない・落ちた・端末が消えたら止まっている、人の確認待ちなら許可待ち、Orca に無ければ見つからない（記録漏れ）、それ以外は進行中。全体の行・大タスクの画面のタスクの行・タスクの詳細はすべてこれを通すので、場所によって状態が食い違わない。メインの書いた `state` をそのまま出すのは、`ok`（取り込み済み）と利用者の番の `stop`・`wait` だけ。パネルは orchestration を読めないので、メインの書いた `state` のまま出し、worker の欄を出さない。
+## 窓口の端末への合図
+端末には中身を送らず、`【操縦席】未反映の操作があります` の 1 行だけを送る。担当と話す・別の答えは、合図の 1 行にカードの id と本文の頭を載せる。
+- 取り消しの猶予（10 秒）が過ぎ、窓口が入力待ちのときに自動で送る（作業中に送ると入力欄に混ざるため）
+- パネルと窓は別のプロセスなので、操作を書いたほうが 10 秒で送り、もう片方は 30 秒待ってから拾う。どこまで送ったかは `~/Library/Application Support/cockpit/notified.json` で共有する
+- 窓口が Orca のチャットで `main.terminal` が空のときは送る手段が無いので、「次に話しかけたときに反映されます」と出す
 
 ## 書体
-IBM Plex Sans JP（Mac に入れておく）を第一に、無ければヒラギノ。パネルは Orca のサンドボックスで Web フォントを読めないので、Mac に入れた書体を名前で指す。文字の大きさは 22・17・15・14 の 4 種類。
-
-## メインの端末への合図
-
-メインには中身を送らず、`【操縦席】未反映の操作があります` の 1 行だけを送る。利用者が決めたあとに「知らせる」操作はさせない。
-
-- 取り消しの猶予（10 秒）が過ぎたら自動で送る。ただし Orca の `terminal.sendText`（窓は `orca terminal send`）は入力欄に打ち込むのと同じなので、メインのエージェントが作業中（working）の間は送らない。入力待ちになった知らせ（`agent.status.changed`、窓は `focus.json` の `agents_at`）で送る。ポーリングはしない
-- 届けたら「メインに届けました」、送れなかったときだけ「もう一度送る」を出す。話したいことも同じく猶予のあとに送り、合図の 1 行に本文の頭を載せる
-- パネルと窓は別のプロセスなので、操作を書いたほうが 10 秒で送り、もう片方は 30 秒待ってから拾う（書いたほうが送れなかったときだけ）。どこまで送ったかは `~/Library/Application Support/cockpit/notified.json` で共有する
-- メインが Orca のチャットで動いていて `main.terminal` が空のときは、送る手段が無い（Orca の CLI にもチャットへ文を送るものが無い。`orca orchestration send` は送り主の端末が要り、端末を持たない窓の常駐のプロセスからは `no_active_sender_terminal` で断られる）ので、「次に話しかけたときに反映されます」と出す
+IBM Plex Sans JP（Mac に入れておく）を第一に、無ければヒラギノ。パネルは Orca のサンドボックスで Web フォントを読めないので、Mac に入れた書体を名前で指す。
 
 ## 開発
 
 ```sh
-orca plugin test .          # model・view・worker と、窓の常駐のプロセス（window/server.test.ts）のテスト
+orca plugin test .          # model・migrate・state・view・worker と、窓の常駐のプロセスのテスト
 orca plugin check . && orca plugin validate .
-COCKPIT_PORT=47299 COCKPIT_DIR=$TMPDIR/cockpit node --disable-warning=ExperimentalWarning window/server.ts   # 窓を手元で動かす
-node window/state.ts <ワークスペースの root>   # hook とメインが読む判定済みの状態
+COCKPIT_PORT=47299 node --disable-warning=ExperimentalWarning fixtures/demo.ts $TMPDIR/ckdemo   # 架空の 4 案件で窓を手元で動かす
+node window/state.ts <ワークスペースの root>   # hook と窓口が読む判定済みの状態
 ```
 
-- `orca plugin dev load .` は本物の `local.cockpit` を置き換える。読み込み元を消すとプラグインの worker が止まり、Orca に合わせた切り替え（`focus.json`）が止まる。本物は承認待ちに戻る。worktree で触るときは、上のテストと別のポートの窓で確かめ、読み込んだら報告の前に `orca plugin dev unload <dir>` で外す（worktree を消す前にも外す）
-- `local.cockpit` が承認待ち・止まっている・開発用に置き換わっているときは、窓の上の帯に理由を出し（`window/orca-state.ts` の `pluginProblem`）、hook がメインに承認を頼む dec を出させる
-
-HTML パネルは `orca plugin shot --act` で操作できないので、操作の流れは窓のページ（同じ controller）をブラウザで確かめる。
+- `orca plugin dev load .` は本物の `local.cockpit` を置き換える。worktree で触るときは、上のテストと別のポートの窓で確かめ、読み込んだら報告の前に `orca plugin dev unload <dir>` で外す
+- `local.cockpit` が承認待ち・止まっている・開発用に置き換わっているときは、窓の上の帯に理由を出す（`window/orca-state.ts` の `pluginProblem`）
+- HTML パネルは `orca plugin shot --act` で操作できないので、操作の流れは窓のページ（同じ controller）をブラウザで確かめる
