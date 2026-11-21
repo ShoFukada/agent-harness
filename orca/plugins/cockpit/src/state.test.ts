@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit, requestCards, type Card, type Cockpit } from './model.ts'
+import { parseCockpit, requestCards, stageOf, type Card, type Cockpit } from './model.ts'
 import type { AgentRow } from './protocol.ts'
 import { bucketOf, byUrgency, derive, NAME_MAX, ORCA_STATUS, report, routeProblem, type Row } from './state.ts'
 
@@ -229,7 +229,7 @@ test('タスクの今の Dispatch は Run の続きをたどった先（current�
   const w = ws(0)
   const c = w.cockpit
   c.tasks[0]!.worker = { task_id: 'task_a', run_id: 'run_a' }
-  c.tasks.push({ id: 't8', stream: 'sX', phase: '作る', title: 'あ'.repeat(NAME_MAX + 1), state: 'idle' })
+  c.tasks.push({ id: 't8', stream: 'sX', phase: '受入', title: 'あ'.repeat(NAME_MAX + 1), state: 'idle' })
   c.streams[0]!.form = 'delegate'
   const facts = { workers: [], dispatches: { ctx_2: { state: 'succeeded', settledAt: NOW - 3_600_000, taskStatus: 'completed' } }, current: { t1: 'ctx_2' } }
   const r = report(c, w.log, [], facts, 'ok', NOW)
@@ -238,7 +238,7 @@ test('タスクの今の Dispatch は Run の続きをたどった先（current�
   assert.equal(r.tasks.find((t) => t.id === 't8')!.dispatch, null)
   assert.deepEqual(r.checks.stale_tasks, ['t1'])
   assert.deepEqual(r.checks.loose_tasks, ['t8'])
-  assert.deepEqual(r.checks.unknown_phase, ['t8（作る）'])
+  assert.deepEqual(r.checks.unknown_phase, ['t8（受入）'])
   assert.deepEqual(r.checks.long_names, [`t8（${NAME_MAX + 1} 字）`])
   assert.deepEqual(r.checks.no_form.sort(), ['s2', 's3', 's4'])
   // 続きを引けていない（current に無い）run_id だけの記録は、Orca に見つからない扱い。
@@ -315,4 +315,14 @@ test('同じ順位の要対応・顧客待ち・報告は時刻で並べる（+0
   const a = { card: mk('x', '2026-11-21T10:00:00+09:00') } as Row
   const b = { card: mk('y', '2026-11-21T02:00:00Z') } as Row
   assert.ok(byUrgency(a, b) < 0)
+})
+
+test('工程は 5 段に寄せる。実データ（nix-darwin の帳簿、11/21 21:55 の写し）の工程名はすべて段に入り、対応に無い名前だけが unknown_phase に出る', () => {
+  // 帳簿の tasks[].phase に出てくる名前の写し（帳簿そのものは書き換えない）。
+  const real = ['実装', '確認', '設計', '作る', '調査', '見直し', '調べる', '決める', '確かめ', '要件', '実地確認', 'push', '2 周目（Neon）', '作成', 'switch 待ち', '見てもらう']
+  assert.deepEqual(real.filter((p) => !stageOf(p)), [])
+  assert.deepEqual(real.map((p) => stageOf(p)), ['作る', '確かめる', '決める', '作る', '調べる', '確かめる', '調べる', '決める', '確かめる', '決める', '確かめる', '入れる', '作る', '作る', '入れる', '確かめる'])
+  const w = ws(0)
+  w.cockpit.tasks.push({ id: 't9', stream: 's1', phase: '受入', title: 'あ', state: 'idle' }, ...real.map((p, i) => ({ id: `r${i}`, stream: 's1', phase: p, title: 'あ', state: 'idle' as const })))
+  assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.unknown_phase, ['t9（受入）'])
 })

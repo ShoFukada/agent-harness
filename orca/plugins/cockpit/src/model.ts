@@ -283,7 +283,18 @@ export function parseHandoff(text: string): Handoff | undefined {
 export const OTHER = 'other'
 export const TEXT_MAX = 4000
 export const UNDO_GRACE_MS = 10_000
-export const DEFAULT_PHASES = ['要件', '設計', '実装', '受入']
+/** 工程の段。どの仕事も同じ 5 段で並べる（R82）。帳簿の phase は自由な名前のまま、読むときに段へ寄せる。 */
+export const STAGES = ['調べる', '決める', '作る', '確かめる', '入れる'] as const
+export type Stage = (typeof STAGES)[number]
+const STAGE_NAMES: Record<Stage, string[]> = {
+  調べる: ['調べる', '調査'],
+  決める: ['要件', '設計', '決める'],
+  作る: ['作る', '作成', '実装', '2 周目（Neon）'],
+  確かめる: ['確かめ', '確かめる', '確認', '実地確認', '見てもらう', '見直し'],
+  入れる: ['入れる', 'push', 'switch 待ち']
+}
+/** 帳簿の phase の段。対応に無い名前は undefined（推測でどこかの段に入れない）。 */
+export const stageOf = (phase: string): Stage | undefined => STAGES.find((s) => STAGE_NAMES[s].includes(phase))
 
 /** 利用者が書いた文の検証。切り詰めずに断る（末尾の条件が落ちた文を決定として扱わないため）。 */
 export function textError(text: string | undefined): string | undefined {

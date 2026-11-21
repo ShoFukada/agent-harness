@@ -144,7 +144,7 @@ export const ago = (iso: string | undefined, now: number) => {
   return m < 60 ? `${m} 分` : m < 60 * 48 ? `${Math.round(m / 60)} 時間` : `${Math.round(m / 1440)} 日`
 }
 
-export const OWNER_STATE: Record<string, string> = { working: '作業中', blocked: '許可待ち', waiting: '入力待ち', done: '手が空いている' }
+export const OWNER_STATE: Record<string, string> = { working: '作業中', blocked: '許可待ち', waiting: '入力待ち', done: '待機' }
 export function ownerHtml(o: OwnerRef): string {
   const where = o.how === 'main' ? '案件の窓口' : o.how === 'chat' ? 'チャット' : '端末'
   return `<span class="owner"><span>話す相手</span><b>${esc(o.title)}</b><span>${where}</span>${o.state ? `<span class="dot ${esc(o.state)}"></span><span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
@@ -204,7 +204,7 @@ export function manualHtml(r: Row): string {
   const m = r.card.manual!
   return [
     fld('どこで', esc(m.where)),
-    m.command ? `<div class="fld"><span class="lb">打つコマンド</span><div class="cmd"><pre class="msg code">${esc(m.command)}</pre><button class="btn quiet" type="button" data-act="copycmd" data-key="${esc(keyOf(r))}">コピー</button></div></div>` : '',
+    m.command ? `<div class="fld"><span class="lb">打つコマンド</span><div class="cmd"><pre class="msg code">${esc(m.command)}</pre><button class="btn" type="button" data-act="copycmd" data-key="${esc(keyOf(r))}">コピー</button></div></div>` : '',
     m.steps?.length ? fld('手順', `<ol class="rich">${m.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>`) : '',
     fld('済ませたあと', esc(m.check))
   ].join('')
@@ -317,7 +317,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   const other = b('other', otherOpen ? '別の答えを閉じる' : '別の答え', 'quiet')
   let btns: string[]
   // Orca から作った詰まり: 開いて直し、直したら「済ませた」で隠す（同じ失敗のあいだ。次に止まればまた出る）。
-  const dismiss = dismissable(c) ? [b('dismiss', '済ませた')] : []
+  const dismiss = dismissable(c) ? [b('dismiss', '済ませた', '', 'title="同じ停止のあいだは隠す。次に止まったときはまた出る"')] : []
   if (r.agent) btns = [b('focus', r.agent.chat ? 'チャットを開く' : '端末を開く', 'pri'), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返事は要らない'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
@@ -334,7 +334,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   // 片付いた・顧客待ちの票には、片付ける操作を出さない（開いて読み返すだけ）。
   if (r.status === 'closed' || r.status === 'waiting') btns = btns.filter((x) => x.includes('data-act="url"'))
   if (r.status !== 'mine' && c.kind !== 'talk') btns = btns.filter((x) => !x.includes('data-act="talk"')).concat(talk('続きを話す'))
-  const hint = c.options?.length ? `<span class="hint"><kbd>1</kbd>〜<kbd>${Math.min(9, c.options.length)}</kbd> で選び <kbd>Enter</kbd></span>` : ''
+  const hint = c.options?.length && btns.some((x) => x.includes('data-act="decide"')) ? `<span class="hint"><kbd>1</kbd>〜<kbd>${Math.min(9, c.options.length)}</kbd> で選び <kbd>Enter</kbd></span>` : ''
   return `<div class="acts">${btns.join('')}${hint}</div>`
 }
 

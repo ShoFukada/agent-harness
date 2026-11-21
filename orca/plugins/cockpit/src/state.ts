@@ -1,7 +1,7 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, DEFAULT_PHASES, KIND_LABEL, missingFields, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
+  COUNTED, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
   type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
@@ -469,7 +469,7 @@ export type StateReport = {
     stale_tasks: string[]
     /** 仕事（streams）に入っていない、済んでいないタスク。 */
     loose_tasks: string[]
-    /** phases に無い工程名の、済んでいないタスク（「t12（作る）」の形）。 */
+    /** 5 段（STAGES）のどれにも寄せられない工程名の、済んでいないタスク（「t12（作る）」の形）。 */
     unknown_phase: string[]
     /** 形（form: delegate・cowork・watch）の書かれていない、済んでいない仕事（R51）。 */
     no_form: string[]
@@ -539,7 +539,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       unsorted: d.unsorted.map((g) => g.id),
       stale_tasks: tasks.filter((t) => t.task.state === 'run' && t.why === 'intake' && facts?.dispatches?.[currentDispatch(t.task, facts) ?? '']?.taskStatus === 'completed').map((t) => t.task.id),
       loose_tasks: live.filter((t) => !c.streams.some((s) => s.id === t.stream)).map((t) => t.id),
-      unknown_phase: live.filter((t) => !(c.phases ?? DEFAULT_PHASES).includes(t.phase)).map((t) => `${t.id}（${t.phase}）`),
+      unknown_phase: live.filter((t) => !stageOf(t.phase)).map((t) => `${t.id}（${t.phase}）`),
       no_form: d.jobs.filter((j) => j.state !== 'done' && !c.streams.find((s) => s.id === j.id)?.form).map((j) => j.id),
       unmapped_elements: c.cards
         .filter((x) => x.elements?.length && log.ops.some((o) => o.type === 'accept' && o.item_id === x.id && o.item_rev === x.rev && !undone.has(o.op_id)))
