@@ -78,7 +78,7 @@ test('全体: タスクを押すと右に詳細（工程・状態・goal・next�
   for (const x of ['工程 3/5 作る（実装）', '状態 作業中', '何のため 配車の一覧で探す手間を減らす', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
     assert.ok(t.includes(x), x)
   assert.match(side, /data-jump="\/ws\/aoba#r5"/)
-  assert.match(side, /<li class=""><span aria-label="証拠なし">・<\/span>並べ替えができる<\/li>/)
+  assert.match(side, /<li class=""><span>未<\/span>並べ替えができる<\/li>/)
   assert.match(t, /出した指示 .*r5 修正を依頼 未反映 幅を 1280 でも崩れないように/)
   assert.doesNotMatch(h, /data-rq=/)
 })
@@ -114,7 +114,11 @@ test('欄の形の違いの知らせは 1 行に畳み、読めない・繋が�
   m.errors = ['常駐のプロセスに繋がりません']
   const h = page(m)
   assert.match(h, /<div class="werrs" role="alert"><div>常駐のプロセスに繋がりません<\/div><\/div>/)
-  assert.match(h, /<summary>帳簿の形式不備 1 件<\/summary>/)
+  assert.match(h, /<summary>帳簿の形式不備 1 件<\/summary><ul><li><span class="code">v1<\/span>・evidence<\/li><\/ul>/)
+  // パネルも 1 行ずつ並べず件数に畳む（追加 15）。
+  const panel = render({ ...m, panel: true }, newUi(), NOW, (x) => x)
+  assert.match(panel, /<summary>帳簿の形式不備 1 件<\/summary>/)
+  assert.doesNotMatch(panel, /<div>[^<]*evidence の形が違う/)
   // 仕事の見出しには工程 n/5（5 段で固定）と今の段の名前を出し、凡例の帯は出さない（R82）。
   assert.match(h, /工程 <span class="num">2\/5<\/span> 決める/)
   assert.doesNotMatch(h, /class="keyline"/)
@@ -149,7 +153,7 @@ test('Codex v3 3: タスクが全部済でもカードが残る仕事は「タ�
   assert.doesNotMatch(head, /全工程 完了/)
   const whole = page(aoba((v) => { for (const c of v.cockpit!.cards) if (c.stream === 's4') c.state = 'done' }), { tab: 'whole', open: { done: true } })
   const box = whole.slice(whole.indexOf('定例と議事録'))
-  assert.match(box.slice(0, box.indexOf('</span></span></span>') + 30), /全工程 完了/)
+  assert.match(box.slice(0, box.indexOf('data-talkstream')), /<span class="pbar"[^>]*>全工程 完了<\/span>/)
 })
 
 test('Codex v3 4・5: 属性の値の中の > でタグを切らず、コピーのあとの知らせは今の「送った」ボタンの名前を案内する', () => {
@@ -168,4 +172,13 @@ test('追加 14: 許可の対象は本文の書体にし、` で囲んだ所と 
   assert.doesNotMatch(f, /<div><span class="code">本番/)
   const panel = render({ ...m, panel: true }, { ...newUi(), sel: '/ws/aoba#p9' }, NOW, (x) => x)
   assert.match(panel, /<span class="lb">対象<\/span><div><div class="rich"><p>本番の DB に <span class="code">migrate 0042<\/span>/)
+})
+
+test('仕事の見出しの要対応は、タブと同じく修正待ちを数えない', () => {
+  const h = page(aoba((v) => {
+    v.log.ops.push({ op_id: 2, at: '2026-11-21T09:40:00+09:00', item_id: 'r5', item_rev: 1, type: 'talk', text: '幅を直して' })
+  }))
+  const head = h.slice(h.indexOf('<b>配車画面の改修</b>'), h.indexOf('</div>', h.indexOf('<b>配車画面の改修</b>')))
+  assert.match(head, /修正待ち 1/)
+  assert.doesNotMatch(head, /要対応/)
 })

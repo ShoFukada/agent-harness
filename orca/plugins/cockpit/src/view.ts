@@ -61,19 +61,6 @@ export function boardsOf(views: CockpitView[], now: number): Board[] {
     })
 }
 
-/** 形でも種類が分かる印（色だけに頼らない）。 */
-const GLYPH: Record<CardKind, string> = {
-  inbox: '<circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/>',
-  send: '<path d="M6 1 11 6 6 11 1 6Z" fill="none" stroke="currentColor" stroke-width="2"/>',
-  decide: '<rect x="1.5" y="1.5" width="9" height="9" fill="currentColor"/>',
-  review: '<rect x="2" y="2" width="8" height="8" fill="none" stroke="currentColor" stroke-width="2"/>',
-  permit: '<path d="M6 1 10.5 2.6V6c0 2.6-2 4.3-4.5 5C3.5 10.3 1.5 8.6 1.5 6V2.6Z" fill="none" stroke="currentColor" stroke-width="1.8"/>',
-  stuck: '<path d="M4 1h4l3 3v4l-3 3H4L1 8V4Z" fill="currentColor"/>',
-  consult: '<path d="M6 1.5 10.5 6 6 10.5 1.5 6Z" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="1.4" fill="currentColor"/>',
-  talk: '<path d="M6 1.5a4.5 4.5 0 1 0 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2"/>',
-  report: '<path d="M2 3h8M2 6h8M2 9h5" stroke="currentColor" stroke-width="1.8"/>'
-}
-export const glyph = (k: CardKind) => `<svg class="glyph" viewBox="0 0 12 12" aria-hidden="true">${GLYPH[k]}</svg>`
 
 /** リンクの種類の印。URL のドメインから決める。 */
 export function linkKind(href: string): string {
@@ -166,7 +153,7 @@ export function dueHtml(due: string | undefined, now: number): string {
   if (Number.isNaN(t)) return `<span class="due">${esc(due)}</span>`
   if (isHot(due, now)) {
     const h = Math.round((t - now) / 3_600_000)
-    const tag = t < now ? '! 過ぎた' : h < 1 ? '! 1 時間以内' : `! あと ${h} 時間`
+    const tag = t < now ? '期限切れ' : h < 1 ? '1 時間以内' : `あと ${h} 時間`
     return `<span class="due hot"><b>${tag}</b><span class="tm">${esc(nearDate(due, now))}</span></span>`
   }
   return `<span class="due">${esc(nearDate(due, now))}</span>`
@@ -182,7 +169,7 @@ export const ago = (iso: string | undefined, now: number) => {
 export const OWNER_STATE: Record<string, string> = { working: '作業中', blocked: '許可待ち', waiting: '入力待ち', done: '待機' }
 export function ownerHtml(o: OwnerRef): string {
   const where = o.how === 'main' ? '' : o.how === 'chat' ? 'チャット' : '端末'
-  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${where ? `<span>${where}</span>` : ''}${o.state ? `<span class="dot ${esc(o.state)}"></span><span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
+  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${where ? `<span>${where}</span>` : ''}${o.state ? `<span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
 }
 
 /** 閉じた票に出す 1 行（HTML）。開くまで中身を読まなくても何の票かが分かるように。 */
@@ -206,6 +193,19 @@ function peek(c: Card, now: number): string {
 
 /** 補足の並び。「・」で繋がず、余白で区切る（html を受ける）。 */
 export const sp = (xs: (string | false | undefined)[]) => xs.filter(Boolean).map((x) => `<span class="pt">${x}</span>`).join('')
+
+/** 欄を外して読めた知らせ（1 枚のカードの書き間違い）か。読めない・繋がらない知らせと分ける。 */
+export const isSoft = (e: string) => /その欄を(外して|出さずに)/.test(e)
+const SOFT = /の(カード|タスク|依頼) (\S+?)(?:「[^」]*」)? ?の (.+?) の形が違う/
+/** 欄の形の違いは件数の 1 行に畳み、開いたときも「id・欄の名前」の 1 行ずつにする（追加 15）。窓口には checks と状態の CLI で名指しが届く。 */
+export function softHtml(soft: string[], ui: Ui, cls: string): string {
+  if (!soft.length) return ''
+  const line = (e: string) => {
+    const m = SOFT.exec(e)
+    return m ? `<span class="code">${esc(m[2])}</span>・${esc(m[3])}` : esc(e)
+  }
+  return `<details class="${cls}" data-fold="soft"${ui.open.soft ? ' open' : ''}><summary>帳簿の形式不備 ${soft.length} 件</summary><ul>${soft.map((e) => `<li>${line(e)}</li>`).join('')}</ul></details>`
+}
 
 export const fld = (label: string, html: string) => (html ? `<div class="fld"><span class="lb">${esc(label)}</span><div>${html}</div></div>` : '')
 
@@ -373,7 +373,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   // 片付いた・顧客待ちの票には、片付ける操作を出さない（開いて読み返すだけ）。
   if (r.status === 'closed' || r.status === 'waiting') btns = btns.filter((x) => x.includes('data-act="url"'))
   if (r.status !== 'mine' && c.kind !== 'talk') btns = btns.filter((x) => !x.includes('data-act="talk"')).concat(talk('協議を続ける'))
-  const hint = c.options?.length && btns.some((x) => x.includes('data-act="decide"')) ? `<span class="hint"><kbd>1</kbd>〜<kbd>${Math.min(9, c.options.length)}</kbd> で選び <kbd>Enter</kbd></span>` : ''
+  const hint = c.options?.length && !otherOpen && btns.some((x) => x.includes('data-act="decide"')) ? `<span class="hint"><kbd>1</kbd>〜<kbd>${Math.min(9, c.options.length)}</kbd> で選び <kbd>Enter</kbd></span>` : ''
   return `<div class="acts">${btns.join('')}${hint}</div>`
 }
 
@@ -383,7 +383,7 @@ export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => st
   const open = ui.sel === k
   const fig = r.v?.figures ?? {}
   const meta = [
-    `<span class="kind">${glyph(c.kind)}${KIND_LABEL[c.kind]}</span>`,
+    `<span class="kind">${KIND_LABEL[c.kind]}</span>`,
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
     r.stream && !c.title.includes(r.stream.title) ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
     r.status === 'fixing' ? `<span>${r.pending ? '修正依頼済み（受領待ち）' : '修正待ち'}</span>` : r.talking ? '<span>協議中</span>' : ''
@@ -497,13 +497,14 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const signal = m.panel ? signalHtml(shown[0]?.v) : ''
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
-    <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, consult: 0, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${glyph(k)}${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox" title="届いたは私の番の数に入れない">${glyph('inbox')}届いた <b>${inbox}</b></span>` : ''}</div>
+    <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, consult: 0, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox" title="届いたは私の番の数に入れない">受信 <b>${inbox}</b></span>` : ''}</div>
     <div class="flags">${unseen.length ? `<button class="flag warn" type="button" data-act="unseen" aria-expanded="${!!ui.open.unseen}">見ていない ${unseen.length}</button>` : ''}${m.live !== undefined ? `<span class="flag live">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
       ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : '自動'}</button>`).join('')}</span>`}</div>
   </header>`
   const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
   const sideCount = { talking: all('fixing').length, waiting: all('waiting').length, late }
-  const errs = [...m.errors, ...shown.flatMap((b) => b.v.errors.map((e) => `${b.v.cockpit?.workspace.name ?? ''}: ${e}`))]
+  const notes = [...m.errors, ...shown.flatMap((b) => b.v.errors.map((e) => `${b.v.cockpit?.workspace.name ?? ''}: ${e}`))]
+  const errs = notes.filter((e) => !isSoft(e))
   const focusBoard = m.boards.find((b) => b.root === (ui.filter ?? m.focused)) ?? (m.panel ? m.boards[0] : undefined)
   const side = [
     focusBoard ? jobsHtml(focusBoard, now, ui.filter ? '案件の今' : m.panel ? '案件の今' : 'Orca で表示中') : '',
@@ -526,7 +527,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   return `<div class="ck" data-theme="${ui.dark ? 'dark' : 'light'}">${top}
     ${paneSwitch(ui, total, sideCount)}
     <main class="board${m.panel ? ' panel' : ''}" data-pane="${ui.pane ?? 'queue'}">
-      ${errs.length ? `<div class="errs" role="alert">${errs.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
+      ${errs.length ? `<div class="errs" role="alert">${errs.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}${softHtml(notes.filter(isSoft), ui, 'soft')}
       ${unseen.length && ui.open.unseen ? `<div class="notes warn" role="status"><b>見ていないもの</b>${unseen.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : ''}
       ${handoffHtml(shown, now)}
       ${m.panel ? '' : casesHtml(m, ui, now)}

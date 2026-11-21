@@ -125,7 +125,6 @@ body { margin:0; }
 .ck .strip[aria-expanded="true"] .peek { display:none; }
 .ck .k-inbox { --kc:var(--k-inbox); } .ck .k-send { --kc:var(--k-send); } .ck .k-decide { --kc:var(--k-decide); } .ck .k-review { --kc:var(--k-review); }
 .ck .k-permit { --kc:var(--k-permit); } .ck .k-stuck { --kc:var(--k-stuck); } .ck .k-talk { --kc:var(--k-talk); } .ck .k-report { --kc:var(--k-report); } .ck .k-consult { --kc:var(--k-consult); }
-.ck .glyph { width:12px; height:12px; flex:none; color:var(--kc); }
 
 /* 開いた票の中身 */
 .ck .body { padding:0 16px 14px 14px; display:grid; gap:12px; min-width:0; }
@@ -170,8 +169,6 @@ body { margin:0; }
 .ck a.inl, .ck button.inl { border:0; background:none; padding:0; color:var(--focus); text-decoration:underline; text-underline-offset:2px; }
 .ck .owner { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:var(--fs-xs); color:var(--ink3); }
 .ck .owner b { color:var(--ink2); font-weight:600; }
-.ck .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--ink3); }
-.ck .dot.working { background:var(--ok); } .ck .dot.blocked, .ck .dot.waiting { background:var(--k-permit); }
 .ck .done-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
 .ck .done-list li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; align-items:start; border-bottom:1px solid var(--rule2); padding-bottom:6px; }
 .ck .done-list small { grid-column:1; color:var(--ink3); font-size:var(--fs-xs); }
@@ -242,6 +239,9 @@ body { margin:0; }
 .ck .notes.warn div { background:none; border:0; padding:0; }
 .ck .flag.repeat { border:1px solid var(--rule); border-radius:6px; padding:1px 9px; font-size:var(--fs-xs); cursor:pointer; }
 .ck .errs { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
+.ck details.soft { grid-column:1 / -1; margin-bottom:8px; font-size:var(--fs-s); color:var(--ink2); }
+.ck details.soft summary { cursor:pointer; }
+.ck details.soft ul, .ck.win .wnotes ul { margin:4px 0 0; padding-left:1.4em; font-size:var(--fs-xs); display:grid; gap:1px; }
 .ck .errs div { background:var(--hot-bg); color:var(--hot); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); font-weight:600; }
 .ck .toasts { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:10; width:max-content; max-width:min(640px, calc(100vw - 24px)); display:grid; gap:6px; }
 .ck .toast {
@@ -277,12 +277,11 @@ body { margin:0; }
 .ck.win .flags { padding-bottom:10px; }
 .ck.win .flags .err { color:var(--hot); font-weight:600; }
 .ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
-.ck.win .wnotes { padding:5px 18px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
+.ck.win .wnotes { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
 .ck.win .wnotes summary { cursor:pointer; }
-.ck.win .wnotes div { font-size:var(--fs-xs); padding-left:1.2em; }
 .ck.win .wbody { display:grid; flex:1; min-height:0; }
 .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
-.ck.win .wpane { overflow-y:auto; padding:14px 18px 80px; display:grid; align-content:start; gap:14px; min-height:0; min-width:0; }
+.ck.win .wpane { overflow-y:auto; padding:10px 16px 60px; display:grid; align-content:start; gap:10px; min-height:0; min-width:0; }
 .ck.win .wside { overflow-y:auto; border-left:1px solid var(--rule); background:var(--surface); min-height:0; min-width:0; }
 .ck.win .wpane > p { margin:0; font-size:var(--fs-s); }
 .ck.win .calm { padding:24px 4px; }
@@ -303,12 +302,12 @@ body { margin:0; }
 .ck.win .subh { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; }
 /* 一覧は 1 つの枠に区切り線で並べる（1 件ずつ角丸の箱にしない）。種類は印と名前の色で示し、左端の色の線は使わない。 */
 .ck.win .rows { display:grid; background:var(--surface); border:1px solid var(--rule); border-radius:8px; overflow:clip; }
-.ck.win .cardrow { display:grid; grid-template-columns:92px minmax(0,1fr) auto; gap:10px; align-items:center; border:0; border-radius:0; padding:8px 12px; background:var(--surface); text-align:left; width:100%; }
+.ck.win .cardrow { display:grid; grid-template-columns:76px minmax(0,1fr) auto; gap:10px; align-items:center; border:0; border-radius:0; padding:6px 12px; background:var(--surface); text-align:left; width:100%; }
 .ck.win .cardrow + .cardrow { border-top:1px solid var(--rule2); }
 .ck.win .cardrow:hover { background:var(--sunk); }
 .ck.win .cardrow[aria-current="true"] { background:var(--sunk); box-shadow:inset 0 0 0 2px var(--focus); }
 .ck.win .cardrow.cl .ti, .ck.win .cardrow.cl .kd { color:var(--ink2); font-weight:400; }
-.ck.win .cardrow.cl .glyph { color:var(--ink3); }
+.ck.win .cardrow.k-stuck:not(.cl) .kd { color:var(--hot); }
 .ck.win .kd { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--kc); white-space:nowrap; }
 .ck.win .cardrow .kd { display:grid; grid-template-columns:auto 1fr; }
 .ck.win .cardrow .kd small { grid-column:1 / -1; font-weight:400; color:var(--ink3); }
@@ -330,46 +329,41 @@ body { margin:0; }
 
 /* 詳細（要対応・対応済みの右） */
 .ck.win .wdet { display:grid; align-content:start; min-height:100%; }
-.ck.win .dh { padding:14px 18px 12px; border-bottom:1px solid var(--rule2); display:grid; gap:6px; position:sticky; top:0; background:var(--surface); z-index:1; }
+.ck.win .dh { padding:10px 16px 8px; border-bottom:1px solid var(--rule2); display:grid; gap:4px; position:sticky; top:0; background:var(--surface); z-index:1; }
 .ck.win .dh .crumbs { font-size:var(--fs-xs); color:var(--ink3); display:flex; gap:6px; flex-wrap:wrap; }
 .ck.win .dh .crumbs i { font-style:normal; }
 .ck.win .dh .kl { display:flex; gap:10px; align-items:center; font-size:var(--fs-xs); flex-wrap:wrap; }
 .ck.win .dh h2 { margin:0; font-size:var(--fs-l); line-height:1.5; }
-.ck.win .note { margin:10px 18px 0; padding:8px 10px; border-radius:6px; background:var(--sunk); font-size:var(--fs-s); }
+.ck.win .note { margin:8px 16px 0; padding:8px 10px; border-radius:6px; background:var(--sunk); font-size:var(--fs-s); }
 .ck.win .note.wait { background:var(--amber-bg); } .ck.win .note.wait b { color:var(--amber); }
 .ck.win .note.ok { background:var(--ok-bg); } .ck.win .note.ok b { color:var(--ok); }
-.ck.win .first { margin:12px 18px 0; padding:12px; border:1px solid var(--rule); border-radius:8px; display:grid; gap:12px; font-size:var(--fs-s); }
+.ck.win .first { margin:10px 16px 0; padding:10px 12px; border:1px solid var(--rule); border-radius:8px; display:grid; gap:8px; font-size:var(--fs-s); }
 .ck.win .first ol.rich, .ck.win .first ul.rich { margin:0; padding-left:1.4em; }
-.ck.win details.more-d { margin:8px 18px 0; }
+.ck.win details.more-d { margin:6px 16px 0; }
 .ck.win details.more-d summary { cursor:pointer; font-size:var(--fs-s); color:var(--focus); padding:6px 0; }
 .ck.win details.more-d .slots { display:grid; gap:10px; padding:4px 0 8px; font-size:var(--fs-s); }
-.ck.win .wdet > .other { margin:8px 18px 0; }
+.ck.win .wdet > .other { margin:8px 16px 0; }
 .ck.win .dbtn { margin-top:auto; position:sticky; bottom:0; background:var(--surface); }
-.ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:12px 18px; }
+.ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:10px 16px; }
 .ck.win .dbtn .nx { margin-left:auto; }
 
 /* 全体: 形ごとの置き場所と仕事の箱 */
 .ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }
 .ck.win .fm { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--fc); white-space:nowrap; }
 .ck.win .fm::before { content:""; width:10px; height:10px; border-radius:2px; background:var(--fc); }
-.ck.win .fsec { display:grid; gap:10px; }
-.ck.win .fsec > h3 { margin:6px 0 0; font-size:var(--fs-m); display:flex; gap:10px; align-items:baseline; }
+.ck.win .fsec { display:grid; gap:8px; }
+.ck.win .fsec > h3 { margin:4px 0 0; font-size:var(--fs-m); display:flex; gap:10px; align-items:baseline; }
 .ck.win .fsec > h3 .mut { font-weight:400; font-size:var(--fs-xs); }
 .ck.win .fsec > p { margin:0; font-size:var(--fs-s); }
 .ck.win .st { background:var(--surface); border:1px solid var(--rule); border-radius:8px; }
-.ck.win .st > .sh { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 16px; padding:11px 14px; }
-.ck.win .st .t { font-weight:600; font-size:var(--fs-l); display:flex; gap:10px; align-items:center; flex-wrap:wrap; border:0; background:none; padding:0; text-align:left; }
+.ck.win .st > .sh { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; padding:8px 12px; }
+.ck.win .st .t { font-weight:700; font-size:var(--fs-l); display:flex; gap:8px; align-items:center; flex-wrap:wrap; border:0; background:none; padding:0; text-align:left; }
 .ck.win .st .tw { font-size:var(--fs-xs); color:var(--ink3); font-weight:400; }
 .ck.win .st .right { display:flex; align-items:center; gap:10px; }
 .ck.win .st .meta { grid-column:1 / -1; display:flex; gap:6px 16px; flex-wrap:wrap; font-size:var(--fs-s); color:var(--ink2); align-items:center; }
 .ck.win .st .nxt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60ch; }
-/* 工程の進み（工程 n/5）。済んだ段は補助の文字色で塗り、今の段は墨で長く、まだの段は枠だけ。 */
-.ck.win .pbar { display:inline-flex; gap:8px; align-items:center; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
-.ck.win .pps { display:inline-flex; gap:2px; }
-.ck.win .pp { display:block; width:12px; height:6px; border:1px solid var(--ink3); border-radius:1px; }
-.ck.win .pp.on { background:var(--ink3); }
-.ck.win .pp.cur { width:20px; background:var(--ink); border-color:var(--ink); }
-.ck.win .ppn { min-width:9.5em; }
+/* 工程の進み（工程 n/5 と段の名前）。上下の箱で位置がそろうよう幅を決める。 */
+.ck.win .pbar { display:inline-block; min-width:9.5em; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win .prog { display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:1px 9px; white-space:nowrap; }
 .ck.win .pill.mine { background:var(--mine); color:var(--surface); }
@@ -378,13 +372,13 @@ body { margin:0; }
 .ck.win .pill.customer { background:var(--amber-bg); color:var(--amber); }
 .ck.win .pill.idle { background:var(--sunk); color:var(--ink2); border:1px solid var(--rule); }
 .ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
-.ck.win .st .inner { border-top:1px solid var(--rule2); padding:4px 14px 12px; display:grid; gap:2px; }
-.ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:8px 0 2px; display:flex; gap:8px; align-items:center; }
+.ck.win .st .inner { border-top:1px solid var(--rule2); padding:2px 12px 8px; display:grid; gap:0; }
+.ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:6px 0 0; display:flex; gap:8px; align-items:center; }
 .ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); border-radius:5px; margin:0 -6px; padding-right:6px; }
-.ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:4px 6px; font:inherit; color:inherit; min-width:0; }
+.ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:3px 6px; font:inherit; color:inherit; min-width:0; }
 .ck.win .task:hover { background:var(--sunk); }
 .ck.win .task[aria-current="true"] { background:var(--sunk); box-shadow:inset 0 0 0 2px var(--focus); }
-.ck.win .task .wk { padding-top:4px; }
+.ck.win .task .wk { padding-top:3px; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
 .ck.win .tst.s-run { color:var(--focus); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
 .ck.win .task .tn { display:grid; min-width:0; }
@@ -392,17 +386,18 @@ body { margin:0; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
 .ck.win .task .nx { color:var(--ink3); font-size:var(--fs-xs); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
-.ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:1px solid var(--rule); border-radius:5px; padding:0 6px; background:var(--sunk); color:var(--ink2); white-space:nowrap; }
-.ck.win .chip.live { border-color:var(--run); color:var(--focus); background:var(--run-bg); }
-.ck.win .chip.bad { border-color:var(--hot); color:var(--hot); background:var(--hot-bg); }
-.ck.win .chip.kc { border-color:var(--kc); color:var(--kc); background:var(--surface); font-weight:700; }
+/* 状態の印は押せる見た目にしない（枠を付けない）。枠を持つのは押せるもの（.act と仕事のカードへ移る .kc）だけ。 */
+.ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:0; padding:0; background:none; color:var(--ink2); white-space:nowrap; }
+.ck.win .chip.live { color:var(--focus); font-weight:600; }
+.ck.win .chip.bad { color:var(--hot); font-weight:600; }
+.ck.win .chip.kc { border:1px solid var(--rule); border-radius:5px; padding:0 6px; color:var(--ink); background:var(--surface); font-weight:600; }
 .ck.win .act { border:1px solid var(--rule); background:var(--surface); border-radius:5px; padding:0 8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; line-height:1.9; }
 .ck.win .act:hover { border-color:var(--ink3); color:var(--ink); }
 .ck.win .act.talk { border-color:var(--focus); color:var(--focus); }
 /* タスクの行の「話す」は、行に触れたときだけ出す（全部の行に同じボタンが並ぶと、読む行の頭が埋もれる）。 */
 .ck.win .task .act.talk { visibility:hidden; }
 .ck.win .task:hover .act.talk, .ck.win .task:focus-within .act.talk { visibility:visible; }
-.ck.win .donebox { font-size:var(--fs-xs); color:var(--ink3); padding:4px 0 0 22px; }
+.ck.win .donebox { font-size:var(--fs-xs); color:var(--ink3); padding:4px 0 0; }
 .ck.win .wmore { border:0; background:none; color:var(--focus); font-size:var(--fs-s); padding:2px 0; text-align:left; justify-self:start; }
 .ck.win .watch { display:grid; gap:6px; }
 .ck.win .watch ul { margin:0; padding-left:1.2em; font-size:var(--fs-s); }
@@ -417,14 +412,19 @@ body { margin:0; }
 .ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; }
 .ck.win .rqd { display:grid; gap:6px; }
 .ck.win .rqd .code { margin-right:6px; }
+.ck.win .rqd .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
+.ck.win .lc .now { font-size:var(--fs-xs); font-weight:700; color:var(--ink); white-space:nowrap; }
+/* タスクの事実はラベルを左、値を右にそろえる。 */
+.ck.win .facts .fld { grid-template-columns:6.5em minmax(0,1fr); gap:10px; align-items:baseline; }
+.ck.win .facts .fld > .lb { font-size:var(--fs-xs); }
 .ck.win .rqd + .rqd { border-top:1px solid var(--rule2); padding-top:8px; margin-top:4px; }
 .ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:2px; }
 .ck.win .dw li { display:grid; grid-template-columns:1.4em minmax(0,1fr); color:var(--ink2); }
 .ck.win .dw li.ok { color:var(--ink); }
 /* 出した指示（新しい順） */
-.ck.win .wdet > .sent { margin:12px 18px 0; }
+.ck.win .wdet > .sent { margin:10px 16px 0; }
 .ck.win .sent ol { margin:0; padding:0; list-style:none; display:grid; }
-.ck.win .sent li { display:grid; gap:4px; padding:7px 0; font-size:var(--fs-s); }
+.ck.win .sent li { display:grid; gap:3px; padding:5px 0; font-size:var(--fs-s); }
 .ck.win .sent li + li { border-top:1px solid var(--rule2); }
 .ck.win .sent .sl { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
 .ck.win .sent .tm { font-size:var(--fs-xs); color:var(--ink3); font-variant-numeric:tabular-nums; }

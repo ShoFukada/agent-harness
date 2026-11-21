@@ -20,7 +20,7 @@ const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 test('上の帯: 全案件の私の番の合計と 5 種類の内訳。届いたは区切りの外に出し、合計に入れない', () => {
   const t = text(html())
   assert.match(t, /9 全案件の私の番/)
-  assert.match(t, /許可 2 判断 3 送信前 1 確認 2 届いた 1/)
+  assert.match(t, /許可 2 判断 3 送信前 1 確認 2 受信 1/)
   assert.match(html(), /class="kc ref k-inbox"/)
 })
 
@@ -32,10 +32,10 @@ test('1 列: 止まっている → 期限切れ → 今の線 → 今日 → �
   assert.ok(order.every((n) => n >= 0))
 })
 
-test('朱は期限が 24 時間以内か過ぎた票だけ。文字でも「! あと n 時間」「! 過ぎた」と出す', () => {
+test('朱は期限が 24 時間以内か過ぎた票だけ。文字でも「あと n 時間」「期限切れ」と出す（記号を付けない。R101）', () => {
   const h = html()
-  assert.match(h, /due hot"><b>! 過ぎた<\/b>/)
-  assert.match(h, /due hot"><b>! あと 3 時間<\/b>/)
+  assert.match(h, /due hot"><b>期限切れ<\/b>/)
+  assert.match(h, /due hot"><b>あと 3 時間<\/b>/)
   assert.ok(!/k-review hot/.test(h.match(/<article class="strip k-review[^"]*"[^>]*data-strip="\/ws\/harness#r8"/)?.[0] ?? ''))
 })
 
@@ -75,7 +75,7 @@ test('今日の見出しの日付は手元の時計で決める（日本時間�
 
 test('期限は、1 列の見出しと重なる日付を省く（今日は時刻だけ、明日は「明日 18:00」）', () => {
   const h = html()
-  assert.match(h, /due hot"><b>! あと 3 時間<\/b><span class="tm">13:00<\/span>/)
+  assert.match(h, /due hot"><b>あと 3 時間<\/b><span class="tm">13:00<\/span>/)
   assert.match(h, /<span class="due">明日 18:00<\/span>/)
   assert.match(h, /<span class="due">11\/24\(火\) 17:00<\/span>/)
 })
