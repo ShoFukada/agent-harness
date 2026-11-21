@@ -149,8 +149,8 @@ body { margin:0; }
 .ck .quote { border-left:3px solid var(--rule); padding:2px 0 2px 10px; color:var(--ink2); font-size:var(--fs-s); white-space:pre-wrap; overflow-wrap:anywhere; }
 .ck .opts { display:grid; gap:6px; margin:0; padding:0; border:0; min-width:0; }
 .ck .opt { display:grid; grid-template-columns:26px minmax(0,1fr); gap:0 10px; align-items:start; text-align:left; width:100%;
-  border:1px solid var(--rule); border-radius:8px; background:var(--surface); padding:8px 12px 8px 8px; }
-.ck .opt:hover { border-color:var(--ink3); }
+  border:1px solid var(--ink3); border-radius:8px; background:var(--surface); padding:8px 12px 8px 8px; }
+.ck .opt:hover { border-color:var(--ink); }
 .ck .opt[aria-checked="true"] { border-color:var(--kc); box-shadow:inset 0 0 0 1px var(--kc); }
 .ck .opt .key { font-size:var(--fs-xs); font-weight:700; color:var(--ink3); border:1px solid var(--ink3); border-radius:5px; height:22px; display:grid; place-items:center; }
 .ck .opt[aria-checked="true"] .key { background:var(--kc); border-color:var(--kc); color:var(--surface); }

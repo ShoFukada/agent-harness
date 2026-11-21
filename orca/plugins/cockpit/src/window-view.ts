@@ -180,7 +180,7 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
         ? clampQuote(a.ask.text, ui, `ask:${keyOf(r)}`) + (a.ask.options?.length ? `<ol class="rich">${a.ask.options.map((o) => `<li>${esc(o)}</li>`).join('')}</ol>` : '')
         : asking ? `<p class="mut">${a.chat ? 'チャット' : '端末の画面'}から問いの本文を読めませんでした。開いて確かめてください</p>` : ''
       return [fld(a?.ask?.kind === 'permit' ? '許可を求めていること' : '聞かれていること', ask),
-        a?.ask ? '' : fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld('停止日時', esc(fmtDate(c.since))) : '',
+        a?.ask ? '' : fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld(a?.ask ? '聞いた日時' : '停止日時', esc(fmtDate(c.since))) : '',
         fld('直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
     }
     case 'consult':

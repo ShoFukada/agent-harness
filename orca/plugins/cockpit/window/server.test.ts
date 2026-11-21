@@ -696,6 +696,7 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   const h = renderWindow(m, { ...newUi(), sel: keyOf(row('窓口に')) }, now, (x) => x)
   assert.match(h, /聞かれていること.*配送日の降順にする<\/li><li>登録順のままにする/s)
   assert.match(h, /窓口の端末を開いて答えを伝える/)
+  assert.match(h, /聞いた日時.*>窓口の端末を開く</s)
   // 許可待ちは道具の欄から（ログ集計の見直し）。
   const harness = m.boards.find((b) => b.root === roots.harness)!
   assert.ok(rows(harness).includes('「ログ集計の見直し」が許可を求めている: Bash: git push origin feature/log-summary'), rows(harness).join('\n'))

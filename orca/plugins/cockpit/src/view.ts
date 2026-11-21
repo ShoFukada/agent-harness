@@ -384,7 +384,9 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   let btns: string[]
   // Orca から作った詰まり: 開いて直し、直したら「済ませた」で隠す（同じ失敗のあいだ。次に止まればまた出る）。
   const dismiss = dismissable(c) ? [b('dismiss', '対応済みにする', '', 'title="同じ停止のあいだは隠す。次に止まったときはまた出る"')] : []
-  if (r.agent) btns = [b('focus', r.agent.chat ? 'チャットを開く' : '端末を開く', 'pri'), ...dismiss]
+  // orchestration の question の行は、聞かれた側（窓口か担当）を開く。
+  const whose = c.id.startsWith('#ask:') ? (r.owner.how === 'main' ? '窓口の' : '担当の') : ''
+  if (r.agent) btns = [b('focus', `${whose}${r.agent.chat ? 'チャット' : '端末'}を開く`, 'pri'), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返信不要'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
     case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), talk('担当と修正'), b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
