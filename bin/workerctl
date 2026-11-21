@@ -220,7 +220,8 @@ def cmd_start(a):
 def cmd_answer(a):
     # 信頼・許可の確認の画面は、本文と Enter を 1 回で送ると Orca が agent_prompt_blocked で断る。
     # 指示ではないので世代も状態も変えない。
-    for args in (["--text", a.text], ["--enter"]):
+    # 空の本文は Orca が断るので、既定の選択肢をそのまま選ぶ（--text ""）ときは Enter だけを送る
+    for args in ([["--text", a.text]] if a.text else []) + [["--enter"]]:
         r = orca("terminal", "send", "--terminal", a.terminal, *args, "--json")
         if r.returncode != 0:
             sys.stderr.write(r.stdout + r.stderr)
@@ -884,6 +885,9 @@ HOOKS = {"worker": hook_worker, "main-context": hook_main_context, "main-stop": 
 
 
 def cmd_hook(a):
+    # 相談スレッド（claude/bin/consult が CONSULT_THREAD=1 で立てる）はメインではないので、見張りや操縦席を求めない
+    if a.name.startswith("main") and os.environ.get("CONSULT_THREAD"):
+        return
     try:
         inp = json.loads(sys.stdin.read() or "{}")
     except ValueError:

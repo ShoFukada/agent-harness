@@ -264,6 +264,13 @@ class StartAndSend(Base):
         self.assertEqual((w["state"], w["gen"]), ("stopped", 1))
         self.assertIn("未処理の知らせ 1 件", self.run_ctl("pending").stdout)
 
+    def test_answer_with_empty_text_sends_only_enter(self):
+        self.run_ctl("answer", "--terminal", WORKER, "--text", "")
+        sends = [c for c in self.calls() if c[:2] == ["terminal", "send"]]
+        self.assertEqual(len(sends), 1)
+        self.assertIn("--enter", sends[0])
+        self.assertNotIn("--text", sends[0])
+
     def test_a_send_from_another_main_keeps_the_owner(self):
         self.adopt_working()
         self.run_ctl("send", "--terminal", WORKER, "--text", "補足", as_terminal="term_other-9")
@@ -446,6 +453,10 @@ class Cockpit(Base):
         self.assertEqual(decision["decision"], "block")
         self.assertIn("【操縦席】", decision["reason"])
         self.assertIn("workerctl wait", decision["reason"])
+
+    def test_a_consult_thread_is_not_asked_for_a_wait(self):
+        self.env["CONSULT_THREAD"] = "1"
+        self.assertIsNone(self.stop())
 
     def test_stop_lets_go_when_active_or_a_wait_runs_or_there_is_no_cockpit(self):
         self.assertIsNone(self.stop(stop_hook_active=True))
