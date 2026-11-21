@@ -6,7 +6,7 @@ import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
-import { boardOf, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
+import { boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -325,10 +325,17 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     return r && r.root === shownRoot && r.status === 'mine' && r.card.kind === 'inbox' ? ui.sel : undefined
   }
 
+  /** 対応済みのカードを選ぶ。閉じた仕事の中のカードへ移ったら、その仕事を既定（開く）に戻して隠さない。 */
+  function pickDone(k: string | undefined): void {
+    ui.doneSel = k
+    const c = k ? rows.get(k)?.card : undefined
+    if (c) delete ui.open[doneFold(c)]
+  }
+
   function select(k: string | undefined): void {
     const tb = tabOf()
     const task = tb === 'whole' && !!k && order.includes(k)
-    if (tb === 'done') ui.doneSel = k
+    if (tb === 'done') pickDone(k)
     else if (task) ui.task = k
     // 窓の要対応は詳細を常に開くので、押し直しても閉じない。全体の受信の票は開け閉めする。
     else ui.sel = win && tb === 'todo' ? k : ui.sel === k ? undefined : k
@@ -357,12 +364,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       // 済んだカードは対応済みのタブで開く。
       if (rows.get(d.jump)?.status === 'closed') {
         ui.tab = 'done'
-        ui.doneSel = d.jump
+        pickDone(d.jump)
       } else {
         ui.tab = 'todo'
         ui.sel = d.jump
       }
-    } else if (d.dsel !== undefined) ui.doneSel = d.dsel
+    } else if (d.dsel !== undefined) pickDone(d.dsel)
     else if (d.term !== undefined) {
       void t.focusAgent(d.term || null, d.wt || undefined).then((x) => toast(x.focused ? `${x.how ?? '端末'}を前に出しました` : '端末も worktree も Orca にありません'), fail)
       return true

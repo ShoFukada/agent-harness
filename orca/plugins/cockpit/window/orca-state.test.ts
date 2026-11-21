@@ -16,6 +16,11 @@ test('操縦席のプラグインが承認待ち・止まっている・無い�
   assert.equal(pluginProblem([row({ source: { reference: '/x', contentHash: 'old' }, folderHash: null })]), undefined)
   assert.equal(pluginProblem([]), 'Orca に操縦席のプラグインが入っていないため、Orca に合わせた切り替えが止まっています')
   assert.match(pluginProblem([row({}), row({ isDev: true, source: { reference: '/w/cockpit-window/orca/plugins/cockpit' } })])!, /開発用の読み込み（\/w\/cockpit-window\/orca\/plugins\/cockpit）に置き換わっています/)
+  // 窓（利用者向け）: 動いている開発用の読み込みと写しの古さは出さず、開発用の読み込みの停止・承認待ちは出す。
+  assert.equal(pluginProblem([row({}), row({ isDev: true })], true), undefined)
+  assert.equal(pluginProblem([row({ source: { reference: '/x', contentHash: 'old' }, folderHash: 'new' })], true), undefined)
+  assert.equal(pluginProblem([row({}), row({ isDev: true, status: 'errored' })], true), 'Orca のプラグインが止まっている（errored）ため、Orca に合わせた切り替えが止まっています')
+  assert.equal(pluginProblem([row({ isDev: true, status: 'pending' })], true), 'Orca のプラグインが承認待ちのため、Orca に合わせた切り替えが止まっています')
 })
 
 const agent = (paneKey: string, over: Partial<PsAgent> = {}): PsAgent => ({ paneKey, state: 'working', stateStartedAt: 1, hasLivePty: true, ...over })

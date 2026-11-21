@@ -332,8 +332,8 @@ body { margin:0; }
 .ck.win .cardrow .du { font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; text-align:right; display:grid; justify-items:end; }
 .ck.win .cardrow .du.cl { max-width:240px; }
 .ck.win .cardrow .du .how { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ck.win .cardrow .du .hot { color:var(--hot); font-weight:600; }
-.ck.win .cardrow .du .soon { color:var(--ink); font-weight:600; }
+.ck.win .dover { color:var(--hot); font-weight:600; }
+.ck.win .dnext.soon { color:var(--ink); font-weight:600; }
 /* 窓の協議は副の操作なので、主のボタンの青と分ける。 */
 .ck.win .btn.talk { border-color:var(--rule); color:var(--ink); }
 /* 札は語だけ（丸枠・地の色の印を並べない。初見 4・15）。協議中は強調の色、確認なしは危険の色。 */
@@ -407,7 +407,7 @@ body { margin:0; }
 .ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); margin:0 -6px; padding-right:6px; }
 .ck.win .tsel { display:grid; grid-template-columns:4.5em minmax(0,1fr); gap:8px; align-items:start; border:0; background:none; text-align:left; padding:3px 6px; font:inherit; color:inherit; min-width:0; }
 .ck.win .task:hover { background:var(--sunk); }
-.ck.win .task[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
+.ck.win .task:has(> .tsel[aria-current="true"]) { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .task .wk { padding-top:3px; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
 .ck.win .tst.s-run { color:var(--ink); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }

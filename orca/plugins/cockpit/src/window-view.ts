@@ -2,7 +2,7 @@
 import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { STOP_LABEL, byUrgency, fmtDate, isHot, isOver, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
+  actsHtml, backgroundParts, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
   type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 
@@ -33,6 +33,8 @@ function closedGroups(b: Board): [string, VRow[]][] {
   for (const r of vrows(b, b.d.closed)) m.set(r.card.stream ?? '', [...(m.get(r.card.stream ?? '') ?? []), r])
   return [...m.entries()].sort((a, b2) => timeOf(b2[1][0]!.when) - timeOf(a[1][0]!.when))
 }
+/** 対応済みの仕事の畳みの鍵（明示的にカードを選んだら、その仕事を開くのに controller も使う）。 */
+export const doneFold = (c: Card) => `done:${c.stream || '-'}`
 export const doneOrder = (b: Board | undefined): string[] => (b ? closedGroups(b).flatMap(([, xs]) => xs.map(keyOf)) : [])
 
 /** 種類は語だけで示す（記号を並べない。R101）。 */
@@ -55,13 +57,17 @@ const recOf = (r: Row) => {
 
 const taskOf = (b: Board, r: Row): TaskView | undefined => b.d.tasks.get(r.card.tasks?.[0] ?? '')
 
+/** 窓の期限。赤は期限切れだけにし、24 時間以内は濃い無彩色（パネルの dueHtml は 24 時間以内も赤のまま）。一覧と詳細で同じ語にする。 */
+const winDue = (due: string | undefined, now: number) =>
+  !due ? '' : isOver(due, now) ? `<span class="dover">期限切れ ${esc(nearDate(due, now))}</span>` : `<span class="dnext${isHot(due, now) ? ' soon' : ''}">${esc(nearDate(due, now))} まで</span>`
+
 function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed = false): string {
   const c = r.card
   const t = taskOf(b, r)
   // 返した答えは 1 行で切り、全文は詳細で読む（長い別の回答で行が伸びないように）。
   const right = closed
     ? `<span class="how" title="${esc(r.how ?? '')}">${esc(r.how ?? '')}</span><span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
-    : c.due ? (isOver(c.due, now) ? `<span class="hot">期限切れ ${esc(nearDate(c.due, now))}</span>` : `<span class="${isHot(c.due, now) ? 'soon' : ''}">${esc(nearDate(c.due, now))} まで</span>`) : ''
+    : winDue(c.due, now)
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${kindName(c)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${t ? `<span class="crumb">${esc(t.task.title)}</span>` : ''}</span>
@@ -240,7 +246,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
     <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}</div>
-      <div class="kl"><span class="kd">${kindName(c)}</span>${c.id.startsWith('#') ? '<span class="mut">Orca から</span>' : ''}${c.due ? dueHtml(c.due, now) : ''}</div>
+      <div class="kl"><span class="kd">${kindName(c)}</span>${c.id.startsWith('#') ? '<span class="mut">Orca から</span>' : ''}${winDue(c.due, now)}</div>
       <h2>${esc(c.title)}</h2><div>${ownerHtml(r.owner)}</div></div>
     ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
@@ -292,16 +298,18 @@ const looseTasks = (b: Board) => [...b.d.tasks.values()].filter((t) => t.state !
 export function taskOrder(b: Board | undefined): string[] {
   if (!b) return []
   const live = b.d.jobs.filter((j) => j.state !== 'done')
-  const jobs = [...FORM_ORDER.flatMap((f) => live.filter((j) => formOf(b, j.id) === f)), ...live.filter((j) => !formOf(b, j.id))]
-  return [...jobs.flatMap((j) => stageGroups(tasksOf(b, j.id)).flatMap(([, xs]) => xs)), ...looseTasks(b)].map((t) => t.task.id)
+  // viewWhole の並び（形のある仕事 → 形の無い仕事 → 結ばれていないタスク → 見張る）と同じにする。
+  const of = (js: JobView[]) => js.flatMap((j) => stageGroups(tasksOf(b, j.id)).flatMap(([, xs]) => xs))
+  const byForm = (f: StreamForm) => live.filter((j) => formOf(b, j.id) === f)
+  return [...of(FORM_ORDER.filter((f) => f !== 'watch').flatMap(byForm)), ...of(live.filter((j) => !formOf(b, j.id))), ...looseTasks(b), ...of(byForm('watch'))].map((t) => t.task.id)
 }
 
 function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined): string {
-  const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く">${kindName(r.card)} ${esc(r.card.id)}</button>`).join('')
+  const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r.card)}を開く</button>`).join('')
   const sub = t.task.waiting_on ? `待ち: ${t.task.waiting_on}` : t.task.next ? `次: ${t.task.next}` : ''
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
-  return `<div class="task" aria-current="${cur === t.task.id}"><button type="button" class="tsel" data-task="${esc(t.task.id)}"><span class="tst s-${t.state}">${TSTATE[t.state]}</span>
+  return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${t.state}">${TSTATE[t.state]}</span>
     <span class="tn"><span>${esc(t.task.title)}</span>${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
     <span class="wk">${chips}</span></div>`
 }
@@ -316,9 +324,12 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
   const open = ui.open[`s:${j.id}`] ?? ts.some((t) => t.task.id === ui.task)
   const working = ts.filter((t) => t.why === 'working').length
   const label = j.state === 'mine' ? `要対応 ${j.mine} 件` : j.state === 'customer' ? j.label : PILL[j.state]
+  const groups = stageGroups(ts)
+  // 選べるタスクが無い仕事は右に詳細を出せないので、協議のボタンを箱の中に置く。
+  const talk = groups.length ? '' : `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(j.id)}">${j.owner ? '担当と協議' : '窓口と協議'}</button></div>`
   const inner = open
-    ? stageGroups(ts).map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task)).join('')}`).join('')
-      + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '')
+    ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task)).join('')}`).join('')
+      + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '') + talk
     : ''
   // 一覧の 1 行。状態は語 1 つ（色は要対応と停止だけ）、次にやることを工程より先に読ませる（初見 4・5）。協議は右の詳細から。
   const who = [j.owner && `担当: ${esc(j.owner.title)}`, working && `worker ${working} 件作業中`].filter(Boolean).join('・')
@@ -446,7 +457,7 @@ function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {
   const groups = closedGroups(b)
   // 仕事ごとに畳めるようにする（件数が多いと 1 本の長い一覧になるため。初見 10）。既定は選んでいるカードのある仕事と、先頭の仕事を開く。
   const list = groups.map(([sid, xs], i) => {
-    const key = `done:${sid || '-'}`
+    const key = doneFold(xs[0]!.card)
     const open = ui.open[key] ?? (i === 0 || xs.some((r) => keyOf(r) === ui.doneSel))
     return `<details class="sgrp" data-fold="${esc(key)}"${open ? ' open' : ''}><summary>${groupHead(b, sid, xs, true)}</summary><div class="rows">${xs.map((r) => cardRow(b, r, ui.doneSel, now, true)).join('')}</div></details>`
   }).join('')

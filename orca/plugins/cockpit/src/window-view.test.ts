@@ -74,7 +74,7 @@ test('全体: タスクを押すと右に詳細（工程・状態・goal・next�
   assert.deepEqual(taskOrder(m.boards[0]), [...all.matchAll(/data-task="(\w+)"/g)].map((x) => x[1]))
   const side = h.slice(h.indexOf('aria-label="タスクの詳細"'))
   const t = text(side)
-  assert.match(h, /class="task" aria-current="true"><button type="button" class="tsel" data-task="t1"/)
+  assert.match(h, /class="task"><button type="button" class="tsel" data-task="t1" aria-current="true"/)
   assert.match(h, /data-toggle="s:s1" aria-expanded="true"/)
   for (const x of ['作業中 工程 3/5 作る', '何のため 配車の一覧で探す手間を減らす', '済の条件 並べ替えができる 絞り込みができる', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
     assert.ok(t.includes(x), x)
@@ -326,4 +326,19 @@ test('Codex 17-4: 依頼の原文の「続き」と済んだことの残りは�
   assert.match(page(m, { sel: '/ws/aoba#r5', open: { 'cont:/ws/aoba#r5': true } }), /data-fold="cont:\/ws\/aoba#r5" open>/)
   const t = aoba((v) => { v.cockpit!.tasks.find((x) => x.id === 't1')!.done = ['a', 'b', 'c', 'd'] })
   assert.match(page(t, { tab: 'whole', task: 't1', open: { 'done:t1': true } }), /data-fold="done:t1" open><summary>残り 1 件/)
+})
+
+test('追加 22 の Codex: 全体の j・k の順は見張るを最後にした画面の順と同じ。選べるタスクの無い仕事は箱の中で協議できる。期限は一覧と詳細で同じ語と色', () => {
+  const m = aoba((v) => { v.cockpit!.streams[2]!.form = 'watch' })
+  const all = page(m, { tab: 'whole', open: { 's:s1': true, 's:s2': true, 's:s3': true } })
+  const order = taskOrder(m.boards[0])
+  assert.deepEqual(order, [...all.matchAll(/data-task="(\w+)"/g)].map((x) => x[1]))
+  assert.equal(order.at(-1), 't3', '見張る仕事（s3）のタスクは最後')
+  // s4 のタスクは済んだ t4 だけなので、右に詳細を出せない。協議は箱の中から。
+  assert.match(page(aoba(), { tab: 'whole', open: { 's:s4': true, done: true } }), /data-talkstream="s4"/)
+  // d21 は 3 時間後、d22 は 2 時間前が期限。赤は期限切れだけで、詳細もパネルの「あと n 時間」の赤い札にしない。
+  const d = page(aoba(), { sel: '/ws/aoba#d21' })
+  assert.doesNotMatch(d, /due hot/)
+  assert.equal(d.match(/class="dnext soon"/g)?.length, 2, '一覧と詳細の 2 か所')
+  assert.match(text(d), /期限切れ 08:00/)
 })
