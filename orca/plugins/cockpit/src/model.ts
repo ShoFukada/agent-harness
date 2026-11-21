@@ -1,6 +1,8 @@
 // .orca/cockpit.json（メインが書く、形の版 2）と .orca/cockpit.user.json（画面が書く操作ログ）の形と、
 // その 2 つを重ねてカードの今の状態を決める純粋な関数。窓・パネル・hook が使う。
 
+import type { DispatchFact } from './protocol.ts'
+
 export const VERSION = 2
 
 export type TaskState = 'stop' | 'run' | 'wait' | 'idle' | 'ok'
@@ -34,8 +36,11 @@ export type Task = {
   done?: DoneEntry[]
   sources?: string[]
   repo?: Repo
-  /** このタスクを進める worker（Orca の worktree id と端末の handle）。 */
-  worker?: { worktree_id: string; terminal?: string }
+  /**
+   * このタスクを進める担当か worker の、Orca の orchestration の Task と Dispatch（worker-start・send の受け取りの taskId・dispatchId）。
+   * 続きを send して Dispatch が変わったら書き換える。窓はこの Dispatch の様子で状態を出す。
+   */
+  worker?: { task_id: string; dispatch_id: string }
 }
 /** 仕事（大タスク）。担当のチャットは仕事ごとに 1 つまで。 */
 export type Stream = { id: string; title: string; summary?: string; sources?: string[] }
@@ -173,8 +178,9 @@ export type Cockpit = {
  * sent は送った・済ませた、skip は送らない・返事は要らない・止める、delegate は「この案件では任せる」（許したうえで以後を任せる）、
  * talk は担当と話し始めた（カードは話し中になる）、ack は報告を読んだ、revert は報告の n 番目を戻して、undo は取り消し。
  */
-export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo'
-export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo']
+/** repeat: 「前にも言った」。前に伝えたことをメインが落としたという合図で、item_id は空。メイン側の hook が押下を数え、新しいチャットへの引き継ぎに使う。 */
+export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat'
+export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat']
 export type Op = {
   op_id: number
   at: string
@@ -188,6 +194,12 @@ export type Op = {
 }
 export type UserLog = { ops: Op[] }
 export type Archive = { cards: Card[] }
+/** .orca/cockpit/handoff.json。メイン側の hook が、メインを新しいチャットに引き継いだときに書く。 */
+export type Handoff = { at: string; reason: string }
+export function parseHandoff(text: string): Handoff | undefined {
+  const v = JSON.parse(text) as Partial<Handoff>
+  return typeof v?.at === 'string' && typeof v.reason === 'string' ? { at: v.at, reason: v.reason } : undefined
+}
 
 export const OTHER = 'other'
 export const TEXT_MAX = 4000
@@ -216,8 +228,12 @@ export function parseCockpit(text: string): Cockpit {
     throw new Error(`cockpit.json が古い形（version ${String(v.version ?? 1)}）です。node window/migrate.ts <ワークスペースの root> --write で移し替えてください`)
   if (!isObj(v.workspace) || !Array.isArray(v.cards) || !Array.isArray(v.tasks) || !Array.isArray(v.streams))
     throw new Error('cockpit.json に workspace・streams・tasks・cards がありません')
-  for (const t of v.tasks as Record<string, unknown>[])
+  for (const t of v.tasks as Record<string, unknown>[]) {
     if (!TASK_STATES.includes(t?.state as TaskState)) throw new Error(`tasks の state が不正です: ${String(t?.id)}`)
+    const w = t.worker
+    if (w !== undefined && !(isObj(w) && typeof w.task_id === 'string' && typeof w.dispatch_id === 'string'))
+      throw new Error(`tasks の worker の形が不正です（{ task_id, dispatch_id }。workerctl の頃の { worktree_id, terminal } は書き換える）: ${String(t.id)}`)
+  }
   // 列挙値は画面で class 名や印に使うので、知らない値は読み込みの時点で断る。
   for (const c of v.cards as Record<string, unknown>[]) {
     if (typeof c?.id !== 'string' || typeof c.title !== 'string' || typeof c.rev !== 'number') throw new Error(`cards の id・title・rev が不正です: ${String(c?.id)}`)
@@ -331,29 +347,24 @@ export function worstState(states: TaskState[]): TaskState | undefined {
   return [...states].sort((a, b) => SEV[a] - SEV[b])[0]
 }
 
-/**
- * 動いている worker が進めているタスク。① 端末の記録が一致するもの ② 同じ worktree の済んでいないもの ③ 同じ worktree の最後のもの。
- * 同じ worktree で済んだタスクを先に拾うと、進行中のタスクが「動いていない」と出るため（2026-11-16）。
- */
-export function taskOfWorker(tasks: Task[], worktreeId: string, terminalId: string | null): Task | undefined {
-  const same = tasks.filter((t) => t.worker?.worktree_id === worktreeId)
-  return (terminalId ? tasks.find((t) => t.worker?.terminal === terminalId) : undefined) ?? same.find((t) => t.state !== 'ok') ?? same.at(-1)
-}
-
 export type ShownWhy = 'ok' | 'record' | 'working' | 'intake' | 'stopped' | 'missing'
 export type TaskShown = { state: TaskState; why: ShownWhy; stop?: string }
-export type LiveAgent = { state: string; stop?: string }
 
 /**
- * 画面に出すタスクの状態。worker の記録があるタスクは、メインの書いた state ではなく Orca の状態から決める
+ * 画面に出すタスクの状態。worker の記録があるタスクは、メインの書いた state ではなく Orca の Dispatch の様子から決める
  * （メインが書き忘れると「worker が作業中なのに動いていない」のような矛盾が出たため、2026-11-16）。
+ * fact は undefined なら Orca を読んでいない（パネル）、null なら Orca に無い。
+ * - state が ok なら完了、wait（外の相手を待つ）はメインの書いた state のまま
+ * - worker_done を返していれば、メインの取り込み待ち
+ * - 起動できない・落ちた・端末が消えた・人の確認待ちなら、止まっている
+ * - それ以外は進行中（担当が利用者と話している間や worker を待つ間も、Dispatch は開いたまま）
  */
-export function shownTask(t: Task, linked: LiveAgent[], worktreeAlive: boolean | undefined): TaskShown {
+export function shownTask(t: Task, fact: DispatchFact | null | undefined): TaskShown {
   if (t.state === 'ok') return { state: 'ok', why: 'ok' }
-  if (!t.worker || worktreeAlive === undefined || t.state === 'wait') return { state: t.state, why: 'record' }
-  if (linked.some((a) => a.state === 'working' && !a.stop)) return { state: 'run', why: 'working' }
-  const stopped = linked.find((a) => a.stop && a.stop !== 'waiting')
-  if (stopped) return { state: 'stop', why: 'stopped', stop: stopped.stop }
-  if (linked.length || worktreeAlive) return { state: 'wait', why: 'intake' }
-  return { state: 'stop', why: 'missing' }
+  if (!t.worker || fact === undefined || t.state === 'wait') return { state: t.state, why: 'record' }
+  if (fact === null) return { state: 'stop', why: 'missing' }
+  if (fact.state === 'succeeded') return { state: 'wait', why: 'intake' }
+  if (fact.state === 'failed' || fact.liveness === 'exited') return { state: 'stop', why: 'stopped', stop: fact.liveness === 'exited' ? 'dead' : 'error' }
+  if (fact.waiting) return { state: 'stop', why: 'stopped', stop: 'blocked' }
+  return { state: 'run', why: 'working' }
 }

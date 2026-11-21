@@ -177,6 +177,15 @@ export function mount(t: Transport, opts: { panel?: boolean } = {}) {
       }, fail)
       return
     }
+    if (name === 'repeat') {
+      const root = el.dataset.root
+      if (root)
+        void t.op({ root, item_id: '', item_rev: 0, type: 'repeat' }).then((res) => {
+          replace(res.view)
+          toast('「前にも言った」を記録しました。窓口が記録を読み直します')
+        }, fail)
+      return
+    }
     if (name === 'notify') {
       const root = feed.views[0]?.root
       if (root) void t.notify(root).then((x) => toast(x.sent ? 'メインに届けました' : `届きませんでした: ${x.reason ?? ''}`), fail)

@@ -28,7 +28,7 @@ export function sample(now = Date.now()): SampleWs[] {
       { id: 's4', title: '定例と議事録' }
     ],
     tasks: [
-      { id: 't1', stream: 's1', phase: '実装', title: '一覧の並べ替えと絞り込み', state: 'run', next: 'レビューの指摘を直して stg に出す', worker: { worktree_id: 'wt-aoba-list', terminal: 'term_aoba_w1' } },
+      { id: 't1', stream: 's1', phase: '実装', title: '一覧の並べ替えと絞り込み', state: 'run', next: 'レビューの指摘を直して stg に出す', worker: { task_id: 'task_aoba_list', dispatch_id: 'ctx_aoba_list' } },
       { id: 't2', stream: 's2', phase: '設計', title: '構成案の図と本文', state: 'wait', next: '入口の描き方を決めてから送る版を作る' },
       { id: 't3', stream: 's3', phase: '設計', title: '利用上限の確認', state: 'wait', waiting_on: '森さん', waiting_since: iso(now - 50 * H), next: '回答が来たら繋ぎ込みの見積もり' },
       { id: 't4', stream: 's4', phase: '要件', title: '議事録の取りまとめ', state: 'ok' }
@@ -161,7 +161,7 @@ export function sample(now = Date.now()): SampleWs[] {
     main: { agent: 'claude', terminal: 'term_h_main' },
     streams: [{ id: 'h1', title: 'ログ集計の見直し' }, { id: 'h2', title: '設計図のページ' }],
     tasks: [
-      { id: 'u1', stream: 'h1', phase: '実装', title: '集計の分け方を直す', state: 'run', worker: { worktree_id: 'wt-h-log', terminal: 'term_h_w1' } },
+      { id: 'u1', stream: 'h1', phase: '実装', title: '集計の分け方を直す', state: 'run', worker: { task_id: 'task_h_log', dispatch_id: 'ctx_h_log' } },
       { id: 'u2', stream: 'h2', phase: '実装', title: '流れと構成の図', state: 'ok' }
     ],
     cards: [

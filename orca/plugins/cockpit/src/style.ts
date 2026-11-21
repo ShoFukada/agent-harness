@@ -219,6 +219,9 @@ body { margin:0; }
 .ck .calm b { font-size:var(--fs-xl); }
 .ck .calm p { margin:0; color:var(--ink2); }
 .ck .calm.warn b { color:var(--k-permit); }
+.ck .notes { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
+.ck .notes div { background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); color:var(--ink2); }
+.ck .flag.repeat { border:1px solid var(--rule); border-radius:6px; padding:1px 9px; font-size:var(--fs-xs); cursor:pointer; }
 .ck .errs { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
 .ck .errs div { background:var(--hot-bg); color:var(--hot); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); font-weight:600; }
 .ck .toasts { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:10; width:max-content; max-width:min(640px, calc(100vw - 24px)); display:grid; gap:6px; }

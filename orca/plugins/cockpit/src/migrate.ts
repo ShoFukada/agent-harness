@@ -72,14 +72,21 @@ export function migrateItem(i: V1Item, c: V1): Card {
   return defined(card)
 }
 
+const isDispatch = (w: unknown) => typeof (w as Record<string, unknown>)?.task_id === 'string' && typeof (w as Record<string, unknown>)?.dispatch_id === 'string'
+
+/** workerctl の頃の形（{ worktree_id, terminal }）の worker の記録を持つ、済んでいないタスク。移すと記録が外れるので、窓口が立て直すか書き直す。 */
+export const oldWorkers = (v1: V1) => v1.tasks.filter((t) => t.worker && !isDispatch(t.worker) && t.state !== 'ok').map((t) => t.id)
+
 /** 版 1 の cockpit.json を版 2 にする。tasks・streams・worker の記録はそのまま写す。 */
 export function migrate(v1: V1): Cockpit {
   if (v1.version === VERSION) throw new Error('すでに版 2 です')
   if (!Array.isArray(v1.items)) throw new Error('items がありません')
-  const { items, requests, version: _v, summary: _s, updated_at: _u, ...rest } = v1
+  const { items, requests, tasks, version: _v, summary: _s, updated_at: _u, ...rest } = v1
   return {
     ...rest,
     version: VERSION,
+    // worker の記録は orchestration の形（{ task_id, dispatch_id }）だけを写す。workerctl の頃の形は指す先がもう無いので外す（元は cockpit.v1.json に残る）。
+    tasks: tasks.map((t) => (t.worker && !isDispatch(t.worker) ? (({ worker: _w, ...x }) => x)(t) : t)),
     // 成果物はカードに写したうえで依頼にも残す（項目から指されていない成果物を落とさないため）。
     requests,
     cards: items.map((i) => migrateItem(i, v1))

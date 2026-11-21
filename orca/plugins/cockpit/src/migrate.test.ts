@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { plan, write } from '../window/migrate.ts'
-import { migrate, type V1 } from './migrate.ts'
+import { migrate, oldWorkers, type V1 } from './migrate.ts'
 import { overlay, parseCockpit } from './model.ts'
 
 /** 版 1 の形（架空の案件）。実際の案件にある項目の書き方をひと通り含める。 */
@@ -14,7 +14,11 @@ const v1 = (): V1 => ({
   main: { agent: 'claude', terminal: 'term_main' },
   summary: '古い要約',
   streams: [{ id: 's1', title: '画面の改修' }],
-  tasks: [{ id: 't1', stream: 's1', phase: '実装', title: '一覧', state: 'run', worker: { worktree_id: 'wt1', terminal: 'term_w1' } }],
+  tasks: [
+    { id: 't1', stream: 's1', phase: '実装', title: '一覧', state: 'run', worker: { task_id: 'task_1', dispatch_id: 'ctx_1' } },
+    { id: 't2', stream: 's1', phase: '実装', title: '絞り込み', state: 'run', worker: { worktree_id: 'wt2', terminal: 'term_w2' } },
+    { id: 't3', stream: 's1', phase: '実装', title: '最初の画面', state: 'ok', worker: { worktree_id: 'wt3' } }
+  ] as unknown as V1['tasks'],
   requests: [{ id: 'r1', at: '2026-11-20', title: '一覧を直して', quote: '一覧で並べ替えたい', state: 'open', tasks: ['t1'], deliverables: [{ id: 'pr', label: 'PR', href: 'https://github.com/example/a/pull/1', look_for: ['並べ替え'] }] }],
   items: [
     { id: 'd1', rev: 1, kind: 'dec', title: '図を描き足すか', state: 'open', related: [{ task: 't1', effect: '図が決まる' }], why: '明日送る', context: { what: 'w' }, options: [{ id: 'a', label: 'A' }] },
@@ -48,11 +52,12 @@ test('移し替えた中身: 仕事・何のため・依頼の原文と見てほ
   assert.equal(card('d3').scope, 'push')
 })
 
-test('版を 1 つ上げ（古い版の操作を効かせない）、tasks と worker の記録はそのまま写す。要約と items は残さない', () => {
+test('版を 1 つ上げ（古い版の操作を効かせない）、tasks を写す。worker の記録は orchestration の形だけを残し、workerctl の形は外す。要約と items は残さない', () => {
   const c = migrate(v1())
   assert.equal(c.version, 2)
   assert.equal(c.cards.find((x) => x.id === 'd2')!.rev, 3)
-  assert.deepEqual(c.tasks, v1().tasks)
+  assert.deepEqual(c.tasks.map((t) => [t.id, t.worker]), [['t1', { task_id: 'task_1', dispatch_id: 'ctx_1' }], ['t2', undefined], ['t3', undefined]])
+  assert.deepEqual(oldWorkers(v1()), ['t2'])
   assert.equal((c as unknown as Record<string, unknown>).items, undefined)
   assert.equal((c as unknown as Record<string, unknown>).summary, undefined)
   assert.doesNotThrow(() => parseCockpit(JSON.stringify(c)))

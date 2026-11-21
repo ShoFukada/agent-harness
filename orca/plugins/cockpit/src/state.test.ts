@@ -98,3 +98,16 @@ test('経路が読めていない: 失敗・まだ読んでいない・既定 2 
   assert.equal(routeProblem({ id: 'm', label: 'メール' }, NOW), 'メール: まだ読んでいない')
   assert.equal(routeProblem({ id: 'm', label: 'メール', error: 'ログイン切れ' }, NOW), 'メール: ログイン切れ')
 })
+
+test('Dispatch で落ちた・Orca に見つからない worker は、端末が消えていても詰まりの票にする。worker_done を返したら取り込み待ち', () => {
+  const w = ws(0)
+  const dead = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: { ctx_aoba_list: { state: 'dispatched', liveness: 'exited' } } }, NOW)
+  const s = dead.queue.find((r) => r.card.id === '#dispatch:t1')!
+  assert.equal(s.card.title, '配車画面の改修 が落ちた')
+  assert.equal(s.card.answerable, false)
+  const gone = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: {} }, NOW)
+  assert.equal(gone.queue.find((r) => r.card.id === '#dispatch:t1')!.card.title, '配車画面の改修 が Orca に見つからない')
+  const done = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: { ctx_aoba_list: { state: 'succeeded', settledAt: NOW - 60_000 } } }, NOW)
+  assert.equal(done.tasks.get('t1')!.why, 'intake')
+  assert.ok(!done.queue.some((r) => r.card.kind === 'stuck'))
+})

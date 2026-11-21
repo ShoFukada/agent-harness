@@ -2,8 +2,8 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  KIND_LABEL, OTHER, nextOp, overlay, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  type Card, type Cockpit, type Op, type UserLog
+  KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
+  type Card, type Cockpit, type Handoff, type Op, type UserLog
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -11,11 +11,11 @@ export const SIGNAL = '【操縦席】未反映の操作があります'
 
 /** 合図の 1 行。別の答えと「担当と話す」があれば、どのカードかと本文の頭を載せる（端末に送るので改行は空白にする）。 */
 export function signalText(ops: Op[]): string {
-  const said = ops.filter((o) => o.type === 'talk' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
+  const said = ops.filter((o) => o.type === 'talk' || o.type === 'repeat' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
   if (!said) return SIGNAL
   const t = (said.text ?? '').replace(/\s+/g, ' ').trim()
-  const what = said.type === 'talk' ? '担当と話す' : '別の答え'
-  return `${SIGNAL}（${what} ${said.item_id}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
+  const what = said.type === 'talk' ? '担当と話す' : said.type === 'repeat' ? '前にも言った' : '別の答え'
+  return `${SIGNAL}（${what}${said.item_id ? ` ${said.item_id}` : ''}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
 }
 
 const FIGURE_PATH = /^\.orca\/cockpit\/figures\/[\w.-]+\.svg$/
@@ -27,6 +27,7 @@ export type Files = {
   figures: Record<string, string>
   errors: string[]
   missing: boolean
+  handoff?: Handoff
 }
 
 export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true })
@@ -60,7 +61,7 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 
 /** 読めたファイルだけ差し替え、壊れたものは prev の中身を保ってエラーを 1 行残す。 */
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
-  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing }
+  const next: Files = { cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff }
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
     try {
@@ -78,6 +79,9 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   })
   await one('cockpit.archive.json', '', (text) => {
     next.archive = text === undefined ? [] : parseArchive(text).cards
+  })
+  await one('cockpit/handoff.json', '', (text) => {
+    next.handoff = text === undefined ? undefined : parseHandoff(text)
   })
   const figures: Record<string, string> = {}
   const refs = [...(next.cockpit?.cards ?? []), ...next.archive]
@@ -137,6 +141,11 @@ const CLOSING = new Set(['decide', 'accept', 'sent', 'skip', 'delegate', 'ack'])
 
 function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): void {
   const invalid = (msg: string) => Object.assign(new Error(msg), { code: 'invalid_params' })
+  // 「前にも言った」はワークスペース全体への合図で、カードを持たない。
+  if (input.type === 'repeat') {
+    if (input.item_id !== '') throw invalid('「前にも言った」はカードに付けません')
+    return
+  }
   const card = cockpit.cards.find((c) => c.id === input.item_id)
   if (!card) throw invalid(`カード ${input.item_id} がありません`)
   // 担当が書き換えたあとの古い画面で押した操作は、新しい版に効かせない。

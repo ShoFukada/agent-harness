@@ -51,7 +51,8 @@ node window/migrate.ts <ワークスペースの root> --write  # 書き換え�
 - 未反映の操作が残っていれば書かずに断る。先に窓口に反映させる
 - 元は `cockpit.v1.json`・`cockpit.archive.v1.json` に残す
 - `dec` は中身で分ける（`topic: push` は許す、`draft` があれば送る前、ほかは決める）。`ask` は送る前、`rev` は見て、`ack` は報告。どのカードも `rev` を 1 つ上げるので、古いバージョンで押した操作は通らない
-- `summary`・`deliverables`・`cockpit.talk.json` は移さない。窓はバージョン 1 のファイルを読まず、移し替えのコマンドを添えて断る
+- `tasks[].worker` は orchestration の形（`{ task_id, dispatch_id }`）だけを写す。workerctl の頃の形（`{ worktree_id, terminal }`）は指す先が無いので外し、済んでいないタスクの id を結果に出す（続けるなら立て直して書く）
+- `summary`・`cockpit.talk.json` は移さない（依頼の `deliverables` は残す）。窓はバージョン 1 のファイルを読まず、移し替えのコマンドを添えて断る
 
 ## Orca のサイドバーとそろえる
 窓のカードと Orca のサイドバーで、同じ仕事が同じ名前・同じ状態で出るようにする。`node window/state.ts <root>` の `jobs[].orca` に、仕事ごとの表示名（20 字まで）・状態・未読の印が出るので、窓口はそれに合わせて `orca worktree set --display-name / --workspace-status / --unread` を打つ。
@@ -82,6 +83,8 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 - 明・暗・Mac に合わせるの切り替えはブラウザに覚えさせる。既定は明るい地
 
 ### Orca の状態
+- worker の記録: 窓口が担当や worker を Orca の orchestration で立てたら、タスクの `worker` に受け取りの `task_id`・`dispatch_id` を書く。窓は済んでいないタスクの Dispatch を `orca orchestration worker-show --dispatch <id> --full` で引き（`window/orca-state.ts` の `orcaDispatches`）、Dispatch の端末で worker とタスクを結ぶ。タスクの状態は Dispatch から出す（`model.ts` の `shownTask`）: worker_done を返したら取り込み待ち、起動できない・落ちた・人の確認待ちは詰まり、Orca に無ければ「Orca に見つからない」の詰まり。落ちて端末が消えた worker も詰まりの票になる
+- Orca の監督の外で止まったもの（`bin/stallwatch` が書く `alerts.json`）は、窓の上にエラーの行で出す
 - 前面のワークスペースは、パネルの worker が書く `focus.json` を見張って取る（ポーリングしない）
 - エージェントの状態と worktree の親子は `orca worktree ps`・`orca terminal list`・`orca agent list` で取る。呼ぶのは窓が表示されている間だけで、(1) 接続したとき、(2) `focus.json` のエージェントの変化の時刻が変わったとき（5 秒に 1 回まで）、(3) 60 秒ごと
 - 止まった worker は詰まりの票になる。名前は仕事の題を先にし、窓口が書いた詰まりと同じ仕事（タスクか担当の端末）なら重ねて出さない。許可待ち・返事待ちは「答えれば進む」、落ちた・ログイン切れは「私では直せない」と分ける
@@ -104,6 +107,10 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 `href`・`links` は種類の印（Drive・PR・Slack・ページ・ファイル）を付けたボタンで出す。
 - http(s) の URL: 窓は常駐のプロセスが macOS の `open` で既定のブラウザに渡す（http と https 以外は断る）。パネルは Orca の `shell.openExternal`
 - ファイル: ワークスペースからの相対パスと、本線の子の worktree の中の絶対パスだけを開く。`path:行` は窓では `orca file open --line` でその行を開く
+
+## 前にも言った・引き継ぎ
+- 案件 1 つを出しているとき（パネル・絞り込み）は、上の帯に「前にも言った」がある。押すと、カードを持たない `repeat`（`item_id` は空）を追記する。前に伝えたことを窓口が落としたという合図で、窓口の hook が押下を数え、新しいチャットへの引き継ぎに使う
+- hook が引き継いだときに書く `.orca/cockpit/handoff.json`（`at`・`reason`）を読み、1 日だけ「窓口を新しいチャットに引き継ぎました」と出す
 
 ## 窓口の端末への合図
 端末には中身を送らず、`【操縦席】未反映の操作があります` の 1 行だけを送る。担当と話す・別の答えは、合図の 1 行にカードの id と本文の頭を載せる。

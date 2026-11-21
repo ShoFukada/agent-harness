@@ -4,7 +4,7 @@ import {
   COUNTED, KIND_LABEL, overlay, shownTask, unappliedOps, worstState,
   type Card, type CardKind, type CardView, type Cockpit, type Milestone, type Owner, type Stream, type Task, type TaskShown, type TaskState, type UserLog
 } from './model.ts'
-import type { AgentRow, OwnerLive, StopReason } from './protocol.ts'
+import type { AgentRow, DispatchFact, OwnerLive, StopReason } from './protocol.ts'
 
 export const STOP_LABEL: Record<StopReason, string> = {
   blocked: '許可待ち', waiting: '返事待ち', interrupted: '中断', error: 'エラー', dead: '落ちた', auth: 'ログイン切れ', limit: '利用枠切れ'
@@ -70,7 +70,8 @@ export function bucketOf(due: string | undefined, now: number, kind?: CardKind):
 export const isHot = (due: string | undefined, now: number) => !!due && !Number.isNaN(dueAt(due)) && dueAt(due) - now < DAY
 
 /** Orca から分かること。パネルは worktree の一覧と担当の今を持たない。 */
-export type OrcaFacts = { workers: AgentRow[]; worktrees?: string[]; owners?: OwnerLive[] }
+/** Orca から分かること。パネルは orchestration を読まないので dispatches が無い（タスクはメインの書いた state のまま）。null は Orca に無い。 */
+export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[] }
 
 /** カードの話し相手。担当が無い仕事は案件の窓口（main）。 */
 export type OwnerRef = {
@@ -91,7 +92,7 @@ export type Row = CardView & {
   agent?: AgentRow
 }
 
-export type TaskView = TaskShown & { task: Task }
+export type TaskView = TaskShown & { task: Task; settledAt?: number }
 /** 案件の今の 1 行（仕事ごと）。 */
 export type JobState = 'mine' | 'stopped' | 'working' | 'customer' | 'idle' | 'done'
 export const JOB_LABEL: Record<JobState, string> = { mine: '私待ち', stopped: '止まっている', working: '作業中', customer: '顧客待ち', idle: '未着手', done: '済' }
@@ -163,6 +164,26 @@ function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, writt
     })
 }
 
+/**
+ * Dispatch で止まった・Orca に見つからないタスクのうち、端末のエージェントからは詰まりの行にならなかったもの
+ * （落ちて端末が消えた worker は worktree ps に出ないため）。
+ */
+function dispatchStuck(c: Cockpit, root: string, tasks: Map<string, TaskView>, written: Set<string>, covered: Set<string>): Row[] {
+  return [...tasks.values()]
+    .filter((t) => (t.why === 'stopped' || t.why === 'missing') && !covered.has(t.task.id) && !written.has(t.task.id) && !written.has(t.task.stream))
+    .map((t) => {
+      const stop = (t.stop ?? 'dead') as StopReason
+      const [answerable, unblock] = t.why === 'missing' ? [false, '窓口が立て直すか、記録を直す'] as const : STOP_UNBLOCK[stop]
+      const reason = t.why === 'missing' ? 'Orca に見つからない' : STOP_LABEL[stop]
+      const name = c.streams.find((s) => s.id === t.task.stream)?.title ?? t.task.title
+      const card: Card = {
+        id: `#dispatch:${t.task.id}`, rev: 0, kind: 'stuck', state: 'open', title: `${name} が${t.why === 'missing' ? ' ' : ''}${reason}`,
+        since: t.settledAt ? new Date(t.settledAt).toISOString() : undefined, reason, answerable, unblock, stream: t.task.stream, tasks: [t.task.id]
+      }
+      return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: ownerOf(c, card), stream: c.streams.find((s) => s.id === t.task.stream) }
+    })
+}
+
 const CLOSED_DAYS = 14
 
 export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, facts: OrcaFacts | undefined, now: number): Derived {
@@ -170,20 +191,20 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const row = (v: CardView): Row => ({ ...v, root, ws: c.workspace.name, owner: ownerOf(c, v.card, facts), stream: c.streams.find((s) => s.id === v.card.stream) })
   const rows = views.map(row)
   const written = new Set(c.cards.filter((x) => x.kind === 'stuck' && x.state === 'open').flatMap((x) => [...(x.tasks ?? []), ...(x.stream ? [x.stream] : [])]))
+  const tasks = new Map<string, TaskView>()
+  for (const t of c.tasks) {
+    const fact = facts?.dispatches && t.worker ? facts.dispatches[t.worker.dispatch_id] ?? null : undefined
+    tasks.set(t.id, { ...shownTask(t, fact), task: t, settledAt: fact?.settledAt })
+  }
   const mine = rows.filter((r) => r.status === 'mine' && r.card.kind !== 'report')
-  const queue = [...mine, ...stuckRows(c, root, facts, written)].sort(byUrgency)
+  const fromAgents = stuckRows(c, root, facts, written)
+  const queue = [...mine, ...fromAgents, ...dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])))].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
   for (const r of queue) counts[r.card.kind]++
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const recent = (r: Row) => !r.when || now - Date.parse(r.when) < CLOSED_DAYS * DAY
   const closed = rows.filter((r) => r.status === 'closed' && recent(r)).sort((a, b) => (b.when ?? '').localeCompare(a.when ?? ''))
 
-  const alive = facts?.worktrees && new Set(facts.worktrees)
-  const tasks = new Map<string, TaskView>()
-  for (const t of c.tasks) {
-    const agents = (facts?.workers ?? []).filter((w) => w.task === t.id)
-    tasks.set(t.id, { ...shownTask(t, agents, alive && !!t.worker && alive.has(t.worker.worktree_id)), task: t })
-  }
   return {
     views, queue, counts, total, tasks, closed,
     talking: rows.filter((r) => r.status === 'talking').sort(byUrgency),
@@ -285,10 +306,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
   const running = tasks.filter((t) => t.why === 'working')
   const names = (xs: string[]) => (xs.length ? `（${xs.join(' / ')}）` : '')
   const next = d.queue.find((r) => COUNTED.includes(r.card.kind))
-  const intake = tasks.filter((t) => t.why === 'intake' && (() => {
-    const ags = (facts?.workers ?? []).filter((w) => w.task === t.task.id)
-    return !ags.length || now - Math.max(...ags.map((a) => a.since)) >= INTAKE_GRACE_MS
-  })())
+  const intake = tasks.filter((t) => t.why === 'intake' && now - (t.settledAt ?? 0) >= INTAKE_GRACE_MS)
   const pushOpen = c.cards.some((x) => x.kind === 'permit' && x.scope === 'push' && (x.state === 'open' || (x.resolved_option === 'later' && now - Date.parse(x.resolved_at ?? '0') < PUSH_LATER_MS)))
   const open = c.cards.filter((x) => x.state === 'open')
   return {

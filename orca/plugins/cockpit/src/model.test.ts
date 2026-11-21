@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { nextOp, overlay, parseCockpit, shownTask, taskOfWorker, unappliedOps, type Cockpit, type Op, type UserLog } from './model.ts'
+import { nextOp, overlay, parseCockpit, shownTask, unappliedOps, type Cockpit, type Op, type UserLog } from './model.ts'
 import { appendOp, SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -99,6 +99,7 @@ test('合図の対象: 自分が書いた操作は 10 秒、ほかの画面の�
 test('合図の 1 行に、担当と話すと別の答えのカードと本文の頭を載せる', () => {
   assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'decide', option_id: 'keep' })]), SIGNAL)
   assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'talk' })]), `${SIGNAL}（担当と話す d21）`)
+  assert.equal(signalText([op({ op_id: 1, item_id: '', type: 'repeat' })]), `${SIGNAL}（前にも言った）`)
   assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'decide', option_id: 'other', text: '図は\n描き足す' })]), `${SIGNAL}（別の答え d21: 図は 描き足す）`)
 })
 
@@ -113,22 +114,23 @@ test('path:行 をファイルと行に分ける', () => {
   assert.deepEqual(splitLine('docs/a:b.md'), { file: 'docs/a:b.md' })
 })
 
-test('worker が進めるタスクは、端末の記録 → 同じ worktree の済んでいないもの → 同じ worktree の最後のもの', () => {
-  const t = (id: string, state: 'ok' | 'run', terminal?: string) => ({ id, stream: 's', phase: 'p', title: id, state, worker: { worktree_id: 'w', terminal } })
-  const tasks = [t('a', 'ok', 'term_a'), t('b', 'run'), t('c', 'ok')]
-  assert.equal(taskOfWorker(tasks, 'w', 'term_a')?.id, 'a')
-  assert.equal(taskOfWorker(tasks, 'w', null)?.id, 'b')
-  assert.equal(taskOfWorker([tasks[0]!, tasks[2]!], 'w', null)?.id, 'c')
+test('worker の記録があるタスクは Dispatch の様子から、外の相手を待つタスクと記録の無いタスクと Orca を読んでいない画面はメインの state のまま', () => {
+  const t = { id: 't', stream: 's', phase: 'p', title: 't', state: 'idle' as const, worker: { task_id: 'task_1', dispatch_id: 'ctx_1' } }
+  assert.deepEqual(shownTask(t, { state: 'dispatched', liveness: 'live' }), { state: 'run', why: 'working' })
+  assert.deepEqual(shownTask(t, { state: 'succeeded' }), { state: 'wait', why: 'intake' })
+  assert.deepEqual(shownTask(t, { state: 'dispatched', liveness: 'exited' }), { state: 'stop', why: 'stopped', stop: 'dead' })
+  assert.deepEqual(shownTask(t, { state: 'failed' }), { state: 'stop', why: 'stopped', stop: 'error' })
+  assert.deepEqual(shownTask(t, { state: 'dispatched', waiting: true }), { state: 'stop', why: 'stopped', stop: 'blocked' })
+  assert.deepEqual(shownTask(t, null), { state: 'stop', why: 'missing' })
+  assert.deepEqual(shownTask(t, undefined), { state: 'idle', why: 'record' })
+  assert.deepEqual(shownTask({ ...t, state: 'wait' }, { state: 'dispatched' }), { state: 'wait', why: 'record' })
+  assert.deepEqual(shownTask({ ...t, state: 'ok' }, null), { state: 'ok', why: 'ok' })
 })
 
-test('worker の記録があるタスクは Orca の状態から、外の相手を待つタスクと記録の無いタスクはメインの state のまま', () => {
-  const t = { id: 't', stream: 's', phase: 'p', title: 't', state: 'idle' as const, worker: { worktree_id: 'w' } }
-  assert.deepEqual(shownTask(t, [{ state: 'working' }], true), { state: 'run', why: 'working' })
-  assert.deepEqual(shownTask(t, [{ state: 'done', stop: 'dead' }], true), { state: 'stop', why: 'stopped', stop: 'dead' })
-  assert.deepEqual(shownTask(t, [], true), { state: 'wait', why: 'intake' })
-  assert.deepEqual(shownTask(t, [], false), { state: 'stop', why: 'missing' })
-  assert.deepEqual(shownTask(t, [], undefined), { state: 'idle', why: 'record' })
-  assert.deepEqual(shownTask({ ...t, state: 'wait' }, [{ state: 'working' }], true), { state: 'wait', why: 'record' })
+test('tasks[].worker は orchestration の形だけを読み、workerctl の頃の形は書き換えを促して断る', () => {
+  const old = aoba() as unknown as { tasks: { worker?: unknown }[] }
+  old.tasks[0]!.worker = { worktree_id: 'r::w', terminal: 'term_w' }
+  assert.throws(() => parseCockpit(JSON.stringify(old)), /worker の形が不正です.*worktree_id/)
 })
 
 test('操作は押した瞬間のファイルで確かめる: 画面が古くても書き換え後の版には記録せず、片付いたカードと版 1 のファイルにも記録しない', async () => {
@@ -145,6 +147,9 @@ test('操作は押した瞬間のファイルで確かめる: 画面が古くて
   await appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' })
   await assert.rejects(appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }), /もう片付いています/)
   await assert.rejects(appendOp(root, shown, { root, item_id: 'w1', item_rev: 2, type: 'sent' }), /もう片付いています/)
+  // 「前にも言った」はカードを持たない、案件全体への合図。
+  assert.equal((await appendOp(root, shown, { root, item_id: '', item_rev: 0, type: 'repeat' })).ops.at(-1)!.type, 'repeat')
+  await assert.rejects(appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'repeat' }), /カードに付けません/)
   writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify({ workspace: { name: 'x' }, streams: [], tasks: [], items: [] }))
   await assert.rejects(appendOp(root, shown, { root, item_id: 'd21', item_rev: 1, type: 'talk' }), /migrate\.ts/)
 })

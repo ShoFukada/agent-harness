@@ -4,7 +4,7 @@
 import { constants as fsConstants, promises as fsp } from 'node:fs'
 import path from 'node:path'
 import { KIND_LABEL, parseUserLog, VERSION, type Cockpit } from '../src/model.ts'
-import { migrate, migrateArchive, type V1 } from '../src/migrate.ts'
+import { migrate, migrateArchive, oldWorkers, type V1 } from '../src/migrate.ts'
 import { lockLog, writeAtomic } from '../src/store.ts'
 
 export type MigrateResult = { cockpit?: Cockpit; archive?: { cards: Cockpit['cards'] }; summary: string[]; unapplied: number[] }
@@ -37,7 +37,8 @@ export async function plan(root: string): Promise<MigrateResult> {
     ...(cockpit ? [`${v1.workspace.name}: items ${v1.items.length} 件 → cards ${cockpit.cards.length} 件`] : [`${v1.workspace.name}: cockpit.json は移し替え済み`]),
     ...[...count].map(([k, n]) => `  ${k} ${n}`),
     ...(cockpit?.cards ?? []).filter((c) => c.state === 'open').map((c) => `  開いている ${c.id}: ${KIND_LABEL[c.kind]}「${c.title}」`),
-    ...(archive ? [`  archive: ${archive.cards.length} 件`] : [])
+    ...(archive ? [`  archive: ${archive.cards.length} 件`] : []),
+    ...(cockpit && oldWorkers(v1).length ? [`  workerctl の形の worker の記録を外した、済んでいないタスク: ${oldWorkers(v1).join(', ')}（続けるなら orchestration で立て直し、tasks[].worker に { task_id, dispatch_id } を書く）`] : [])
   ]
   return { cockpit, archive, summary, unapplied }
 }

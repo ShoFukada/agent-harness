@@ -9,9 +9,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chatMain, OP_TYPES, type Card, type OpType } from '../src/model.ts'
-import type { CockpitView, NotifyResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
+import type { CockpitView, DispatchFact, NotifyResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { ownerOf } from '../src/state.ts'
-import { orcaAgents, orcaWorktrees, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
+import { orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, SHORT, type PluginRow, type PsAgent, type PsRow, type WorkerShow } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
@@ -31,6 +31,8 @@ export type Orca = {
   plugins(): Promise<PluginRow[]>
   /** チャットも含めた全エージェント（orca agent list）。担当の今を出す。 */
   agents(): Promise<OwnerLive[]>
+  /** orchestration worker-show --full。Dispatch が Orca に無ければ null。 */
+  show(dispatch: string): Promise<WorkerShow | null>
   send(terminal: string, text: string): Promise<void>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
@@ -43,13 +45,13 @@ export function orcaCli(bin = 'orca'): Orca {
   const run = (args: string[]) =>
     new Promise<Record<string, unknown>>((resolve, reject) =>
       execFile(bin, [...args, '--json'], { timeout: 15_000, maxBuffer: 64 << 20 }, (err, out) => {
-        let json: { ok?: boolean; result?: Record<string, unknown>; error?: { message?: string } } | undefined
+        let json: { ok?: boolean; result?: Record<string, unknown>; error?: { message?: string; code?: string } } | undefined
         try {
           json = JSON.parse(out)
         } catch {
           return reject(new Error(err?.message ?? 'orca の出力を読めません'))
         }
-        if (err || json?.ok === false) return reject(new Error(json?.error?.message ?? err?.message ?? 'orca が失敗しました'))
+        if (err || json?.ok === false) return reject(Object.assign(new Error(json?.error?.message ?? err?.message ?? 'orca が失敗しました'), { code: json?.error?.code }))
         resolve(json?.result ?? {})
       })
     )
@@ -85,6 +87,14 @@ export function orcaCli(bin = 'orca'): Orca {
       if (mine) mine.folderHash = ((await run(['plugin', 'inspect', mine.source!.reference!]).catch(() => ({}))) as { contentHash?: string }).contentHash ?? null
       return rows.map(({ kind: _kind, ...r }) => r)
     },
+    show: (dispatch) =>
+      run(['orchestration', 'worker-show', '--dispatch', dispatch, '--full']).then(
+        (r) => r as WorkerShow,
+        (e: Error & { code?: string }) => {
+          if (e.code === 'dispatch_not_found') return null
+          throw e
+        }
+      ),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
@@ -125,6 +135,10 @@ export function createServer(opts: Options) {
   let owners: OwnerLive[] = []
   let orcaError: string | undefined
   let pluginNote: string | undefined
+  /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
+  const facts = new Map<string, Record<string, DispatchFact | null>>()
+  /** stallwatch が書く alerts.json の、Orca の監督の外で止まったもの。 */
+  let alerts: string[] = []
   let focus: Focus = {}
   /** この常駐のプロセスが書いた操作（root#op_id）。合図は書いた側が先に送る（store.ts の signalPlan）。 */
   const mine = new Set<string>()
@@ -150,9 +164,8 @@ export function createServer(opts: Options) {
     return parent && hasCockpit(parent.path) ? parent.path : p
   }
 
-  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit)
+  const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root))
   const workersOf = (root: string, files: Files) => agentsOf(root, files).workers
-  const worktreesOf = (root: string) => orcaWorktrees(root, ps)
 
   async function cockpitView(root: string | undefined, slim = false): Promise<CockpitView> {
     const ws = root ? wss.get(root) : undefined
@@ -163,8 +176,8 @@ export function createServer(opts: Options) {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit, log: files.log, figures: files.figures, errors: files.errors,
       archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since) : files.archive,
-      workers: root ? workersOf(root, files) : [], worktrees: root ? worktreesOf(root) : [], owners,
-      notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal
+      workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, owners,
+      notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff
     }
   }
 
@@ -200,7 +213,7 @@ export function createServer(opts: Options) {
     const boards = await Promise.all([...wss.values()].filter((ws) => ws.files.cockpit || ws.files.errors.length).map((ws) => cockpitView(ws.root, true)))
     // Orca にある本線のうち、操縦席の無いもの（見ていない案件）。worker の worktree と、操縦席の窓のある本線は除く。
     const unseen = ps.filter((r) => !r.parentWorktreeId && !hasCockpit(r.path)).map((r) => ({ name: r.displayName?.trim() || path.basename(r.path), path: r.path }))
-    return { focused: followRoot(), boards, unseen, live, errors: [orcaError, pluginNote].filter((e): e is string => !!e) }
+    return { focused: followRoot(), boards, unseen, live, errors: [orcaError, pluginNote, ...alerts].filter((e): e is string => !!e) }
   }
 
   function broadcast(): void {
@@ -253,6 +266,19 @@ export function createServer(opts: Options) {
     }))
   }
 
+  async function readAlerts(): Promise<void> {
+    let next: string[] = []
+    try {
+      const d = JSON.parse(await fsp.readFile(path.join(opts.dir, 'alerts.json'), 'utf8')) as { alerts?: { text?: unknown }[] }
+      next = (d.alerts ?? []).map((a) => a.text).filter((t): t is string => typeof t === 'string').map((t) => `止まっている: ${t}`)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return void console.error(`alerts.json: ${(e as Error).message}`)
+    }
+    if (next.join('\n') === alerts.join('\n')) return
+    alerts = next
+    broadcast()
+  }
+
   function refreshOrca(): Promise<void> {
     return (refreshing ??= (async () => {
       try {
@@ -268,6 +294,9 @@ export function createServer(opts: Options) {
       }
       lastRefresh = Date.now()
       await sync()
+      if (!orcaError)
+        for (const ws of wss.values())
+          if (ws.files.cockpit) facts.set(ws.root, await orcaDispatches(ws.files.cockpit, orca.show).catch((e: Error) => (console.error(`orchestration: ${e.message}`), facts.get(ws.root) ?? {})))
       broadcast()
     })().finally(() => {
       refreshing = undefined
@@ -534,6 +563,7 @@ export function createServer(opts: Options) {
       await fsp.mkdir(opts.dir, { recursive: true })
       // focus.json は rename で置き換わるので、ファイルではなく置き場所を見張る。
       focusWatcher = watch(opts.dir, (_ev, name) => {
+        if (name === 'alerts.json') return void readAlerts()
         if (name !== 'focus.json') return
         clearTimeout(focusTimer)
         focusTimer = setTimeout(() => void readFocus(), 30)
@@ -541,6 +571,7 @@ export function createServer(opts: Options) {
       // 見張れないとき（ファイルの見張りの上限など）も、常駐のプロセスは落とさず、前面の切り替えだけを止める。
       focusWatcher.on('error', (e) => console.error(`focus.json を見張れません: ${e.message}`))
       await readFocus()
+      await readAlerts()
       for (const ws of wss.values()) void autoSignal(ws).catch((e) => console.error(e))
       await new Promise<void>((resolve) => server.listen(opts.port, opts.host ?? '127.0.0.1', resolve))
       port = (server.address() as { port: number }).port

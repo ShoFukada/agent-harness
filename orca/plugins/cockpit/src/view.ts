@@ -50,7 +50,7 @@ export function boardsOf(views: CockpitView[], now: number): Board[] {
   return views
     .filter((v): v is CockpitView & { root: string; cockpit: NonNullable<CockpitView['cockpit']> } => !!v.root && !!v.cockpit)
     .map((v) => {
-      const facts: OrcaFacts = { workers: v.workers, worktrees: v.worktrees, owners: v.owners }
+      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners }
       return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now) }
     })
 }
@@ -386,7 +386,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
     <div class="kinds" aria-label="${esc(countsText({ ...counts, inbox, talk: 0, report: 0 }, total))}">${COUNTED.filter((k) => counts[k]).map((k) => `<span class="kc k-${k}">${glyph(k)}${KIND_LABEL[k]} <b>${counts[k]}</b></span>`).join('')}${inbox ? `<span class="kc ref k-inbox">数えない ${glyph('inbox')}届いた <b>${inbox}</b></span>` : ''}</div>
-    <div class="flags">${unseenCount ? `<span class="flag warn">見ていない ${unseenCount}</span>` : ''}${m.live !== undefined ? `<span class="flag">動いているエージェント ${m.live}</span>` : ''}${signal}
+    <div class="flags">${unseenCount ? `<span class="flag warn">見ていない ${unseenCount}</span>` : ''}${m.live !== undefined ? `<span class="flag">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
       ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : 'Mac'}</button>`).join('')}</span>`}</div>
   </header>`
   const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
@@ -420,6 +420,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
     ${paneSwitch(ui, total, sideCount)}
     <main class="board${m.panel ? ' panel' : ''}" data-pane="${ui.pane ?? 'queue'}">
       ${errs.length ? `<div class="errs" role="alert">${errs.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
+      ${handoffHtml(shown, now)}
       ${m.panel ? '' : casesHtml(m, ui, now)}
       <div class="queue" aria-label="私の番">${empty}</div>
       <aside class="side">${side}</aside>
@@ -435,6 +436,23 @@ function paneSwitch(ui: Ui, total: number, n: { talking: number; waiting: number
 }
 
 /** パネルで、メインに合図が届いていないとき。 */
+/**
+ * 「前にも言った」。前に伝えたことを窓口が落としたときに押す。案件ごとの合図なので、案件 1 つを出しているとき（パネル・絞り込み）だけ出す。
+ * 窓口の hook が押下を数え、2 回で新しいチャットへの引き継ぎに使う。
+ */
+function repeatHtml(m: Model, ui: Ui, shown: Board[]): string {
+  if (shown.length !== 1 || !(m.panel || ui.filter)) return ''
+  return `<button class="flag repeat" type="button" data-act="repeat" data-root="${esc(shown[0]!.root)}" title="前に伝えたことを窓口が落としたときに押します。窓口が記録を読み直し、2 回押されると新しいチャットへ引き継ぎます">前にも言った</button>`
+}
+
+/** 窓口を新しいチャットに引き継いだ知らせ。古い知らせで今のチャットを取り違えないよう、1 日だけ出す。 */
+function handoffHtml(shown: Board[], now: number): string {
+  const lines = shown
+    .filter((b) => b.v.handoff && now - Date.parse(b.v.handoff.at) < 86_400_000)
+    .map((b) => `<div>${esc(b.v.cockpit?.workspace.name ?? '')}: 窓口を新しいチャットに引き継ぎました（${esc(fmtDate(b.v.handoff!.at))}・${esc(b.v.handoff!.reason)}）。Orca のチャットの一覧から新しいチャットを開いてください</div>`)
+  return lines.length ? `<div class="notes" role="status">${lines.join('')}</div>` : ''
+}
+
 function signalHtml(v: CockpitView | undefined): string {
   if (!v?.cockpit) return ''
   if (chatMain(v.cockpit)) return ''

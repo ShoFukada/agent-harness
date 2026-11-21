@@ -8,6 +8,7 @@ import { sample } from '../fixtures/sample.ts'
 import type { OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
 import { createServer, stopReason, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
 
@@ -28,8 +29,9 @@ const cockpit = (name: string, over: Record<string, unknown> = {}) => {
 }
 const agent = (paneKey: string, over: Partial<PsAgent> = {}): PsAgent => ({ paneKey, state: 'working', stateStartedAt: 1, hasLivePty: true, ...over })
 
-function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], owners: OwnerLive[] = []) {
+function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], owners: OwnerLive[] = [], shows: Record<string, WorkerShow> = {}) {
   const calls: string[][] = []
+  const showCalls: string[] = []
   const orca: Orca = {
     ps: async () => rows,
     terminals: async () => [
@@ -39,13 +41,17 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
     ],
     plugins: async () => plugins,
     agents: async () => owners,
+    show: async (dispatch) => {
+      showCalls.push(dispatch)
+      return shows[dispatch] ?? null
+    },
     send: async (t, text) => void calls.push(['send', t, text]),
     activate: async (root) => void calls.push(['activate', root]),
     switchTerminal: async (t) => void calls.push(['switch', t]),
     openFile: async (root, abs, line) => void calls.push(line ? ['open', root, abs, String(line)] : ['open', root, abs]),
     openUrl: async (url) => void calls.push(['url', url])
   }
-  return { orca, calls }
+  return { orca, calls, showCalls }
 }
 
 const servers: { close(): Promise<void> }[] = []
@@ -53,12 +59,12 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[]) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
   if (focusPath) setFocus(focusPath)
-  const fake = fakeOrca(rows, plugins, owners)
+  const fake = fakeOrca(rows, plugins, owners, shows)
   const s = createServer({ port: 0, dir, orca: fake.orca })
   servers.push(s)
   const port = await s.listen()
@@ -71,7 +77,7 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
     })
     return { status: r.status, body: await r.json() }
   }
-  return { s, port, origin, post, setFocus, dir, calls: fake.calls }
+  return { s, port, origin, post, setFocus, dir, calls: fake.calls, showCalls: fake.showCalls }
 }
 
 function listen(port: number, token: string) {
@@ -315,16 +321,32 @@ test('取り消しの猶予が過ぎた操作は、メインが入力待ちな�
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'notified.json'), 'utf8')), { [a]: 2 })
 })
 
-test('worker は操縦席の task に記録された worktree id で task に結び、仕事の名前は task の名前にする', async () => {
+test('worker は操縦席の task に記録された Dispatch の端末で task に結び、仕事の名前は task の名前にする', async () => {
   const { a, child, rows } = workspaces()
   const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
-  c.tasks[0].worker = { worktree_id: 'r::a-w1' }
+  c.tasks[0].worker = { task_id: 'task_w1', dispatch_id: 'ctx_w1' }
   writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
   rows.find((r) => r.path === child)!.displayName = 'list｜表示名から推した名前'
-  const { s, port } = await start(rows, a)
-  const v = await listen(port, s.token).until((w) => ready(w) && board(w, a)!.workers.length === 1)
+  const shows = { ctx_w1: { projection: { stage: { worker: 'ready' }, liveness: { verdict: 'live' } }, terminal: { handle: 'term_w1' }, observation: { agentWait: null } } }
+  const { s, port } = await start(rows, a, undefined, undefined, shows)
+  const v = await listen(port, s.token).until((w) => ready(w) && board(w, a)!.workers.length === 1 && board(w, a)!.workers[0]!.task !== undefined)
   assert.deepEqual(board(v, a)!.workers.map((w) => [w.task, w.job]), [['t1', '一覧の並べ替えと絞り込み']])
-  assert.deepEqual(board(v, a)!.worktrees, ['r::a', 'r::a-w1'])
+  // view は JSON で届くので settledAt: undefined は欄ごと落ちる。
+  assert.deepEqual(board(v, a)!.dispatches, { ctx_w1: { state: 'ready', liveness: 'live', terminal: 'term_w1', waiting: false } })
+})
+
+test('Orca に無い Dispatch は null で渡して詰まりの票にし、済んだタスクの Dispatch は問い合わせない', async () => {
+  const { a, rows } = workspaces()
+  const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
+  c.tasks[0].worker = { task_id: 'task_gone', dispatch_id: 'ctx_gone' }
+  c.tasks.push({ ...c.tasks[0], id: 't_old', state: 'ok', worker: { task_id: 'task_old', dispatch_id: 'ctx_old' } })
+  writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify(c))
+  const { s, port, showCalls } = await start(rows, a)
+  const v = await listen(port, s.token).until((w) => ready(w) && !!board(w, a)?.dispatches)
+  assert.deepEqual(board(v, a)!.dispatches, { ctx_gone: null })
+  assert.ok(showCalls.includes('ctx_gone') && !showCalls.includes('ctx_old'))
+  // 見つからない worker の記録は、詰まりの票になる（落ちて端末が消えた worker も取りこぼさない）。
+  assert.ok(board(v, a)!.cockpit!.tasks[0]!.worker)
 })
 
 test('開けるのは本線と本線の子の worktree の中のファイルだけ。日本語の名前と path:行 も開く', async () => {

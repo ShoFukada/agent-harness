@@ -1,4 +1,4 @@
-import type { Card, Cockpit, OpType, UserLog } from './model.ts'
+import type { Card, Cockpit, Handoff, OpType, UserLog } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -12,9 +12,23 @@ export type AgentRow = {
   stop?: StopReason
   /** その worker の worktree のパス。端末が無いときに worktree を開くのに使う。 */
   worktree?: string
-  /** 何の仕事か。task の記録があればその名前、無ければ worktree の表示名・コメント。 */
+  /** 何の仕事か。task の worker の記録（Dispatch の端末）で結べればその task の名前、無ければ worktree の表示名・コメント。 */
   job?: string
+  /** 操縦席の task.worker に記録された worker なら、その task の id。 */
   task?: string
+}
+
+/** Orca の orchestration の Dispatch の様子（orca orchestration worker-show）。 */
+export type DispatchFact = {
+  /** ready・dispatched（進行中）、succeeded（worker_done を返した）、failed（起動できない・落ちた・端末が消えた）など。 */
+  state: string
+  /** live・exited・unverifiable。 */
+  liveness?: string
+  /** 人にしか答えられない確認（許可など）で止まっている。 */
+  waiting?: boolean
+  terminal?: string | null
+  /** 終わった時刻（ミリ秒）。取り込み待ちの猶予に使う。 */
+  settledAt?: number
 }
 
 /** 担当（Orca のチャットか端末のエージェント）の今。orca agent list から取る。 */
@@ -34,14 +48,16 @@ export type CockpitView = {
   errors: string[]
   /** メインを除く、このワークスペースのエージェント。 */
   workers: AgentRow[]
-  /** 本線と子の worktree のうち、Orca に今ある worktree の id。パネルは持たない。 */
-  worktrees?: string[]
+  /** worker の記録（tasks[].worker.dispatch_id）ごとの Orca の様子。null は Orca に無い。パネルは読まないので undefined。 */
+  dispatches?: Record<string, DispatchFact | null>
   /** 担当の今（session で引く）。パネルは持たない。 */
   owners?: OwnerLive[]
   /** メインに合図を送ったときの、最後の op_id。 */
   notifiedOp: number
   /** 自動の合図が届いていないとき。waiting: メインが作業中なので一区切りを待っている。failed: 送れなかった。 */
   signal?: { state: 'waiting' | 'failed'; reason?: string }
+  /** メインを新しいチャットに引き継いだ知らせ（.orca/cockpit/handoff.json）。 */
+  handoff?: Handoff
 }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */

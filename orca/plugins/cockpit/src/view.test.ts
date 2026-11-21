@@ -9,7 +9,7 @@ const svg = (s: string) => s
 function views(): CockpitView[] {
   return sample(NOW).map((w) => ({
     state: 'ok', root: `/ws/${w.dir}`, cockpit: structuredClone(w.cockpit), log: structuredClone(w.log), archive: [], figures: w.figure ? { '.orca/cockpit/figures/entry.svg': w.figure } : {},
-    errors: [], workers: [], worktrees: [], notifiedOp: 0
+    errors: [], workers: [], notifiedOp: 0
   }))
 }
 const model = (over: Partial<Model> = {}, vs = views()): Model => ({ boards: boardsOf(vs, NOW), unseen: [], errors: [], ...over })

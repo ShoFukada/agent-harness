@@ -38,6 +38,12 @@ export function writeSample(base: string, now = Date.now()): { roots: Record<str
     }),
     plugins: async () => [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }],
     agents: async () => [{ session: 'sess-aws', kind: 'chat', state: 'working', title: 'AWS 構成案（担当）', worktree: roots.aoba }],
+    // 見本の worker の記録（sample.ts の tasks[].worker）の Dispatch。端末でタスクと結ぶ。
+    show: async (dispatch) =>
+      ({
+        ctx_aoba_list: { projection: { stage: { worker: 'dispatched' }, liveness: { verdict: 'live' } }, terminal: { handle: 'term_aoba_w1' }, observation: { agentWait: null } },
+        ctx_h_log: { projection: { stage: { worker: 'dispatched' }, liveness: { verdict: 'live' } }, terminal: { handle: 'term_h_w1' }, observation: { agentWait: { kind: 'permission' } } }
+      })[dispatch] ?? null,
     send: async (t, text) => void calls.push(['send', t, text]),
     activate: async (root) => void calls.push(['activate', root]),
     switchTerminal: async (t) => void calls.push(['switch', t]),
