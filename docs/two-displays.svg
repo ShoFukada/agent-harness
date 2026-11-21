@@ -1,70 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 510" font-family="'IBM Plex Sans JP','Hiragino Sans',sans-serif" role="img" aria-label="2 枚のディスプレイでの操縦席と worker の使い方">
-  <style>
-    .t{font-size:14px;fill:#1f2328}
-    .s{font-size:12px;fill:#57606a}
-    .h{font-size:16px;font-weight:600;fill:#1f2328}
-    .box{fill:#fff;stroke:#8c959f;stroke-width:1.5}
-    .scr{fill:#f6f8fa;stroke:#1f2328;stroke-width:2}
-    .hot{fill:#ddf4ff;stroke:#0969da;stroke-width:1.5}
-    .ln{stroke:#0969da;stroke-width:1.8;fill:none}
-    .ln2{stroke:#bf3989;stroke-width:1.8;fill:none;stroke-dasharray:6 4}
-    .flow{stroke-dasharray:6 6;animation:f 1.6s linear infinite}
-    @keyframes f{to{stroke-dashoffset:-24}}
-    @media (prefers-reduced-motion: reduce){.flow{animation:none}}
-  </style>
-  <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#0969da"/></marker>
-    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#bf3989"/></marker>
-  </defs>
-  <rect width="960" height="510" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 760 312" width="760" height="312" role="img" font-family="'IBM Plex Sans JP','Hiragino Sans','Noto Sans JP',sans-serif">
+<title>2 枚のディスプレイでの使い方</title>
+<desc>左のディスプレイの操縦席の窓で全案件の私の番を期限順に片付け、迷うものは「担当と話す」で主のディスプレイの担当のチャットへ渡す。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="760" height="312"/>
+<rect class="box" x="16" y="40" width="352" height="232" rx="8"/>
+<path class="soft" d="M24,40.5 H360 a7.5,7.5 0 0 1 7.5,7.5 V64 H16.5 V48 a7.5,7.5 0 0 1 7.5,-7.5 z"/>
+<line class="ln" x1="16" y1="64" x2="368" y2="64"/>
+<text class="g" x="16" y="26">左のディスプレイ</text>
+<text class="s" x="30" y="57">操縦席の窓（ブラウザ・全案件）</text>
+<text class="s" x="28" y="88">案件</text>
+<text x="28" y="112">全案件 10</text>
+<text class="s" x="28" y="134">案件 A 5</text>
+<text class="s" x="28" y="156">案件 B 3</text>
+<text class="s" x="28" y="178">案件 C 2</text>
+<line class="ln" x1="112" y1="64" x2="112" y2="272"/>
+<text class="h" x="124" y="88">私の番（期限順）</text>
+<rect class="fa" x="124" y="100" width="136" height="36" rx="4"/>
+<text x="132" y="123">止まっている</text>
+<rect class="box" x="124" y="144" width="136" height="36" rx="4"/>
+<text x="132" y="167">期限切れ</text>
+<line class="em" x1="124" y1="190" x2="260" y2="190"/>
+<text class="n" x="132" y="206">今の線</text>
+<rect class="box" x="124" y="216" width="136" height="36" rx="4"/>
+<text x="132" y="239">今日・明日・今週</text>
+<line class="ln" x1="272" y1="64" x2="272" y2="272"/>
+<text class="h" x="282" y="88">案件の今</text>
+<text class="s" x="282" y="112">節目</text>
+<text class="s" x="282" y="134">仕事ごとの</text>
+<text class="s" x="282" y="152">状態</text>
+<text class="s" x="282" y="180">話し中</text>
+<text class="s" x="282" y="202">顧客待ち</text>
+<text class="s" x="282" y="224">片付いた</text>
+<rect class="box" x="392" y="40" width="352" height="232" rx="8"/>
+<path class="soft" d="M400,40.5 H736 a7.5,7.5 0 0 1 7.5,7.5 V64 H392.5 V48 a7.5,7.5 0 0 1 7.5,-7.5 z"/>
+<line class="ln" x1="392" y1="64" x2="744" y2="64"/>
+<text class="g" x="392" y="26">主のディスプレイ</text>
+<text class="s" x="406" y="57">Orca</text>
+<path class="soft" d="M392.5,64 H492 V271.5 H400 a7.5,7.5 0 0 1 -7.5,-7.5 z"/>
+<text class="s" x="404" y="88">サイドバー</text>
+<text x="404" y="112">窓口</text>
+<text x="416" y="134">担当</text>
+<text class="s" x="428" y="156">worker</text>
+<text x="416" y="178">担当</text>
+<text class="s" x="428" y="200">worker</text>
+<line class="ln" x1="492" y1="64" x2="492" y2="272"/>
+<text class="h" x="504" y="88">担当のチャット</text>
+<rect class="fa" x="504" y="100" width="124" height="56" rx="4"/>
+<text x="512" y="122">カードの書き出し</text>
+<text class="s" x="512" y="142">を貼って話す</text>
+<text class="s" x="504" y="184">決めたことは</text>
+<text class="s" x="504" y="202">担当がカードに</text>
+<text class="s" x="504" y="220">書き戻す</text>
+<line class="ln" x1="640" y1="64" x2="640" y2="272"/>
+<text class="h" x="650" y="88">右の欄</text>
+<text class="s" x="650" y="112">PR・資料・</text>
+<text class="s" x="650" y="130">ページなど、</text>
+<text class="s" x="650" y="148">話している</text>
+<text class="s" x="650" y="166">成果物</text>
+<path class="em" d="M192,252 V292 H614 V158" marker-end="url(#dg-tip)"/>
+<rect class="bg" x="316" y="282" width="168" height="20"/>
+<text class="n mid" x="400" y="297">「担当と話す」で渡す</text>
 
-  <!-- 左のディスプレイ -->
-  <text class="h" x="40" y="34">左のディスプレイ</text>
-  <rect class="scr" x="40" y="48" width="360" height="300" rx="8"/>
-  <rect class="hot" x="56" y="64" width="328" height="150" rx="6"/>
-  <text class="t" x="70" y="88">操縦席の窓（ブラウザのタブ）</text>
-  <text class="s" x="70" y="110">左の列: 操縦席のある全ワークスペース</text>
-  <text class="s" x="70" y="128">右: 選んだワークスペースの要対応・全体</text>
-  <text class="s" x="70" y="146">決める・聞く・見てを押して返す</text>
-  <text class="s" x="70" y="164">Orca の前面に合わせて切り替わる</text>
-  <text class="s" x="70" y="196">127.0.0.1:47231（window/server.ts）</text>
-  <rect class="box" x="56" y="226" width="328" height="106" rx="6"/>
-  <text class="t" x="70" y="250">エージェントの端末やチャット</text>
-  <text class="s" x="70" y="272">メインのエージェントと話す</text>
-
-  <!-- 右（主）のディスプレイ -->
-  <text class="h" x="500" y="34">主のディスプレイ</text>
-  <rect class="scr" x="500" y="48" width="420" height="300" rx="8"/>
-  <rect class="box" x="516" y="64" width="250" height="268" rx="6"/>
-  <text class="t" x="530" y="88">Orca</text>
-  <rect class="box" x="530" y="102" width="222" height="76" rx="4"/>
-  <text class="t" x="542" y="124">本線のメイン</text>
-  <text class="s" x="542" y="144">.orca/cockpit.json を書く</text>
-  <rect class="box" x="530" y="182" width="222" height="40" rx="4"/>
-  <text class="s" x="542" y="206">worker 1（別の worktree）</text>
-  <rect class="box" x="530" y="230" width="222" height="40" rx="4"/>
-  <text class="s" x="542" y="254">worker 2（別の worktree）</text>
-  <rect class="box" x="530" y="278" width="222" height="40" rx="4"/>
-  <text class="s" x="542" y="302">worker 3 …</text>
-  <rect class="hot" x="776" y="64" width="128" height="268" rx="6"/>
-  <text class="t" x="790" y="88">操縦席の</text>
-  <text class="t" x="790" y="106">パネル</text>
-  <text class="s" x="790" y="130">右のサイドバー</text>
-  <text class="s" x="790" y="148">前面の 1 件だけ</text>
-
-  <!-- 流れ -->
-  <path class="ln" d="M530 130 C 450 130, 440 140, 388 140" marker-end="url(#a)"/>
-  <text class="s" x="412" y="122">cockpit.json</text>
-  <path class="ln2 flow" d="M384 196 C 450 196, 480 170, 528 170" marker-end="url(#b)"/>
-  <text class="s" x="410" y="238">cockpit.</text><text class="s" x="410" y="254">user.json</text>
-  
-  <text class="s" x="542" y="166">↓ orca-launch・orchestration send（Orca が起こす）</text>
-
-  <!-- 凡例 -->
-  <line x1="40" y1="422" x2="80" y2="422" class="ln"/>
-  <text class="s" x="90" y="426">メインが書いたものを出す・worker に指示する</text>
-  <line x1="40" y1="450" x2="80" y2="450" class="ln2"/>
-  <text class="s" x="90" y="454">人が押した操作をメインに返す</text>
-  <rect class="hot" x="40" y="470" width="40" height="18" rx="3"/>
-  <text class="s" x="90" y="484">このリポジトリの操縦席（orca/plugins/cockpit）</text>
 </svg>

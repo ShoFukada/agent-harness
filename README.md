@@ -1,28 +1,30 @@
 # agent-harness
 
-Orca で複数のコーディングエージェントを並べて動かすときの、人とエージェントのやり取りの仕組み。いまは次の 3 つが入っている。
+Orca で複数のコーディングエージェントを並べて動かすときに、人が判断にだけ頭を使えるようにする道具の集まりです。案件ごとの窓口のエージェント（各ワークスペースのメイン）が作業を進め、人は「自分の番」のものだけを 1 か所で片付けます。
 
-- **操縦席**（`orca/plugins/cockpit`）: 各ワークスペースのメインのエージェントが書く `.orca/cockpit.json` を、人が決めること・顧客に聞くこと・見て承認する成果物に絞って出す画面。Orca の右のサイドバーのパネルと、別のディスプレイに置くブラウザの窓の 2 か所に出す。押した操作は `.orca/cockpit.user.json` に残り、メインが読んで反映する
-- **orca-launch**（`bin/orca-launch`）: worker（別の worktree の端末で動く Claude Code や Codex）を、呼んだエージェントと同じアカウントと worker 用の設定で立て、brief を Orca の orchestration の Task として渡すコマンド。完了・質問・停止の知らせは Orca が coordinator を起こして届ける
-- **stallwatch**（`bin/stallwatch`）: Orca の監督の外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓のサーバー・launchd の定時ジョブ）を launchd から数分おきに見て、macOS の通知と窓の上の帯に出す見張り。モデルは呼ばない
+| 道具 | できること |
+|---|---|
+| 操縦席（`orca/plugins/cockpit`） | 全案件で自分が決める・許す・送る・見るものを、期限順の 1 列に並べる画面。押した操作は窓口に届き、迷うものは仕事の担当のチャットへ渡せる |
+| orca-launch（`bin/orca-launch`） | worker（別の worktree の端末で動く Claude Code や Codex）を、呼んだエージェントと同じアカウントと worker 用の設定で立て、指示を Orca の orchestration の Task として渡す |
+| stallwatch（`bin/stallwatch`） | Orca の監督の外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓・launchd の定時ジョブ）を数分おきに見て、macOS の通知と操縦席の窓の上の帯に出す。モデルは呼ばない |
 
-## 2 枚のディスプレイでの使い方
+## 毎日の使い方
 
 ![2 枚のディスプレイでの使い方](docs/two-displays.svg)
 
-主のディスプレイに Orca を置き、メインのエージェントが worker を立てて作業を進める。左のディスプレイの上半分に操縦席の窓を置き、操縦席のある全ワークスペースの判断待ちを 1 か所で見る。窓は Orca の前面のワークスペースに合わせて切り替わる。人が窓で決めると、その操作がメインに 1 行の合図として届き（端末のメインには入力として、チャットのメインには Orca mail で）、メインが `cockpit.json` に反映する。
+左のディスプレイに操縦席の窓を置き、主のディスプレイに Orca を置きます。
 
-## 入っているもの
+1. 朝は窓の上の帯で全案件の「私の番」の数を見て、1 列を上から片付けます。決めるカードはおすすめを選んだ状態で開くので、よければボタンを 1 回押すだけで次のカードに進みます
+2. 迷うカードは「担当と話す」を押します。カードの書き出しがクリップボードに入り、Orca でその仕事の担当のいるワークスペースが前に出るので、知らせに出たタブを開いて貼ります。決まったことは担当がカードに書き戻します
+3. Slack や Teams の連絡は、見張りの Bot（このリポジトリの外）が拾って「届いた」に出し、返事が要るものは担当が「送る前」の文面にします。人はコピーして送り、「送った」を押します
+4. worker の結果は「見て」に出ます。止まった worker は、窓口が書かなくても 1 列の先頭の「止まっている」に出ます
+5. 夕方は右の列の報告・顧客待ち・片付いたを見て、残りを確かめます
 
-| 場所 | 中身 |
-|---|---|
-| `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐のプロセス（`window/server.ts`）。仕組みは同じ場所の README、画面が満たすことは `docs/user-stories.md` |
-| `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認の画面の検出・Task の受け渡し・サイドバーの表示名と状態）とそのテスト |
-| `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものは窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
+画面の見方、カードの種類、キーボードの操作は [操縦席の README](orca/plugins/cockpit/README.md) にあります。
 
 ## 入れ方
 
-macOS、Orca 1.4.248 以降、Node 24 以降、Python 3.9 以降を前提にする。
+macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提にします。
 
 1. 置き場所に clone する。以下の例は `~/.config/agent-harness`
    ```sh
@@ -37,7 +39,7 @@ macOS、Orca 1.4.248 以降、Node 24 以降、Python 3.9 以降を前提にす�
    ```sh
    orca plugin install ~/.config/agent-harness/orca/plugins/cockpit
    ```
-4. 窓の常駐のプロセスを launchd で動かす。`~/Library/LaunchAgents/` に置く plist の主な欄は次のとおり
+4. 窓の常駐のプロセスを launchd で動かす。`~/Library/LaunchAgents/` に置く plist の主な欄は次のとおり。窓はブラウザで `http://127.0.0.1:47231` を開く
    ```xml
    <key>ProgramArguments</key>
    <array>
@@ -49,14 +51,11 @@ macOS、Orca 1.4.248 以降、Node 24 以降、Python 3.9 以降を前提にす�
    <dict>
      <!-- orca CLI を呼ぶので Orca.app の bin を入れる -->
      <key>PATH</key><string>/Applications/Orca.app/Contents/Resources/bin:/usr/bin:/bin</string>
-     <!-- 話したいことへの回答で claude -p を呼ぶ。USER が無いと Keychain の認証を読めない -->
-     <key>USER</key><string>you</string>
    </dict>
    <key>RunAtLoad</key><true/>
    <key>KeepAlive</key><true/>
    ```
-   窓はブラウザで `http://127.0.0.1:47231` を開く
-6. 見張り（stallwatch）を launchd で 5 分おきに動かす。Orca の更新や再起動でメインと一緒に止まらないよう、Orca の automations ではなく launchd に置く。PATH には orca CLI のある Orca.app の bin を入れる
+5. 見張り（stallwatch）を launchd で 5 分おきに動かす。Orca の更新や再起動でメインと一緒に止まらないよう、Orca の automations ではなく launchd に置く。PATH には orca CLI のある Orca.app の bin を入れる
    ```xml
    <key>ProgramArguments</key>
    <array>
@@ -68,16 +67,19 @@ macOS、Orca 1.4.248 以降、Node 24 以降、Python 3.9 以降を前提にす�
    </array>
    <key>StartInterval</key><integer>300</integer>
    ```
-   `--job` は終わりのコードとログの最後の行（失敗した実行のあとでも launchctl が終わりのコード 0 を返したことがあるので、ログにだけ残った失敗も拾う）、`--service` は動いているかを見る。知らせは通知と窓の上の帯だけに出し、会話の中へは送らない（worker の完了と停止でメインを起こすのは Orca の orchestration。launchd から `orca orchestration send` を打つと送り主が決まらず断られる）
+   `--job` は終わりのコードとログの最後の行を見る（失敗した実行のあとでも launchctl が終わりのコード 0 を返したことがあるので、ログにだけ残った失敗も拾う）。`--service` は動いているかを見る。知らせは通知と窓の上の帯だけに出し、会話の中へは送らない（worker の完了と停止でメインを起こすのは Orca の orchestration。launchd から `orca orchestration send` を打つと送り主が決まらず断られる）
 
-### 設定のリポジトリから参照するとき
+窓口のエージェントには、`.orca/cockpit.json` にカードを書かせます。ファイルの形と最小の例は [操縦席の README の「ファイルの形」](orca/plugins/cockpit/README.md#ファイルの形バージョン-2) にあります。
 
-作者は nix-darwin（home-manager）の設定から、このリポジトリの clone を `mkOutOfStoreSymlink` で指している。手で直した内容が switch なしですぐ使われることを優先したためで、次の 2 点で flake input にしなかった。
+<details>
+<summary>設定のリポジトリ（nix-darwin）から参照するとき</summary>
+
+作者は nix-darwin（home-manager）の設定から、このリポジトリの clone を `mkOutOfStoreSymlink` で指しています。手で直した内容が switch なしですぐ使われることを優先したためで、次の 2 点で flake input にしませんでした。
 
 - flake input にすると、ファイルが読み取り専用の `/nix/store` に入る。1 行直して確かめるたびに、commit・push・`nix flake update`・switch が要る
 - Orca は操縦席をフォルダから入れ、launchd は `server.ts` をそのまま動かす。どちらも書き換えられる実体のパスを指す必要がある
 
-代わりに、home-manager の activation で clone が無いときだけ clone する。どのコミットで動いているかは clone の `git log` で分かるが、flake.lock のようには固定されない。
+代わりに、home-manager の activation で clone が無いときだけ clone します。どのコミットで動いているかは clone の `git log` で分かりますが、flake.lock のようには固定されません。
 
 ```nix
 home.activation.agentHarness = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -89,49 +91,15 @@ home.file.".local/bin/orca-launch".source =
   config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.config/agent-harness/bin/orca-launch";
 ```
 
-## 操縦席の JSON の形
+</details>
 
-メインのエージェントが `.orca/cockpit.json` を書く。型の全体は `orca/plugins/cockpit/src/model.ts`、全部の欄を使った例は `orca/plugins/cockpit/fixtures/sample.json` にある。最小の例は次のとおり。
+## 入っているもの
 
-```json
-{
-  "version": 1,
-  "workspace": { "name": "問い合わせ管理システム", "milestones": [{ "date": "2026-11-21", "label": "定例" }] },
-  "main": { "agent": "claude", "terminal": "term_abc" },
-  "phases": ["設計", "実装", "確認"],
-  "streams": [{ "id": "s1", "title": "一覧画面", "summary": "担当者が自分の残りを一覧で見られる" }],
-  "tasks": [
-    { "id": "t1", "stream": "s1", "phase": "設計", "title": "一覧画面の設計", "state": "stop",
-      "worker": { "task_id": "task_123", "dispatch_id": "ctx_456" } }
-  ],
-  "items": [
-    { "id": "d1", "rev": 1, "kind": "dec", "title": "担当者の割り当て方を決める", "state": "open",
-      "due": "2026-11-18T18:00:00+09:00",
-      "related": [{ "task": "t1", "effect": "これが決まるまで止まる" }],
-      "why": "11/21 の定例で画面の案を見せるには、11/18 までに決める必要がある",
-      "context": { "what": "…", "now": "…", "how": "…", "gain": "…", "cost": "…" },
-      "options": [
-        { "id": "a", "label": "システムが自動で割り当てる", "recommended": true, "example": "30 件 → 5 人に 6 件ずつ" },
-        { "id": "b", "label": "担当者が自分で取る" }
-      ] }
-  ],
-  "requests": [
-    { "id": "r1", "at": "2026-11-14T10:00:00+09:00", "title": "一覧画面の案", "quote": "定例の前に一覧画面の案を見せてほしい",
-      "state": "open", "tasks": ["t1"] }
-  ],
-  "applied_ops": []
-}
-```
-
-| 欄 | 中身 |
+| 場所 | 中身 |
 |---|---|
-| `streams` | 大タスク（元の案件）。全体のタブの最上層に並ぶ |
-| `tasks` | 大タスクの下の作業。`state` は `stop`・`run`・`wait`・`idle`・`ok`。`worker`（Orca の orchestration の Task と Dispatch の id）があれば、状態は Orca の Dispatch の様子（`orca orchestration worker-show`）から取る |
-| `items` | 人に返してほしいもの。`kind` は `dec`（決める）・`ask`（顧客に聞く）・`rev`（成果物を見て承認する）・`ack`（読めば済む報告） |
-| `requests` | 人からの依頼の原文。タスクと成果物に結ぶ |
-| `applied_ops` | メインが反映し終えた操作の `op_id` |
-
-人が押した操作は `.orca/cockpit.user.json` に `{ "ops": [{ "op_id": 1, "at": "…", "item_id": "d1", "item_rev": 1, "type": "decide", "option_id": "a" }] }` の形で追記される。判定済みの状態は `node orca/plugins/cockpit/window/state.ts <ワークスペースの root>` で JSON として読める。
+| `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐のプロセス（`window/server.ts`）。使い方と仕組みは同じ場所の README、画面が満たす条件は `docs/user-stories.md` |
+| `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認の画面の検出・Task の受け渡し・サイドバーの表示名と状態）とそのテスト |
+| `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものは窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
 
 ## テスト
 

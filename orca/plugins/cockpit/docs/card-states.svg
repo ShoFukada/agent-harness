@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 632 284" width="632" height="284" role="img" font-family="'IBM Plex Sans JP','Hiragino Sans','Noto Sans JP',sans-serif">
+<title>カードの移り変わり</title>
+<desc>私の番のカードは、押すと受け取り待ちになり、窓口が受け取ると片付く。担当と話すと話し中になり、担当が書き換えると私の番に戻る。送ったあと返事を待つものは顧客待ちを通る。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="632" height="284"/>
+<circle class="dot" cx="20" cy="132" r="6"/>
+<line class="ar" x1="27" y1="132" x2="51" y2="132" marker-end="url(#dg-tip)"/>
+<g><rect class="fa" x="52" y="108" width="120" height="48" rx="6"/><text class="mid h" x="112.0" y="130">私の番</text><text class="s mid" x="112.0" y="148">件数に数える</text></g>
+<line class="ar" x1="173" y1="132" x2="275" y2="132" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="224" y="124">決める・許す</text>
+<text class="s mid" x="224" y="152">送った など</text>
+<g><rect class="box" x="276" y="108" width="128" height="48" rx="6"/><text class="mid h" x="340.0" y="130">受け取り待ち</text><text class="s mid" x="340.0" y="148">10 秒は元に戻せる</text></g>
+<line class="ar" x1="405" y1="132" x2="503" y2="132" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="454" y="124">窓口が</text>
+<text class="s mid" x="454" y="152">受け取る</text>
+<g><rect class="box" x="504" y="108" width="112" height="48" rx="6"/><text class="mid h" x="560.0" y="130">片付いた</text><text class="s mid" x="560.0" y="148">14 日は読み返せる</text></g>
+<line class="ar" x1="92" y1="157" x2="92" y2="219" marker-end="url(#dg-tip)"/>
+<text class="s end" x="84" y="192">担当と話す</text>
+<g><rect class="box" x="52" y="220" width="120" height="48" rx="6"/><text class="mid h" x="112.0" y="242">話し中</text><text class="s mid" x="112.0" y="260">件数に数えない</text></g>
+<line class="ar" x1="132" y1="219" x2="132" y2="157" marker-end="url(#dg-tip)"/>
+<text class="s" x="140" y="184">担当がカードを</text>
+<text class="s" x="140" y="202">書き換える</text>
+<line class="ar" x1="340" y1="157" x2="340" y2="219" marker-end="url(#dg-tip)"/>
+<text class="s" x="348" y="192">送ったあと返事を待つ</text>
+<g><rect class="box" x="268" y="220" width="144" height="48" rx="6"/><text class="mid h" x="340.0" y="242">顧客待ち</text><text class="s mid" x="340.0" y="260">催促の日を過ぎると朱</text></g>
+<path class="ar" d="M413,244 H556 Q560,244 560,240 V157" marker-end="url(#dg-tip)"/>
+<text class="s" x="472" y="236">返事が来た</text>
+<path class="ar dash" d="M340,107 V60 Q340,56 336,56 H116 Q112,56 112,60 V107" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="226" y="48">元に戻す（10 秒の間・窓口が受け取る前）</text>
+</svg>
