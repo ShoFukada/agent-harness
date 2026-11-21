@@ -453,6 +453,8 @@ body { margin:0; }
 .ck.win .watch ul.rows { margin:0; padding:0; list-style:none; }
 .ck.win .watch .rrow > :last-child { font-size:var(--fs-xs); overflow-wrap:anywhere; }
 .ck.win .watch .rrow > .at { white-space:nowrap; }
+/* 読めない理由は長いことがあるので、経路名の幅を奪わないよう次の段に置く。 */
+.ck.win .watch .rrow > .hotc { grid-column:1 / -1; }
 .ck.win .watch p { margin:0; font-size:var(--fs-s); }
 .ck.win .watch .strips { margin:0; background:none; }
 /* 届いた連絡の題は、見張るの見出しより弱くする（見出し → 小見出し → 項目の順）。 */
@@ -460,7 +462,7 @@ body { margin:0; }
 
 /* 全体の右: タスクの詳細 */
 .ck.win .wk2 { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
-.ck.win .lc { display:grid; grid-template-columns:3.4em minmax(0,1fr) auto; gap:8px; align-items:center; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
+.ck.win .lc { display:grid; grid-template-columns:3.4em minmax(0,1fr) auto; gap:8px; align-items:baseline; width:100%; text-align:left; border:0; background:none; padding:5px 6px; margin:0 -6px; border-radius:5px; font:inherit; color:inherit; }
 .ck.win button.lc:hover { background:var(--sunk); }
 .ck.win .lc .ti { overflow-wrap:anywhere; }
 .ck.win .lc .mut { font-size:var(--fs-xs); white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis; }
@@ -474,6 +476,9 @@ body { margin:0; }
 /* タスクの事実はラベルを左、値を右にそろえる。 */
 .ck.win .facts .fld { grid-template-columns:6.5em minmax(0,1fr); gap:10px; align-items:baseline; }
 .ck.win .facts .fld > .lb { font-size:var(--fs-xs); }
+/* 狭い幅では見出しを値の上に置き、値の列の幅を取る（Neon 初見 2 巡目）。 */
+@media (max-width:1100px) { .ck.win .facts .fld { grid-template-columns:minmax(0,1fr); gap:2px; } }
+.ck.win .kl .num { margin:0 .3em; }
 .ck.win .rqd + .rqd { border-top:1px solid var(--rule2); padding-top:8px; margin-top:4px; }
 .ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:2px; }
 .ck.win .dw li { display:grid; grid-template-columns:1.6em minmax(0,1fr); align-items:baseline; color:var(--ink); }

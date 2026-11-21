@@ -351,7 +351,8 @@ test('詳細の担当の行は、端末・チャットを前に出すボタン�
   // 担当の名前が仕事の名前（AWS 構成案）と同じなら名前を重ねない（初見 2 巡目 3）。
   assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span>(<span>[^<]*<\/span>)?<button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws">チャットを開く<\/button>/)
   assert.match(page(m, { sel: '/ws/aoba#r5' }), /<button type="button" class="act" data-term="term_aoba_w1" data-wt="">端末を開く<\/button>/)
-  assert.match(page(aoba(), { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span>(<span>[^<]*<\/span>)?<span>チャット<\/span>/)
+  // 前に出せないときは「チャット」を押せない語として並べない。
+  assert.doesNotMatch(page(aoba(), { sel: '/ws/aoba#d21' }), /<span>チャット<\/span>/)
 })
 
 test('補助の文字・危険・仕事の形の色は、明暗どちらの地でも WCAG AA（4.5:1）を満たし、押せるものの枠は 3:1 を満たす', () => {
@@ -407,6 +408,16 @@ test('Codex 初見 2 巡目: 協議の開始だけが記録され、答えは帳
   assert.match(t, /結果 決定: 議題だけテキストで送る/)
 })
 
+test('Codex 初見 2 巡目 2: 前の版への答えしか記録が無ければ、今の版の答えを結果の 1 行で出す', () => {
+  const m = aoba((v) => {
+    const d19 = v.cockpit!.cards.find((x) => x.id === 'd19')!
+    d19.rev = 2
+  })
+  const t = text(page(m, { tab: 'done', doneSel: '/ws/aoba#d19' }))
+  assert.match(t, /出した指示 .*（版 1）/)
+  assert.match(t, /結果 決定: 議題だけテキストで送る/)
+})
+
 test('初見 2 巡目: 見張るの経路は線の一覧で「最終確認 hh:mm」。詳細の操作の帯はいつも下端（縦の flex）', () => {
   const t = text(page(aoba(), { tab: 'whole' }))
   assert.match(t, /Slack #aoba-dev 最終確認 /)
@@ -424,6 +435,9 @@ test('初見 2 巡目: タスクのエージェントが停止で要対応に出
   assert.match(row, /<span class="tst s-stop">停止<\/span>/)
   assert.match(row, /停止を開く/)
   assert.match(h, /<div class="kl"><span class="tst s-stop">停止<\/span>/)
+  // 進め手の worker と仕事の行の件数も停止にそろえる。
+  assert.match(h, /<span class="mut">worker<\/span><b>[^<]*<\/b><span class="chip bad">停止<\/span>/)
+
   // 停止の無いときは帳簿のまま。
   assert.match(page(aoba(), { tab: 'whole', task: 't1' }), /<div class="kl"><span class="tst s-run">作業中<\/span>/)
 })

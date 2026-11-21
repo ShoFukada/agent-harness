@@ -183,12 +183,12 @@ export const OWNER_STATE: Record<string, string> = { working: '作業中', block
  * チャットは Orca がタブを前に出せないので、居場所の worktree が分かるときだけボタンにする。
  */
 export function ownerHtml(o: OwnerRef, owners?: OwnerLive[] | false, same?: string): string {
-  // false: 操作の帯に同じ「端末を開く」がある行。ここでは「端末」「チャット」の語を出さない（押せない語を並べない。Neon 追加 23）。
+  // 「端末」「チャット」の語は前に出せるときのボタンにだけ使い、押せない語として並べない（Neon 追加 23・初見 2 巡目）。
   const where = o.how === 'main' || owners === false ? '' : o.how === 'chat' ? 'チャット' : '端末'
   const wt = o.how === 'chat' && o.session && owners ? owners.find((x) => x.session === o.session)?.worktree : undefined
   const open = owners && (o.how === 'terminal' ? !!o.terminal : !!wt)
     ? `<button type="button" class="act" data-term="${esc(o.how === 'terminal' ? o.terminal : '')}" data-wt="${esc(wt ?? '')}">${where}を開く</button>`
-    : where ? `<span>${where}</span>` : ''
+    : ''
   // 役割・名前・状態・操作の順（全体のタスクの進め手の行と同じ。Neon 追加 23）。
   // 担当の名前が仕事の名前と同じなら名前を重ねない（初見 2 巡目 3）。
   const name = o.title === same ? '' : `<b>${esc(o.title)}</b>`
@@ -285,7 +285,7 @@ export function backgroundParts(r: Row, svg: (raw: string) => string, figures: R
   return parts
 }
 
-function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<string, string>): string {
+function detailsHtml(r: Row, ui: Ui, svg: (raw: string) => string, figures: Record<string, string>): string {
   const c = r.card
   // 判断の材料の残り（これは何かは選択肢の前に出したので重ねない）も畳む。開いた票が操作の帯の下に長く続かないように（窓の「詳細」と同じ。Neon 初見 2 巡目）。
   const ctx = c.kind === 'decide' && c.context && CONTEXT_FIELDS.some(([k]) => k !== 'what' && c.context?.[k])
@@ -293,7 +293,9 @@ function detailsHtml(r: Row, svg: (raw: string) => string, figures: Record<strin
     : ''
   const parts = [ctx, ...backgroundParts(r, svg, figures)].filter(Boolean)
   if (!parts.length) return ''
-  return `<details class="more"><summary>詳細（判断材料・出典）</summary><div>${parts.join('')}</div></details>`
+  // 開閉を ui.open に残す（1 分ごとの描き直しで、読んでいる途中に閉じないように）。
+  const key = `more:${keyOf(r)}`
+  return `<details class="more" data-fold="${esc(key)}"${ui.open[key] ? ' open' : ''}><summary>詳細（判断材料・出典）</summary><div>${parts.join('')}</div></details>`
 }
 
 function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, figures: Record<string, string>): string {
@@ -363,7 +365,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
     ...(c.links ?? [])
   ]
   if (links.length) parts.push(`<div class="links">${links.map((l) => linkBtn(l.label, l.href)).join('')}</div>`)
-  parts.push(detailsHtml(r, svg, figures))
+  parts.push(detailsHtml(r, ui, svg, figures))
   parts.push(`<div>${ownerHtml(r.owner, undefined, r.stream?.title)}</div>`)
   parts.push(otherHtml(r, ui))
   return parts.filter(Boolean).join('')

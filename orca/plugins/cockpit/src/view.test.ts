@@ -275,3 +275,10 @@ test('R85: 表示のときに日本語と英数字のあいだの半角の空白
   assert.match(t, /src\/state.tsが 証拠 から 決める。<span class="code">v91<\/span>を見る/)
   assert.match(t, /<p>Neonで2巡<\/p>/)
 })
+
+test('パネルの詳細（判断材料・出典）は開閉を覚え、描き直しで閉じない。判断材料の残りはその中に畳む', () => {
+  const k = '/ws/aoba#d21'
+  const closed = html(model(), { ...newUi(), sel: k })
+  assert.match(closed, /<details class="more" data-fold="more:\/ws\/aoba#d21"><summary>詳細（判断材料・出典）<\/summary><div><dl class="ctx">/)
+  assert.match(html(model(), { ...newUi(), sel: k, open: { [`more:${k}`]: true } }), /data-fold="more:\/ws\/aoba#d21" open>/)
+})
