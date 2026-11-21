@@ -165,6 +165,8 @@ test('書く道具: 入れ子の知らない欄と、形の違うタスクの欄
   assert.match(applyChange(c, { tasks: [{ ...c.tasks[0]!, owner: 'o1' } as never] }).errors.join('\n'), /タスク t1: 書けない欄 owner/)
   const d = card(c, 'd21')
   assert.match(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', cc: 'c' } as never }] }).errors.join('\n'), /カード d21: 書けない欄 draft.cc/)
+  assert.deepEqual(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', format: 'teams' } }] }).errors, [])
+  assert.match(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', format: 'line' } as never }] }).errors.join('\n'), /カード d21: draft の形が違う/)
   assert.match(applyChange(c, { cards: [{ ...d, rev: 2, options: [{ id: 'a', label: 'A', recomended: true } as never] }] }).errors.join('\n'), /options\[0\]\.recomended/)
   assert.match(applyChange(c, { requests: [{ id: 'q1', at: '', title: 't', utterances: [{ id: 'u1', quote: '' }], kind: 'work', done_when: ['a'], evidence: [{ when: 1, kind: 'pr', ref: 'x', note: 'y' } as never] }] }, utter).errors.join('\n'), /依頼 q1: 書けない欄 evidence\[0\]\.note/)
   // 行に元からある欄（版 2 の仕事の background など）は書き戻せる。足すのは断る。

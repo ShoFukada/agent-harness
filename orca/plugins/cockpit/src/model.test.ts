@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { missingFields, nextOp, overlay, parseCockpit, shownTask, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
+import { draftFormat, missingFields, nextOp, overlay, parseCockpit, shownTask, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
 import { appendOp, SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -91,6 +91,24 @@ test('必須の欄: 共通（仕事・何のため・なぜ今か期限・返事
   assert.deepEqual(missingFields({ ...base, kind: 'report' }), [])
   // 送る前は元のスレッドの URL が出典になる。
   assert.deepEqual(missingFields({ ...base, kind: 'send', quote: undefined, draft: { to: 'a', via: 'Slack', text: 't', href: 'https://example.com' } }), [])
+})
+
+test('送る文面の書式: format が先、無ければ経路、それでも決まらなければ元のスレッドのリンク。決まらなければ無し', () => {
+  const d = { to: 'a', text: 't' }
+  assert.equal(draftFormat({ ...d, via: 'Slack・共有チャンネル', format: 'teams' }), 'teams')
+  assert.equal(draftFormat({ ...d, via: 'Slack Connect' }), 'slack')
+  assert.equal(draftFormat({ ...d, via: 'Teams のチャネル' }), 'teams')
+  assert.equal(draftFormat({ ...d, via: 'メール（Gmail）' }), 'mail')
+  assert.equal(draftFormat({ ...d, via: '顧客', href: 'https://teams.microsoft.com/l/message/1' }), 'teams')
+  assert.equal(draftFormat({ ...d, href: 'mailto:mori@example.com' }), 'mail')
+  // リンクはホストだけを見る（Slack のパスに mail が入っていてもメールにしない）。
+  assert.equal(draftFormat({ ...d, href: 'https://example.com/mail/1' }), undefined)
+  assert.equal(draftFormat({ ...d, via: 'LINE', href: 'not a url' }), undefined)
+  // 形の違う format は読み込みで欄ごと外れる（帳簿の欄の形の違いに出る）。
+  const c = structuredClone(sample()[0]!.cockpit)
+  const card = c.cards.find((x) => x.draft)!
+  ;(card.draft as { format?: string }).format = 'line'
+  assert.equal(parseCockpit(JSON.stringify(c)).cards.find((x) => x.id === card.id)!.draft, undefined)
 })
 
 test('版 2 の古い形を読む: 開いた talk は相談、at が無ければ created_at、worker は dispatch_id だけでも run_id だけでも読む', () => {

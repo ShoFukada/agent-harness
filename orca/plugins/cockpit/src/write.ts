@@ -42,7 +42,7 @@ type Keys = { top: string[]; nested: Record<string, string[]> }
 const CARD_KEYS: Keys = {
   top: ['id', 'rev', 'kind', 'title', 'state', ...Object.keys(CARD_SHAPE)],
   nested: {
-    from: ['who', 'via', 'at', 'href'], draft: ['to', 'via', 'text', 'href'], context: ['what', 'now', 'how', 'gain', 'cost'],
+    from: ['who', 'via', 'at', 'href'], draft: ['to', 'via', 'text', 'href', 'format'], context: ['what', 'now', 'how', 'gain', 'cost'],
     options: ['id', 'label', 'recommended', 'example', 'body'], compare: ['columns', 'rows'], background: ['text', 'quote', 'date'],
     last: ['text', 'at', 'by'], done: ['what', 'why', 'undo', 'task'], awaiting: ['who', 'what', 'since', 'resumes', 'remind_at'],
     links: ['label', 'href'], manual: ['where', 'command', 'steps', 'check'], elements: ['n', 'text'], element_map: ['n', 'task', 'request', 'skip']

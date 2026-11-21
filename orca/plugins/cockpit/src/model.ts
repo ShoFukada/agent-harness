@@ -84,6 +84,29 @@ export const CONTEXT_FIELDS: [keyof DecisionContext, string][] = [
   ['what', 'これは何か'], ['now', '今どうなっているか'], ['how', '入れるならどうするか'], ['gain', '得られること'], ['cost', '失うこと']
 ]
 
+/** 送る文面を貼る先の書式。clip-draft の --to と同じ名前。 */
+export type DraftFormat = 'slack' | 'teams' | 'mail'
+export const DRAFT_FORMATS: DraftFormat[] = ['slack', 'teams', 'mail']
+export type Draft = { to: string; via?: string; text: string; href?: string; format?: DraftFormat }
+
+/** 貼る先の書式。format が無ければ経路（via）、それでも決まらなければ元のスレッドのリンクから決める。決まらなければ素の文字列で写す。 */
+export function draftFormat(d: Draft): DraftFormat | undefined {
+  if (d.format) return d.format
+  let host = ''
+  try {
+    const u = new URL(d.href ?? '')
+    host = u.protocol === 'mailto:' ? 'mail' : u.hostname
+  } catch {
+    // リンクが無いか読めないときは経路だけで決める。
+  }
+  for (const s of [d.via ?? '', host]) {
+    if (/slack/i.test(s)) return 'slack'
+    if (/teams/i.test(s)) return 'teams'
+    if (/メール|mail|outlook/i.test(s)) return 'mail'
+  }
+  return undefined
+}
+
 export type Card = {
   id: string
   rev: number
@@ -114,7 +137,7 @@ export type Card = {
   reply?: 'needed' | 'none'
 
   /** send（と、送る文面のある decide）: 宛先と本文。href は元のスレッド。 */
-  draft?: { to: string; via?: string; text: string; href?: string }
+  draft?: Draft
 
   /** decide: なぜ今決めるか。 */
   why?: string
@@ -329,7 +352,7 @@ export const CARD_SHAPE: Record<string, Shape> = {
   manual: (v) => obj([], ['where', 'command', 'check'])(v) && ((v as Manual).steps === undefined || strs((v as Manual).steps)),
   tasks: strs, look_for: strs, evidence: strs, known: strs, undecided: strs,
   from: obj(['who'], ['via', 'at', 'href']),
-  draft: obj(['to', 'text'], ['via', 'href']),
+  draft: (v) => obj(['to', 'text'], ['via', 'href'])(v) && ((v as Draft).format === undefined || DRAFT_FORMATS.includes((v as Draft).format!)),
   context: obj([], CONTEXT_FIELDS.map(([k]) => k)),
   options: list((v) => obj(['id', 'label'], ['example', 'body'])(v) && ((v as { recommended?: unknown }).recommended === undefined || typeof (v as { recommended?: unknown }).recommended === 'boolean')),
   compare: (v) => str(v) || (isObj(v) && strs(v.columns) && list(strs)(v.rows)),
