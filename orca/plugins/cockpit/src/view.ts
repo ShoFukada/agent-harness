@@ -293,7 +293,7 @@ function actsHtml(r: Row, ui: Ui): string {
   // 片付いた・顧客待ちの票には、片付ける操作を出さない（開いて読み返すだけ）。
   if (r.status === 'closed' || r.status === 'waiting') btns = btns.filter((x) => x.includes('data-act="url"'))
   if (r.status !== 'mine' && c.kind !== 'talk') btns = btns.filter((x) => !x.includes('data-act="talk"')).concat(talk('続きを話す'))
-  const hint = c.options?.length ? '<span class="hint"><kbd>1</kbd>〜<kbd>9</kbd> で選び <kbd>Enter</kbd></span>' : ''
+  const hint = c.options?.length ? `<span class="hint"><kbd>1</kbd>〜<kbd>${Math.min(9, c.options.length)}</kbd> で選び <kbd>Enter</kbd></span>` : ''
   return `<div class="acts">${btns.join('')}${hint}</div>`
 }
 
@@ -388,7 +388,7 @@ function jobsHtml(b: Board, now: number, label: string): string {
   const job = (j: JobView) => {
     const who = ownerText(j)
     return `<li class="job ${j.state}"><span class="js" aria-hidden="true"></span><span class="t">${esc(j.title)}</span><span class="st">${esc(j.label)}${j.since ? `（${esc(fmtDate(j.since.slice(0, 10)))} から）` : ''}</span>
-    ${j.next || who ? `<span class="nx sp">${sp([j.next && `<b class="pl">次</b>${mono(esc(j.next))}`, who && `<b class="pl">担当</b>${esc(who)}`])}</span>` : ''}</li>`
+    ${j.next || who ? `<span class="nx sp">${sp([j.next && `<b class="pl">次</b>${mono(esc(j.next))}`, who && `<span class="nw"><b class="pl">担当</b>${esc(who)}</span>`])}</span>` : ''}</li>`
   }
   return `<section class="pane" aria-label="案件の今"><h2>${esc(c.workspace.name)} <small>${esc(label)}</small></h2>
     ${ms.length ? `<ul class="ms">${ms.map((x) => `<li><b>${x.left === 0 ? '今日' : `あと ${x.left} 日`}</b><span>${esc(x.label)}</span></li>`).join('')}</ul>` : ''}

@@ -5,8 +5,8 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 | 道具 | できること |
 |---|---|
 | 操縦席（`orca/plugins/cockpit`） | 全案件で自分が決める・許す・送る・見るものを、期限順の 1 列に並べる画面。押した操作は窓口に届き、迷うものは仕事の担当のチャットへ渡せる |
-| orca-launch（`bin/orca-launch`） | worker（別の worktree の端末で動く Claude Code や Codex）を、呼んだエージェントと同じアカウントと worker 用の設定で立て、指示を Orca の orchestration の Task として渡す |
-| stallwatch（`bin/stallwatch`） | Orca の監督の外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓・launchd の定時ジョブ）を数分おきに見て、macOS の通知と操縦席の窓の上の帯に出す。モデルは呼ばない |
+| orca-launch（`bin/orca-launch`） | worker（別の worktree の端末で動く Claude Code や Codex）を、呼んだエージェントと同じアカウントと worker 用の設定で立ち上げ、指示を Orca の orchestration の Task として渡す |
+| stallwatch（`bin/stallwatch`） | Orca の監視外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓・launchd の定時ジョブ）を数分おきに見て、macOS の通知と操縦席の窓の上の帯に出す。モデルは呼ばない |
 
 ## 毎日の使い方
 
@@ -24,13 +24,13 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 
 ## 入れ方
 
-macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提にします。
+macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提とします。
 
 1. 置き場所に clone する。以下の例は `~/.config/agent-harness`
    ```sh
    git clone https://github.com/<owner>/agent-harness ~/.config/agent-harness
    ```
-2. `orca-launch` を PATH に通し、worker に付ける Claude Code の設定のパスを `ORCA_WORKER_SETTINGS` に入れる（無ければ設定を付けずに起動する）
+2. `orca-launch` を PATH に通し、worker に付ける Claude Code 設定のパスを `ORCA_WORKER_SETTINGS` に入れる（無ければ設定を付けずに起動する）
    ```sh
    ln -s ~/.config/agent-harness/bin/orca-launch ~/.local/bin/orca-launch
    export ORCA_WORKER_SETTINGS=~/.claude/settings.worker.json
@@ -39,7 +39,7 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提にし�
    ```sh
    orca plugin install ~/.config/agent-harness/orca/plugins/cockpit
    ```
-4. 窓の常駐のプロセスを launchd で動かす。`~/Library/LaunchAgents/` に置く plist の主な欄は次のとおり。窓はブラウザで `http://127.0.0.1:47231` を開く
+4. 窓の常駐プロセスを launchd で動かす。`~/Library/LaunchAgents/` に置く plist の主な項目は次のとおり。窓はブラウザで `http://127.0.0.1:47231` を開いて表示する
    ```xml
    <key>ProgramArguments</key>
    <array>
@@ -67,14 +67,14 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提にし�
    </array>
    <key>StartInterval</key><integer>300</integer>
    ```
-   `--job` は終わりのコードとログの最後の行を見る（失敗した実行のあとでも launchctl が終わりのコード 0 を返したことがあるので、ログにだけ残った失敗も拾う）。`--service` は動いているかを見る。知らせは通知と窓の上の帯だけに出し、会話の中へは送らない（worker の完了と停止でメインを起こすのは Orca の orchestration。launchd から `orca orchestration send` を打つと送り主が決まらず断られる）
+   `--job` は終了コードとログの最後の行を見る（失敗した実行のあとでも launchctl が終了コード 0 を返したことがあるので、ログにだけ残った失敗も拾う）。`--service` は動いているかを見る。知らせは macOS の通知と窓の上の帯だけに出し、会話の中へは送らない（worker の完了と停止でメインを起こすのは Orca の orchestration。launchd から `orca orchestration send` を打つと送り主が決まらず断られる）
 
 窓口のエージェントには、`.orca/cockpit.json` にカードを書かせます。ファイルの形と最小の例は [操縦席の README の「ファイルの形」](orca/plugins/cockpit/README.md#ファイルの形バージョン-2) にあります。
 
 <details>
 <summary>設定のリポジトリ（nix-darwin）から参照するとき</summary>
 
-作者は nix-darwin（home-manager）の設定から、このリポジトリの clone を `mkOutOfStoreSymlink` で指しています。手で直した内容が switch なしですぐ使われることを優先したためで、次の 2 点で flake input にしませんでした。
+作者は nix-darwin（home-manager）の設定から、このリポジトリの clone を `mkOutOfStoreSymlink` で指しています。手で直した内容を switch なしですぐ使えるようにすることを優先し、次の 2 点から flake input にはしませんでした。
 
 - flake input にすると、ファイルが読み取り専用の `/nix/store` に入る。1 行直して確かめるたびに、commit・push・`nix flake update`・switch が要る
 - Orca は操縦席をフォルダから入れ、launchd は `server.ts` をそのまま動かす。どちらも書き換えられる実体のパスを指す必要がある
@@ -97,9 +97,9 @@ home.file.".local/bin/orca-launch".source =
 
 | 場所 | 中身 |
 |---|---|
-| `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐のプロセス（`window/server.ts`）。使い方と仕組みは同じ場所の README、画面が満たす条件は `docs/user-stories.md` |
-| `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認の画面の検出・Task の受け渡し・サイドバーの表示名と状態）とそのテスト |
-| `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものは窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
+| `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐プロセス（`window/server.ts`）。使い方と仕組みは同じ場所の README、画面が満たす条件は `docs/user-stories.md` |
+| `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認画面の検出・Task の受け渡し・サイドバーの表示名と状態）とそのテスト |
+| `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録先は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものの書き出し先は窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
 
 ## テスト
 

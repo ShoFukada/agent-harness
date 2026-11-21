@@ -70,7 +70,9 @@ body { margin:0; }
 .ck .cases h3, .ck .side h3 { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); margin:14px 10px 4px; letter-spacing:.02em; }
 .ck .case .sub .hot { color:var(--hot); font-weight:600; }
 @container (max-width:760px) {
-  .ck .cases { position:static; display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+  .ck .cases { position:static; display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none;
+    -webkit-mask-image:linear-gradient(to right, #000 85%, transparent); mask-image:linear-gradient(to right, #000 85%, transparent); }
+  .ck .strips .strip { scroll-margin-top:60px; }
   .ck .case { flex:none; grid-template-columns:auto auto; padding:4px 10px; border:1px solid var(--rule); border-radius:999px; }
   .ck .case .sub, .ck .cases h3 { display:none; }
 }
@@ -91,14 +93,14 @@ body { margin:0; }
 .ck .now-line span { text-align:right; font-size:var(--fs-xs); font-weight:700; color:var(--focus); }
 .ck .now-line i { height:2px; background:var(--focus); opacity:.55; border-radius:1px; }
 /* 区分ごとに 1 つの面。票は区切り線で並べ、1 件ずつの囲みにしない。 */
-.ck .strips { display:grid; margin:6px 0; min-width:0; background:var(--surface); border:1px solid var(--rule2); border-radius:8px; box-shadow:var(--shadow); overflow:hidden; }
+.ck .strips { display:grid; margin:6px 0; min-width:0; background:var(--surface); border:1px solid var(--rule2); border-radius:8px; box-shadow:var(--shadow); overflow:clip; }
 @container (max-width:520px) { .ck .lane { grid-template-columns:minmax(0,1fr); } .ck .when { text-align:left; padding:10px 0 0; } .ck .when::after { display:none; }
   .ck .when small { display:inline; margin-left:6px; } .ck .now-line { grid-template-columns:auto minmax(0,1fr); }
   /* 狭い幅で案件名と仕事の名前が並ぶと、どちらも数文字に削られるので、案件名があるときは仕事の名前を出さない。 */
   .ck .strip .meta .ws ~ .jobname { display:none; } .ck .strip .ws { max-width:none; }
   .ck .due.hot .tm, .ck .flag.live, .ck .acts .hint { display:none; } }
 
-.ck .strip { position:relative; min-width:0; }
+.ck .strip { position:relative; min-width:0; scroll-margin:84px 0 16px; }
 .ck .strip + .strip { border-top:1px solid var(--rule2); }
 .ck .strip[aria-expanded="true"] { box-shadow:inset 0 0 0 2px var(--kc); }
 .ck .strip.hot { --hotline:var(--hot); }
@@ -128,7 +130,7 @@ body { margin:0; }
 .ck .fld { display:grid; gap:2px; min-width:0; }
 .ck .fld > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 .ck .fld > div, .ck .fld > p { margin:0; overflow-wrap:anywhere; }
-.ck .ctx { display:grid; grid-template-columns:9.5em minmax(0,1fr); gap:6px 14px; margin:0; font-size:var(--fs-s); }
+.ck .ctx { display:grid; grid-template-columns:11em minmax(0,1fr); gap:6px 14px; margin:0; font-size:var(--fs-s); }
 .ck .ctx dt { color:var(--ink3); font-weight:600; }
 .ck .ctx dd { margin:0; overflow-wrap:anywhere; }
 @container (max-width:520px) { .ck .ctx { grid-template-columns:minmax(0,1fr); gap:0; } .ck .ctx dd { margin-bottom:6px; } }
@@ -171,7 +173,7 @@ body { margin:0; }
 .ck .other .cnt { font-size:var(--fs-xs); color:var(--ink3); }
 
 /* 返答の列。低い窓でも見えるよう、開いた票の下に留める。 */
-.ck .acts { position:sticky; bottom:0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:10px 14px; margin:0 -16px -14px -14px;
+.ck .acts { position:sticky; bottom:0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:10px 14px; margin:0 -14px -12px -12px;
   background:var(--surface); border-top:1px solid var(--rule2); border-radius:0 0 8px 8px; }
 .ck .btn { border:1px solid var(--rule); background:var(--surface); border-radius:7px; padding:5px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
 .ck .btn:hover { border-color:var(--ink3); }
@@ -198,6 +200,7 @@ body { margin:0; }
 .ck .job .t { font-weight:600; color:var(--ink); }
 .ck .job .st { grid-column:2; font-size:var(--fs-xs); font-weight:600; }
 .ck .job .nx { grid-column:2; color:var(--ink2); font-size:var(--fs-xs); }
+.ck .nw { white-space:nowrap; }
 .ck .job.mine .st { color:var(--k-decide); } .ck .job.stopped .st { color:var(--k-stuck); } .ck .job.working .st { color:var(--ok); }
 .ck .job.customer .st { color:var(--k-send); } .ck .job.idle .st, .ck .job.done .st { color:var(--ink3); }
 .ck .js { grid-row:1 / span 3; width:10px; height:10px; margin-top:5px; border-radius:50%; border:2px solid currentColor; }
