@@ -44,7 +44,9 @@ export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures
  * 相談のメモの「## 窓口に返したもの」の節にある ```json の塊のうち、return_id を持つもの（同じ id は先のもの）。
  * 読み方は compaction-keep.py の memo_returns と同じにする（checks.unreflected_returns を python と食い違わせないため）。
  */
-export function memoReturns(text: string): ConsultReturn[] {
+export function memoReturns(raw: string): ConsultReturn[] {
+  // python はテキストの読み込みで改行を \n にそろえる。
+  const text = raw.replace(/\r\n?/g, '\n')
   const head = /^## 窓口に返したもの[^\n]*\n/m.exec(text)
   if (!head) return []
   const rest = text.slice(head.index + head[0].length)
@@ -221,12 +223,20 @@ async function write(root: string, _shown: Cockpit | undefined, { root: _root, .
     const text = await readInOrca(root, '.orca/cockpit.user.json')
     const log = text === undefined ? { ops: [] } : parseUserLog(text)
     check(cockpit, log, input)
+    // 同じタブでの協議は 1 回だけ記録する（連打や、consult が開いているタブを前に出した 2 回目）。ロックの中の最新のログで見る。
+    if (input.type === 'talk' && input.terminal && lastTalk(log, input.item_id, input.item_rev)?.terminal === input.terminal) return log
     log.ops.push(nextOp(log, { at: new Date().toISOString(), ...input }))
     await writeAtomic(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify(log, null, 2) + '\n')
     return log
   } finally {
     await release()
   }
+}
+
+/** カードのその版への、取り消されていない最新の協議。 */
+function lastTalk(log: UserLog, item: string, rev: number): Op | undefined {
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  return log.ops.filter((o) => o.type === 'talk' && o.item_id === item && o.item_rev === rev && !undone.has(o.op_id)).at(-1)
 }
 
 async function readCockpit(root: string): Promise<Cockpit> {

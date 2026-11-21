@@ -5,7 +5,7 @@ import type { Cockpit } from '../src/model.ts'
 import { report, type OrcaFacts, type StateReport } from '../src/state.ts'
 import { emptyFiles, loadFiles } from '../src/store.ts'
 import { currentDispatches, orcaAgents, orcaDispatches, pluginProblem, type Chain, type Failure, type PluginRow, type PsRow, type WorkerShow } from './orca-state.ts'
-import { orcaCli } from './server.ts'
+import { orcaCli, TERMINAL_LIMIT } from './server.ts'
 
 /**
  * Dispatch の問い合わせは worker の記録がある済んでいないタスクがあるときだけにする（hook は発言のたびに走るので、要らない呼び出しを省く）。
@@ -21,7 +21,7 @@ export async function orcaFacts(root: string, c: Cockpit, ps: () => Promise<PsRo
     // 失敗の理由（利用枠・ログイン切れ）は inbox にしかないので、失敗で止まったエージェントがいるときだけ読む（窓と同じ）。
     const fails = failures && rows.some((r) => r.agents.some((a) => a.mainAgent?.outcome === 'failure')) ? await failures().catch(() => ({})) : {}
     const agents = orcaAgents(root, rows, byPane, c, dispatches, current, fails).workers
-    return { facts: { workers: agents, dispatches, current, terminals: terms.map((t) => t.handle) }, state: 'ok' }
+    return { facts: { workers: agents, dispatches, current, terminals: terms.length < TERMINAL_LIMIT ? terms.map((t) => t.handle) : undefined }, state: 'ok' }
   } catch {
     return { state: 'error' }
   }

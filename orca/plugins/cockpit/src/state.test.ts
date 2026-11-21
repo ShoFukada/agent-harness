@@ -265,13 +265,17 @@ test('カードの相談: タブ（talk の terminal）が Orca にある間だ�
   const facts = (terminals?: string[]) => ({ workers: [], terminals })
   const live = report(w.cockpit, log, [], facts(['term_c22', 'term_c19', 'term_zz', 'term_undone']), 'ok', NOW)
   assert.deepEqual(live.talking, [{ id: 'd22', since: '2026-11-21T09:50:00+09:00', with: 'カードの相談' }])
-  assert.deepEqual(live.checks.stale_consults, [{ id: 'd19', terminal: 'term_c19' }, { id: 'zz', terminal: 'term_zz' }])
+  // 協議を取り消してもタブは閉じないので、取り消した記録のタブも名指しする。
+  assert.deepEqual(live.checks.stale_consults, [{ id: 'd19', terminal: 'term_c19' }, { id: 'zz', terminal: 'term_zz' }, { id: 'd19', terminal: 'term_undone' }])
   const closed = report(w.cockpit, log, [], facts([]), 'ok', NOW)
   assert.deepEqual(closed.talking, [], 'タブが閉じたら話し中を外す')
   assert.deepEqual(closed.checks.stale_consults, [])
   const unknown = report(w.cockpit, log, [], undefined, 'error', NOW)
   assert.deepEqual(unknown.talking.map((x) => x.id), ['d22'])
   assert.deepEqual(unknown.checks.stale_consults, [])
+  // 最新の協議の相談タブが閉じたら、前に窓口へ回した協議の印を戻さない（Codex 中 1）。
+  const back = { ops: [...w.log.ops, { op_id: 5, at: '2026-11-21T09:40:00+09:00', item_id: 'd22', item_rev: 2, type: 'talk' as const }, talk(6, 'd22', 2, 'term_c22')] }
+  assert.deepEqual(report(w.cockpit, back, [], facts([]), 'ok', NOW).talking, [])
 })
 
 /** 相談の返しの照合を試す操縦席。d21 は反映済み・帳簿だけ抜け・保留、d22 はメモの塊に card が無い。片付けて移したカードの保留はメモに無い。 */
@@ -279,7 +283,7 @@ function consultRoot(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), 'cockpit-consult-'))
   const w = ws(0)
   const c = structuredClone(w.cockpit) as Cockpit
-  c.cards.find((x) => x.id === 'd21')!.from_returns = ['d21-1']
+  c.cards.find((x) => x.id === 'd21')!.from_returns = ['d21-1', 'typo']
   c.cards.find((x) => x.id === 'd21')!.held_returns = ['d21-3']
   const put = (rel: string, text: string) => {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
@@ -292,7 +296,8 @@ function consultRoot(): string {
   put('.orca/consult/d21.md', ['# 相談｜案件A｜d21\n', '## 決めたこと\n', block({ return_id: 'd21-8', card: 'd21' }), '## 窓口に返したもの（時刻・message id）\n',
     block({ return_id: 'd21-1', card: 'd21', rev: 1, decisions: [{ text: '入口は 1 つにする' }] }), block({ return_id: 'd21-2', card: 'd21', rev: 1 }), block({ return_id: 'd21-2', card: 'x' }),
     '```json\n{ 書きかけ\n```\n', block({ card: 'd21' }), block({ return_id: 'd21-3', card: 'd21', rev: 1 }), '## 残っている論点\n', block({ return_id: 'd21-9', card: 'd21' })].join(''))
-  put('.orca/consult/d22.md', '## 窓口に返したもの\n' + block({ return_id: 'd22-1', rev: 2 }))
+  // 改行が CRLF のメモ・card が空の配列の塊・全角数字の連番も python と同じに読む（Codex 重大 4・軽微）。
+  put('.orca/consult/d22.md', ('## 窓口に返したもの\n' + block({ return_id: 'd22-1', rev: 2 }) + block({ return_id: 'd22-２', card: [] })).replace(/\n/g, '\r\n'))
   put('.orca/consult/c4.md', '# 返しはまだ無い\n')
   return root
 }
@@ -305,6 +310,7 @@ test('相談の返し: メモにあって判断の記録か帳簿に無いもの
     { id: 'd21-2', card: 'd21', missing: ['帳簿'], memo: memo('d21') },
     { id: 'd21-3', card: 'd21', missing: ['判断の記録', '帳簿', '保留'], memo: memo('d21') },
     { id: 'd22-1', card: 'd22', missing: ['帳簿'], memo: memo('d22') },
+    { id: 'd22-２', card: 'd22', missing: ['判断の記録', '帳簿'], memo: memo('d22') },
     { id: 'x9-1', card: 'x9', missing: ['保留'], memo: null }
   ])
 })

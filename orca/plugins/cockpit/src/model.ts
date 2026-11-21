@@ -364,9 +364,9 @@ const strs: Shape = (v) => Array.isArray(v) && v.every(str)
 const obj = (need: string[], opt: string[] = []): Shape => (v) =>
   isObj(v) && need.every((k) => str(v[k])) && opt.every((k) => v[k] === undefined || str(v[k]))
 const list = (one: Shape): Shape => (v) => Array.isArray(v) && v.every(one)
-/** カードの相談の返しの id（<カード id>-<連番>）。 */
-export const RETURN_ID = /^[A-Za-z0-9_]+-\d+$/
-const returnId: Shape = (v) => str(v) && RETURN_ID.test(v as string)
+/** カードの相談の返しの id（<カード id>-<連番>）。連番の数字は compaction-keep.py（python の \d）と同じく Unicode の十進数字を受ける。 */
+export const RETURN_ID = /^[A-Za-z0-9_]+-\p{Nd}+$/u
+export const returnId: Shape = (v) => str(v) && RETURN_ID.test(v as string)
 /** 画面と状態の計算が読むカードの欄の形。種類・状態・id は parseCockpit が先に断る。 */
 export const CARD_SHAPE: Record<string, Shape> = {
   ...Object.fromEntries(['at', 'created_at', 'due', 'stream', 'owner', 'purpose', 'asked', 'routed', 'why', 'fallback', 'figure', 'request', 'request_id', 'href', 'diff', 'target', 'effect', 'undo',
@@ -376,7 +376,9 @@ export const CARD_SHAPE: Record<string, Shape> = {
   resolved_by: (v) => v === 'user' || v === 'owner',
   answerable: (v) => typeof v === 'boolean',
   manual: (v) => obj([], ['where', 'command', 'check'])(v) && ((v as Manual).steps === undefined || strs((v as Manual).steps)),
-  tasks: strs, look_for: strs, evidence: strs, known: strs, undecided: strs, from_returns: list(returnId), held_returns: list(returnId),
+  tasks: strs, look_for: strs, evidence: strs, known: strs, undecided: strs,
+  // 返しの照合は python と同じく配列の値をそのまま使う（1 つの書き間違いで欄ごと落とさない）。書く道具は形を別に確かめる。
+  from_returns: Array.isArray, held_returns: Array.isArray,
   from: obj(['who'], ['via', 'at', 'href']),
   draft: (v) => obj(['to', 'text'], ['via', 'href'])(v) && ((v as Draft).format === undefined || DRAFT_FORMATS.includes((v as Draft).format!)),
   context: obj([], CONTEXT_FIELDS.map(([k]) => k)),
@@ -654,7 +656,9 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = [], live?: (
       out.push({ card, status: 'fixing', pending, undoOp: pending ? fix : undefined, when: fix.at, fix: fix.text })
       continue
     }
-    const talk = talks.filter((o) => !o.terminal || !live || live(o.terminal)).at(-1)
+    // 最新の協議だけを見る（相談のタブを閉じたら、前に窓口へ回した協議の印を戻さない）。
+    const last = talks.at(-1)
+    const talk = last && (!last.terminal || !live || live(last.terminal)) ? last : undefined
     out.push({ card, status: 'mine', pending: false, ...(talk && { talking: { since: talk.at, ...(talk.terminal && { terminal: talk.terminal }) }, when: talk.at, undoOp: applied.has(talk.op_id) ? undefined : talk }) })
   }
   for (const card of archive) {

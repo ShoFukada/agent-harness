@@ -1,7 +1,7 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  badFields, CARD_SHAPE, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
+  badFields, CARD_SHAPE, returnId, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
   type Card, type Cockpit, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 
@@ -221,7 +221,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       continue
     }
     const card = upgradeCard(x)
-    const bad = badFields(card)
+    // 返しの印は読むときは配列なら受ける（python の照合と同じ）が、書くときは return_id の形だけにする。
+    const bad = [...badFields(card), ...(['from_returns', 'held_returns'] as const).filter((k) => Array.isArray(card[k]) && !card[k]!.every(returnId))]
     if (bad.length) errors.push(`カード ${card.id}: ${bad.join('・')} の形が違う`)
     if (!has(streams, card.stream)) errors.push(`カード ${card.id}: 仕事 ${card.stream} が無い`)
     for (const t of card.tasks ?? []) if (!has(tasks, t)) errors.push(`カード ${card.id}: タスク ${t} が無い`)

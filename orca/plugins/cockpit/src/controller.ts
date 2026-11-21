@@ -127,8 +127,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
       const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
       if ((ui.tab ?? 'todo') === 'todo' && !(ui.sel && (order.includes(ui.sel) || reports.includes(ui.sel)))) ui.sel = order[0] ?? reports[0]
-      // 対応済みはタスクの詳細から開いた期間外のカードも選んだまま出す。
-      if (ui.tab === 'done' && !(ui.doneSel && (order.includes(ui.doneSel) || rows.get(ui.doneSel)?.status === 'closed'))) ui.doneSel = order[0]
+      // 対応済みはタスクの詳細から開いた期間外のカードも選んだまま出す（今の案件のものだけ）。
+      if (ui.tab === 'done' && !(ui.doneSel && (order.includes(ui.doneSel) || b?.d.settled.some((r) => keyOf(r) === ui.doneSel)))) ui.doneSel = order[0]
       // 全体は右に出しているタスクが消えたら、上から最初のタスクにする（済んだタスクは選んだまま読める）。
       if (ui.tab === 'whole' && !(ui.task && b?.d.tasks.has(ui.task))) ui.task = order[0]
     }

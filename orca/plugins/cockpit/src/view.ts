@@ -602,6 +602,8 @@ export function talkMessage(res: TalkResult, copied: boolean): string {
   const where = res.opened ? `${res.how}を前に出しました。` : ''
   const paste = copied ? '書き出しをコピーしたので、貼って話してください' : '話してください'
   const head = res.note ? `${res.note}。窓口に回します。` : ''
+  // 開けたが協議中の印を残せなかった（版が変わったなど）。
+  if (res.reason && res.opened) return `${head}${res.how}を開きました。協議中の記録は残せませんでした: ${res.reason}`
   if (res.reason) return `${head}開けませんでした: ${res.reason}`
   if (res.tab) return `${head}${where}チャットの「${res.tab}」を開き、${paste}`
   return head + (res.opened ? `${res.how}を開きました。${paste}` : `${res.how}を開けませんでした。Orca で開き、${paste}`)

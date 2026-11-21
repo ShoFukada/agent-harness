@@ -288,7 +288,9 @@ test('担当と協議: 担当のいないカードはカードの相談のタブ
   await ev.until(ready)
   assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '相談のタブ' })
   assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '相談のタブ' })
-  assert.deepEqual(asked, [[a, 'd22'], [a, 'd22']])
+  // 連打（同じ読み直しを待つ 2 つの要求）でも、同じタブの記録は 1 つ（Codex 重大 1）。
+  await Promise.all([post('talk', { root: a, item_id: 'd22', item_rev: 2 }), post('talk', { root: a, item_id: 'd22', item_rev: 2 })])
+  assert.deepEqual(asked.length, 4)
   assert.deepEqual(calls.filter((x) => x[0] === 'switch' || x[0] === 'activate'), [], 'タブは consult が前に出す')
   assert.deepEqual(talkOps(a), [['d22', 'talk', 'term_consult']])
   const w = await ev.until((v) => !!board(v, a)?.terminals?.includes('term_consult'))
@@ -296,7 +298,7 @@ test('担当と協議: 担当のいないカードはカードの相談のタブ
   // 担当のいるカードと、全体のタブの仕事の協議（カードの無い talk）は相談にしない。
   assert.equal((await post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body.how, '配車画面の改修の端末')
   assert.equal((await post('talk', { root: a, stream: 's4' })).body.how, '窓口の端末')
-  assert.deepEqual(asked.length, 2)
+  assert.deepEqual(asked.length, 4)
 })
 
 test('担当と協議: consult が失敗したら理由を返して窓口に回し、handle の無い話し中として記録する', async () => {
@@ -308,6 +310,48 @@ test('担当と協議: consult が失敗したら理由を返して窓口に回�
   assert.deepEqual(asked, [[a, 'd22']])
   assert.deepEqual(calls.filter((x) => x[0] === 'switch'), [['switch', 'term_main']])
   assert.deepEqual(talkOps(a), [['d22', 'talk', null]])
+})
+
+test('担当と協議: 相談のタブは報告のカードでも handle を残す。consult の間に版が変わったら窓口に回さず、記録できなかった理由だけ返す（Codex 重大 2・3）', async () => {
+  const { a, rows } = workspaces()
+  const file = path.join(a, '.orca/cockpit.json')
+  const c = JSON.parse(readFileSync(file, 'utf8'))
+  c.cards.push({ id: 'a9', rev: 1, kind: 'report', state: 'open', title: '議事録の置き場所を変えた', stream: 's4', done: [{ what: '置き場所を変えた' }] })
+  writeFileSync(file, JSON.stringify(c))
+  const terms: string[] = []
+  const base = fakeConsult(terms)
+  let bump = false
+  const consult: Consult = async (root, card) => {
+    const h = await base.consult(root, card)
+    if (bump) {
+      const now = JSON.parse(readFileSync(file, 'utf8'))
+      now.cards.find((x: { id: string }) => x.id === 'd22').rev = 3
+      writeFileSync(file, JSON.stringify(now))
+    }
+    return h
+  }
+  const { s, port, post, calls } = await start(rows, a, undefined, undefined, undefined, undefined, { consult, terms })
+  await listen(port, s.token).until(ready)
+  assert.deepEqual((await post('talk', { root: a, item_id: 'a9', item_rev: 1 })).body, { opened: true, how: '相談のタブ' })
+  assert.deepEqual(talkOps(a), [['a9', 'talk', 'term_consult']])
+  bump = true
+  const r = (await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body
+  assert.equal(r.opened, true)
+  assert.equal(r.how, '相談のタブ')
+  assert.match(r.reason, /書き換えました/)
+  assert.deepEqual(calls.filter((x) => x[0] === 'switch' || x[0] === 'activate'), [], '窓口に回さない')
+  assert.deepEqual(talkOps(a), [['a9', 'talk', 'term_consult']])
+})
+
+test('相談のメモは送るカードのものだけを、表示に使う欄に絞って窓に送る（Codex 中 5）', async () => {
+  const { a, rows } = workspaces()
+  const block = (v: unknown) => '```json\n' + JSON.stringify(v) + '\n```\n'
+  mkdirSync(path.join(a, '.orca/consult'), { recursive: true })
+  writeFileSync(path.join(a, '.orca/consult/d22.md'), '## 窓口に返したもの\n' + block({ return_id: 'd22-1', choice: 'send', decisions: [{ text: '送る', quote: '長い原文'.repeat(50) }], open: ['x'], note: 'y'.repeat(5000) }))
+  writeFileSync(path.join(a, '.orca/consult/gone.md'), '## 窓口に返したもの\n' + block({ return_id: 'gone-1' }))
+  const { s, port } = await start(rows, a)
+  const w = await listen(port, s.token).until((v) => ready(v) && !!board(v, a)?.consults)
+  assert.deepEqual(board(w, a)!.consults, [{ card: 'd22', path: path.join(a, '.orca/consult/d22.md'), returns: [{ return_id: 'd22-1', choice: 'send', decisions: [{ text: '送る' }] }] }])
 })
 
 /** 担当 o1 を、worker-start --agent で立てたチャットにする。窓口は受け取りの terminal（structworker_…）を terminal に書いた。 */

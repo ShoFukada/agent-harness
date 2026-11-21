@@ -510,7 +510,7 @@ export function unreflectedReturns(cards: Card[], rulings: Ruling[], memos: Cons
   for (const m of memos)
     for (const v of m.returns) {
       const missing = [...(inRulings.has(v.return_id) ? [] : ['判断の記録' as const]), ...(inLedger.has(v.return_id) ? [] : ['帳簿' as const]), ...(held.has(v.return_id) ? ['保留' as const] : [])]
-      if (missing.length) out.push({ id: v.return_id, card: v.card || m.card, missing, memo: m.path })
+      if (missing.length) out.push({ id: v.return_id, card: pyFalsy(v.card) ? m.card : v.card, missing, memo: m.path })
     }
   // メモに書き損ねた返しでも、保留にしたものは相談が返し直すまで名指しする。
   const named = new Set(out.map((x) => x.id))
@@ -518,15 +518,19 @@ export function unreflectedReturns(cards: Card[], rulings: Ruling[], memos: Cons
   return [...out, ...rest.map(([id, card]): Unreflected => ({ id, card, missing: ['保留'], memo: null }))]
 }
 
+/** python の `x or 既定値` の偽（None・False・0・空の文字列・空の配列と辞書）。 */
+const pyFalsy = (v: unknown) =>
+  v == null || v === false || v === 0 || v === '' || (Array.isArray(v) ? !v.length : typeof v === 'object' && !Object.keys(v as object).length)
+
 /** カードが片付いた（帳簿から消えたものも）のに、Orca に残っている相談のタブ。端末の一覧を読めていなければ言い切らない。 */
 export function staleConsults(views: CardView[], log: UserLog, terminals: string[] | undefined): { id: string; terminal: string }[] {
   if (!terminals) return []
   const live = new Set(terminals)
-  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  // 協議を取り消してもタブは閉じないので、取り消した記録の handle も探す。
   const status = new Map(views.map((v) => [v.card.id, v.status]))
   const out = new Map<string, { id: string; terminal: string }>()
   for (const o of log.ops)
-    if (o.type === 'talk' && o.terminal && !undone.has(o.op_id) && live.has(o.terminal) && (status.get(o.item_id) ?? 'closed') === 'closed')
+    if (o.type === 'talk' && o.terminal && live.has(o.terminal) && (status.get(o.item_id) ?? 'closed') === 'closed')
       out.set(`${o.item_id}\n${o.terminal}`, { id: o.item_id, terminal: o.terminal })
   return [...out.values()]
 }

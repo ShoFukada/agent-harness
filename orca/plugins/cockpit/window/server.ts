@@ -8,7 +8,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chatMain, requestCards, OP_TYPES, overlay, type Card, type Cockpit, type OpType } from '../src/model.ts'
+import { chatMain, requestCards, OP_TYPES, overlay, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import type { ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, TalkResult, WindowView } from '../src/protocol.ts'
 import { agentTitle, ownerOf } from '../src/state.ts'
@@ -25,6 +25,8 @@ const POLL_MS = 60_000
 const REFRESH_GAP_MS = 5_000
 
 export type TerminalRow = { handle: string; tabId: string; leafId: string }
+/** 端末の一覧を読む上限。上限まで返ったら一覧が切れているかもしれないので、無い handle を「閉じた」と言い切らない。 */
+export const TERMINAL_LIMIT = 500
 
 export type Orca = {
   ps(): Promise<PsRow[]>
@@ -82,7 +84,7 @@ export function orcaCli(bin = 'orca'): Orca {
       }))
     },
     terminals: async () =>
-      ((await run(['terminal', 'list', '--limit', '500'])).terminals as TerminalRow[]).map(({ handle, tabId, leafId }) => ({ handle, tabId, leafId })),
+      ((await run(['terminal', 'list', '--limit', String(TERMINAL_LIMIT)])).terminals as TerminalRow[]).map(({ handle, tabId, leafId }) => ({ handle, tabId, leafId })),
     plugins: async () => {
       type Listed = PluginRow & { source?: { kind?: string; reference?: string | null; contentHash?: string | null } | null }
       const rows = ((await run(['plugin', 'list'])).plugins as Listed[]).map(({ pluginKey, status, needsReconsent, isDev, source }) => ({
@@ -218,16 +220,34 @@ export function createServer(opts: Options) {
     const tied = (x: Card) => !!x.tasks?.some((t) => live.has(t))
     const keep = (x: Card) => recent(x) || tied(x)
     const cockpit = slim && files.cockpit ? slimmed(files.cockpit, keep) : files.cockpit
+    const archive = slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since || proof.has(c.id) || tied(c)) : files.archive
     return {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit, log: files.log, figures: files.figures, errors: files.errors,
-      archive: slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since || proof.has(c.id) || tied(c)) : files.archive,
+      archive,
       workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, current: root ? currents.get(root) : undefined, owners,
       notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen,
-      terminals: lastRefresh && !orcaError ? [...terms.values()] : undefined, consults: files.consults
+      terminals: lastRefresh && !orcaError && terms.size < TERMINAL_LIMIT ? [...terms.values()] : undefined,
+      consults: consultsFor(files.consults, cockpit, archive)
     }
+  }
+
+  /**
+   * 窓に送る相談のメモ。送るカードのメモだけにし、返しは表示に使う欄（return_id・選んだ案・決まったことの文）の新しい 10 件に絞る
+   * （メモは相談スレッドが書くので、知らない欄に長文があっても毎回の配信に載せない）。
+   */
+  function consultsFor(memos: ConsultMemo[], c: Cockpit | undefined, archive: Card[]): ConsultMemo[] {
+    const ids = new Set([...(c?.cards ?? []), ...archive].map((x) => x.id))
+    return memos.filter((m) => ids.has(m.card)).map((m) => ({
+      ...m,
+      returns: m.returns.slice(-10).map((x) => ({
+        return_id: x.return_id,
+        ...(typeof x.choice === 'string' && { choice: x.choice }),
+        decisions: (Array.isArray(x.decisions) ? x.decisions : []).filter((d) => typeof d?.text === 'string').map((d) => ({ text: d.text }))
+      }))
+    }))
   }
 
   /** 窓に送る量を減らす。片付いて日のたったカードと、タスクの済んだ作業の記録は画面に出さない。 */
@@ -499,11 +519,27 @@ export function createServer(opts: Options) {
    * 私の番で、まだ話し中の印が無いときだけ記録する（取り消したあとにもう一度押したときも記録する）。印が付いてもカードは私の番に残る。
    * カードの相談はタブの handle を残し、別のタブで話し中なら（閉じて立て直した）新しいタブで記録し直す。
    */
-  async function markTalk(ws: Ws, c: Cockpit, card: Card, rev: unknown, terminal?: string): Promise<void> {
+  async function markTalk(ws: Ws, c: Cockpit, card: Card, rev: unknown): Promise<void> {
     const now = overlay(c, ws.files.log, [], liveTerminal).find((v) => v.card.id === card.id)
-    if (now?.status !== 'mine' || (now.talking && now.talking.terminal === terminal) || card.kind === 'report' || rev !== card.rev) return
-    ws.files = { ...ws.files, log: await appendOp(ws.root, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk', ...(terminal && { terminal }) }) }
-    mine.add(`${ws.root}#${ws.files.log.ops.at(-1)!.op_id}`)
+    if (now?.status !== 'mine' || (now.talking && !now.talking.terminal) || card.kind === 'report' || rev !== card.rev) return
+    await recordTalk(ws, c, { root: ws.root, item_id: card.id, item_rev: card.rev, type: 'talk' })
+  }
+  /**
+   * 開いた相談のタブは、種類や状態（報告・修正待ち・片付いた）に関わらず handle を残す（片付いたあとに残るタブを stale_consults で探すため）。
+   * 同じタブの記録の重なりは追記のロックの中で省く。古い版で押したなら版の食い違いとして断る。
+   */
+  async function markConsult(ws: Ws, c: Cockpit, card: Card, rev: unknown, terminal: string): Promise<void> {
+    if (typeof rev !== 'number') throw new HttpError(400, '版がありません')
+    await recordTalk(ws, c, { root: ws.root, item_id: card.id, item_rev: rev, type: 'talk', terminal })
+  }
+  async function recordTalk(ws: Ws, c: Cockpit, input: OpInput): Promise<void> {
+    const known = new Set(ws.files.log.ops.map((o) => o.op_id))
+    const log = await appendOp(ws.root, c, input)
+    ws.files = { ...ws.files, log }
+    // 同じタブの記録が既にあれば追記は省かれる。省かれたときは合図も送らない。
+    const op = log.ops.at(-1)
+    if (!op || known.has(op.op_id) || op.type !== 'talk' || op.item_id !== input.item_id || op.terminal !== input.terminal) return
+    mine.add(`${ws.root}#${op.op_id}`)
     broadcast()
     void autoSignal(ws).then(broadcast, (e) => console.error(e))
   }
@@ -540,14 +576,20 @@ export function createServer(opts: Options) {
       // 全体のタブの仕事の協議（id の空の仮のカード）は相談に分けない（設計 10.7 の 7）。
       let note: string | undefined
       if (card.id && opts.consult && ownerFor(ws, c, card).how === 'main') {
+        let handle: string | undefined
         try {
-          const handle = await opts.consult(ws.root, card.id)
-          // 立てたタブを端末の一覧に入れてから記録する（一覧に無いタブの印は外れて見え、続けて押すと二重に記録するため）。
-          await refreshOrca()
-          await markTalk(ws, c, card, b.item_rev, handle)
-          return { opened: true, how: '相談のタブ' }
+          handle = await opts.consult(ws.root, card.id)
         } catch (e) {
           note = `相談のタブを開けませんでした（${(e as Error).message}）`
+        }
+        if (handle) {
+          // 立てたタブを端末の一覧に入れる（入るまでは協議中の印が外れて見える）。
+          await refreshOrca()
+          // タブは開いたので、記録できなくても窓口には回さない（版が変わったなど。開いたタブはそのまま使える）。
+          return markConsult(ws, c, card, b.item_rev, handle).then(
+            () => ({ opened: true, how: '相談のタブ' }),
+            (e: Error) => ({ opened: true, how: '相談のタブ', reason: e.message })
+          )
         }
       }
       const to = talkTarget(ws, c, card)
