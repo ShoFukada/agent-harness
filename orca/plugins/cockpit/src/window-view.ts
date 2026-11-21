@@ -275,7 +275,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
       + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '')
     : ''
   return `<div class="st f-${s?.form ?? 'none'}"><div class="sh">
-    <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}">${formChip(s?.form)}<span>${esc(j.title)}</span><span class="pill ${j.state}">${esc(label)}</span>${j.owner ? `<span class="tw">担当: ${esc(j.owner.title)}</span>` : ''}</button>
+    <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span>${esc(j.title)}</span><span class="pill ${j.state}">${esc(label)}</span>${j.owner ? `<span class="tw">担当: ${esc(j.owner.title)}</span>` : ''}</button>
     <span class="right"><span class="prog">${phaseBar(ts, s?.form, j.state)}</span><button type="button" class="act talk" data-talkstream="${esc(j.id)}">${talkLabel}</button></span>
     <span class="meta">${working ? `<span class="chip live">worker ${working} 作業中</span>` : ''}${j.next && !open ? `<span class="mut nxt">次: ${mono(esc(j.next))}</span>` : ''}</span></div>
     ${open ? `<div class="inner">${inner || '<span class="mut">なし</span>'}</div>` : ''}</div>`

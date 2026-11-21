@@ -241,7 +241,8 @@ body { margin:0; }
 .ck .errs { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
 .ck details.soft { grid-column:1 / -1; margin-bottom:8px; font-size:var(--fs-s); color:var(--ink2); }
 .ck details.soft summary { cursor:pointer; }
-.ck details.soft ul, .ck.win .wnotes ul { margin:4px 0 0; padding-left:1.4em; font-size:var(--fs-xs); display:grid; gap:1px; }
+/* 開いても画面を押し下げないよう、横に流して高さを抑える。 */
+.ck details.soft ul, .ck.win .wnotes ul { margin:4px 0 2px; padding:0; list-style:none; font-size:var(--fs-xs); display:flex; flex-wrap:wrap; gap:2px 16px; max-height:6em; overflow-y:auto; }
 .ck .errs div { background:var(--hot-bg); color:var(--hot); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); font-weight:600; }
 .ck .toasts { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:10; width:max-content; max-width:min(640px, calc(100vw - 24px)); display:grid; gap:6px; }
 .ck .toast {
@@ -368,9 +369,9 @@ body { margin:0; }
 .ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:1px 9px; white-space:nowrap; }
 .ck.win .pill.mine { background:var(--mine); color:var(--surface); }
 .ck.win .pill.stopped { background:var(--hot); color:var(--surface); }
-.ck.win .pill.working { background:var(--run-bg); color:var(--focus); border:1px solid var(--run); }
+.ck.win .pill.working { background:var(--run-bg); color:var(--focus); }
 .ck.win .pill.customer { background:var(--amber-bg); color:var(--amber); }
-.ck.win .pill.idle { background:var(--sunk); color:var(--ink2); border:1px solid var(--rule); }
+.ck.win .pill.idle { background:var(--sunk); color:var(--ink2); }
 .ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
 .ck.win .st .inner { border-top:1px solid var(--rule2); padding:2px 12px 8px; display:grid; gap:0; }
 .ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:6px 0 0; display:flex; gap:8px; align-items:center; }
