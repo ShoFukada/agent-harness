@@ -105,6 +105,8 @@ test('端末の画面の末尾から、選択肢の付いた問いを読む（�
   const permit = [' Bash command', '', '   git push origin main', '', ' Do you want to', ' proceed?', ' ❯ 1. Yes', "   2. Yes, and don't ask again for git push", '   3. No, and tell Claude what to do differently (esc)']
   assert.deepEqual(screenAsk(permit, 'permit'), { kind: 'permit', text: 'Do you want to proceed?', options: ['Yes', "Yes, and don't ask again for git push", 'No, and tell Claude what to do differently'] })
   assert.equal(screenAsk(['❯ ', '  ctx 17%']), undefined)
+  // 返事待ちの画面に残ったエージェントの箇条書き（選んでいる印が無い）は問いと読まない。
+  assert.equal(screenAsk(['直したこと:', '1. 一覧の並び', '2. 絞り込み', '', '❯ ']), undefined)
 })
 
 test('question を案件に結ぶ: 窓口の Run 宛てと、案件の木の中の担当宛てだけ。終わった Dispatch の問いは除く', async () => {

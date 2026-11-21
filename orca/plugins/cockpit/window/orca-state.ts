@@ -135,7 +135,7 @@ export function toolAsk(a: Pick<PsAgent, 'state' | 'toolName' | 'toolInput'>): A
   return { kind: 'permit', text: a.toolInput?.trim() ? `${a.toolName}: ${a.toolInput.trim()}` : a.toolName }
 }
 
-const OPTION = /^\s*(?:[❯›>]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/
+const OPTION = /^\s*([❯›>]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/
 const BORDER = /^[\s─━═│┃╭╮╰╯┌┐└┘├┤☐☒✔·•-]*$/
 // Claude Code が選択肢の下に足す、自由入力と相談の行。選択肢としては出さない。
 const EXTRA = /^(Type something|Chat about this)/i
@@ -146,16 +146,20 @@ const EXTRA = /^(Type something|Chat about this)/i
 export function screenAsk(lines: string[], kind: Ask['kind'] = 'question'): Ask | undefined {
   const tail = lines.slice(-60)
   let first = -1
-  for (let i = tail.length - 1; i >= 0; i--) if (OPTION.exec(tail[i]!)?.[1] === '1') { first = i; break }
+  for (let i = tail.length - 1; i >= 0; i--) if (OPTION.exec(tail[i]!)?.[2] === '1') { first = i; break }
   if (first < 0) return undefined
   const options: string[] = []
+  // 選んでいる選択肢の印（❯）が無い番号の並びは、エージェントの出力の箇条書きなので問いと読まない。
+  let cursor = false
   for (let i = first, n = 1; i < tail.length; i++) {
     const m = OPTION.exec(tail[i]!)
-    if (m && Number(m[1]) === n) {
+    if (m && Number(m[2]) === n) {
       n++
-      if (!EXTRA.test(m[2]!)) options.push(m[2]!.replace(/\s*\(esc\)$/, ''))
+      cursor ||= !!m[1]
+      if (!EXTRA.test(m[3]!)) options.push(m[3]!.replace(/\s*\(esc\)$/, ''))
     }
   }
+  if (!cursor) return undefined
   const block: string[] = []
   for (let i = first - 1; i >= 0 && first - i <= 12; i--) {
     const l = tail[i]!.replace(/[│┃]/g, '').trim()
