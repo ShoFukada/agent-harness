@@ -170,7 +170,7 @@ test('Orca の下の帯に、前面の案件の私の番を出す。期限が 24
   // 許可待ちの worker（term_w）は詰まりとして数える。
   assert.equal(last.text, '私の番 4')
   assert.equal(last.tone, 'danger')
-  assert.match(last.tooltip, /青葉物流 配車アプリ: 私の番 4 件（詰まり 1・決める 1・送る前 1・見て 1）/)
+  assert.match(last.tooltip, /青葉物流 配車アプリ: 私の番 4 件（停止 1・判断 1・送信前 1・確認 1）/)
 })
 
 test('メインの端末がワークスペースに無ければ送らず、理由を返す', async () => {

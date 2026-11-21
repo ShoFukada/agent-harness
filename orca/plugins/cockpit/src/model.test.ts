@@ -31,7 +31,7 @@ test('決めた操作は担当が受け取るまで「受け取り待ち」で�
   const v = statusOf(c, log, 'd21')
   assert.equal(v.status, 'closed')
   assert.equal(v.pending, true)
-  assert.equal(v.how, '決めた: 図はこのまま、本文で説明する')
+  assert.equal(v.how, '決定: 図はこのまま、本文で説明する')
   assert.equal(v.undoOp?.op_id, 2)
   // 担当が反映すると cockpit.json の state が正になる。
   c.applied_ops = [1, 2]
@@ -104,7 +104,7 @@ test('版 2 の古い形を読む: 開いた talk は相談、at が無ければ
 test('種類ごとの片付けの言葉: 許すは「許した」、送る前の送ったは「送った」、別の答えは本文', () => {
   const c = sample(NOW)[1]!.cockpit
   const log = { ops: [op({ op_id: 1, item_id: 'p7', type: 'accept' }), op({ op_id: 2, item_id: 'k9', type: 'decide', option_id: 'other', text: '情報部に聞いてから' })] }
-  assert.equal(statusOf(c, log, 'p7').how, '許した')
+  assert.equal(statusOf(c, log, 'p7').how, '許可')
   assert.equal(statusOf(c, log, 'k9').how, '別の答え: 情報部に聞いてから')
   const a = aoba()
   assert.equal(statusOf(a, { ops: [op({ op_id: 2, item_id: 'd22', item_rev: 2, type: 'sent' })] }, 'd22').how, '送った')
@@ -206,5 +206,5 @@ test('深田さんの返答で閉じたカードは、選択肢の記録が無�
   const c = { version: 2, workspace: { name: 'w' }, streams: [], tasks: [], cards: [
     { ...base, id: 'v1', kind: 'review' }, { ...base, id: 'p1', kind: 'permit', resolved_text: 'push だけ' }, { ...base, id: 'v2', kind: 'review', resolved_by: 'owner' }
   ] } as Cockpit
-  assert.deepEqual(overlay(c, { ops: [] }).map((v) => v.how), ['これでよい', '許した: push だけ', '担当が片付けた'])
+  assert.deepEqual(overlay(c, { ops: [] }).map((v) => v.how), ['承認', '許可: push だけ', '担当が完了'])
 })

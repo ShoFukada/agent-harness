@@ -53,7 +53,7 @@ test('全体: 一緒に作る → 任せる → 見張る → 形の無い仕事
   assert.ok(order.every((n) => n >= 0), t)
   assert.deepEqual([...order].sort((a, b) => a - b), order)
   assert.match(t, /届いた連絡 1 件・件数外/)
-  assert.match(t, /まだ済んでいない依頼 1 件/)
+  assert.match(t, /未完了の依頼 1 件/)
 })
 
 test('対応済み: 確認の返答が無いまま閉じた見てに札を付け、詳細に返した答えと片付けた人を出す', () => {
@@ -62,7 +62,7 @@ test('対応済み: 確認の返答が無いまま閉じた見てに札を付け
   })
   const h = page(m, { tab: 'done', doneSel: '/ws/aoba#v9' })
   assert.match(h, /data-dsel="\/ws\/aoba#v9"[\s\S]*?確認なしで閉じた/)
-  assert.match(text(h), /担当が片付けた 11\/21\(土\) 09:30・確認の返答なし/)
+  assert.match(text(h), /担当が完了 11\/21\(土\) 09:30・確認の返答なし/)
 })
 
 test('欄の形の違いの知らせは 1 行に畳み、読めない・繋がらない知らせだけを赤の帯に出す', () => {
@@ -72,7 +72,7 @@ test('欄の形の違いの知らせは 1 行に畳み、読めない・繋が�
   m.errors = ['常駐のプロセスに繋がりません']
   const h = page(m)
   assert.match(h, /<div class="werrs" role="alert"><div>常駐のプロセスに繋がりません<\/div><\/div>/)
-  assert.match(h, /<summary>帳簿の欄の形の違い 1 件<\/summary>/)
+  assert.match(h, /<summary>帳簿の形式不備 1 件<\/summary>/)
   // 仕事の見出しには工程 n/5（5 段で固定）と今の段の名前を出し、凡例の帯は出さない（R82）。
   assert.match(h, /工程 <span class="num">2\/5<\/span> 決める/)
   assert.doesNotMatch(h, /class="keyline"/)

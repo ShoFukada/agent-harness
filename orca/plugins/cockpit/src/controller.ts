@@ -177,14 +177,14 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const other = (ui.other[k] ?? '').trim()
     // 別の答えを開いている間は、その文だけで決める（空のままおすすめが決まらないように）。
     // 見ての「直してほしいこと」は片付けずに、本文つきの talk として渡す（カードは直し待ちになり、担当が書き換えると私の番に戻る）。
-    if (ui.otherOpen[k] && r.card.kind === 'review') return other ? act('talk', r, { text: other }, '直しを頼みました') : undefined
+    if (ui.otherOpen[k] && r.card.kind === 'review') return other ? act('talk', r, { text: other }, '修正を依頼しました') : undefined
     if (ui.otherOpen[k]) return other ? act('decide', r, { option_id: OTHER, text: other }, `別の答えで決めました`) : undefined
     const id = chosenOption(r, ui)
     const o = r.card.options?.find((x) => x.id === id)
-    if (o) return act('decide', r, { option_id: o.id }, `${r.card.kind === 'permit' ? '許しました' : '決めました'}「${o.label}」`)
+    if (o) return act('decide', r, { option_id: o.id }, `${r.card.kind === 'permit' ? '許可しました' : '決めました'}「${o.label}」`)
   }
 
-  const LABEL: Partial<Record<OpType, string>> = { accept: 'これでよいと返しました', sent: '送ったと記録しました', skip: '見送りました', delegate: '許して、以後は任せました', ack: '読みました' }
+  const LABEL: Partial<Record<OpType, string>> = { accept: '承認しました', sent: '送信済みとして記録しました', skip: '見送りました', delegate: '許可し、以後は一任しました', ack: '既読にしました' }
 
   function onAct(name: string, r: VRow | undefined, el: HTMLElement): void {
     if (name === 'undo') {
@@ -204,7 +204,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       if (root)
         void t.op({ root, item_id: '', item_rev: 0, type: 'repeat' }).then((res) => {
           replace(res.view)
-          toast('「前にも言った」を記録しました。窓口が記録を読み直します')
+          toast('記録の再読を依頼しました')
         }, fail)
       return
     }
@@ -222,7 +222,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       case 'decide': return void decide(r)
       case 'talk': return void talk(r)
       case 'copy': return void copy(r)
-      case 'copycmd': return void navigator.clipboard.writeText(r.card.manual?.command ?? '').then(() => toast('コマンドをコピーしました。打って終わったら「済ませた」を押してください'), fail)
+      case 'copycmd': return void navigator.clipboard.writeText(r.card.manual?.command ?? '').then(() => toast('コマンドをコピーしました'), fail)
       case 'focus': return void t.focusAgent(r.agent?.terminalId ?? null, r.agent?.worktree).then((x) => toast(talkMessage(focusResult(x, r.owner.title), false)), fail)
       case 'url': return void openTarget(r.root, el)
       case 'other': {
@@ -233,9 +233,9 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
         return
       }
       case 'revert': return void act('revert', r, { target: Number(el.dataset.target) }, '戻すよう頼みました')
-      case 'dismiss': return void act('dismiss', r, {}, '済ませたと記録しました。次に止まったときはまた出します')
+      case 'dismiss': return void act('dismiss', r, {}, '対応済みとして記録しました')
       case 'accept': case 'sent': case 'skip': case 'delegate': case 'ack':
-        return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許しました' : r.card.manual && name === 'sent' ? '済ませたと記録しました' : LABEL[name]!)
+        return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許可しました' : r.card.manual && name === 'sent' ? '対応済みとして記録しました' : LABEL[name]!)
     }
   }
 

@@ -16,7 +16,7 @@ export const COUNTED: CardKind[] = ['stuck', 'permit', 'decide', 'send', 'review
 /** 深田さんに返事か相談を頼む種類。必須の欄を検査し、欠けていれば窓に出さない（R46-4）。 */
 export const ASKING: CardKind[] = [...COUNTED, 'consult']
 export const KIND_LABEL: Record<CardKind, string> = {
-  inbox: '届いた', send: '送る前', decide: '決める', review: '見て', permit: '許す', stuck: '詰まり', consult: '相談', talk: '話し中', report: '報告'
+  inbox: '受信', send: '送信前', decide: '判断', review: '確認', permit: '許可', stuck: '停止', consult: '相談', talk: '協議中', report: '報告'
 }
 
 export type Milestone = { date: string; label: string }
@@ -517,17 +517,17 @@ const CLOSING: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'ack'
 
 function closedLabel(c: Card, type: OpType | undefined, option?: Option, text?: string): string {
   if (type === 'decide' && option?.id === OTHER) return `別の答え: ${text ?? ''}`
-  if (type === 'decide' || (!type && option)) return `${c.kind === 'permit' ? '許した' : '決めた'}: ${option?.label ?? text ?? '?'}`
-  if (type === 'accept') return c.kind === 'permit' ? '許した' : 'これでよい'
+  if (type === 'decide' || (!type && option)) return `${c.kind === 'permit' ? '許可' : '決定'}: ${option?.label ?? text ?? '?'}`
+  if (type === 'accept') return c.kind === 'permit' ? '許可' : '承認'
   if (type === 'sent') return c.kind === 'send' ? '送った' : '済ませた'
   if (type === 'skip') return c.kind === 'send' ? '送らない' : c.kind === 'inbox' ? '返事は要らない' : c.kind === 'permit' ? '止めた' : '見送った'
   if (type === 'delegate') return '許して、以後は任せた'
   if (type === 'ack') return '読んだ'
-  return '担当が片付けた'
+  return '担当が完了'
 }
 
 const USER_DONE: Record<CardKind, string> = {
-  review: 'これでよい', permit: '許した', decide: '決めた', send: '送った', report: '読んだ', stuck: '答えた', inbox: '返事は要らない', consult: '話して決めた', talk: '話して決めた'
+  review: '承認', permit: '許可', decide: '決定', send: '送信済み', report: '既読', stuck: '回答', inbox: '返信不要', consult: '協議で決定', talk: '協議で決定'
 }
 
 /** cockpit.json の状態に、操作ログのうち効いている操作を重ねる。 */
@@ -551,7 +551,7 @@ export function overlay(c: Cockpit, log: UserLog, archive: Card[] = []): CardVie
       const chosen = option(card.resolved_option)
       // 深田さんの返答で閉じたのに選択肢の記録が無いもの（見て・許す・報告など）は、種類ごとの返答の名前にする（「担当が片付けた」と出さない）。
       const how = card.resolved_by === 'user' ? (chosen ? closedLabel(card, undefined, chosen, card.resolved_text) : card.resolved_text ? `${USER_DONE[card.kind]}: ${card.resolved_text}` : USER_DONE[card.kind]) : closedLabel(card, undefined)
-      out.push({ card, status: 'closed', pending: false, how: card.resolved_option === OTHER ? `別の答え: ${card.resolved_text ?? ''}` : how, when: card.resolved_at, chosen })
+      out.push({ card, status: 'closed', pending: false, how: card.resolved_option === OTHER ? `別の回答: ${card.resolved_text ?? ''}` : how, when: card.resolved_at, chosen })
       continue
     }
     if (card.state === 'waiting') {

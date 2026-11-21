@@ -146,8 +146,8 @@ export const ago = (iso: string | undefined, now: number) => {
 
 export const OWNER_STATE: Record<string, string> = { working: '作業中', blocked: '許可待ち', waiting: '入力待ち', done: '待機' }
 export function ownerHtml(o: OwnerRef): string {
-  const where = o.how === 'main' ? '案件の窓口' : o.how === 'chat' ? 'チャット' : '端末'
-  return `<span class="owner"><span>話す相手</span><b>${esc(o.title)}</b><span>${where}</span>${o.state ? `<span class="dot ${esc(o.state)}"></span><span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
+  const where = o.how === 'main' ? '' : o.how === 'chat' ? 'チャット' : '端末'
+  return `<span class="owner"><span>担当</span><b>${esc(o.title)}</b>${where ? `<span>${where}</span>` : ''}${o.state ? `<span class="dot ${esc(o.state)}"></span><span>${OWNER_STATE[o.state] ?? esc(o.state)}</span>` : ''}</span>`
 }
 
 /** 閉じた票に出す 1 行（HTML）。開くまで中身を読まなくても何の票かが分かるように。 */
@@ -255,7 +255,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       break
     case 'review':
       if (c.request) parts.push(fld('依頼の原文', `<div class="quote">${esc(c.request)}</div>`))
-      if (c.look_for?.length) parts.push(fld('見てほしい点', `<ul class="rich">${c.look_for.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
+      if (c.look_for?.length) parts.push(fld('確認事項', `<ul class="rich">${c.look_for.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
       if (c.evidence?.length) parts.push(fld('確かめた結果', `<ul class="rich">${c.evidence.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
       if (r.fix) parts.push(fld('頼んだ直し', `<div class="quote">${esc(r.fix)}</div>`))
       break
@@ -307,33 +307,33 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   const k = esc(keyOf(r))
   const b = (act: string, label: string, cls = '', extra = '') => `<button class="btn ${cls}" type="button" data-act="${act}" data-key="${k}" ${extra}>${esc(label)}</button>`
   // 窓は話す相手で名前を変える（担当の無い仕事のカードは窓口と話す）。
-  const talk = (label = win && r.owner.how === 'main' ? '窓口と話す' : '担当と話す') => b('talk', label, 'talk')
+  const talk = (label = win && r.owner.how === 'main' ? '窓口と協議' : '担当と協議') => b('talk', label, 'talk')
   const picked = chosenOption(r, ui)
   const otherOpen = ui.otherOpen[keyOf(r)]
   const otherText = otherOpen && (ui.other[keyOf(r)] ?? '').trim()
-  const decideLabel = otherOpen ? (c.kind === 'review' ? 'この直しを頼む' : '別の答えで決める') : !picked ? '選択肢を選ぶ' : ui.picked[keyOf(r)] ? 'この案で決める' : 'おすすめで決める'
+  const decideLabel = otherOpen ? (c.kind === 'review' ? 'この修正を依頼' : '別の回答で決定') : !picked ? '選択肢を選択' : ui.picked[keyOf(r)] ? 'この案で決定' : '推奨案で決定'
   const ready = otherOpen ? otherText : picked
   const decideBtn = c.options?.length || otherOpen ? b('decide', decideLabel, 'pri', ready ? '' : 'disabled') : ''
-  const other = b('other', otherOpen ? '別の答えを閉じる' : '別の答え', 'quiet')
+  const other = b('other', otherOpen ? '別の回答を閉じる' : '別の回答', 'quiet')
   let btns: string[]
   // Orca から作った詰まり: 開いて直し、直したら「済ませた」で隠す（同じ失敗のあいだ。次に止まればまた出る）。
-  const dismiss = dismissable(c) ? [b('dismiss', '済ませた', '', 'title="同じ停止のあいだは隠す。次に止まったときはまた出る"')] : []
+  const dismiss = dismissable(c) ? [b('dismiss', '対応済みにする', '', 'title="同じ停止のあいだは隠す。次に止まったときはまた出る"')] : []
   if (r.agent) btns = [b('focus', r.agent.chat ? 'チャットを開く' : '端末を開く', 'pri'), ...dismiss]
   else switch (c.kind) {
-    case 'inbox': btns = [talk(), b('skip', '返事は要らない'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
-    case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', '送った'), talk('担当と直す'), b('skip', '送らない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
+    case 'inbox': btns = [talk(), b('skip', '返信不要'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
+    case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', '送信済みにする'), talk('担当と修正'), b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
     case 'decide': btns = [decideBtn, talk(), other]; break
-    case 'review': btns = [b('accept', 'これでよい', 'pri'), b('other', otherOpen ? '書くのをやめる' : '直してほしいことを書く'), ...(otherOpen ? [decideBtn] : []), talk('直してほしい（担当と話す）'), ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
-    case 'permit': btns = c.manual ? [b('sent', '済ませた', 'pri'), talk()]
-      : c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許す', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}任せる`), b('skip', '止める', 'quiet'), talk()]; break
-    case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と話す' : '担当を開く'), ...dismiss, ...(dismiss.length ? [] : [other])]; break
+    case 'review': btns = [b('accept', '承認する', 'pri'), b('other', otherOpen ? '記入をやめる' : '修正点を記入'), ...(otherOpen ? [decideBtn] : []), talk('担当と修正を協議'), ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
+    case 'permit': btns = c.manual ? [b('sent', '対応済みにする', 'pri'), talk()]
+      : c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許可する', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}一任する`), b('skip', '却下', 'quiet'), talk()]; break
+    case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と協議' : '担当を開く'), ...dismiss, ...(dismiss.length ? [] : [other])]; break
     case 'consult': btns = [talk()]; break
-    case 'talk': btns = [talk('続きを話す')]; break
-    case 'report': btns = [b('ack', '読んだ', 'pri'), talk()]; break
+    case 'talk': btns = [talk('協議を続ける')]; break
+    case 'report': btns = [b('ack', '既読にする', 'pri'), talk()]; break
   }
   // 片付いた・顧客待ちの票には、片付ける操作を出さない（開いて読み返すだけ）。
   if (r.status === 'closed' || r.status === 'waiting') btns = btns.filter((x) => x.includes('data-act="url"'))
-  if (r.status !== 'mine' && c.kind !== 'talk') btns = btns.filter((x) => !x.includes('data-act="talk"')).concat(talk('続きを話す'))
+  if (r.status !== 'mine' && c.kind !== 'talk') btns = btns.filter((x) => !x.includes('data-act="talk"')).concat(talk('協議を続ける'))
   const hint = c.options?.length && btns.some((x) => x.includes('data-act="decide"')) ? `<span class="hint"><kbd>1</kbd>〜<kbd>${Math.min(9, c.options.length)}</kbd> で選び <kbd>Enter</kbd></span>` : ''
   return `<div class="acts">${btns.join('')}${hint}</div>`
 }
@@ -347,7 +347,7 @@ export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => st
     `<span class="kind">${glyph(c.kind)}${KIND_LABEL[c.kind]}</span>`,
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
     r.stream && !c.title.includes(r.stream.title) ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
-    r.status === 'fixing' ? `<span>${r.pending ? '直し依頼済み（受領待ち）' : '直し待ち'}</span>` : r.talking ? '<span>話し中</span>' : ''
+    r.status === 'fixing' ? `<span>${r.pending ? '修正依頼済み（受領待ち）' : '修正待ち'}</span>` : r.talking ? '<span>協議中</span>' : ''
   ].filter(Boolean).join('')
   return `<article class="strip k-${c.kind}${isHot(c.due, now) ? ' hot' : ''}" aria-expanded="${open}" data-strip="${esc(k)}" id="s-${esc(k)}">
     <button class="head" type="button" data-sel="${esc(k)}" aria-label="${esc(KIND_LABEL[c.kind])}: ${esc(c.title)}">

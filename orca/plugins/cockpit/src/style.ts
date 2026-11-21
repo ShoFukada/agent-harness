@@ -384,6 +384,7 @@ body { margin:0; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
 .ck.win .tst.s-run { color:var(--focus); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
 .ck.win .task .tn { display:grid; min-width:0; }
+.ck.win .cardrow .kd small, .ck.win .task .id, .ck.win .rid { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
 .ck.win .task .nx { color:var(--ink3); font-size:var(--fs-xs); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }

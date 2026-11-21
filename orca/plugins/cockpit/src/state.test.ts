@@ -86,7 +86,7 @@ test('hook が読む全体の 1 行と検査: 催促の日を過ぎた顧客待�
   const w = ws(0)
   const c: Cockpit = { ...w.cockpit, streams: [...w.cockpit.streams, { id: 's9', title: 'あ'.repeat(NAME_MAX + 1) }], tasks: [...w.cockpit.tasks, { id: 't9', stream: 's9', phase: '実装', title: 'x', state: 'run' }] }
   const r = report(c, w.log, [], undefined, 'skipped', NOW)
-  assert.equal(r.overview, '全体: 私の番 3 件（決める 1・送る前 1・見て 1）・話し中 0・顧客待ち 1・動いている worker 0')
+  assert.equal(r.overview, '全体: 私の番 3 件（判断 1・送信前 1・確認 1）・話し中 0・顧客待ち 1・動いている worker 0')
   assert.deepEqual(r.checks.remind_due, ['w1'])
   assert.deepEqual(r.checks.long_names, [`s9（${NAME_MAX + 1} 字）`])
   assert.equal(r.next?.id, 'd22')

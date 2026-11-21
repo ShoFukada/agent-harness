@@ -43,8 +43,8 @@ const tag = (text: string, cls = '') => `<span class="tag${cls ? ` ${cls}` : ''}
 function tags(r: Row): string {
   return [
     r.card.kind === 'consult' && tag('件数外'),
-    r.talking && tag('話し中', 'talk'),
-    r.status === 'fixing' && (r.pending ? tag('直し依頼済み（受領待ち）', 'wait') : tag('直し待ち', 'wait'))
+    r.talking && tag('協議中', 'talk'),
+    r.status === 'fixing' && (r.pending ? tag('修正依頼済み（受領待ち）', 'wait') : tag('修正待ち', 'wait'))
   ].filter(Boolean).join('')
 }
 
@@ -71,9 +71,9 @@ function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
   const s = b.v.cockpit!.streams.find((x) => x.id === sid)
   const counted = xs.filter((r) => COUNTED.includes(r.card.kind)).length
   const consult = xs.filter((r) => r.card.kind === 'consult').length
-  const n = closed ? `対応済み ${xs.length} 件` : [counted && `要対応 ${counted}`, consult && `相談 ${consult}`, xs.length - counted - consult && `直し待ち ${xs.length - counted - consult}`].filter(Boolean).join('・')
-  if (sid === ORCA) return `<div class="gh"><b>止まったエージェント</b><span class="mut">${n}・Orca の状態から</span></div>`
-  if (!s) return `<div class="gh"><b>仕事に結ばれていない</b><span class="mut">${n}</span></div>`
+  const n = closed ? `対応済み ${xs.length} 件` : [counted && `要対応 ${counted}`, consult && `相談 ${consult}`, xs.length - counted - consult && `修正待ち ${xs.length - counted - consult}`].filter(Boolean).join('・')
+  if (sid === ORCA) return `<div class="gh"><b>停止中のエージェント</b><span class="mut">${n}・Orca より</span></div>`
+  if (!s) return `<div class="gh"><b>仕事の割り当てなし</b><span class="mut">${n}</span></div>`
   const ts = tasksOf(b, sid)
   const j = b.d.jobs.find((x) => x.id === sid)
   return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b><span class="mut">${n}</span>${j?.owner ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}<span class="prog">${phaseBar(ts, s.form)}</span></div>`
@@ -84,7 +84,7 @@ function gapsHtml(b: Board): string {
   const gs = b.d.gaps
   if (!gs.length) return ''
   const what = { card: 'カード', request: '依頼', utterance: '発言' } as const
-  return `<div class="gaps" role="status"><b>帳簿の抜け ${gs.length} 件</b><span class="mut">30 分を過ぎて未記入</span>
+  return `<div class="gaps" role="status"><b>帳簿の未記入 ${gs.length} 件</b><span class="mut">30 分超過</span>
     <ul>${gs.map((g) => `<li>${esc(what[g.kind])} <span class="code">${esc(g.id)}</span> ${esc(g.title)}<span class="mut">（欠け: ${esc(g.missing.join('・'))}）</span></li>`).join('')}</ul></div>`
 }
 
@@ -94,7 +94,7 @@ function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
   const list = groups.length
     ? groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>`).join('')
     : '<div class="calm"><b>要対応 0 件</b></div>'
-  const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">読むだけ（報告）${reps.length} 件・件数外</div><div class="rows">${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>` : ''
+  const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">報告（参照のみ）${reps.length} 件・件数外</div><div class="rows">${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>` : ''
   const order = todoOrder(b)
   const all = [...groups.flatMap(([, xs]) => xs), ...reps]
   const cur = all.find((r) => keyOf(r) === ui.sel)
@@ -131,7 +131,7 @@ function firstOfKind(r: VRow, ui: Ui, list: (xs: string[] | undefined, ordered?:
   const c = r.card
   switch (c.kind) {
     case 'review':
-      return [c.href ? `<div class="links">${linkBtn('成果物を開く', c.href)}</div>` : '', fld('見てほしい点', points(c.look_for)), r.fix ? fld('頼んだ直し（原文）', `<div class="quote">${esc(r.fix)}</div>`) : ''].join('')
+      return [c.href ? `<div class="links">${linkBtn('成果物を開く', c.href)}</div>` : '', fld('確認事項', points(c.look_for)), r.fix ? fld('頼んだ直し（原文）', `<div class="quote">${esc(r.fix)}</div>`) : ''].join('')
     case 'decide':
       return [optionsHtml(r, ui), fld('得られること', rich(c.context?.gain, c.repo)), fld('失うこと', rich(c.context?.cost, c.repo))].join('')
     case 'permit':
@@ -140,7 +140,7 @@ function firstOfKind(r: VRow, ui: Ui, list: (xs: string[] | undefined, ordered?:
     case 'send':
       return c.draft ? `<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b>${c.draft.via ? `　経路 ${esc(c.draft.via)}` : ''}</div><div class="msg">${esc(c.draft.text)}</div></div>${optionsHtml(r, ui)}` : optionsHtml(r, ui)
     case 'stuck':
-      return [fld('止まっている理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld('止まってから', esc(fmtDate(c.since))) : '',
+      return [fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld('停止日時', esc(fmtDate(c.since))) : '',
         fld('直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
     case 'consult':
       return [fld('論点', esc(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)), fld('分かっていること', list(c.known)), fld('決めかねていること', list(c.undecided))].join('')
@@ -183,11 +183,11 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const c = r.card
   const s = r.stream
   const t = taskOf(b, r)
-  const crumbs = [b.v.cockpit!.workspace.name, s?.title ?? '仕事に結ばれていない', t && `${t.task.id} ${t.task.title}`].filter(Boolean) as string[]
+  const crumbs = [b.v.cockpit!.workspace.name, s?.title ?? '仕事の割り当てなし', t && `${t.task.id} ${t.task.title}`].filter(Boolean) as string[]
   const notes = [
-    closed ? `<div class="note ok"><b>${esc(r.how ?? '')}</b>　${esc(fmtDate(r.when))}${c.resolved_at_inferred ? '（時刻は推定）' : ''}${r.pending ? '・窓口の受け取り待ち' : c.resolved_by === 'user' ? '・深田さんの返答' : ''}${c.closed_without_review ? '・確認の返答なし' : ''}</div>` : '',
-    r.talking ? `<div class="note wait"><b>話し中</b>　${esc(fmtDate(r.talking.since))} から・${esc(r.owner.how === 'main' ? '窓口' : `担当（${r.owner.title}）`)}</div>` : '',
-    r.status === 'fixing' ? `<div class="note wait"><b>${r.pending ? '直し依頼済み（受領待ち）' : '直し待ち'}</b></div>` : '',
+    closed ? `<div class="note ok"><b>${esc(r.how ?? '')}</b>　${esc(fmtDate(r.when))}${c.resolved_at_inferred ? '（時刻は推定）' : ''}${r.pending ? '・窓口の受け取り待ち' : c.resolved_by === 'user' ? '・深田さんの回答' : ''}${c.closed_without_review ? '・確認の返答なし' : ''}</div>` : '',
+    r.talking ? `<div class="note wait"><b>協議中</b>　${esc(fmtDate(r.talking.since))} から・${esc(r.owner.how === 'main' ? '窓口' : `担当（${r.owner.title}）`)}</div>` : '',
+    r.status === 'fixing' ? `<div class="note wait"><b>${r.pending ? '修正依頼済み（受領待ち）' : '修正待ち'}</b></div>` : '',
   ].join('')
   // 対応済みは返した答えが主役。頼んだ中身（手順・選択肢）は「詳しく」に畳む。
   const first = closed ? '' : firstView(r, ui, now)
@@ -199,7 +199,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
       <div class="kl"><span class="kd">${kindName(c)}</span><span class="mut">${esc(c.id.startsWith('#') ? 'Orca から' : c.id)}</span>${c.due ? dueHtml(c.due, now) : ''}</div>
       <h2>${esc(c.title)}</h2><div>${ownerHtml(r.owner)}</div></div>
     ${notes}${first ? `<div class="first">${first}</div>` : ''}
-    ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳しく（頼んだ内容・何のため・出典）' : '詳しく（何のため・判断の材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
+    ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・目的・出典）' : '詳細（目的・判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
     ${closed ? '' : otherHtml(r, ui)}
     <div class="dbtn">${acts}</div></div>`
 }
@@ -208,7 +208,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
 const tasksOf = (b: Board, sid: string) => [...b.d.tasks.values()].filter((t) => t.task.stream === sid)
 /** タスクの進み具合を言葉で（「済 26・全 34 件」）。分数だけでは何の数か分からないため（R81）。 */
 const okOf = (ts: TaskView[]) => `タスク 済 ${ts.filter((t) => t.state === 'ok').length}・全 ${ts.length} 件`
-const TSTATE: Record<TaskState, string> = { ok: '済', run: '作業中', wait: '待ち', stop: '止まった', idle: '未着手' }
+const TSTATE: Record<TaskState, string> = { ok: '完了', run: '作業中', wait: '待機', stop: '停止', idle: '未着手' }
 /**
  * 工程の進み（前の窓の「工程 n/5」の形）。済んでいないタスクのうちいちばん前の段を今の段にし、それより前を済んだ段にする。
  * どの段にも寄せられない工程名だけのときは段を決めない（推測で入れない）。見張る仕事は段を持たない。
@@ -224,15 +224,15 @@ function phaseBar(ts: TaskView[], form?: StreamForm): string {
   return `<span class="pbar" title="${STAGES.join(' › ')}"><span class="pps" aria-hidden="true">${pips}</span><span class="ppn">${name}</span></span>`
 }
 
-const WHY: Record<TaskView['why'], string> = { ok: '済', record: '', working: '作業中', intake: '済・取り込み待ち', stopped: '止まった', missing: 'Orca に無い' }
+const WHY: Record<TaskView['why'], string> = { ok: '済', record: '', working: '作業中', intake: '完了・取り込み待ち', stopped: '停止', missing: 'Orca に無し' }
 
 function workerRow(b: Board, t: TaskView): string {
   if (!t.task.worker) return ''
   const a = b.v.workers.find((w) => w.task === t.task.id)
   // 記録のまま（Orca の Dispatch を読めていない）は、窓口が書いたタスクの状態をそのまま出す。
-  const st = t.why === 'stopped' && t.stop ? `止まった（${STOP_LABEL[t.stop as keyof typeof STOP_LABEL] ?? t.stop}）` : t.why === 'record' ? TSTATE[t.state] : WHY[t.why]
+  const st = t.why === 'stopped' && t.stop ? `停止（${STOP_LABEL[t.stop as keyof typeof STOP_LABEL] ?? t.stop}）` : t.why === 'record' ? TSTATE[t.state] : WHY[t.why]
   return `<div class="wrow"><span class="mut">worker</span><span class="wn">${esc(t.task.title)}</span><span class="chip${t.why === 'working' ? ' live' : t.why === 'stopped' || t.why === 'missing' ? ' bad' : ''}">${esc(st)}</span>${a?.where ? `<span class="mut">今: ${esc(a.where)}</span>` : ''}
-    ${a ? `<button type="button" class="act" data-term="${esc(a.terminalId ?? '')}" data-wt="${esc(a.worktree ?? '')}">端末を見る</button>` : ''}</div>`
+    ${a ? `<button type="button" class="act" data-term="${esc(a.terminalId ?? '')}" data-wt="${esc(a.worktree ?? '')}">端末を開く</button>` : ''}</div>`
 }
 
 function taskRow(b: Board, t: TaskView, todo: Map<string, VRow[]>, talkLabel: string): string {
@@ -244,7 +244,7 @@ function taskRow(b: Board, t: TaskView, todo: Map<string, VRow[]>, talkLabel: st
     ${workerRow(b, t)}</div>`
 }
 
-const PILL: Record<JobState, string> = { mine: '要対応', stopped: '止まっている', working: '作業中', customer: '顧客待ち', idle: '未着手', done: '済' }
+const PILL: Record<JobState, string> = { mine: '要対応', stopped: '停止中', working: '作業中', customer: '顧客待ち', idle: '未着手', done: '完了' }
 
 function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): string {
   const c = b.v.cockpit!
@@ -256,13 +256,13 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
   // 段の順に並べ、どの段にも寄せられない工程名は元の名前のまま後ろに置く。
   const groups = [...STAGES.map((st) => [st, live.filter((t) => stageOf(t.task.phase) === st)] as const),
     ...[...new Set(live.map((t) => t.task.phase).filter((p) => !stageOf(p)))].map((p) => [p, live.filter((t) => t.task.phase === p)] as const)]
-  const talkLabel = j.owner ? '担当と話す' : '窓口と話す'
+  const talkLabel = j.owner ? '担当と協議' : '窓口と協議'
   const working = ts.filter((t) => t.why === 'working').length
   const label = j.state === 'mine' ? `要対応 ${j.mine}` : j.state === 'customer' ? j.label : PILL[j.state]
   const inner = open
     ? groups.filter(([, xs]) => xs.length)
         .map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(b, t, todo, talkLabel)).join('')}`).join('')
-      + (ts.length - live.length ? `<div class="donebox">済んだタスク ${ts.length - live.length}</div>` : '')
+      + (ts.length - live.length ? `<div class="donebox">完了タスク ${ts.length - live.length}</div>` : '')
     : ''
   return `<div class="st f-${s?.form ?? 'none'}"><div class="sh">
     <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="tw">${open ? '▾' : '▸'}</span>${formChip(s?.form)}<span>${esc(j.title)}</span><span class="pill ${j.state}">${esc(label)}</span>${j.owner ? `<span class="tw">担当: ${esc(j.owner.title)}</span>` : ''}</button>
@@ -287,10 +287,10 @@ function requestsHtml(b: Board, ui: Ui, now: number): string {
       <span class="l">タスク</span><div>${ts.map((t) => `<div>${esc(t.task.id)} ${esc(t.task.title)}（${TSTATE[t.state]}）</div>`).join('') || '—'}</div>
       <span class="l">確認依頼</span><div>${r.cards.map((x) => `<div class="k-${x.kind}"><span class="kd">${glyph(x.kind)}</span> ${esc(x.id)} ${esc(x.title)}${x.state === 'done' ? '（済）' : ''}</div>`).join('') || '—'}</div></div>` : ''
     return `<div class="rq"><button type="button" data-rq="${esc(r.req.id)}" aria-expanded="${on}"><span class="rid">${esc(r.req.id)}</span><span class="rt">${esc(r.req.title)}</span>
-      <span class="rs"><span>${esc(nearDate(r.req.at, now))}</span><span>${esc(r.state)}</span><span>${ts.length ? okOf(ts) : 'タスクなし'}</span>${ts.length && ts.every((t) => t.task.state === 'ok') && r.covered.some((x) => !x) ? tag('タスクは済・証拠待ち', 'wait') : ''}${r.missing.length ? tag(`欠け: ${r.missing.join('・')}`, 'miss') : ''}${r.legacy && !allLegacy ? tag('移し替え前') : ''}</span></button>${trace}</div>`
+      <span class="rs"><span>${esc(nearDate(r.req.at, now))}</span><span>${esc(r.state)}</span><span>${ts.length ? okOf(ts) : 'タスクなし'}</span>${ts.length && ts.every((t) => t.task.state === 'ok') && r.covered.some((x) => !x) ? tag('タスク完了・証拠待ち', 'wait') : ''}${r.missing.length ? tag(`欠け: ${r.missing.join('・')}`, 'miss') : ''}${r.legacy && !allLegacy ? tag('移し替え前') : ''}</span></button>${trace}</div>`
   }
   const ms = upcomingMilestones(c.workspace.milestones, now)[0]
-  return `<h3>まだ済んでいない依頼 <span class="mut">${open.length} 件・受けた順</span>${allLegacy ? tag('移し替え前') : ''}</h3>
+  return `<h3>未完了の依頼 <span class="mut">${open.length} 件・受付順</span>${allLegacy ? tag('移し替え前') : ''}</h3>
     ${ms ? `<p class="note">次の節目: ${esc(ms.label)}（${esc(fmtDate(ms.date))}）</p>` : ''}${open.map(row).join('')}`
 }
 
@@ -320,9 +320,9 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const main = FORM_ORDER.filter(filled).map((f) => sec(f, f === 'watch' ? watchExtra : '')).join('')
     + (empty.length ? `<p class="mut">進行中の仕事なし: ${empty.map((f) => esc(FORM_LABEL[f])).join('・')}</p>` : '')
     + (noForm.length ? `<section class="fsec"><h3><span class="hotc">形が書かれていない仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo)).join('')}</section>` : '')
-    + (loose.length ? `<section class="fsec"><h3><span class="hotc">仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(b, t, todo, '窓口と話す')).join('')}</div></div></section>` : '')
-    + (done.length ? `<button type="button" class="wmore" data-toggle="done" aria-expanded="${!!ui.open.done}">${ui.open.done ? '▾ 済んだ仕事を閉じる' : `▸ 済んだ仕事 ${done.length} 件`}</button>${ui.open.done ? done.map((j) => streamBox(b, j, ui, todo)).join('') : ''}` : '')
-  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="まだ済んでいない依頼">${requestsHtml(b, ui, now)}</aside>`
+    + (loose.length ? `<section class="fsec"><h3><span class="hotc">仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(b, t, todo, '窓口と協議')).join('')}</div></div></section>` : '')
+    + (done.length ? `<button type="button" class="wmore" data-toggle="done" aria-expanded="${!!ui.open.done}">${ui.open.done ? '▾ 完了した仕事を閉じる' : `▸ 完了した仕事 ${done.length} 件`}</button>${ui.open.done ? done.map((j) => streamBox(b, j, ui, todo)).join('') : ''}` : '')
+  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="未完了の依頼">${requestsHtml(b, ui, now)}</aside>`
 }
 
 function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {
@@ -354,9 +354,9 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
   return `<div class="ck win" data-theme="${ui.dark ? 'dark' : 'light'}">
     <div class="wtop"><span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
       <div class="tabs" role="tablist">${tabBtn('todo', '要対応', total)}${tabBtn('whole', '全体')}${tabBtn('done', '対応済み', b.d.closed.length, true)}</div>
-      <div class="flags"><span class="${stuck ? 'err' : 'mut'}">止まっている ${stuck}</span>${m.live !== undefined ? `<span class="mut">稼働中のエージェント ${m.live}</span>` : ''}
-        <button class="flag repeat" type="button" data-act="repeat" data-root="${esc(b.root)}" title="前に伝えたことを窓口が落としたときに押します。窓口が記録を読み直し、2 回押されると新しいチャットへ引き継ぎます">読み直させる</button>${theme}</div></div>
+      <div class="flags"><span class="${stuck ? 'err' : 'mut'}">停止中 ${stuck} 件</span>${m.live !== undefined ? `<span class="mut">稼働中のエージェント ${m.live}</span>` : ''}
+        <button class="flag repeat" type="button" data-act="repeat" data-root="${esc(b.root)}" title="前に伝えたことを窓口が落としたときに押します。窓口が記録を読み直し、2 回押されると新しいチャットへ引き継ぎます">記録の再読を依頼</button>${theme}</div></div>
     ${hard.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
-    ${soft.length ? `<details class="wnotes" data-fold="soft"${ui.open.soft ? ' open' : ''}><summary>帳簿の欄の形の違い ${soft.length} 件</summary>${soft.map((e) => `<div>${esc(e)}</div>`).join('')}</details>` : ''}
+    ${soft.length ? `<details class="wnotes" data-fold="soft"${ui.open.soft ? ' open' : ''}><summary>帳簿の形式不備 ${soft.length} 件</summary>${soft.map((e) => `<div>${esc(e)}</div>`).join('')}</details>` : ''}
     <main class="wbody ${tab === 'whole' ? 'whole' : 'split'}">${body}</main>${toastsHtml(ui, now)}</div>`
 }

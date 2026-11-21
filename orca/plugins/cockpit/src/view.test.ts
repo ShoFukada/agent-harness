@@ -20,7 +20,7 @@ const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 test('上の帯: 全案件の私の番の合計と 5 種類の内訳。届いたは区切りの外に出し、合計に入れない', () => {
   const t = text(html())
   assert.match(t, /9 全案件の私の番/)
-  assert.match(t, /許す 2 決める 3 送る前 1 見て 2 届いた 1/)
+  assert.match(t, /許可 2 判断 3 送信前 1 確認 2 届いた 1/)
   assert.match(html(), /class="kc ref k-inbox"/)
 })
 
@@ -54,18 +54,18 @@ test('案件で絞ると、その案件の票だけになり、右に案件の�
 test('決める: 何のため → なぜ今 → 選択肢 → 返事が無いとき → 決めるための情報 → 話す相手。おすすめを選んだ状態で開き「おすすめで決める」、選び直すと「この案で決める」', () => {
   const ui = { ...newUi(), sel: '/ws/aoba#d21' }
   const t = text(html(model(), ui))
-  const order = ['何のため', 'なぜ今決めるか', '図はこのまま', '返事が無いとき', 'これは何か', '失うこと', '話す相手 AWS 構成案'].map((x) => t.indexOf(x))
+  const order = ['何のため', 'なぜ今決めるか', '図はこのまま', '返事が無いとき', 'これは何か', '失うこと', '担当 AWS 構成案'].map((x) => t.indexOf(x))
   assert.deepEqual([...order].sort((a, b) => a - b), order)
-  assert.match(html(model(), ui), /data-act="decide"[^>]*\s>おすすめで決める/)
+  assert.match(html(model(), ui), /data-act="decide"[^>]*\s>推奨案で決定/)
   assert.match(html(model(), ui), /role="radio" aria-checked="true" data-pick="keep"/)
   ui.picked['/ws/aoba#d21'] = 'draw'
-  assert.match(html(model(), ui), /data-act="decide"[^>]*>この案で決める/)
+  assert.match(html(model(), ui), /data-act="decide"[^>]*>この案で決定/)
   assert.match(html(model(), ui), /role="radio" aria-checked="true" data-pick="draw"/)
   // 戻せない操作を含む詰まり・許すは、選ぶまで押せない（決めるはおすすめが必須の欄なので、おすすめを選んだ状態で開く）。
-  assert.match(html(model(), { ...newUi(), sel: '/ws/konan#k9' }), /data-act="decide"[^>]*disabled>選択肢を選ぶ/)
+  assert.match(html(model(), { ...newUi(), sel: '/ws/konan#k9' }), /data-act="decide"[^>]*disabled>選択肢を選択/)
   // 別の答えを開いたら、文が空のうちはおすすめでも決められない。
   const other = { ...newUi(), sel: '/ws/aoba#d21', otherOpen: { '/ws/aoba#d21': true }, other: { '/ws/aoba#d21': '  ' } }
-  assert.match(html(model(), other), /data-act="decide"[^>]*disabled>別の答えで決める/)
+  assert.match(html(model(), other), /data-act="decide"[^>]*disabled>別の回答で決定/)
 })
 
 test('今日の見出しの日付は手元の時計で決める（日本時間の朝 9 時前でも前日にならない）', () => {
@@ -105,15 +105,15 @@ test('見て: 「直してほしいことを書く」で書く欄を開き、本
     return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
   }
   const open = { ...newUi(), sel: k, otherOpen: { [k]: true }, other: { [k]: ' ' } }
-  assert.deepEqual(acts(open), ['accept:これでよい', 'other:書くのをやめる', 'decide:この直しを頼む', 'talk:直してほしい（担当と話す）', 'url:開く'])
-  assert.match(html(model(), open), /data-act="decide"[^>]*disabled>この直しを頼む/)
+  assert.deepEqual(acts(open), ['accept:承認する', 'other:記入をやめる', 'decide:この修正を依頼', 'talk:担当と修正を協議', 'url:開く'])
+  assert.match(html(model(), open), /data-act="decide"[^>]*disabled>この修正を依頼/)
   assert.match(html(model(), open), /直してほしいこと（書いた文のまま担当か窓口に届きます）/)
   const vs = views()
   vs[0]!.log.ops.push({ op_id: 9, at: new Date(NOW).toISOString(), item_id: 'r5', item_rev: 1, type: 'talk', text: '凡例を上に寄せてほしい' })
   const m = model({}, vs)
   assert.ok(!m.boards[0]!.d.queue.some((r) => r.card.id === 'r5'), '件数から外れる')
   const h = html(m, { ...newUi(), sel: k })
-  assert.match(h, /<span>直し依頼済み（受領待ち）<\/span>/)
+  assert.match(h, /<span>修正依頼済み（受領待ち）<\/span>/)
   assert.match(text(h), /頼んだ直し 凡例を上に寄せてほしい/)
 })
 
@@ -149,16 +149,16 @@ test('種類ごとの返答: 送る前はコピーしてスレッドを開く・
     const h = html(model(), { ...newUi(), sel })
     return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
   }
-  assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送った', 'talk:担当と直す', 'skip:送らない'])
-  assert.deepEqual(acts('/ws/aoba#r5'), ['accept:これでよい', 'other:直してほしいことを書く', 'talk:直してほしい（担当と話す）', 'url:開く'])
-  assert.deepEqual(acts('/ws/konan#p7'), ['accept:許す', 'delegate:この案件の 本番 は任せる', 'skip:止める', 'talk:担当と話す'])
-  assert.deepEqual(acts('/ws/aoba#i3'), ['talk:担当と話す', 'skip:返事は要らない', 'url:元の連絡を開く'])
+  assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送信済みにする', 'talk:担当と修正', 'skip:送信しない'])
+  assert.deepEqual(acts('/ws/aoba#r5'), ['accept:承認する', 'other:修正点を記入', 'talk:担当と修正を協議', 'url:開く'])
+  assert.deepEqual(acts('/ws/konan#p7'), ['accept:許可する', 'delegate:この案件の 本番 は一任する', 'skip:却下', 'talk:担当と協議'])
+  assert.deepEqual(acts('/ws/aoba#i3'), ['talk:担当と協議', 'skip:返信不要', 'url:元の連絡を開く'])
   // 手作業を頼む許す（manual）は、どこで・打つコマンド・手順を先に出し、「済ませた」を主にする（2026-11-21 に switch を頼むカードで、コマンドが無く、打ったあと押すボタンも無かった）。
   const vs = views()
   const p7 = vs[1]!.cockpit!.cards.find((c) => c.id === 'p7')!
   p7.manual = { where: 'ターミナル', command: 'sudo darwin-rebuild switch --flake ~/.config/nix-darwin', steps: ['パスワードを入れる', '終わったら「済ませた」を押す'], check: '窓口が launchctl list で確かめる' }
   const h = html(model({}, vs), { ...newUi(), sel: '/ws/konan#p7' })
-  assert.deepEqual([...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`), ['copycmd:コピー', 'sent:済ませた', 'talk:担当と話す'])
+  assert.deepEqual([...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`), ['copycmd:コピー', 'sent:対応済みにする', 'talk:担当と協議'])
   const t = text(h.slice(h.indexOf('data-strip="/ws/konan#p7"')))
   const order = ['どこで ターミナル', '打つコマンド sudo darwin-rebuild switch --flake ~/.config/nix-darwin', '手順 パスワードを入れる', '済ませたあと 窓口が launchctl list で確かめる'].map((x) => t.indexOf(x))
   assert.ok(order.every((n) => n >= 0) && [...order].sort((a, b) => a - b).join() === order.join(), t)
@@ -183,7 +183,7 @@ test('右の列: 直し待ち・顧客待ち（催促の日を過ぎたら朱）
   assert.match(h, /class="r sp hot"><span class="pt">森さん<\/span><span class="pt">.* から<\/span><span class="pt">催促の日を過ぎた<\/span>/)
   assert.ok(!/class="r[^"]*">[^<]*・/.test(h), '補足を「・」で繋がない')
   assert.match(t, /片付いた 2/)
-  assert.match(t, /受け取り待ち これでよい/)
+  assert.match(t, /受け取り待ち 承認/)
 })
 
 test('何もしなくてよいのは見ていないものが無いときだけ。見ていない案件・読めていない経路があればそう出す', () => {
@@ -232,7 +232,7 @@ test('「元に戻す」は知らせと別に、操作ごとに積んで残り�
 test('担当に貼る書き出しは、カードの id・種類・題・何のため', () => {
   const b = boardsOf(views(), NOW)[0]!
   const r = b.d.queue.find((x) => x.card.id === 'd21')!
-  assert.equal(preface(r), '【操縦席 d21・決める】構成案の本番の図に、社内向けの入口を描き足すか\n何のため: 構成案の図が決まり、送る版を作れる\nこの件で: ')
+  assert.equal(preface(r), '【操縦席 d21・判断】構成案の本番の図に、社内向けの入口を描き足すか\n何のため: 構成案の図が決まり、送る版を作れる\nこの件で: ')
 })
 
 test('片付いた票を開いても片付ける操作は出さない。版 1 のままの案件は「見ていない」に理由つきで出す', () => {
