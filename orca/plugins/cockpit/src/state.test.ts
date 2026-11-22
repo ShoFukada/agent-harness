@@ -856,3 +856,16 @@ test('放置の検出の起点: 常駐のプロセスがタスクの中身の変
   assert.deepEqual(files.taskSeen, {})
   assert.equal((await recordTaskSeen(root, files, NOW + 120_000)).k1!.at, new Date(NOW + 120_000).toISOString())
 })
+
+test('idle の理由の無いタスク（追加 48・R193）: state が idle で waiting_on が空のタスクを checks.idle_unexplained に名指しする', () => {
+  const c: Cockpit = {
+    version: 2, workspace: { name: '社内｜x' }, streams: [{ id: 's1', title: '仕事' }], cards: [],
+    tasks: [
+      { id: 't1', stream: 's1', phase: '作成', title: 'a', state: 'idle' },
+      { id: 't2', stream: 's1', phase: '作成', title: 'b', state: 'idle', waiting_on: '空き枠' },
+      { id: 't3', stream: 's1', phase: '作成', title: 'c', state: 'idle', waiting_on: '  ' },
+      { id: 't4', stream: 's1', phase: '作成', title: 'd', state: 'wait' }
+    ]
+  }
+  assert.deepEqual(report(c, { ops: [] }, [], undefined, 'skipped', NOW).checks.idle_unexplained, ['t1', 't3'])
+})

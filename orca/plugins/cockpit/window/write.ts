@@ -4,7 +4,8 @@ import { parseCockpit, parseUserLog, RUN_ID, VERSION, type Cockpit, type UserLog
 import { workspaceNameCheck } from '../src/state.ts'
 import { lockCockpit, parseUtterances, readInOrca, writeAtomic } from '../src/store.ts'
 import { checkDrafts, type LintOpts } from '../src/lint.ts'
-import { applyChange, draftsToLint, migrateV3, type MigrateV3, type WriteResult } from '../src/write.ts'
+import { checkDefer, type DeferOpts } from '../src/defer.ts'
+import { applyChange, deferToCheck, draftsToLint, migrateV3, type MigrateV3, type WriteResult } from '../src/write.ts'
 import { orcaCli } from './server.ts'
 
 async function readLedger(root: string): Promise<{ raw: Cockpit; log: UserLog; utterances: ReturnType<typeof parseUtterances> }> {
@@ -20,17 +21,20 @@ async function readLedger(root: string): Promise<{ raw: Cockpit; log: UserLog; u
 
 const save = (root: string, c: Cockpit) => writeAtomic(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(c, null, 2) + '\n')
 
-/** 変更を検査して書く。check なら書かない。書いた中身が読み込みで新しい形の誤りを出すなら書かない。lintOpts は書式の検査の CLI の差し替え（試験用）。 */
-export async function write(root: string, change: unknown, check = false, lintOpts: LintOpts = {}): Promise<WriteResult> {
-  // 送る文面の書式の検査（dev-standards の draft-format-lint）はロックの外で済ませる。ロックは 10 秒で外れるので、中で CLI を待つと並んだ書き込みを古い中身で上書きしうる。
-  const lint = await checkDrafts(draftsToLint(change), lintOpts)
+/**
+ * 変更を検査して書く。check なら書かない。書いた中身が読み込みで新しい形の誤りを出すなら書かない。
+ * lintOpts・deferOpts は書式の検査・先送りの検査の CLI の差し替え（試験用）。
+ */
+export async function write(root: string, change: unknown, check = false, lintOpts: LintOpts = {}, deferOpts: DeferOpts = {}): Promise<WriteResult> {
+  // 送る文面の書式の検査（dev-standards の draft-format-lint）と先送りの検査（defer-guard.py）はロックの外で済ませる。ロックは 10 秒で外れるので、中で CLI を待つと並んだ書き込みを古い中身で上書きしうる。
+  const [lint, defer] = await Promise.all([checkDrafts(draftsToLint(change), lintOpts), checkDefer(deferToCheck(change), deferOpts)])
   // 検査だけ（--dry-run）はロックファイルも作らない（実データの .orca に何も書かずに通せるように）。
   const release = check ? async () => {} : await lockCockpit(root)
   try {
     const { raw, log, utterances } = await readLedger(root)
     const before: string[] = []
     parseCockpit(JSON.stringify(raw), before)
-    const r = applyChange(raw, change, utterances, log, lint)
+    const r = applyChange(raw, change, utterances, log, lint, defer)
     if (!r.next) return r
     const after: string[] = []
     parseCockpit(JSON.stringify(r.next), after)
@@ -81,9 +85,9 @@ export async function migrate(root: string, runOf: (dispatch: string) => Promise
 
 /**
  * 操縦席を初めて作る（cockpit skill の references/setup.md の「最初に作るとき」）。帳簿が既にあれば断る。
- * 版・案件の名前の形（R165）・窓口の Run（R191）・読み込みの形の誤りのどれかが通らなければ書かず、理由を返す。
+ * 版・案件の名前の形（R165）・窓口の Run（R191）・読み込みの形の誤り・タスクの検査（待ちの書き方 R193 など）のどれかが通らなければ書かず、理由を返す。
  */
-export async function init(root: string, ledger: unknown, check = false): Promise<string[]> {
+export async function init(root: string, ledger: unknown, check = false, deferOpts: DeferOpts = {}): Promise<string[]> {
   if (typeof ledger !== 'object' || ledger === null || Array.isArray(ledger)) return ['帳簿は JSON のオブジェクトで渡す']
   const c = ledger as Partial<Cockpit>
   const errors: string[] = []
@@ -97,6 +101,18 @@ export async function init(root: string, ledger: unknown, check = false): Promis
     } catch (e) {
       errors.push((e as Error).message)
     }
+  }
+  // 普通の書き込みは同じ id の行を後の行で置き換えるが、init は渡した中身をそのまま書くので、重なりを断る（重なった先の行が検査をすり抜けるため。Codex 48 の 2 巡目）。
+  for (const k of ['streams', 'tasks', 'cards', 'requests', 'owners'] as const) {
+    const ids = ((c[k] ?? []) as { id?: unknown }[]).map((x) => x?.id)
+    const dup = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))]
+    if (dup.length) errors.push(`${k} に同じ id の行が重なっている: ${dup.join('・')}`)
+  }
+  // タスクは全部が新しい行なので、普通の書き込みと同じ検査（待ちの書き方・言い回しなど）にかける。先送りの検査はロックの外で済ませる（Codex 48 必須 2）。
+  if (!errors.length) {
+    const tasks = { tasks: c.tasks }
+    const defer = await checkDefer(deferToCheck(tasks), deferOpts)
+    errors.push(...applyChange({ ...(c as Cockpit), tasks: [] }, tasks, [], { ops: [] }, {}, defer).errors)
   }
   if (errors.length) return errors
   const exists = [`${root}/.orca/cockpit.json が既にある。書き換えは cockpit-write <root> <変更> で渡す`]

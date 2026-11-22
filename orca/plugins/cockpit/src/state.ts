@@ -701,6 +701,8 @@ export type StateReport = {
     local_deliverables: string[]
     /** 手書きの state が止まっている・待っているのに、外の相手（waiting_on）も、私の番のカードも、顧客待ちのカードも指していないタスク。 */
     orphan_waits: string[]
+    /** state が idle で waiting_on が空のタスク（R193。idle は空き枠の順番待ちだけ）。書く道具を通らずに残った古い行を拾う。 */
+    idle_unexplained: string[]
     intake: string[]
     missing_workers: string[]
     /** 進行中のタスクが無く、push の許すも開いておらず、push も一任されていない（hook が git を見て、残りがあれば push の許すを出させる）。 */
@@ -945,6 +947,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       orphan_cards: open.filter((x) => x.kind !== 'inbox' && !x.stream && !x.owner && !x.tasks?.length).map((x) => x.id),
       local_deliverables: open.filter((x) => (x.kind === 'review' || x.kind === 'report') && [x.href, ...(x.links ?? []).map((l) => l.href)].some((h) => h && TMP.test(h))).map((x) => x.id),
       orphan_waits: tasks.filter((t) => t.why === 'record' && (t.state === 'stop' || t.state === 'wait') && !t.task.waiting_on?.trim() && !pointed.has(t.task.id)).map((t) => t.task.id),
+      idle_unexplained: tasks.filter((t) => t.task.state === 'idle' && !t.task.waiting_on?.trim()).map((t) => t.task.id),
       intake: intake.map((t) => t.task.id),
       missing_workers: tasks.filter((t) => t.why === 'missing').map((t) => t.task.id),
       push_check: !tasks.some((t) => t.state === 'run') && !pushOpen && !pushDelegated,

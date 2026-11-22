@@ -166,7 +166,7 @@
 | `intake` | 発言の仕分けの位置（`through` までの発言は依頼か `none` に結んである）。相談・質問の返しで決まった発言は、その返しを判断の記録（`from_return`）か依頼（`from_return`）に入れれば仕分け済みとみなす。仕分けていない発言は、30分を過ぎると窓の上に「窓口の未処理: 発言の仕分けn件（30分超過）」の1行で出る |
 | `applied_ops` | 窓口が反映し終えた操作の `op_id` |
 
-帳簿は Write・Edit で書かず、下の「書く道具」を通します。人の操作は `.orca/cockpit.user.json` に `{ "ops": [{ "op_id": 1, "at": "…", "item_id": "d1", "item_rev": 1, "type": "decide", "option_id": "a" }] }` の形で追記されます。窓と同じ判定済みの状態は `node window/state.ts <ワークスペースの root>` で JSON として読めます。hook と窓口はこの出力の `overview`・`mine`・`jobs`・`tasks`（`from` と今の Dispatch の `dispatch`）・`checks` を読みます。`checks` の版 3 の検査は `incomplete_cards`・`incomplete_requests`・`unsorted`・`stale_tasks`・`loose_tasks`・`unknown_phase`・`no_form`・`unmapped_elements`・`unproven`・`affected_tasks`・`unreflected_returns`（相談のメモにあって判断の記録の `from_return` か帳簿のカードの `from_returns` に無い返しと、カードの `held_returns` に残る返し。`compaction-keep.py unreflected` と同じ判定）・`stale_consults`（カードが片付いたのに Orca に残る相談のタブとチャット）です。`unreflected_returns` には窓からの質問の分も `ask` 付きで並びます（`{ id: return_id, ask, missing, memo, returns, tasks? }` と、返しの無い「これで決める」 `{ id: null, ask, op, missing: ['返し'], memo }`。`compaction-keep.py unreflected` の `unreflected_asks` と同じ判定）。
+帳簿は Write・Edit で書かず、下の「書く道具」を通します。人の操作は `.orca/cockpit.user.json` に `{ "ops": [{ "op_id": 1, "at": "…", "item_id": "d1", "item_rev": 1, "type": "decide", "option_id": "a" }] }` の形で追記されます。窓と同じ判定済みの状態は `node window/state.ts <ワークスペースの root>` で JSON として読めます。hook と窓口はこの出力の `overview`・`mine`・`jobs`・`tasks`（`from` と今の Dispatch の `dispatch`）・`checks` を読みます。`checks` の版 3 の検査は `incomplete_cards`・`incomplete_requests`・`unsorted`・`stale_tasks`・`loose_tasks`・`unknown_phase`・`no_form`・`unmapped_elements`・`unproven`・`affected_tasks`・`unreflected_returns`（相談のメモにあって判断の記録の `from_return` か帳簿のカードの `from_returns` に無い返しと、カードの `held_returns` に残る返し。`compaction-keep.py unreflected` と同じ判定）・`stale_consults`（カードが片付いたのに Orca に残る相談のタブとチャット）・`idle_unexplained`（state が idle で `waiting_on` が空のタスクの id。R193）です。`unreflected_returns` には窓からの質問の分も `ask` 付きで並びます（`{ id: return_id, ask, missing, memo, returns, tasks? }` と、返しの無い「これで決める」 `{ id: null, ask, op, missing: ['返し'], memo }`。`compaction-keep.py unreflected` の `unreflected_asks` と同じ判定）。
 
 ### 書く道具（cockpit-write）
 
@@ -179,7 +179,7 @@ bin/cockpit-write init <root> < cockpit.json      # 操縦席を初めて作る�
 
 - 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." }, "asks": [...], "workspace": { "name": "顧客｜案件" } }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換える（agent・terminal は今の値を保つ）。Run の無い帳簿は書けない（窓の合図は窓口の Run にだけ送る。R191）ので、消すことはできず、無い帳簿には Run を一緒に書く。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
 - 案件の名前（R165）: `workspace` は `name` だけを置き換える（milestones は今の値を保つ）。「顧客｜案件」の形（`src/state.ts` の `workspaceNameOk`）に合わない名前は、`checks.workspace_name` と同じ 1 文で断る。移した帳簿に形の外れた名前が残っていれば、ほかの書き込みは止めずに注意で名指しする。`intake` を初めて付ける書き込み（版 3 への移し替えに当たる）は、名前が外れていれば断る
-- init: 版・案件の名前の形・`main.run_id`・読み込みの形の誤りを確かめ、通ったものだけを `.orca/cockpit.json` に書く。migrate-v3 の `--write` と版 1 からの移し替え（`window/migrate.ts --write`）も、案件の名前が形から外れていれば書かずに断る
+- init: 版・案件の名前の形・`main.run_id`・読み込みの形の誤りと、タスクを普通の書き込みと同じ検査（待ちの書き方・言い回し・worker の形など）にかけ、通ったものだけを `.orca/cockpit.json` に書く。migrate-v3 の `--write` と版 1 からの移し替え（`window/migrate.ts --write`）も、案件の名前が形から外れていれば書かずに断る
 - `asks` は窓からの質問の返しを反映した印（`{ id: "ask3", card?, task?, memo?, from_returns: ["ask3-1"], held_returns: [], notify: [{ return_id, task?, message_id? }] }`）を質問 id ごとに足すか置き換える。返しの id はその質問のもの（`ask3-<数>`）だけを受ける
 - 検査: 欄の形・参照（仕事・タスク・担当・依頼の id）・`rev`（開いたカードの中身を変えたら 1 上げる。片付けるだけ・要素の行き先を書くだけなら据え置き）・依頼の欄・仕分けの位置・要素の行き先。通らなければ書かずに理由を返す
 - 語調: カードとタスクの人が読む欄（title・purpose・why・next・`last.text`・`look_for`・`options` の label と body・タスクの `done` など）に柔らかい言い回し（ておきました・ですね・ますね・ですよね・かも・しちゃ・ちゃいました・ちゃった）があれば、欄と語を名指しして断る（R84）。draft・quote・request・reason・`background.quote`・深田さんの `last`（by が 私）と、元の行にそのままある文は見ない
@@ -188,6 +188,11 @@ bin/cockpit-write init <root> < cockpit.json      # 操縦席を初めて作る�
   - `via`（優先）と `href`（補完）から推した宛先と `format` が食い違えば断る（`format` が `mail` で `via` が Slack など）。推せない経路（LINE・GitHub の Issue など）は `format` をそのまま使う
   - 本文を dev-standards の `draft-format-lint --json`（既定は `~/.claude/plugins/marketplaces/medurance-dev-standards/scripts/draft-format-lint`、`COCKPIT_DRAFT_LINT` で差し替え）で `format` の書式として検査し、違反があればカード・行番号・規則・該当の行・直し方を名指しして断る。決まりと規則は dev-standards（`rules/docs/message-formats.md`）だけが持つ
   - CLI が無い・起動できない・出力が読めないときは、その文面を含む変更を断る（fail closed）。検査は `window/write.ts` が行い、`applyChange` には結果を渡す
+- 待ちの書き方（R193）: 新しく書く・書き換えるタスクの行だけを見る。元の行と同じ値で、待ちの状態（idle・wait）も前から続くものは断らない（書く道具を通らずに残った idle は `checks.idle_unexplained` が名指しする）
+  - `state: "idle"` は空き枠が無いあいだの順番待ちだけ。`waiting_on` が空なら断る
+  - idle の `waiting_on` がタスクの id（`t12` など）を指すなら、その先が `run`・`stop` でなければ（済・idle・無い）断る。同じ変更で先を `run` にすれば通る
+  - `waiting_on` が日付・期間だけ（`12月`・`12/4`・`来週`・`月末まで` など）なら断る。待つ出来事を書き、日付で確かめるなら `check_on` と `next` に書く
+  - idle・wait のタスクの `waiting_on`・`next`・`status` を `~/.claude/hooks/defer-guard.py --text`（`COCKPIT_DEFER_GUARD` で差し替え）にかけ、都合での先送りの言い回しが当たれば断る。言い回しの判定は defer-guard.py だけが持つ。無い・起動できない・期限切れ・0 と 1 以外で終わったときは、その文を含む変更を断る（fail closed）
 - 必須の欄が欠けたカードは書くが、注意で名指しする（窓には出ない）
 - migrate-v3: 開いた `talk` を `consult` に、`created_at` を `at` に写し、worker に `run_id` を補う。今ある依頼に `legacy` を付け、タスクとカードが全部済で深田さんの返答が残るものだけ済にし、ほかは窓口が仕分ける一覧に出す。閉じたカードの `resolved_at` を補い（`resolved_at_inferred`）、深田さんの操作の無いまま閉じた見てに `closed_without_review` を付ける。元は `cockpit.v2.json` に控える
 - 台帳の取り込み: 取り込む依頼を `{ "requests": [...] }` の変更にして、`--dry-run` で通ることを確かめてから書く。既存の依頼と同じ件はその id で置き換え、`legacy` を外して `utterances` か `source`・`done_when` を足す

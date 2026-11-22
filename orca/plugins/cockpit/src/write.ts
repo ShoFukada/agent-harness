@@ -4,6 +4,7 @@ import {
   ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WATCH_SHAPE, WORKER_SHAPE,
   type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
+import type { DeferCheck, DeferItem } from './defer.ts'
 import { workspaceNameCheck } from './state.ts'
 
 /**
@@ -163,6 +164,60 @@ export function draftsToLint(change: unknown): { id: string; to: DraftFormat; te
   })
 }
 
+/** 待ちの状態。先送りの言い回しはこの状態のタスクの文だけを見る（R193）。 */
+const WAITING = new Set(['idle', 'wait'])
+/** 待ちの理由を書く欄。先送りの検査はこの欄を見る。 */
+const DEFER_FIELDS = ['waiting_on', 'next', 'status'] as const
+/**
+ * 日付・期間だけの waiting_on（何を待つかが無い）。日まで決まった日付も、出来事が無ければ同じく断る。
+ * 全角の数字と、数字と単位のあいだの空白（「１２月」「12 月」）を均してから当てる。
+ */
+const DATE_ONLY = /^(?:(?:\d{4}[-/年])?\d{1,2}(?:月(?:\d{1,2}日)?|[-/]\d{1,2}日?)|\d{4}[-/年]\d{1,2}月?|今週末|来週末|週末|来週|再来週|来月|再来月|月末|月初|週明け|年明け|年末)(?:上旬|中旬|下旬|ごろ|頃|以降|まで|中|の?うち)?$/
+const dateOnly = (s: string) => DATE_ONLY.test(s.normalize('NFKC').replace(/\s+/g, ''))
+/** waiting_on が指すタスクの id。 */
+const TASK_REF = /\bt\d+\b/g
+
+/**
+ * 先送りの検査（defer-guard.py）にかける文: 変更のうち、待ちの状態（idle・wait）のタスクの waiting_on・next・status。
+ * 元の行にそのままある文も含める（どれを断るかは applyChange が元の行と比べて決める）。
+ */
+export function deferToCheck(change: unknown): DeferItem[] {
+  const tasks = isObj(change) && Array.isArray(change.tasks) ? change.tasks : []
+  const last = new Map(tasks.filter((x: unknown) => isObj(x) && typeof x.id === 'string').map((x: Record<string, unknown>) => [x.id as string, x]))
+  return [...last.values()].filter((t) => WAITING.has(t.state as string)).flatMap((t) =>
+    DEFER_FIELDS.flatMap((f) => (typeof t[f] === 'string' && (t[f] as string).trim() ? [{ key: `${t.id as string}.${f}`, text: t[f] as string }] : [])))
+}
+
+/**
+ * 待ちの書き方の断り（R193）。元の行と同じ値で、待ちの状態も前から続くものは見ない（書く道具を通らずに残った古い行は state.ts の checks が拾う）。
+ * defer は defer-guard.py の結果（key は id.欄）。無いか error なら、検査できなかったとして断る（fail closed）。
+ */
+function waitErrors(t: Task, old: Task | undefined, tasks: Task[], defer: Record<string, DeferCheck>): string[] {
+  const out: string[] = []
+  const wasWaiting = !!old && WAITING.has(old.state)
+  const fresh = (f: (typeof DEFER_FIELDS)[number]) => !(wasWaiting && (old![f] ?? '') === (t[f] ?? ''))
+  const why = typeof t.waiting_on === 'string' ? t.waiting_on.trim() : ''
+  // idle に変えたときは、前の待ち（wait）の waiting_on をそのまま持ち越しても見る（Codex 48 必須 1）。
+  if (t.state === 'idle' && (old?.state !== 'idle' || fresh('waiting_on'))) {
+    if (!why) out.push(`タスク ${t.id}: idle は空き枠が無いあいだの順番待ちだけ。waiting_on に「空き枠」か、先に進める進行中のタスクと理由を書く。今やれるなら run にして出す（R193、schema.md の tasks[].state）`)
+    for (const id of new Set(why.match(TASK_REF) ?? [])) {
+      const ahead = tasks.find((x) => x.id === id)
+      if (!ahead || (ahead.state !== 'run' && ahead.state !== 'stop'))
+        out.push(`タスク ${t.id}: 順番待ちの先 ${id} が${ahead ? ` ${ahead.state} で` : '無く、'}動いていない。先のタスクが済んだ・止めたなら、このタスクを run にして出す（R193）`)
+    }
+  }
+  if (why && dateOnly(why) && (old?.waiting_on ?? '') !== (t.waiting_on ?? ''))
+    out.push(`タスク ${t.id}.waiting_on: 日付・期間だけ（「${why}」）では何を待つかが分からない。待つ出来事を書き、日付で確かめるなら check_on と next に書く（R193）`)
+  if (WAITING.has(t.state))
+    for (const f of DEFER_FIELDS) {
+      if (!(typeof t[f] === 'string' && t[f]!.trim()) || !fresh(f)) continue
+      const d = defer[`${t.id}.${f}`]
+      if (!d || d.error) out.push(`タスク ${t.id}.${f}: 都合での先送りかを確かめられない（${d?.error ?? '先送りの検査をしていない'}）`)
+      else if (d.hit) out.push(`タスク ${t.id}.${f}: 都合での先送り「${d.hit}」。外の理由（人の返事・承認、日付で初めて取れるデータ・出来事、利用枠）を書くか、今進める（R193）`)
+    }
+  return out
+}
+
 const QUOTE_MAX = 40
 const clip = (s: string) => (s.length > QUOTE_MAX ? `${s.slice(0, QUOTE_MAX)}…` : s)
 
@@ -209,9 +264,10 @@ function upsert<T extends { id: string }>(rows: T[], incoming: T[]): T[] {
 /**
  * 変更を検査して、書いたあとの帳簿を返す。形・参照・版・依頼の欄・仕分けの位置のどれかが通らなければ next を返さず、理由を errors に並べる。
  * 必須の欄が欠けた確認依頼は書く（窓には出ず、窓口が 30 分のうちに埋める）が、warnings で名指しする。
- * lint は draftsToLint の文面を書式の検査にかけた結果（カード id ごと）。検査は入出力の境界（window/write.ts）が行い、ここは結果だけを見る。
+ * lint は draftsToLint の文面を書式の検査にかけた結果（カード id ごと）、defer は deferToCheck の文を先送りの検査にかけた結果（id.欄ごと）。
+ * 検査は入出力の境界（window/write.ts）が行い、ここは結果だけを見る。
  */
-export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }, lint: Record<string, DraftCheck> = {}): WriteResult {
+export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }, lint: Record<string, DraftCheck> = {}, defer: Record<string, DeferCheck> = {}): WriteResult {
   const errors: string[] = []
   const warnings: string[] = []
   if (!isObj(change)) return { errors: ['変更は JSON のオブジェクトで渡す'], warnings }
@@ -289,6 +345,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (soft) errors.push(soft)
     const long = statusError(`タスク ${t.id}`, t.status)
     if (long) errors.push(long)
+    errors.push(...waitErrors(t, old, tasks, defer))
     const rec = t as unknown as Record<string, unknown>
     // null は、その行に元から null で書かれていた欄だけ書き戻してよい（読み込みは null の欄を無いものとして読む）。
     const was = old as unknown as Record<string, unknown> | undefined

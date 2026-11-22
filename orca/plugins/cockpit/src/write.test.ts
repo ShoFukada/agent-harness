@@ -7,14 +7,17 @@ import { test } from 'node:test'
 import { FAKE_LINT, FIXED_M1, OLD_M1, REAL_SENDS } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
 import { init, migrate, write } from '../window/write.ts'
-import { parseCockpit, STATUS_MAX, type Card, type Cockpit, type Request } from './model.ts'
+import type { DeferCheck } from './defer.ts'
+import { parseCockpit, STATUS_MAX, type Card, type Cockpit, type Request, type Task } from './model.ts'
 import { workspaceNameCheck } from './state.ts'
-import { applyChange, draftsToLint, migrateV3 } from './write.ts'
+import { applyChange, deferToCheck, draftsToLint, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
 /** 移し替え（migrate-v3 --write）は「顧客｜案件」の形の名前だけを通すので、見本の名前を形に合わせる。 */
 const aobaNamed = (): Cockpit => ({ ...aoba(), workspace: { ...aoba().workspace, name: '青葉物流｜配車アプリ' } })
+/** 初めて作る帳簿の見本。init は今の形（worker は run_id と task_id）を求めるので、版 2 の dispatch_id の worker を今の形にする。 */
+const freshLedger = (): Cockpit => ({ ...aobaNamed(), main: { agent: 'claude', terminal: '', run_id: 'run_m' }, tasks: aobaNamed().tasks.map((t) => (t.worker ? { ...t, worker: { run_id: 'run_w', task_id: t.worker.task_id } } : t)) })
 const card = (c: Cockpit, id: string) => structuredClone(c.cards.find((x) => x.id === id)!)
 const utter = [{ id: 'u1', at: '2026-11-21T09:00:00+09:00' }, { id: 'u2', at: '2026-11-21T09:10:00+09:00' }, { id: 'u3', at: '2026-11-21T09:20:00+09:00' }]
 
@@ -486,26 +489,31 @@ test('案件の名前（追加 43・R165）: cockpit-write で workspace.name �
 
 test('cockpit-write init（追加 43）: 初めて作る帳簿は、版・案件の名前の形・窓口の Run が揃ったものだけを書き、既にあれば上書きしない', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'cockpit-init-'))
-  const ledger = { ...aobaNamed(), main: { agent: 'claude', terminal: '', run_id: 'run_m' } }
+  const ledger = freshLedger()
   const file = path.join(root, '.orca', 'cockpit.json')
-  assert.deepEqual(await init(root, { ...ledger, workspace: { name: 'agent-harness' } }), [workspaceNameCheck('agent-harness', '渡す帳簿の workspace.name を直して init し直す（R165）')!.message])
-  assert.match((await init(root, { ...ledger, main: { agent: 'claude' } })).join(), /main\.run_id が無い/)
-  assert.match((await init(root, { ...ledger, version: 1 })).join(), /version は 2/)
-  assert.match((await init(root, [])).join(), /オブジェクト/)
+  // 見本の待ちのタスク（t2・t3）の文は、当たりの無い偽の先送りの検査にかける（本物の defer-guard.py に頼らない）。
+  const guard = path.join(mkdtempSync(path.join(tmpdir(), 'cockpit-guard-')), 'defer-guard')
+  writeFileSync(guard, '#!/bin/sh\ncase "$2" in *落ち着いてから*) echo 落ち着いてから; exit 1 ;; esac\nexit 0\n')
+  chmodSync(guard, 0o755)
+  const g = { bin: guard }
+  assert.deepEqual(await init(root, { ...ledger, workspace: { name: 'agent-harness' } }, false, g), [workspaceNameCheck('agent-harness', '渡す帳簿の workspace.name を直して init し直す（R165）')!.message])
+  assert.match((await init(root, { ...ledger, main: { agent: 'claude' } }, false, g)).join(), /main\.run_id が無い/)
+  assert.match((await init(root, { ...ledger, version: 1 }, false, g)).join(), /version は 2/)
+  assert.match((await init(root, [], false, g)).join(), /オブジェクト/)
   assert.ok(!existsSync(file), '断ったら何も書かない')
-  assert.deepEqual(await init(root, ledger, true), [])
+  assert.deepEqual(await init(root, ledger, true, g), [])
   assert.ok(!existsSync(path.join(root, '.orca')), '検査だけ（--dry-run）は .orca も作らない')
   // CLI でも --dry-run は作らない（Codex 43 必須 2）。
   const cli = path.join(import.meta.dirname, '../bin/cockpit-write')
   const out = await new Promise<string>((resolve, reject) => {
-    const child = execFile(cli, ['--dry-run', 'init', root], (err, stdout, stderr) => (err ? reject(new Error(stderr)) : resolve(stdout)))
+    const child = execFile(cli, ['--dry-run', 'init', root], { env: { ...process.env, COCKPIT_DEFER_GUARD: guard } }, (err, stdout, stderr) => (err ? reject(new Error(stderr)) : resolve(stdout)))
     child.stdin?.end(JSON.stringify(ledger))
   })
   assert.match(out, /検査を通った（作っていない）/)
   assert.ok(!existsSync(file))
-  assert.deepEqual(await init(root, ledger), [])
+  assert.deepEqual(await init(root, ledger, false, g), [])
   assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Cockpit).workspace.name, '青葉物流｜配車アプリ')
-  assert.match((await init(root, { ...ledger, workspace: { name: '社内｜別' } })).join(), /既にある/)
+  assert.match((await init(root, { ...ledger, workspace: { name: '社内｜別' } }, false, g)).join(), /既にある/)
   assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Cockpit).workspace.name, '青葉物流｜配車アプリ', '既にある帳簿は上書きしない')
 })
 
@@ -519,4 +527,96 @@ test('migrate-v3（追加 43）: 案件の名前が形から外れていれば�
   await assert.rejects(migrate(root, async () => 'run_x', true, NOW), /移し替えていない: 案件の名前「agent-harness」/)
   assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Cockpit).intake, undefined)
   assert.ok(!existsSync(path.join(root, '.orca', 'cockpit.v2.json')))
+})
+
+/** 先送りの検査の結果の見本。text に「落ち着いてから」があれば当たり（本物の判定は defer-guard.py。ここでは結果の扱いだけを見る）。 */
+const deferOf = (change: unknown): Record<string, DeferCheck> =>
+  Object.fromEntries(deferToCheck(change).map((x) => [x.key, x.text.includes('落ち着いてから') ? { hit: '落ち着いてから' } : {}]))
+const put = (c: Cockpit, rows: Partial<Task>[]) => {
+  const ch = { tasks: rows.map((r) => ({ stream: 's1', phase: '作成', title: 'x', ...r })) }
+  return applyChange(c, ch, [], { ops: [] }, {}, deferOf(ch)).errors
+}
+
+test('待ちの書き方（追加 48・R193）: idle は waiting_on が要り、指す先のタスクが run・stop のものだけ。日付だけの waiting_on と、待つタスクの文の先送りを断る', () => {
+  const c = { ...aobaNamed(), main: { run_id: 'run_m' } }
+  c.tasks = [...c.tasks, { id: 't80', stream: 's1', phase: '作成', title: '先', state: 'run' }, { id: 't81', stream: 's1', phase: '作成', title: '済', state: 'ok' }]
+  // 1. idle で waiting_on が空
+  assert.match(put(c, [{ id: 't90', state: 'idle' }]).join(), /タスク t90: idle は空き枠が無いあいだの順番待ちだけ/)
+  assert.deepEqual(put(c, [{ id: 't90', state: 'idle', waiting_on: '空き枠（worker の上限）' }]), [])
+  // 2. 指す先が run・stop でない（済・無い）なら断り、run なら通す
+  assert.deepEqual(put(c, [{ id: 't90', state: 'idle', waiting_on: 't80 が同じファイルを触るので、済んでから' }]), [])
+  assert.match(put(c, [{ id: 't90', state: 'idle', waiting_on: 't81 のあと' }]).join(), /順番待ちの先 t81 が ok で動いていない/)
+  assert.match(put(c, [{ id: 't90', state: 'idle', waiting_on: 't99 のあと' }]).join(), /順番待ちの先 t99 が無く、動いていない/)
+  // 同じ変更で先を run にすれば通る
+  assert.deepEqual(put(c, [{ id: 't81', state: 'run' }, { id: 't90', state: 'idle', waiting_on: 't81 のあと' }]), [])
+  // 4. 日付・期間だけ（全角・単位の前の空白も。Codex 48 必須 3）
+  for (const w of ['12月', '12 月', '１２月', '12/4', '2026-12-04', '2026-12', '12月4日以降', '12月中旬', '来週', '来週末', '月末まで', '年明け'])
+    assert.match(put(c, [{ id: 't90', state: 'wait', waiting_on: w }]).join(), /waiting_on: 日付・期間だけ/, w)
+  for (const w of ['12/4 の定例で森さんが決める', '12 月の定例で森さんが決める'])
+    assert.deepEqual(put(c, [{ id: 't90', state: 'wait', waiting_on: w, check_on: '2026-12-04' }]), [], w)
+  // 3. 待つタスクの waiting_on・next・status の先送り。run のタスクは見ない
+  assert.match(put(c, [{ id: 't90', state: 'wait', waiting_on: '森さんの回答', next: '落ち着いてから進める' }]).join(), /タスク t90\.next: 都合での先送り「落ち着いてから」/)
+  assert.deepEqual(put(c, [{ id: 't90', state: 'run', next: '落ち着いてから進める' }]), [])
+  // 検査の結果が無い・検査できないときは通さない（fail closed）
+  const ch = { tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '森さんの回答' }] }
+  assert.match(applyChange(c, ch).errors.join(), /t90\.waiting_on: 都合での先送りかを確かめられない（先送りの検査をしていない）/)
+  assert.match(applyChange(c, ch, [], { ops: [] }, {}, { 't90.waiting_on': { error: 'CLI が無い' } }).errors.join(), /確かめられない（CLI が無い）/)
+})
+
+test('待ちの書き方（追加 48）: 元の行にそのままある値は断らない。待ちに変えた行の古い文と、書き換えた文は断る', () => {
+  const c = { ...aobaNamed(), main: { run_id: 'run_m' } }
+  c.tasks = [...c.tasks,
+    { id: 't91', stream: 's1', phase: '作成', title: '古い idle', state: 'idle' },
+    { id: 't92', stream: 's1', phase: '作成', title: '古い待ち', state: 'wait', waiting_on: '来週', next: '落ち着いてから進める' },
+    { id: 't93', stream: 's1', phase: '作成', title: '動いている', state: 'run', next: '落ち着いてから進める' }]
+  const row = (id: string) => structuredClone(c.tasks.find((t) => t.id === id)!)
+  assert.deepEqual(put(c, [{ ...row('t91'), title: '題だけ直す' }]), [])
+  assert.deepEqual(put(c, [{ ...row('t92'), title: '題だけ直す' }]), [])
+  assert.match(put(c, [{ ...row('t92'), next: 'まだ落ち着いてから' }]).join(), /t92\.next: 都合での先送り/)
+  assert.match(put(c, [{ ...row('t93'), state: 'wait', waiting_on: '森さんの回答' }]).join(), /t93\.next: 都合での先送り/)
+  // wait から idle に変えたら、持ち越した waiting_on も idle の決まりで見る（Codex 48 必須 1）。
+  c.tasks.push({ id: 't94', stream: 's1', phase: '作成', title: '待ち', state: 'wait', waiting_on: '' }, { id: 't95', stream: 's1', phase: '作成', title: '待ち', state: 'wait', waiting_on: 't99' })
+  assert.match(put(c, [{ ...row('t94'), state: 'idle' }]).join(), /タスク t94: idle は空き枠が無いあいだの順番待ちだけ/)
+  assert.match(put(c, [{ ...row('t95'), state: 'idle' }]).join(), /順番待ちの先 t99 が無く/)
+})
+
+test('cockpit-write（追加 48）: 待つタスクの文を defer-guard.py（差し替えた偽のスクリプト）で検査し、当たり・起動できないときは書かない', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-defer-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify({ ...aobaNamed(), main: { run_id: 'run_m' } }))
+  const guard = path.join(root, 'defer-guard')
+  // 本物と同じ入口（--text の文。当たれば標準出力に当たりを出して 1）。
+  writeFileSync(guard, '#!/bin/sh\ncase "$2" in *落ち着いてから*) echo 落ち着いてから; exit 1 ;; *壊れた*) exit 3 ;; esac\nexit 0\n')
+  chmodSync(guard, 0o755)
+  const task = (next: string) => ({ tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '森さんの回答', next }] })
+  assert.match((await write(root, task('落ち着いてから進める'), false, {}, { bin: guard })).errors.join(), /t90\.next: 都合での先送り「落ち着いてから」/)
+  assert.match((await write(root, task('壊れた'), false, {}, { bin: guard })).errors.join(), /t90\.next: 都合での先送りかを確かめられない（先送りの検査（.*）が 3 で終わった/)
+  assert.match((await write(root, task('x'), false, {}, { bin: path.join(root, 'missing') })).errors.join(), /確かめられない（先送りの検査（.*）を起動できない/)
+  // 当たりの印（終わりのコード 1）なのに当たりの文が無いのは、検査できなかったとして扱う。
+  const mute = path.join(root, 'mute-guard')
+  writeFileSync(mute, '#!/bin/sh\nexit 1\n')
+  chmodSync(mute, 0o755)
+  assert.match((await write(root, task('x'), false, {}, { bin: mute })).errors.join(), /確かめられない（先送りの検査（.*）が 1 で終わった/)
+  assert.deepEqual((await write(root, task('回答を受けて一覧を直す'), false, {}, { bin: guard })).errors, [])
+  assert.equal((JSON.parse(readFileSync(path.join(root, '.orca', 'cockpit.json'), 'utf8')) as Cockpit).tasks.find((t) => t.id === 't90')!.next, '回答を受けて一覧を直す')
+  // 検査できなくても、待ちの文を変えない書き換え（題だけ）は止めない。
+  const now = (JSON.parse(readFileSync(path.join(root, '.orca', 'cockpit.json'), 'utf8')) as Cockpit).tasks.find((t) => t.id === 't90')!
+  assert.deepEqual((await write(root, { tasks: [{ ...now, title: '題だけ直す' }] }, false, {}, { bin: path.join(root, 'missing') })).errors, [])
+})
+
+test('cockpit-write init（追加 48）: 初めて作る帳簿のタスクも、普通の書き込みと同じく待ちの書き方を検査する', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-init-wait-'))
+  const guard = path.join(root, 'defer-guard')
+  writeFileSync(guard, '#!/bin/sh\ncase "$2" in *落ち着いてから*) echo 落ち着いてから; exit 1 ;; esac\nexit 0\n')
+  chmodSync(guard, 0o755)
+  const base = freshLedger()
+  const withTask = (t: Partial<Task>) => ({ ...base, tasks: [...base.tasks, { id: 't90', stream: 's1', phase: '作成', title: 'x', ...t }] })
+  assert.match((await init(root, withTask({ state: 'idle' }), true, { bin: guard })).join(), /タスク t90: idle は空き枠/)
+  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '森さんの回答', next: '落ち着いてから進める' }), true, { bin: guard })).join(), /t90\.next: 都合での先送り/)
+  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '森さんの回答' }), true, { bin: path.join(root, 'missing') })).join(), /確かめられない/)
+  assert.deepEqual(await init(root, withTask({ state: 'wait', waiting_on: '森さんの回答' }), true, { bin: guard }), [])
+  // 同じ id の行が重なると、先の行が後の行の検査結果で通ってしまうので、重なりごと断る（Codex 48 の 2 巡目）。
+  const twice = withTask({ state: 'wait', waiting_on: '森さんの回答', next: '落ち着いてから進める' })
+  twice.tasks.push({ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '森さんの回答', next: '承認を確かめる' })
+  assert.match((await init(root, twice, true, { bin: guard })).join(), /tasks に同じ id の行が重なっている: t90/)
 })
