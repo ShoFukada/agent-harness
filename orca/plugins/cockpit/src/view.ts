@@ -452,13 +452,27 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   return `<div class="acts">${btns.join('')}${hint}</div>`
 }
 
-export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => string, showWs: boolean): string {
+/**
+ * 要対応の行に出す ID（R67・追加 40）。深田さんが質問で「d21 が〜」と打てるように。帳簿のカードはカードの id、
+ * 一緒に作る仕事の行は仕事の id（tasks にはその仕事の済んでいないタスクが全部入り、先頭が今の話とは限らない）。
+ * ほかの Orca から作った行（止まった問いなど）は指すタスク。タスクの無い問いは出さない（仕事の id では問いを指せない）。
+ */
+export const rowId = (r: Pick<Row, 'card'>): string | undefined =>
+  r.card.id.startsWith(COWORK_ID) ? r.card.stream : r.card.id.startsWith('#') ? r.card.tasks?.[0] : r.card.id
+export const rowIdHtml = (r: Pick<Row, 'card'>) => {
+  const id = rowId(r)
+  // 「番号」を添えて、隣の時刻（期限切れ 10:12 など）と読み違えないようにする（初見の目）。詳細の下の「番号 d21」と同じ語。
+  return id ? `<span class="cid">番号<span class="cv">${esc(id)}</span></span>` : ''
+}
+
+export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => string, showWs: boolean, withId = false): string {
   const c = r.card
   const k = keyOf(r)
   const open = ui.sel === k
   const fig = r.v?.figures ?? {}
   const meta = [
     `<span class="kind">${r.status === 'mine' ? actionVerb(c, r.agent?.ask?.kind) : KIND_LABEL[c.kind]}</span>`,
+    withId ? rowIdHtml(r) : '',
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
     r.stream && !c.title.includes(r.stream.title) ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
     r.status === 'fixing' ? `<span>${r.pending ? '修正依頼済み（受領待ち）' : '修正待ち'}</span>` : r.talking ? '<span>協議中</span>' : ''
@@ -496,7 +510,7 @@ function queueHtml(rows: VRow[], m: Model, ui: Ui, now: number, svg: (raw: strin
     if (!list) continue
     const sub = b === 'today' ? fmtDate(localDay(now)) : b === 'over' || b === 'stuck' ? `${list.length} 件` : ''
     out.push(`<section class="lane ${b}" aria-label="${BUCKET_LABEL[b]}"><div class="when">${BUCKET_LABEL[b]}${sub ? `<small>${esc(sub)}</small>` : ''}</div>
-      <div class="strips">${list.map((r) => stripHtml(r, ui, now, svg, showWs)).join('')}</div></section>`)
+      <div class="strips">${list.map((r) => stripHtml(r, ui, now, svg, showWs, true)).join('')}</div></section>`)
   }
   return out.join('')
 }

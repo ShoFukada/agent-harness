@@ -4,7 +4,7 @@ import { sample } from '../fixtures/sample.ts'
 import { answerParts, parseCockpit, STAGES, stageOf, type DraftFormat } from './model.ts'
 import type { ClipResult, CockpitView } from './protocol.ts'
 import { copyDraft, copyMessage, copyTarget } from './controller.ts'
-import { boardsOf, dropRulings, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
+import { boardsOf, dropRulings, newUi, render, rowId, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
 import { CSS } from './style.ts'
 import { renderWindow, stagesHtml, taskOrder, todoOrder } from './window-view.ts'
 
@@ -665,4 +665,15 @@ test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ち�
   assert.match(rowOf(calm), /<span class="kd">確認<\/span>/)
   assert.match(text(rowOf(calm)), /共同作業中（担当は作業中）/)
   assert.doesNotMatch(rowOf(calm), /返事待ち/)
+})
+
+test('要対応の行の ID（追加 40）: 各行の右の列の下に、質問で打てる ID を補助の色で出す。Orca から作った行は指すタスク、無ければ仕事の id。対応済みの行には出さない', () => {
+  const h = page(aoba())
+  for (const id of ['d22', 'd21', 'c4', 'r5']) assert.match(h, new RegExp(`data-sel="/ws/aoba#${id}"[\\s\\S]*?<span class="du">[\\s\\S]*?<span class="cid">番号<span class="cv">${id}</span></span></span></button>`))
+  assert.equal(rowId({ card: { id: '#agent:term_x', tasks: ['t5'], stream: 's1' } as never }), 't5')
+  assert.equal(rowId({ card: { id: '#cowork:s2', stream: 's2', tasks: ['t1', 't2'] } as never }), 's2', '一緒に作る仕事の行は、先頭のタスクではなく仕事を指す')
+  assert.equal(rowId({ card: { id: '#ask:msg_q1', stream: 's2' } as never }), undefined)
+  const done = page(aoba(), { tab: 'done' })
+  assert.doesNotMatch(done.slice(done.indexOf('class="wpane"')), /class="cid"/)
+  assert.match(CSS, /\.ck \.cid \{[^}]*user-select:text/)
 })

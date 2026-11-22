@@ -113,6 +113,9 @@ body { margin:0; }
 /* 種類・案件・仕事は 1 行に固定し、長い仕事の名前は末尾を省く（題の書き出しの位置をそろえる）。 */
 .ck .strip .meta { display:flex; flex-wrap:nowrap; align-items:center; gap:2px 10px; font-size:var(--fs-xs); color:var(--ink3); min-width:0; white-space:nowrap; overflow:hidden; }
 .ck .strip .meta > * { flex-shrink:0; }
+/* 行の ID は質問で打つために写せるようにする（行はボタンなので、字だけ選べるように戻す）。 */
+.ck .cid { color:var(--ink3); font-weight:400; user-select:text; -webkit-user-select:text; cursor:text; }
+.ck .cid .cv { margin-left:.35em; }
 .ck .strip .meta > :last-child:not(.kind) { flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .ck .strip .kind { display:inline-flex; align-items:center; gap:5px; color:var(--kc); font-weight:700; }
 .ck .strip .ws { color:var(--ink2); font-weight:600; max-width:45%; overflow:hidden; text-overflow:ellipsis; }

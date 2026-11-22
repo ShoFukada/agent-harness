@@ -2,7 +2,7 @@
 import { actionVerb, COUNTED, COWORK_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, stripHtml, toastsHtml,
+  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, stripHtml, toastsHtml, rowIdHtml,
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 import type { RulingHit } from './protocol.ts'
@@ -91,12 +91,13 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
   const right = closed
     ? `${outcome(r.how) ? `<span class="how" title="${esc(r.how ?? '')}">${esc(outcome(r.how))}</span>` : ''}<span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
     : r.agent?.ask && c.since ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
+  // 番号はどの行でも右の列の 2 段目に置く（時刻の無い行で、時刻の位置に番号だけが来ないように。Neon・初見の目）。
   // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。
   const sub = r.agent?.ask?.from ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
-    <span class="du${closed ? ' cl' : ''}">${right}</span></button>`
+    <span class="du${closed ? ' cl' : ''}">${right}${closed || !rowIdHtml(r) ? '' : `${right ? '' : '<span aria-hidden="true">&nbsp;</span>'}${rowIdHtml(r)}`}</span></button>`
 }
 
 const FORM_ORDER = FORMS

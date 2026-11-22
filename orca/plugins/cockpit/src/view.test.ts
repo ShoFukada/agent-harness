@@ -293,3 +293,8 @@ test('要対応の行の先頭は深田さんがすることの語（R115）。�
   assert.match(h, /aria-label="確認: 配車画面の一覧（並べ替えと絞り込み）">\n      <span class="meta"><span class="kind">承認<\/span>/)
   assert.match(h, /<span class="kind">送る<\/span>/)
 })
+
+test('要対応の行の ID（追加 40）: パネルの帯の頭の行に、動詞の次に ID を出す', () => {
+  const h = html()
+  assert.match(h, /data-sel="\/ws\/aoba#d21"[\s\S]*?<span class="meta"><span class="kind">[^<]+<\/span><span class="cid">番号<span class="cv">d21<\/span><\/span>/)
+})
