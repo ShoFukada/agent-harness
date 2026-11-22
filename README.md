@@ -106,6 +106,24 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提とし�
    ```
    入れる前に `--dry-run`（`--assume-full` を足すと今の席を上限と見なす）で、どの席へ移り、どの端末に続きを頼むかを確かめる。stallwatch の `--job` に足すと、失敗した回が窓の帯に出る
 
+8. Orca本体の見張り（orca-watch）をlaunchdの `KeepAlive` で常駐させる。PATHにはorca CLIのある Orca.app のbinと、`ioreg` のある `/usr/sbin` を入れる。何をするかは下の「Orca本体が落ちたら起動し直す」にある
+   ```xml
+   <key>ProgramArguments</key>
+   <array>
+     <string>/usr/bin/python3</string>
+     <string>/Users/you/.config/agent-harness/bin/orca-watch</string>
+   </array>
+   <key>RunAtLoad</key><true/>
+   <key>KeepAlive</key><true/>
+   <key>EnvironmentVariables</key>
+   <dict>
+     <key>PATH</key><string>/Applications/Orca.app/Contents/Resources/bin:/usr/sbin:/usr/bin:/bin</string>
+   </dict>
+   <key>StandardOutPath</key><string>/Users/you/Library/Logs/orca-watch.log</string>
+   <key>StandardErrorPath</key><string>/Users/you/Library/Logs/orca-watch.log</string>
+   ```
+   stallwatchの `--service` に足しておくと、見張りが動いていないときに通知と窓の帯に出る
+
 窓口のエージェントには、`.orca/cockpit.json` にカードを書かせます。ファイルの形と最小の例は [操縦席の README の「ファイルの形」](orca/plugins/cockpit/README.md#ファイルの形バージョン-2) にあります。
 
 <details>
@@ -154,6 +172,18 @@ worker の結果を取り込んだら、窓口がその場で worktree を消し
 - dispatch の一覧かプラグインの一覧を読めなかった回は、何も消さない。応答に `workers`・`plugins` の配列が無い、開発用プラグインの読み込み元が空のときも読めなかった扱い
 - 結果は 1 行ずつ出し、最後の行に件数を出す。消せなかったものがあったか、dispatch かプラグインの一覧を読めなかったときは終了コード 1
 - 同じ結果を `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`）にも書く。`decide` が判断が要るもので、各項目の `parent` は親の worktree のパス、`main` は親を辿って最初に当たる窓口のワークスペースのパス（担当の下の worker も窓口に届く）。メインの hook は `main` で自分の下だけを拾える
+
+## Orca本体が落ちたら起動し直す
+
+2026-11-21・22の夜、macOSの自動アップデートの再起動がOrca本体を正常に終了させ、Chromeが終了を断って再起動が中止されたため、Orcaは朝まで止まっていた。Orcaのdaemonとclaudeは動き続けていたので、Orcaを起動し直せば作業は戻る。同じときlaunchdのユーザーの領域が on-demand-only になり、一定間隔のジョブ（stallwatch・account-failover）は起こされなかった。そこで、すでに動いている常駐のプロセス（orca-watch）が1分おきに `orca status` の `runtime.reachable` を見る。
+
+- 落ちたのに気づいたら、1回だけ起動し直してよい落ち方かを決める。Orcaが最後に動いていたのを見た時刻より後にキーボードかマウスが触られていれば（`ioreg` の `HIDIdleTime`）、人が自分で終了したと見なして起動し直さない。見張りが動き出してからOrcaを一度も見ていないときと、無操作の時間を読めないときも起動し直さない
+- この見分け方は入力の有無しか見ないので、両方向に外れる。人がいる間にOrcaが落ちて、そのあと別のアプリを触ると起動し直さない（人がいるので気づける）。人が触らずにOrcaを終える手段（別の端末からの終了など）では起動し直す。確実に止めておきたいときは `~/Library/Application Support/stallwatch/orca-watch.pause`（`STALLWATCH_HOME`）を置く。起動し直す直前にも見る
+- 人のいないあいだに落ちていれば、気づいてから5分待って `open -a Orca` を打つ（macOSの再起動の手順は2026-11-22で47秒だった。Orcaの自己更新にかかる時間は測っていない。5分を超える手順の途中には打ちうる）。戻らなければ5分おきに試し、1時間に3回で止めて通知する。止めたあとは、最後に起動し直してから1時間たって、Orcaが動いているのを見るまで起動し直さない
+- `orca status` が失敗し続けるだけでOrca本体は動いているときも、止まっていると数える。`open -a Orca` は動いているOrcaを前に出すだけなので、3回で止まって通知する
+- 起動し直す前に回数を記録に書く。書けなければ起動しない（回数を残さないまま起動し続けないため）
+- `open -a Orca` を打ったこと・失敗したこと・止めたことは `~/Library/Logs/orca-watch.log` に書き、`STALLWATCH_HOME/orca-watch.json` に書いたものをstallwatchが窓の帯に合流させる。「見張りが起動し直した」は、Orcaが戻ったのを見てから12時間出す。stallwatchが起こされない間は帯に出ず、ログにだけ残る
+- 見張り自身の例外ではプロセスを終えない（on-demand-only の間はlaunchdが起こし直さないため）。同じ例外はログに1回だけ書く
 
 ## 利用枠の上限で席を切り替える
 
@@ -206,7 +236,7 @@ worker の設定で起こし直す（`--after-switch` と自動の切り替え�
 - 切り替えたあと 10 分は次の切り替えをしない（Orca が新しい席の使用量を読むのを待つ）。6 時間に 6 回を超えたら往復していると見なして止め、知らせる。使用量の分からない席へ移って 15 分たっても Orca が読めなければ、「上限に当たっても自動では切り替えられない」と帯に出す
 - Orca の設定「ターミナルで Claude を実行中にアカウントを切り替える場合」を「維持」にしていると、端末は起動し直らない。Orca が窓を開かずに動いているときも起動し直らない
 - 確認の画面は、Orca が見分けるもの（`blockedReason`。フォルダの信頼など）のほかに、Orca が見分けない auto mode の確認があるので、入力待ちにならなければ画面の下 25 行を読んで見分ける（`bin/stallwatch` の `STARTUP_SCREENS`。orca-launch も同じものを使う）
-- 窓の帯へは、account-failover が `STALLWATCH_HOME/failover.json` に書き、stallwatch が `alerts.json` に合流させる（帯の書き手を stallwatch 1 つに保つ）。通知は account-failover が書いた時点で出すので、stallwatch は重ねて出さない
+- 窓の帯へは、account-failover が `STALLWATCH_HOME/failover.json` に書き、stallwatchが `alerts.json` に合流させる（帯の書き手をstallwatch 1つに保つ。orca-watch の `orca-watch.json` も同じ）。通知は account-failover が書いた時点で出すので、stallwatchは重ねて出さない
 
 ### 上限で止まった担当のチャットを出し直す（R114）
 
@@ -236,6 +266,7 @@ Dispatch の開いている担当のチャットは、Orca が新しい席へ移
 | `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認画面の検出と名指し（どの席で何の画面か）・Task の受け渡し・サイドバーの表示名と状態）とそのテスト |
 | `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録先は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものの書き出し先は窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
 | `bin/account-failover`・`bin/account_failover_test.py` | 利用枠の上限での席の切り替えとそのテスト。記録先は stallwatch と同じ `STALLWATCH_HOME`（`failover-state.json`・`failover.json`・`failover-history.jsonl`） |
+| `bin/orca-watch`・`bin/orca_watch_test.py` | Orca本体が人のいないあいだに落ちたときの起動し直しとそのテスト。記録先はstallwatchと同じ `STALLWATCH_HOME`（`orca-watch-state.json`・`orca-watch.json`・`orca-watch.pause`） |
 | `bin/worktree-sweep`・`bin/worktree_sweep_test.py` | 使い終わった worktree の見回りとそのテスト。結果の書き出し先は `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`） |
 
 ## テスト
@@ -246,6 +277,7 @@ python3 bin/orca_launch_test.py
 python3 bin/stallwatch_test.py
 python3 bin/worktree_sweep_test.py
 python3 bin/account_failover_test.py
+python3 bin/orca_watch_test.py
 ```
 
 ## ライセンス

@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Orca 本体が人のいないあいだに落ちていたら、起動し直す。
+
+launchd が KeepAlive で常駐させ、1 分おきに `orca status` を見る。stallwatch のような一定間隔のジョブにしないのは、
+macOS の自動アップデートの再起動が中止されると、launchd のユーザーの領域が on-demand-only になって一定間隔のジョブを起こさなくなり、
+すでに動いているプロセスだけが残るため（2026-11-21・22 の夜。Orca の daemon と窓のサーバーは動き続けた）。モデルは呼ばない。
+
+人が自分で Orca を終了したときは起動し直さない。落ちたのに気づいたとき、Orca が最後に動いていたのを見た時刻より後に
+キーボードかマウスが触られていれば、人の手の終了と見なす（終了には Cmd+Q かメニューの操作が要る）。
+確実に止めておきたいときは、STALLWATCH_HOME/orca-watch.pause を置く。
+知らせは、続けて落ちて上限で止めたときの通知と、stallwatch が窓の帯に合流させる orca-watch.json と、標準出力（launchd が ~/Library/Logs/orca-watch.log に書く）。
+"""
+
+import argparse
+import importlib.util
+import os
+import re
+import subprocess
+import time
+import traceback
+from importlib.machinery import SourceFileLoader
+
+_here = os.path.dirname(os.path.realpath(__file__))
+_loader = SourceFileLoader("stallwatch", os.path.join(_here, "stallwatch"))
+sw = importlib.util.module_from_spec(importlib.util.spec_from_loader("stallwatch", _loader))
+_loader.exec_module(sw)
+
+STATE = os.path.join(sw.HOME, "orca-watch-state.json")
+STATUS = os.path.join(sw.HOME, "orca-watch.json")
+PAUSE = os.path.join(sw.HOME, "orca-watch.pause")
+MIN = 60_000
+# 落ちたのに気づいてから起動し直すまで待つ。macOS の再起動の手順（2026-11-22 は Orca の終了から中止まで 47 秒）と、Orca の自己更新の途中に割り込まないため。
+GRACE_MS = 5 * MIN
+RETRY_GAP_MS = 5 * MIN
+TRIES = 3
+TRIES_WINDOW_MS = 60 * MIN
+# 起動し直したことを帯に出しておく時間。夜に起きたことを朝に読めるように。
+SHOWN_MS = 12 * 60 * MIN
+HID_IDLE = re.compile(r'"HIDIdleTime" = (\d+)')
+
+
+def now_ms():
+    return int(os.environ.get("ORCA_WATCH_NOW") or time.time() * 1000)
+
+
+def say(text):
+    print("%s %s" % (time.strftime("%Y-%m-%dT%H:%M:%S%z"), text), flush=True)
+
+
+def hm(ms):
+    return time.strftime("%H:%M", time.localtime(ms / 1000))
+
+
+def orca_status():
+    """(動いているか, 動いていないときの様子)。"""
+    res, err, _rt = sw.orca("status", timeout=20)
+    if res is None:
+        return False, "orca status が失敗: %s" % err
+    rt = res.get("runtime") or {}
+    if rt.get("reachable") is True:
+        return True, None
+    return False, "runtime.state = %s、app.running = %s" % (rt.get("state"), (res.get("app") or {}).get("running"))
+
+
+def idle_ms():
+    """キーボードとマウスが最後に触られてからの時間。読めなければ None。"""
+    try:
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = HID_IDLE.search(out)
+    return int(m.group(1)) // 1_000_000 if m else None
+
+
+def launch():
+    """(打てたか, 失敗の理由)。打てても Orca が戻ったとは限らないので、戻ったかは次の回の orca status で見る。"""
+    cmd = os.environ.get("ORCA_WATCH_OPEN")
+    try:
+        r = subprocess.run([cmd] if cmd else ["open", "-a", "Orca"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    return r.returncode == 0, " ".join((r.stderr or "").split())[:200] or "終了コード %d" % r.returncode
+
+
+def judge(state):
+    """落ちたのに気づいたときに 1 回だけ、起動し直してよい落ち方かを決める。"""
+    if os.path.exists(PAUSE):
+        return "paused", "一時停止のファイル（%s）があるので起動し直さない" % PAUSE
+    last = state.get("last_up")
+    if not last:
+        return "unknown", "見張りが動き出してから Orca が動いているのを見ていないので起動し直さない"
+    idle = idle_ms()
+    if idle is None:
+        return "unknown", "キーボードとマウスの無操作の時間を読めないので起動し直さない"
+    # orca status を待つ間（最大 20 秒）も無操作の時間は伸びるので、読んだ時刻から最後に触られた時刻を出す。
+    if now_ms() - idle > last:
+        return "hand", "Orca が最後に動いていた %s より後に人が触っている（自分で終了したと見なす）ので起動し直さない" % hm(last)
+    return "away", "%s より前から人が触っていないので、%d 分たっても戻らなければ起動し直す" % (hm(last), GRACE_MS // MIN)
+
+
+def step(state, now):
+    """1 回分。state を進め、保存したあとにすること（"launch" か、通知の文）を返す。帯に出す知らせは state["alerts"]（id → 中身）。"""
+    alerts = {k: v for k, v in state.get("alerts", {}).items() if not v.get("until") or now < v["until"]}
+    state["alerts"] = alerts
+    tries = [t for t in state.get("tries", []) if now - t < TRIES_WINDOW_MS]
+    state["tries"] = tries
+    up, why = orca_status()
+    if up:
+        if state.get("down_since"):
+            text = "Orca が %s から止まっていた" % hm(state["down_since"])
+            if state.get("launched_at"):
+                text += "ので、%s に見張りが起動し直した（%s に戻ったのを確かめた）" % (hm(state["launched_at"]), hm(now))
+                alerts["orca-watch:relaunched"] = {"text": text, "until": now + SHOWN_MS}
+            say(text + "。今は動いている")
+        state.update(last_up=now, down_since=None, verdict=None, launched_at=None)
+        if state.get("gave_up") and not tries:
+            state["gave_up"] = False
+            alerts.pop("orca-watch:gave-up", None)
+        return None
+    state["last_why"] = why
+    if not state.get("down_since"):
+        state["down_since"] = now
+        state["verdict"], plan = judge(state)
+        say("Orca が止まっている（%s）。%s" % (why, plan))
+    if state["verdict"] != "away" or state.get("gave_up") or now - state["down_since"] < GRACE_MS:
+        return None
+    # 猶予の間に置かれた一時停止も守る。
+    if os.path.exists(PAUSE):
+        return None
+    if len(tries) >= TRIES:
+        state["gave_up"] = True
+        text = "Orca に繋がらない状態が続くので、起動し直すのを止めた（%d 分に %d 回起動し直した。最後の様子: %s）。手で起動して、~/Library/Logs/orca-watch.log と Orca のログを見る" % (
+            TRIES_WINDOW_MS // MIN, TRIES, why)
+        alerts["orca-watch:gave-up"] = {"text": text}
+        state["launched_at"] = None
+        say(text)
+        return text
+    if tries and now - tries[-1] < RETRY_GAP_MS:
+        return None
+    tries.append(now)
+    return "launch"
+
+
+def persist(state):
+    """状態を書く。書けなければ例外（起動も通知もしない）。帯のファイルは書けなくても止めず、毎回書き直す。"""
+    sw.save(STATE, state)
+    try:
+        sw.save(STATUS, {"alerts": [dict(v, id=k) for k, v in state["alerts"].items()]})
+    except OSError as e:
+        say("%s を書けない: %s" % (STATUS, e))
+
+
+def run_once():
+    now = now_ms()
+    state = sw.load(STATE, {})
+    try:
+        todo = step(state, now)
+    except (TypeError, KeyError, AttributeError, ValueError):
+        # 状態のファイルの中身が壊れている。空から始め直す（Orca が動いているのを見るまでは起動し直さない）。空でも例外なら見張りの誤り。
+        say("%s の中身で見られないので、空から始め直す:\n%s" % (STATE, traceback.format_exc()))
+        state = {}
+        todo = step(state, now)
+    # 起動と通知の前に書く。書けなければ例外で起動しない（回数の記録が残らないまま起動し続けないため）。
+    persist(state)
+    if todo == "launch":
+        ok, err = launch()
+        say("open -a Orca を打った。次の回で戻ったかを確かめる" if ok else "open -a Orca が失敗した: %s" % err)
+        if ok:
+            state["launched_at"] = now
+            persist(state)
+        else:
+            state["launched_at"] = None
+            state["alerts"]["orca-watch:open-failed"] = {
+                "text": "Orca が %s から止まっていて、%s に起動し直そうとしたが open が失敗した（%s）" % (hm(state["down_since"]), hm(now), err),
+                "until": now + SHOWN_MS}
+            persist(state)
+    elif todo:
+        sw.notify([todo], title="Orca の見張り")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="orca-watch", description=__doc__.split("\n")[0])
+    ap.add_argument("--once", action="store_true", help="1 回だけ見て終わる")
+    ap.add_argument("--interval", type=int, default=60, help="見る間隔（秒）")
+    a = ap.parse_args()
+    last_error = None
+    while True:
+        try:
+            run_once()
+            last_error = None
+        except Exception:  # on-demand-only の間は launchd が起こし直さないので、常駐を落とさない
+            text = traceback.format_exc()
+            if a.once:
+                raise
+            if text != last_error:
+                say(text)
+            last_error = text
+        if a.once:
+            return
+        time.sleep(a.interval)
+
+
+if __name__ == "__main__":
+    main()

@@ -453,11 +453,12 @@ def check_jobs(jobs, services):
     return out
 
 
-def check_failover(now):
-    """account-failover が書いた知らせ（全席が上限・切り替えた・移せなかった端末）。alerts.json の書き手をここ 1 つに保つため、帯へはここで合流させる。"""
-    # account-failover は書いた時点で自分で通知しているので、ここでは帯にだけ出す（quiet）。
-    return [dict(alert(a["id"], a["text"]), quiet=True) for a in load(os.path.join(HOME, "failover.json"), {}).get("alerts", [])
-            if not a.get("until") or now < a["until"]]
+def check_side(now):
+    """account-failover（全席が上限・切り替えた・移せなかった端末）と orca-watch（Orca を起動し直した・止めた）が書いた知らせ。
+    alerts.json の書き手をここ 1 つに保つため、帯へはここで合流させる。"""
+    # どちらも知らせるべきものは書いた時点で自分で通知しているので、ここでは帯にだけ出す（quiet）。
+    return [dict(alert(a["id"], a["text"]), quiet=True) for name in ("failover.json", "orca-watch.json")
+            for a in load(os.path.join(HOME, name), {}).get("alerts", []) if not a.get("until") or now < a["until"]]
 
 
 def notify(texts, title=None):
@@ -466,8 +467,8 @@ def notify(texts, title=None):
     body = " / ".join(texts)[:600]
     script = "display notification %s with title %s" % (json.dumps(body, ensure_ascii=False), json.dumps(title, ensure_ascii=False))
     try:
-        r = subprocess.run([cmd, title, body] if cmd else ["osascript", "-e", script], capture_output=True)
-    except OSError:
+        r = subprocess.run([cmd, title, body] if cmd else ["osascript", "-e", script], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return r.returncode == 0
 
@@ -477,7 +478,7 @@ def run(a):
     state_path = os.path.join(HOME, "state.json")
     state = load(state_path, {})
     found = (check_mains(now, state) + check_window(a.window, a.window_log, state, now) + check_jobs(a.job, a.service)
-             + check_failover(now))
+             + check_side(now))
     seen = state.get("seen", {})
     notified = state.get("notified", {})
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
