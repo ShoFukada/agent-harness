@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -300,8 +301,20 @@ class AccountFailoverTest(unittest.TestCase):
         env.pop("ORCA_WORKER_SETTINGS", None)
         return env
 
+    def run_cmd(self, *args, timeout=60):
+        """試験の環境で args を動かす。偽の orca が返らないと account-failover は呼び出しごとに 30 秒まで待つので、
+        上限を超えたら孫の偽の orca ごと止め、最後に呼んだ orca を出して落とす（全件が止まって見えないように）。"""
+        p = subprocess.Popen(args, env=self.env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            out, err = p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.communicate()
+            self.fail("%d 秒で終わらなかった: %s。最後に呼んだ orca: %s" % (timeout, " ".join(args[1:]), self.calls()[-3:]))
+        return subprocess.CompletedProcess(args, p.returncode, out, err)
+
     def run_failover(self, *args):
-        r = subprocess.run([sys.executable, SCRIPT] + SEATS + list(args), env=self.env(), capture_output=True, text=True)
+        r = self.run_cmd(sys.executable, SCRIPT, *SEATS, *args)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout
 
@@ -482,7 +495,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertIn("起動し直したが止まっている端末（端末で答える）: 題 t3（t3） auto mode を既定にするかの確認", self.notes()[0])
 
     def run_after(self, *args):
-        return subprocess.run([sys.executable, SCRIPT, "--after-switch"] + list(args), env=self.env(), capture_output=True, text=True)
+        return self.run_cmd(sys.executable, SCRIPT, "--after-switch", *args)
 
     def test_after_switch_rebinds_lost_workers_to_the_terminals_orca_restarted(self):
         # t1: 同じ枠に起こし直した。t2: 別の端末（n2）で起こし直したらしい（切り替える前からいた別の Claude と見分けられない）。
@@ -1422,7 +1435,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertIn(time.strftime("%H:%M", time.localtime(soon / 1000)), self.notes()[0])
         self.assertEqual(len(self.status()), 1)
         # stallwatch は帯にだけ合流させ、通知を重ねない。
-        r = subprocess.run([sys.executable, STALLWATCH, "--window", "http://127.0.0.1:9"], env=self.env(), capture_output=True, text=True)
+        r = self.run_cmd(sys.executable, STALLWATCH, "--window", "http://127.0.0.1:9")
         with open(os.path.join(self.tmp, "cockpit", "alerts.json")) as fh:
             ids = [x["id"] for x in json.load(fh)["alerts"]]
         self.assertTrue(any(i.startswith("failover:all-full") for i in ids), (ids, r.stderr))
@@ -1466,7 +1479,7 @@ class AccountFailoverTest(unittest.TestCase):
     def test_a_refused_switch_is_not_counted_and_is_retried(self):
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
         open(os.path.join(self.fake, "select-fails"), "w").close()
-        r = subprocess.run([sys.executable, SCRIPT] + SEATS, env=self.env(), capture_output=True, text=True)
+        r = self.run_cmd(sys.executable, SCRIPT, *SEATS)
         self.assertNotEqual(r.returncode, 0)
         os.remove(os.path.join(self.fake, "select-fails"))
         # 断られた回を切り替えと数えていれば、10 分は待って試し直さない。
@@ -1477,7 +1490,7 @@ class AccountFailoverTest(unittest.TestCase):
     def test_stops_before_switching_when_orca_changes_the_agent_list(self):
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
         open(os.path.join(self.fake, "agents-renamed"), "w").close()
-        r = subprocess.run([sys.executable, SCRIPT] + SEATS, env=self.env(), capture_output=True, text=True)
+        r = self.run_cmd(sys.executable, SCRIPT, *SEATS)
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.selects(), [])
         self.assertIn("形が変わった", self.notes()[0])
@@ -1501,14 +1514,14 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.home))
 
     def test_assume_full_needs_dry_run(self):
-        r = subprocess.run([sys.executable, SCRIPT] + SEATS + ["--assume-full"], env=self.env(), capture_output=True, text=True)
+        r = self.run_cmd(sys.executable, SCRIPT, *SEATS, "--assume-full")
         self.assertNotEqual(r.returncode, 0)
 
     def test_unknown_seat_name_fails_loudly_once(self):
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
         args = [sys.executable, SCRIPT, "--seat", "nobody@example.com"]
         for _ in range(2):
-            r = subprocess.run(args, env=self.env(), capture_output=True, text=True)
+            r = self.run_cmd(*args)
             self.assertNotEqual(r.returncode, 0)
         self.assertEqual(len(self.notes()), 1)
         self.assertIn("Orca に無い席", self.notes()[0])

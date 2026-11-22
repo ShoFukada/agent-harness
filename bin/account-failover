@@ -207,7 +207,7 @@ def wait_restarted(before, timeout_s):
                  if pane(t) in by_pane and by_pane[pane(t)].get("ptyId") != t["ptyId"]}
         if len(moved) == len(before) or time.time() >= deadline:
             break
-        time.sleep(5)
+        time.sleep(min(5, max(0, deadline - time.time())))
     return moved, [t for t in before if t["handle"] not in moved], now or []
 
 
@@ -590,7 +590,7 @@ def relaunch(x, home, trusted=False):
                 break
             if time.time() >= deadline:
                 return "/exit のあと %d 秒で claude が終わらなかった" % EXIT_WAIT_S
-            time.sleep(2)
+            time.sleep(min(2, max(0, deadline - time.time())))
         x["exited"] = True
     if not x.get("launched"):
         if sw.orca("terminal", "send", "--terminal", h, "--text", relaunch_command(x, home), "--enter")[0] is None:
