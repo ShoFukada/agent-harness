@@ -29,7 +29,7 @@ function workspace(name: string, files: Record<string, string> = {}): string {
 const cockpit = (name: string, over: Record<string, unknown> = {}) => {
   const c = structuredClone(sample()[0]!.cockpit) as unknown as Record<string, unknown>
   ;(c.workspace as { name: string }).name = name
-  c.main = { agent: 'claude', terminal: 'term_main' }
+  c.main = { agent: 'claude', terminal: 'term_main', run_id: 'run_main' }
   return JSON.stringify({ ...c, ...over })
 }
 const agent = (paneKey: string, over: Partial<PsAgent> = {}): PsAgent => ({ paneKey, state: 'working', stateStartedAt: 1, hasLivePty: true, ...over })
@@ -851,17 +851,18 @@ test('パネルと窓（別のプロセス）が同時に追記しても、両�
   assert.deepEqual(log.ops.map((o: { item_id: string }) => o.item_id).sort(), ['d21', 'd22', 'i3', 'r5'])
 })
 
-test('取り消しの猶予が過ぎた操作は、メインが入力待ちなら自動で合図を送り、送った記録はパネルと共有する', async () => {
+test('取り消しの猶予が過ぎた操作は、窓口が端末で動いていても端末に打たず、郵便受けから main.run_id に知らせる（R191）', async () => {
   const old = new Date(Date.now() - 60_000).toISOString()
   const a = workspace('a', {
     '.orca/cockpit.json': cockpit('案件A'),
     '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 2, at: old, item_id: 'r5', item_rev: 1, type: 'accept' }] })
   })
-  const rows: PsRow[] = [{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main', { state: 'done' })] }]
+  // 窓口は作業中でも待たない（Orca が手の空いたときに届ける）。
+  const rows: PsRow[] = [{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main', { state: 'working' })] }]
   const { s, port, calls, dir } = await start(rows, a)
   const v = await listen(port, s.token).until((w) => board(w, a)?.notifiedOp === 2)
   assert.equal(board(v, a)!.signal, undefined)
-  assert.deepEqual(calls, [['send', 'term_main', SIGNAL]])
+  assert.deepEqual(calls.filter((c) => c[0] !== 'mailbox').map((c) => c.slice(0, 4)), [['run', 'term_box1', 'run_main', SIGNAL]])
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'notified.json'), 'utf8')), { [a]: 2 })
 })
 
@@ -884,6 +885,18 @@ test('自動の合図と押した送り直しが重なっても、同じ操作�
   release()
   assert.deepEqual((await manual).body, { sent: true })
   assert.deepEqual(sent, ['run_m'])
+})
+
+test('窓口の Run の無い帳簿で猶予の過ぎた操作があれば、送らずに窓の上の帯に理由を出す（黙って届かないままにしない。Codex 追加 47）', async () => {
+  const old = new Date(Date.now() - 60_000).toISOString()
+  const a = workspace('a', {
+    '.orca/cockpit.json': cockpit('案件A', { main: { agent: 'claude', terminal: 'term_main' } }),
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 7, at: old, item_id: 'r5', item_rev: 1, type: 'accept' }] })
+  })
+  const { s, port, calls } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
+  const v = await listen(port, s.token).until((w) => board(w, a)?.signal?.state === 'failed')
+  assert.equal(board(v, a)!.signal!.reason, 'cockpit.json の main に run_id がありません')
+  assert.deepEqual(calls.filter((c) => ['run', 'send', 'mailbox'].includes(c[0]!)), [])
 })
 
 test('郵便受け: 控えた端末が生きていれば使い回し、消えていれば作り直し、作れなければ帯に理由を出す（追加 44 の補足）', async () => {
@@ -1029,7 +1042,7 @@ test('送る文面のコピーは本文と書式を clip-draft の呼び出し�
   assert.deepEqual(got, [['- **a**', 'teams']])
 })
 
-test('見ての「直してほしいこと」は本文つきの talk として記録し、合図の 1 行に本文の頭を載せる', async () => {
+test('見ての「直してほしいこと」は本文つきの talk として記録し、合図の本文の頭に載せる', async () => {
   const old = new Date(Date.now() - 60_000).toISOString()
   const a = workspace('a', {
     '.orca/cockpit.json': cockpit('案件A'),
@@ -1038,7 +1051,9 @@ test('見ての「直してほしいこと」は本文つきの talk として�
   const rows: PsRow[] = [{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main', { state: 'done' })] }]
   const { s, port, calls, post } = await start(rows, a)
   await listen(port, s.token).until((w) => board(w, a)?.notifiedOp === 5)
-  assert.deepEqual(calls, [['send', 'term_main', `${SIGNAL}（直してほしい r5: 凡例を上に寄せ、色の意味を 1 行で書いてほしい）`]])
+  const body = calls.find((c) => c[0] === 'run')![4]!
+  assert.ok(body.startsWith(`案件A の操縦席の窓から: ${SIGNAL}（直してほしい r5: 凡例を上に寄せ、色の意味を 1 行で書いてほしい）`), body)
+  assert.ok(!calls.some((c) => c[0] === 'send'), '窓口の端末には打たない')
   assert.equal((await post('op', { root: a, item_id: 'r5', item_rev: 1, type: 'talk', text: 'あ'.repeat(4001) })).status, 400, '本文の上限は別の答えと同じ')
 })
 

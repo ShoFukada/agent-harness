@@ -8,12 +8,10 @@ import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { clipDraft, isDraftFormat } from './clip.ts'
 import { draftLinter } from './lint.ts'
-import { chatMain, COUNTED, overlay } from './model.ts'
-import type { AgentRow, CockpitView, NotifyResult, TalkResult } from './protocol.ts'
+import { COUNTED, overlay } from './model.ts'
+import type { AgentRow, CockpitView, TalkResult } from './protocol.ts'
 import { countsText, derive, isHot, ownerName, ownerOf } from './state.ts'
-import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeAtomic, writeNotified, type Files } from './store.ts'
-
-export { SIGNAL } from './store.ts'
+import { appendOp, emptyFiles, loadFiles, readNotified, splitLine, writeAtomic, type Files } from './store.ts'
 
 /** 窓の常駐のプロセスと共有する場所。テストでは COCKPIT_DIR で差し替える。 */
 export const cockpitDir = () => process.env.COCKPIT_DIR ?? path.join(os.homedir(), 'Library/Application Support/cockpit')
@@ -28,12 +26,8 @@ type State = Files & {
   watcher?: FSWatcher
   watchingDir?: boolean
   timer?: ReturnType<typeof setTimeout>
-  signal?: CockpitView['signal']
-  signalTimer?: ReturnType<typeof setTimeout>
 }
 
-/** このパネルが書いた操作（root#op_id）。合図は書いた側が先に送る（store.ts の signalPlan）。 */
-const mine = new Set<string>()
 
 let orca: OrcaWorkerApi
 let s: State = fresh()
@@ -68,7 +62,6 @@ async function view(): Promise<CockpitView> {
     errors: s.errors,
     workers: s.agents.filter((a) => a.terminalId !== main),
     notifiedOp: s.root ? await readNotified(cockpitDir(), s.root) : 0,
-    signal: s.signal,
     handoff: s.handoff,
     drafts: await drafts
   })
@@ -119,7 +112,7 @@ function watchRoot(): void {
       if (s.root !== root) return
       // .orca が後から作られたら、見張る先を .orca に移す。
       if (!s.watchingDir) watchRoot()
-      void load().then(autoSignal).then(publish).catch((e) => orca.log(`load failed: ${e}`))
+      void load().then(publish).catch((e) => orca.log(`load failed: ${e}`))
     }, 80)
   }
   try {
@@ -149,7 +142,6 @@ async function focus(workspaceId: string | undefined): Promise<void> {
   if (workspaceId === s.workspaceId && s.root) return
   s.watcher?.close()
   clearTimeout(s.timer)
-  clearTimeout(s.signalTimer)
   const st = (s = fresh())
   st.workspaceId = workspaceId
   if (workspaceId) {
@@ -161,46 +153,8 @@ async function focus(workspaceId: string | undefined): Promise<void> {
   // 待つ間に別のワークスペースへ切り替わっていたら、その切り替えに任せる。
   if (s === st) {
     watchRoot()
-    await autoSignal()
     await writeFocus()
   }
-}
-
-/**
- * 取り消しの猶予が過ぎた操作があれば、メインに合図を送る。入力中の文字と混ざらないよう、メインが作業中（working）の間は送らず、
- * agent.status.changed で入力待ちになったときにもう一度呼ばれる。
- */
-async function autoSignal(): Promise<void> {
-  const st = s
-  clearTimeout(st.signalTimer)
-  if (!st.root || !st.cockpit || chatMain(st.cockpit)) return void (st.signal = undefined)
-  const root = st.root
-  const plan = signalPlan(st.cockpit, st.log, await readNotified(cockpitDir(), root), Date.now(), (o) => mine.has(`${root}#${o.op_id}`))
-  if (plan.nextAt !== undefined)
-    st.signalTimer = setTimeout(() => void autoSignal().then(publish).catch((e) => orca.log(`signal failed: ${e}`)), plan.nextAt - Date.now() + 50)
-  if (!plan.due.length) return void (st.signal = undefined)
-  const main = st.agents.find((a) => a.terminalId === st.cockpit?.main?.terminal)
-  if (!main) return void (st.signal = { state: 'failed', reason: 'メインのエージェントが見つかりません' })
-  if (main.state === 'working') return void (st.signal = { state: 'waiting' })
-  const r = await notify(Date.now())
-  st.signal = r.sent ? undefined : { state: 'failed', reason: r.reason }
-}
-
-/** now は送る時機を決める時刻。押して送り直すときは Infinity（猶予中の操作も送る）。 */
-async function notify(now = Infinity): Promise<NotifyResult> {
-  const st = s
-  if (!st.root || !st.cockpit) return { sent: false, reason: 'cockpit.json に main がありません' }
-  const root = st.root
-  const { due } = signalPlan(st.cockpit, st.log, await readNotified(cockpitDir(), root), now, (o) => mine.has(`${root}#${o.op_id}`))
-  if (!due.length) return { sent: true }
-  const result = await notifyMain(st.cockpit, due, async (terminal, text) => {
-    const ctx = await orca.host.call('workspace.readContext')
-    if (!ctx?.terminals.some((t) => t.id === terminal)) return { sent: false, reason: 'メインの端末が見つかりません' }
-    const { accepted } = await orca.host.call('terminal.sendText', { terminalId: terminal, text, enter: true })
-    return accepted ? { sent: true } : { sent: false, reason: 'メインの端末が受け取りませんでした' }
-  })
-  if (result.lastOp !== undefined && st.root) await writeNotified(cockpitDir(), st.root, result.lastOp)
-  return result.sent ? { sent: true } : { sent: false, reason: result.reason }
 }
 
 export default function activate(api: OrcaWorkerApi): void {
@@ -218,7 +172,6 @@ export default function activate(api: OrcaWorkerApi): void {
   orca.events.on('agent.status.changed', async () => {
     await ensure()
     await refreshAgents()
-    await autoSignal()
     await publish()
     // 窓は agents_at の変化を見て、全ワークスペースのエージェントを読み直す。
     agentsAt = Date.now()
@@ -234,19 +187,12 @@ export default function activate(api: OrcaWorkerApi): void {
     const st = s
     if (!st.root) throw Object.assign(new Error('表示中のワークスペースが変わりました。もう一度押してください'), { code: 'conflict' })
     st.log = await appendOp(st.root, st.cockpit, input)
-    mine.add(`${st.root}#${st.log.ops.at(-1)!.op_id}`)
-    await autoSignal()
     const v = await view()
     orca.panels.post('cockpit.changed', v)
     return { view: v }
   })
-  orca.panels.handle('cockpit.notify', async () => {
-    await ensure()
-    const result = await notify()
-    s.signal = result.sent ? undefined : { state: 'failed', reason: result.reason }
-    await publish()
-    return result
-  })
+  // 窓口への合図は窓の常駐のプロセスが郵便受けから Run に送る（R191）。パネルは host API しか持たず Run に送れない。
+  orca.panels.handle('cockpit.notify', async () => ({ sent: false, reason: '窓口への合図は操縦席の窓から送ります' }))
   orca.panels.handle('cockpit.open', async ({ path: href }) => {
     await ensure()
     if (!s.workspaceId || !s.root) return { opened: false, reason: '表示中のワークスペースが分かりません' }
@@ -280,8 +226,6 @@ export default function activate(api: OrcaWorkerApi): void {
     const now = overlay(st.cockpit, st.log).find((v) => v.card.id === card.id)
     if (!res.reason && now?.status === 'mine' && !now.talking && card.kind !== 'report') {
       st.log = await appendOp(st.root, st.cockpit, { root: st.root, item_id: card.id, item_rev: card.rev, type: 'talk' })
-      mine.add(`${st.root}#${st.log.ops.at(-1)!.op_id}`)
-      await autoSignal()
       await publish()
     }
     return res
@@ -319,5 +263,4 @@ async function resolveOpen(root: string, workspaceId: string, href: string): Pro
 export function deactivate(): void {
   s.watcher?.close()
   clearTimeout(s.timer)
-  clearTimeout(s.signalTimer)
 }

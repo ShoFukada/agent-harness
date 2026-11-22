@@ -8,7 +8,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ASK_ID, askItem, chatMain, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
+import { ASK_ID, askItem, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
 import type { Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
@@ -17,7 +17,8 @@ import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
-import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAtomic, writeNotified, type Files } from '../src/store.ts'
+import { sendFromMailbox, type MailOrca } from './mail.ts'
+import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeNotified, type Files, type SendRun } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
 const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts'])
@@ -329,8 +330,6 @@ export function createServer(opts: Options) {
   /** stallwatch が書く alerts.json の、Orca の監督の外で止まったもの。 */
   let alerts: string[] = []
   let focus: Focus = {}
-  /** この常駐のプロセスが書いた操作（root#op_id）。合図は書いた側が先に送る（store.ts の signalPlan）。 */
-  const mine = new Set<string>()
   const clients = new Set<http.ServerResponse>()
   let poll: ReturnType<typeof setInterval> | undefined
   let focusWatcher: FSWatcher | undefined
@@ -429,25 +428,15 @@ export function createServer(opts: Options) {
     return { ...c, cards: c.cards.filter(keep), tasks: c.tasks.map(({ done: _d, sources: _s, ...t }) => t) }
   }
 
-  /**
-   * 取り消しの猶予が過ぎた操作があれば、メインに合図を送る。入力中の文字と混ざらないよう、メインが作業中（working）の間は送らず、
-   * エージェントの状態が変わった知らせ（focus.json の agents_at）でもう一度呼ぶ。
-   */
+  /** 取り消しの猶予が過ぎた操作があれば、窓口の Run に合図を送る（Orca が窓口の手が空いたときに届ける。R191）。 */
   async function autoSignal(ws: Ws): Promise<void> {
     clearTimeout(ws.signalTimer)
     const c = ws.files.cockpit
-    if (!c || (chatMain(c) && !(c.main?.run_id && canRun))) return void (ws.signal = undefined)
-    const plan = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), Date.now(), (o) => mine.has(`${ws.root}#${o.op_id}`))
+    if (!c) return void (ws.signal = undefined)
+    const plan = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), Date.now())
     if (plan.nextAt !== undefined)
       ws.signalTimer = setTimeout(() => void autoSignal(ws).then(broadcast, (e) => console.error(e)), plan.nextAt - Date.now() + 50)
     if (!plan.due.length) return void (ws.signal = undefined)
-    // Run に送る知らせは Orca が窓口の手が空いたときに届けるので、端末の窓口のときだけ手が空くのを待つ。
-    if (!chatMain(c)) {
-      if (Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
-      const main = agentsOf(ws.root, ws.files).main
-      if (!main) return void (ws.signal = { state: 'failed', reason: 'メインのエージェントが見つかりません' })
-      if (main.state === 'working') return void (ws.signal = { state: 'waiting' })
-    }
     const r = await notify(ws, Date.now())
     ws.signal = r.sent ? undefined : { state: 'failed', reason: r.reason }
   }
@@ -701,33 +690,10 @@ export function createServer(opts: Options) {
     return ws
   }
 
-  const send = async (terminal: string, text: string): Promise<NotifyResult> => {
-    if (![...terms.values()].includes(terminal)) await refreshOrca()
-    if (![...terms.values()].includes(terminal)) return { sent: false, reason: 'メインの端末が見つかりません' }
-    await orca.send(terminal, text)
-    return { sent: true }
-  }
-
-  /**
-   * 郵便受けから窓口の Run に送る（窓から Orca に知らせる口はここ 1 か所）。窓は Orca の外のプロセスなので、送り手の端末が無いと
-   * Orca が断る（no_active_sender_terminal）。チャットの窓口の名は送り手に使えない（session_caller_chat_not_declarable）。
-   */
-  let boxing: Promise<string> | undefined
-  function mailbox(root: string): Promise<string> {
-    const file = path.join(opts.dir, 'mailbox.json')
-    // 同時に送る案件どうしが郵便受けを 2 つ作らないよう、作るのは 1 つずつにする。
-    return (boxing ??= (async () => {
-      const saved = await fsp.readFile(file, 'utf8').then((t) => (JSON.parse(t) as { handle?: string }).handle, () => undefined)
-      if (saved && (await orca.terminals()).some((t) => t.handle === saved)) return saved
-      const handle = await orca.mailbox!(root)
-      await writeAtomic(file, JSON.stringify({ handle }) + '\n')
-      return handle
-    })().finally(() => (boxing = undefined)))
-  }
-  const canRun = !!(orca.notifyRun && orca.mailbox)
-  const sendRun = (root: string) => async (runId: string, subject: string, body: string): Promise<NotifyResult> => {
-    await orca.notifyRun!(await mailbox(root), runId, subject, body)
-    return { sent: true }
+  const sendRun = (root: string): SendRun | undefined => {
+    if (!orca.notifyRun || !orca.mailbox) return undefined
+    const box = orca as MailOrca
+    return async (runId, subject, body) => (await sendFromMailbox(box, opts.dir, root, runId, subject, body), { sent: true })
   }
 
   /**
@@ -738,9 +704,10 @@ export function createServer(opts: Options) {
     const run = async (): Promise<NotifyResult> => {
       const c = ws.files.cockpit
       if (!c) return { sent: false, reason: 'cockpit.json に main がありません' }
-      const { due } = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), now, (o) => mine.has(`${ws.root}#${o.op_id}`))
+      const { due } = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), now)
       if (!due.length) return { sent: true }
-      const r = await notifyMain(c, due, send, canRun ? sendRun(ws.root) : undefined)
+      // run_id の無い帳簿は notifyMain が理由を返す（窓の上の帯に出し、押した操作が黙って届かないままにしない）。
+      const r = await notifyMain(c, due, sendRun(ws.root) ?? (async () => ({ sent: false, reason: 'Orca に送る口がありません' })))
       if (r.lastOp !== undefined) await writeNotified(opts.dir, ws.root, r.lastOp)
       return r.sent ? { sent: true } : { sent: false, reason: r.reason }
     }
@@ -816,7 +783,6 @@ export function createServer(opts: Options) {
     ws.files = { ...ws.files, log }
     // 同じ協議の記録が既にあれば追記は省かれる。省かれた呼び出しは合図を送らない。
     if (!added) return
-    mine.add(`${ws.root}#${added.op_id}`)
     broadcast()
     void autoSignal(ws).then(broadcast, (e) => console.error(e))
   }
@@ -834,7 +800,6 @@ export function createServer(opts: Options) {
         target: typeof b.target === 'number' ? b.target : undefined, text: typeof b.text === 'string' ? b.text : undefined
       }
       const log = await appendOp(ws.root, ws.files.cockpit, input)
-      mine.add(`${ws.root}#${log.ops.at(-1)!.op_id}`)
       ws.files = { ...ws.files, log }
       broadcast()
       await autoSignal(ws)
@@ -946,7 +911,6 @@ export function createServer(opts: Options) {
         return { op: lastAskDecide(log, askItem(id), answer)?.op_id ?? 0, sent: false, again: true }
       }
       const op = added.op_id
-      mine.add(`${ws.root}#${op}`)
       ws.files = { ...ws.files, log }
       broadcast()
       const tab = await askTab(ws, id).catch((e: Error) => ({ reason: `タブを探せませんでした: ${e.message}` }))

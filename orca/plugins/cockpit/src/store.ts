@@ -446,6 +446,9 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
 export const lockLog = (root: string) => lock(path.join(root, '.orca', 'cockpit.user.json.lock'))
 /** cockpit.json を書く道具（window/write.ts）と移し替え（migrate-v3）が取るロック。 */
 export const lockCockpit = (root: string) => lock(path.join(root, '.orca', 'cockpit.json.lock'))
+/** 郵便受けの控え（dir/mailbox.json）を決めるロック。窓と cockpit-mail が取る。 */
+// 持っている間に orca を 2 回（terminal list・create、各 15 秒まで）呼ぶので、待ちと古いと見なすまでをそれより長くとる（生きている持ち主のロックを奪わない）。
+export const lockMailbox = (dir: string) => lock(path.join(dir, 'mailbox.json.lock'), 60_000, 45_000)
 
 /**
  * パネルの worker と窓の常駐のプロセスは別のプロセスなので、同じログへの追記をロックファイルで 1 つずつにする
@@ -467,9 +470,7 @@ async function lock(file: string, staleMs = 10_000, waitMs = 3_000): Promise<() 
   }
 }
 
-/** 端末に文字を送る。送れなければ理由を返す。パネルは Orca の host API、窓は orca CLI で送る。 */
-export type SendText = (terminal: string, text: string) => Promise<NotifyResult>
-/** 窓口の Run に orchestration の知らせを送る（Orca が窓口のチャットを起こして届ける）。窓だけが持つ。 */
+/** 窓口の Run に orchestration の知らせを送る（郵便受けの端末を送り手にする。window/mail.ts）。 */
 export type SendRun = (runId: string, subject: string, body: string) => Promise<NotifyResult>
 
 export function runSignalBody(cockpit: Cockpit, ops: Op[]): string {
@@ -479,15 +480,14 @@ export function runSignalBody(cockpit: Cockpit, ops: Op[]): string {
 }
 
 /**
- * メインに合図を送る。端末（main.terminal）があれば合図の 1 行を入力し、無くて Run（main.run_id）があれば
- * orchestration の知らせで送る（窓口が Orca のチャットで動いていると端末が無く、何も届かなかった）。
+ * 窓口に合図を送る。端末の窓口にもチャットの窓口にも、main.run_id の Run への orchestration の知らせ 1 本で送る（R191）。
  * ops は signalPlan の due（送る時機の来た操作だけ）。送れたら、その最後の op_id を返す。
  */
-export async function notifyMain(cockpit: Cockpit | undefined, ops: Op[], send: SendText, sendRun?: SendRun): Promise<NotifyResult & { lastOp?: number }> {
-  const main = cockpit?.main
-  if (!cockpit || !(main?.terminal || (main?.run_id && sendRun))) return { sent: false, reason: 'cockpit.json に main がありません' }
+export async function notifyMain(cockpit: Cockpit | undefined, ops: Op[], sendRun: SendRun): Promise<NotifyResult & { lastOp?: number }> {
+  const run = cockpit?.main?.run_id
+  if (!cockpit || !run) return { sent: false, reason: 'cockpit.json の main に run_id がありません' }
   try {
-    const r = main!.terminal ? await send(main!.terminal, signalText(ops)) : await sendRun!(main!.run_id!, SIGNAL, runSignalBody(cockpit, ops))
+    const r = await sendRun(run, SIGNAL, runSignalBody(cockpit, ops))
     if (!r.sent) return r
   } catch (e) {
     return { sent: false, reason: (e as Error).message }
@@ -505,11 +505,9 @@ export async function writeAtomic(file: string, text: string): Promise<void> {
 
 /**
  * 自動で合図を送る操作と、次に送れるようになる時刻。取り消しの猶予が過ぎ、まだ知らせていない未反映の操作が対象。
- * 未反映どうしの取り消しの組は除く。話したいも同じく猶予のあとに送る（本文の頭を合図に載せる）。
- * パネルの worker と窓の常駐のプロセスが同じ操作に二重に送らないよう、自分が書いた操作（mine）は猶予だけ、
- * ほかの画面が書いた操作はその 3 倍待つ（書いた側が送れなかったときだけ拾う）。
+ * 未反映どうしの取り消しの組は除く。話したいも同じく猶予のあとに送る（本文の頭を合図に載せる）。送るのは窓の常駐のプロセスだけ。
  */
-export function signalPlan(c: Cockpit, log: UserLog, notified: number, now: number, mine: (op: Op) => boolean): { due: Op[]; nextAt?: number } {
+export function signalPlan(c: Cockpit, log: UserLog, notified: number, now: number): { due: Op[]; nextAt?: number } {
   const un = unappliedOps(c, log)
   const cancelled = new Set(un.filter((o) => o.type === 'undo' && un.some((x) => x.op_id === o.undo_of)).flatMap((o) => [o.op_id, o.undo_of!]))
   const due: Op[] = []
@@ -518,7 +516,7 @@ export function signalPlan(c: Cockpit, log: UserLog, notified: number, now: numb
   for (const o of un) {
     // 「これで決める」は返しが届いてから窓口が反映するので、窓口の本線に合図を送らない（返しは hook が窓口の Run に知らせる。R105）。
     if (o.op_id <= notified || cancelled.has(o.op_id) || o.type === 'ask_decide' || (o.type === 'undo' && un.some((x) => x.op_id === o.undo_of && x.type === 'ask_decide'))) continue
-    const at = Date.parse(o.at) + (mine(o) ? UNDO_GRACE_MS : UNDO_GRACE_MS * 3)
+    const at = Date.parse(o.at) + UNDO_GRACE_MS
     if (at <= now) due.push(o)
     else {
       nextAt = Math.min(nextAt ?? Infinity, at)
@@ -529,7 +527,7 @@ export function signalPlan(c: Cockpit, log: UserLog, notified: number, now: numb
   return { due: due.filter((o) => o.op_id < held), nextAt }
 }
 
-/** どの操作までメインに知らせたか。パネルと窓が共有する（~/Library/Application Support/cockpit/notified.json）。 */
+/** どの操作までメインに知らせたか（~/Library/Application Support/cockpit/notified.json。送るのは窓だけ）。 */
 export async function readNotified(dir: string, root: string): Promise<number> {
   try {
     const v = JSON.parse(await fsp.readFile(path.join(dir, 'notified.json'), 'utf8')) as Record<string, unknown>
@@ -541,7 +539,7 @@ export async function readNotified(dir: string, root: string): Promise<number> {
 
 export async function writeNotified(dir: string, root: string, op: number): Promise<void> {
   const file = path.join(dir, 'notified.json')
-  // 案件ごとの位置を 1 つのファイルに持つので、窓の案件どうし・パネルと窓が同時に書くと先の書き込みが消える。
+  // 案件ごとの位置を 1 つのファイルに持つので、窓の案件どうしが同時に書くと先の書き込みが消える。
   const release = await lock(`${file}.lock`)
   try {
     let v: Record<string, number> = {}

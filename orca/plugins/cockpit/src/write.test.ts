@@ -108,6 +108,9 @@ test('migrate-v3: 話し中 → 相談、run_id の補い、依頼に legacy と
   assert.equal(n.cards.find((x) => x.id === 'v3')!.closed_without_review, true)
   // 発言に id が無ければ、仕分けの位置は空。
   assert.deepEqual(migrateV3(c, log, [], {}, NOW).next.intake, { through: '', none: [] })
+  // 窓口の Run が無い帳簿は、移したあとに書く手順を知らせる（Run が無いと窓の合図が届かず、cockpit-write が断る。R191）。
+  assert.ok(!migrateV3(c, log, [], {}, NOW).summary.some((x) => x.includes('main.run_id が無い')))
+  assert.ok(migrateV3({ ...c, main: { agent: 'claude', terminal: 'term_main' } }, log, [], {}, NOW).summary.some((x) => x.includes('main.run_id が無い')))
   // 元の中身は変えない。
   assert.equal(c.cards.find((x) => x.id === 'c4')!.kind, 'talk')
 })
@@ -266,20 +269,27 @@ test('質問の返し: asks[] を質問 id ごとに足し・置き換え、そ�
   assert.match(parseCockpit(JSON.stringify({ ...c, asks: {} }), problems) && problems.join(), /asks が配列ではない/)
 })
 
-test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ。null で消し、run_ で始まらない値・ほかの欄は断る。読み込みも受ける', () => {
+test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ。run_ で始まらない値・ほかの欄は断る。Run の無い帳簿は書けず、Run を一緒に書けば通る（R191）。読み込みも受ける', () => {
   const c = aoba()
-  c.main = { agent: 'claude', terminal: 'term_main' }
+  c.main = { agent: 'claude', terminal: 'term_main', run_id: 'run_old' }
   const r = applyChange(c, { main: { run_id: 'run_abc123' } })
   assert.deepEqual(r.errors, [])
   assert.deepEqual(r.next!.main, { agent: 'claude', terminal: 'term_main', run_id: 'run_abc123' })
-  assert.deepEqual(applyChange(r.next!, { main: { run_id: null } }).next!.main, { agent: 'claude', terminal: 'term_main' })
   assert.match(applyChange(c, { main: { run_id: 'ctx_1' } }).errors.join(), /main は \{ run_id \} だけ/)
   assert.match(applyChange(c, { main: { run_id: 'run_1', terminal: 'x' } }).errors.join(), /main は \{ run_id \} だけ/)
-  assert.equal(applyChange({ ...c, main: undefined }, { main: { run_id: null } }).next!.main, undefined)
-  // main の無い帳簿に Run を書いて消すと、main の無い帳簿に戻る（空の main を残さない。Codex 17 軽微）。
-  const set = applyChange({ ...c, main: undefined }, { main: { run_id: 'run_1' } }).next!
-  assert.deepEqual(set.main, { run_id: 'run_1' })
-  assert.ok(!('main' in applyChange(set, { main: { run_id: null } }).next!))
+  // 窓の合図は窓口の Run にだけ送るので、Run を消す・Run の無い帳簿に書くのは断る。
+  const noRun = /main\.run_id が無い/
+  assert.match(applyChange(c, { main: { run_id: null } }).errors.join(), noRun)
+  const bare = { ...c, main: { agent: 'claude', terminal: 'term_main' } }
+  const touch = { streams: [structuredClone(c.streams[0]!)] }
+  assert.match(applyChange(bare, touch).errors.join(), noRun)
+  assert.match(applyChange({ ...c, main: undefined }, touch).errors.join(), noRun)
+  assert.deepEqual(applyChange(bare, { ...touch, main: { run_id: 'run_1' } }).errors, [])
+  assert.deepEqual(applyChange({ ...c, main: undefined }, { main: { run_id: 'run_1' } }).next!.main, { run_id: 'run_1' })
+  // 担当の session の空文字は断る（分からなければ欄ごと書かない）。
+  const o = { id: 'o9', title: '担当', stream: 's1' }
+  assert.match(applyChange(c, { owners: [{ ...o, session: '' }] }).errors.join(), /担当 o9: session が空/)
+  assert.deepEqual(applyChange(c, { owners: [o] }).errors, [])
   const problems: string[] = []
   assert.equal(parseCockpit(JSON.stringify(r.next), problems).main?.run_id, 'run_abc123')
   assert.equal(parseCockpit(JSON.stringify({ ...c, main: { ...c.main, run_id: 3 } }), problems).main?.run_id, undefined)

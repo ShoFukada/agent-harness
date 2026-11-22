@@ -126,7 +126,7 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提とし�
    </array>
    <key>StartInterval</key><integer>300</integer>
    ```
-   `--job` は終了コードとログの最後の行を見る（失敗した実行のあとでも launchctl が終了コード 0 を返したことがあるので、ログにだけ残った失敗も拾う）。`--service` は動いているかを見る。知らせは macOS の通知と窓の上の帯だけに出し、会話の中へは送らない（worker の完了と停止でメインを起こすのは Orca の orchestration。launchd から `orca orchestration send` を打つと送り主が決まらず断られる）
+   `--job` は終了コードとログの最後の行を見る（失敗した実行のあとでも launchctl が終了コード 0 を返したことがあるので、ログにだけ残った失敗も拾う）。`--service` は動いているかを見る。知らせは macOS の通知と窓の上の帯に出す。窓口の判断が要るもの（worker が止まったあとメインが動いていない）だけは、`bin/cockpit-mail` で窓口の Run にも送る（R191。launchd から送り手なしで `orca orchestration send` を打つと `no_active_sender_terminal` で断られるので、窓と同じ郵便受けの端末を送り手にする）。窓口自身が止まった知らせは送らない
 
 6. worktree の見回り（worktree-sweep）を launchd で毎晩 1 回 `--apply` 付きで動かす。PATH には orca CLI のある Orca.app の bin と git と gh を入れる。何を消すかは下の「worktree の片付け」にある
    ```xml
@@ -246,6 +246,8 @@ worker の結果を取り込んだら、窓口がその場で worktree を消し
 
 account-failover は、Orca が読んでいる各席の使用量（`orca account list --json` の `rateLimits`。ほかの席の分も、その席を使わずに Orca が読んでいる）だけで判断し、トークンや Keychain には触りません。
 
+Orca の外（launchd）から案件の窓口の会話に知らせを届けるときは、`bin/cockpit-mail <root> --subject <件名> --body-file <path|->` を使います（窓口の Run に、操縦席の窓と同じ郵便受けの端末から送る。R191）。下の 7 の結び直しは Run の coordinator の名で打つ別の操作です。
+
 1. 今の席の 5 時間の枠か週の枠が 100% で、戻る時刻がまだ先なら「上限」と見なす。Orca の読みが 30 分より古いか読めていないときは判断しない。Fable の週の枠は見ない
 2. 行き先は `--seat` の優先度順に選ぶ。使用量が空きと分かっている席を先に、無ければ使用量の分からない席を試す。Orca の `stale-token`（しばらく動いていない席のトークンが古いだけで、次に Claude が動けば更新される）は使用量の分からない席として試す。上限で離れた席は、その枠が戻る時刻を過ぎるか、離れたあとに Orca が空きと読むまで選ばない
 3. 次の席は行き先にしない。上限でないあいだも窓の帯に「上限に当たってもこの席へは切り替えない」と出し、行き先が無くなったら切り替えずに通知と帯で名指しする
@@ -323,6 +325,7 @@ Dispatch の開いている担当のチャットは、Orca が新しい席へ移
 | `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐プロセス（`window/server.ts`）。使い方と仕組みは同じ場所の README、画面が満たす条件は `docs/user-stories.md` |
 | `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認画面の検出と名指し（どの席で何の画面か）・Task の受け渡し・サイドバーの表示名と状態と親・上限を超える名前を断る・どの worker にも渡す決まりを brief の先頭に足す）とそのテスト |
 | `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録先は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものの書き出し先は窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
+| `bin/cockpit-mail` | Orca の外のプロセスから案件の窓口の Run に知らせるコマンド。中身と試験は `orca/plugins/cockpit/window/mail.ts`・`mail.test.ts` |
 | `bin/account-failover`・`bin/account_failover_test.py` | 利用枠の上限での席の切り替えとそのテスト。記録先は stallwatch と同じ `STALLWATCH_HOME`（`failover-state.json`・`failover.json`・`failover-history.jsonl`） |
 | `bin/orca-watch`・`bin/orca_watch_test.py` | Orca本体が人のいないあいだに落ちたときの起動し直しとそのテスト。記録先はstallwatchと同じ `STALLWATCH_HOME`（`orca-watch-state.json`・`orca-watch.json`・`orca-watch.pause`） |
 | `bin/worktree-sweep`・`bin/worktree_sweep_test.py` | 使い終わった worktree の見回りとそのテスト。結果の書き出し先は `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`） |

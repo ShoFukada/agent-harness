@@ -1,5 +1,5 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { actionVerb, chatMain, CONTEXT_FIELDS, COUNTED, COWORK_ID, IDLE_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
+import { actionVerb, CONTEXT_FIELDS, COUNTED, COWORK_ID, IDLE_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -587,7 +587,6 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const counts = Object.fromEntries(COUNTED.map((k) => [k, shown.reduce((n, b) => n + b.d.counts[k], 0)])) as Record<CardKind, number>
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
   const unseen = unseenList(m, now)
-  const signal = m.panel ? signalHtml(shown[0]?.v) : ''
   const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
   const sideCount = { talking: all('fixing').length, waiting: all('waiting').length, late }
   // 種類ごとの件数の帯は出さない。種類は票の語で、急ぎは期限の見出しと文字色で読む（R82・R91）。
@@ -595,7 +594,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const top = `<header class="top">
     <div class="tally"><b>${total}</b><span>${ui.filter ? `${esc(shown[0]?.v.cockpit?.workspace.name ?? '')} の` : m.panel ? '' : '全案件の'}私の番</span></div>
     ${paneSwitch(ui, total, sideCount)}
-    <div class="flags">${unseen.length ? `<button class="flag warn" type="button" data-act="unseen" aria-expanded="${!!ui.open.unseen}">見ていない ${unseen.length}</button>` : ''}${m.live !== undefined ? `<span class="flag live">動いているエージェント ${m.live}</span>` : ''}${signal}${repeatHtml(m, ui, shown)}
+    <div class="flags">${unseen.length ? `<button class="flag warn" type="button" data-act="unseen" aria-expanded="${!!ui.open.unseen}">見ていない ${unseen.length}</button>` : ''}${m.live !== undefined ? `<span class="flag live">動いているエージェント ${m.live}</span>` : ''}${repeatHtml(m, ui, shown)}
       ${m.panel ? '' : `<span class="seg" role="group" aria-label="地の色">${(['light', 'dark', 'auto'] as Theme[]).map((t) => `<button type="button" data-theme="${t}" aria-pressed="${ui.theme === t}">${t === 'light' ? '明' : t === 'dark' ? '暗' : '自動'}</button>`).join('')}</span>`}</div>
   </header>`
   const notes = [...m.errors, ...shown.flatMap((b) => b.v.errors.map((e) => `${b.v.cockpit?.workspace.name ?? ''}: ${e}`))]
@@ -672,14 +671,6 @@ function handoffHtml(shown: Board[], now: number): string {
     .filter((b) => b.v.handoff && now - Date.parse(b.v.handoff.at) < 86_400_000)
     .map((b) => `<div>${esc(b.v.cockpit?.workspace.name ?? '')}: 窓口を新しいチャットに引き継ぎました（${esc(fmtDate(b.v.handoff!.at))} ${esc(b.v.handoff!.reason)}）。Orca のチャットの一覧から新しいチャットを開いてください</div>`)
   return lines.length ? `<div class="notes" role="status">${lines.join('')}</div>` : ''
-}
-
-function signalHtml(v: CockpitView | undefined): string {
-  if (!v?.cockpit) return ''
-  if (chatMain(v.cockpit) && !v.cockpit.main?.run_id) return ''
-  if (v.signal?.state === 'failed') return `<button class="flag err" type="button" data-act="notify">メインに届いていません（${esc(v.signal.reason ?? '')}）。もう一度送る</button>`
-  if (v.signal?.state === 'waiting') return '<span class="flag">メインの手が空いたら届けます</span>'
-  return ''
 }
 
 export function talkMessage(res: TalkResult, copied: boolean): string {

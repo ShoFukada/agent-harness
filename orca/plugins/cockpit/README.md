@@ -176,7 +176,7 @@ bin/cockpit-write --dry-run <root> < change.json  # 書かずに検査だけ（�
 bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write が無ければ結果を出すだけ）
 ```
 
-- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." }, "asks": [...] }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換え、`null` で消す（agent・terminal は今の値を保つ）。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
+- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." }, "asks": [...] }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換える（agent・terminal は今の値を保つ）。Run の無い帳簿は書けない（窓の合図は窓口の Run にだけ送る。R191）ので、消すことはできず、無い帳簿には Run を一緒に書く。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
 - `asks` は窓からの質問の返しを反映した印（`{ id: "ask3", card?, task?, memo?, from_returns: ["ask3-1"], held_returns: [], notify: [{ return_id, task?, message_id? }] }`）を質問 id ごとに足すか置き換える。返しの id はその質問のもの（`ask3-<数>`）だけを受ける
 - 検査: 欄の形・参照（仕事・タスク・担当・依頼の id）・`rev`（開いたカードの中身を変えたら 1 上げる。片付けるだけ・要素の行き先を書くだけなら据え置き）・依頼の欄・仕分けの位置・要素の行き先。通らなければ書かずに理由を返す
 - 語調: カードとタスクの人が読む欄（title・purpose・why・next・`last.text`・`look_for`・`options` の label と body・タスクの `done` など）に柔らかい言い回し（ておきました・ですね・ますね・ですよね・かも・しちゃ・ちゃいました・ちゃった）があれば、欄と語を名指しして断る（R84）。draft・quote・request・reason・`background.quote`・深田さんの `last`（by が 私）と、元の行にそのままある文は見ない
@@ -196,7 +196,8 @@ bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write �
 | `src/model.ts` | ファイルの形（バージョン 2）と、cockpit.json に操作ログを重ねる処理 |
 | `src/migrate.ts` | バージョン 1（`items`）からバージョン 2（`cards`）への移し替え |
 | `src/state.ts` | 期限の区切り・私の番の 1 列・案件の今・話す相手・Orca のサイドバーの状態をまとめて決める。画面と `window/state.ts` はここを通す |
-| `src/store.ts` | `.orca/` のファイルを読む・操作を追記する（バージョンと選択肢を確かめる）・窓口に合図を送る。パネルの worker と窓の常駐プロセスが共有する |
+| `src/store.ts` | `.orca/` のファイルを読む・操作を追記する（バージョンと選択肢を確かめる）・窓口への合図を組む。パネルの worker と窓の常駐プロセスが共有する |
+| `window/mail.ts` | 郵便受けの端末から窓口の Run に送る口。窓と `bin/cockpit-mail` が使う |
 | `src/view.ts` | パネルの描画（表示の状態から HTML を作る。DOM に触らない）と、窓と共有する部品 |
 | `src/window-view.ts` | 窓の 3 タブ（要対応・全体・対応済み）の描画 |
 | `src/write.ts`・`window/write.ts`・`bin/cockpit-write` | 帳簿を書く道具と、版 3 への移し替え（migrate-v3） |
@@ -253,7 +254,7 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
                                                      ▼  ~/Library/Application Support/cockpit/
    各ワークスペースの .orca/ ──fs.watch──▶ 常駐のプロセス（127.0.0.1:47231）──SSE──▶ 窓のページ
                                           │  orca worktree ps / terminal list / agent list / orchestration worker-show
-                                          └─ 操作の追記・orca terminal send / switch / worktree activate / file open
+                                          └─ 操作の追記・orca orchestration send（郵便受けから窓口の Run へ）/ terminal send（質問のタブへ）/ switch / worktree activate / file open
 ```
 
 - 起動は launchd などの常駐の仕組みに任せる。ブラウザ向けの TS は、配るときに Node の `module.stripTypeScriptTypes` で型を除く。ビルドの手順は無い。配るのは `window/server.ts` の `SERVED` に書いたファイルだけ
@@ -269,13 +270,15 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 </details>
 
 <details>
-<summary>窓口の端末への合図</summary>
+<summary>窓口への合図</summary>
 
-端末には中身を送らず、`【操縦席】未反映の操作があります` の 1 行だけを送ります。「担当と話す」「別の答え」「直してほしい」（見ての直しの指示）は、合図の 1 行にカードの id と本文の頭を載せます。
+窓口には、端末の窓口にもチャットの窓口にも、帳簿の `main.run_id` の Run への orchestration の知らせ 1 本で送ります（R191）。件名は `【操縦席】未反映の操作があります`、本文の頭に「<案件名> の操縦席の窓から: <合図の 1 行>」を置き、「担当と話す」「別の答え」「直してほしい」（見ての直しの指示）はカードの id と本文の頭を載せ、書いた文の全文を続けます。
 
-- 取り消しの猶予（10 秒）が過ぎ、窓口が入力待ちのときに自動で送る（作業中に送ると入力欄に混ざるため）
-- パネルと窓は別のプロセスなので、操作を書いたほうが 10 秒で送り、もう片方は 30 秒待ってから拾う。どこまで送ったかは `~/Library/Application Support/cockpit/notified.json` で共有する
-- 窓口が Orca のチャットで `main.terminal` が空のときは送る手段が無いので、「次に話しかけたときに反映されます」と出す
+- 送るのは窓の常駐のプロセスだけ。パネルは host API しか持たず Run に送れないので送らない
+- 取り消しの猶予（10 秒）が過ぎたら送る。窓口が作業中でも待たない（Orca が窓口の手の空いたときに届ける）。どこまで送ったかは `~/Library/Application Support/cockpit/notified.json` に案件ごとに持つ
+- 窓は Orca の外のプロセスなので、送り手の端末が無いと Orca が断る（`no_active_sender_terminal`）。窓は AI を動かさない「郵便受け」の端末（題「操縦席｜郵便受け」、`tail -f /dev/null`）を 1 つ持ち、それを `--from` にする。handle は `~/Library/Application Support/cockpit/mailbox.json` に控え、消えていれば作り直す
+- 送り口は `window/mail.ts` の 1 か所。Orca の外のほかのプロセス（`bin/stallwatch` など）は `bin/cockpit-mail <root> --subject <件名> [--body-file <path|->]` で同じ郵便受けから送る
+- 帳簿に `main.run_id` が無いと送れないので、cockpit-write は Run の無い帳簿を断る。送れなかったときは、窓の上の赤い帯に案件名と理由と「もう一度送る」を出す
 
 </details>
 

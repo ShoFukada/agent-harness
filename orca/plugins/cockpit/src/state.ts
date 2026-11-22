@@ -220,7 +220,7 @@ export function ownerOf(c: Cockpit, card: Pick<Card, 'owner' | 'stream'>, facts?
     const term = own.terminal ? facts?.workers.find((w) => w.terminalId === own.terminal) : undefined
     // worker-start --agent で立てたチャットの担当は、受け取りの terminal（structworker_…）を terminal に書かれがち。端末の一覧に無いので、
     // その handle の Dispatch からチャットを引く（2026-11-21 に「担当と話す」が何も開かなかった）。
-    const session = own.session ?? (own.terminal && !term ? Object.values(facts?.dispatches ?? {}).find((f) => f?.terminal === own.terminal)?.session : undefined)
+    const session = own.session || (own.terminal && !term ? Object.values(facts?.dispatches ?? {}).find((f) => f?.terminal === own.terminal)?.session : undefined)
     const live = session ? facts?.owners?.find((x) => x.session === session) : undefined
     if (session && !term) return { title: own.title, how: 'chat', owner: own, state: live?.state, session }
     return { title: own.title, how: own.terminal ? 'terminal' : 'chat', owner: own, state: term?.state ?? live?.state, terminal: own.terminal }

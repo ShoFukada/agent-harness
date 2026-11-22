@@ -3,7 +3,8 @@
 
 launchd が数分おきに 1 回ずつ起こす。Orca や Claude の会話の中に置くと、Orca の更新や会話の終わりと一緒に止まるため外に置く。モデルは呼ばない。
 worker の生死は Orca の orchestration（worker-start の監督）が見て、worker_done・escalation でその coordinator を起こすので、ここでは見ない。
-ここから会話の中へは送らない（launchd から orchestration send を打つと送り主が決まらず断られる）。知らせは通知と窓の上の帯だけに出す。
+知らせは通知と窓の上の帯に出す。窓口の判断が要るもの（worker が止まったあとメインが動いていない）だけは、cockpit-mail で
+窓口の Run にも送る（R191。Orca の外から送るので、窓と同じ郵便受けの端末を送り手にする）。窓口自身が止まった知らせは送らない。
 """
 
 import argparse
@@ -473,6 +474,25 @@ def notify(texts, title=None):
     return r.returncode == 0
 
 
+# 窓口の Run に送る知らせ（窓口が動いていて、判断すれば片付くもの）。窓口自身が止まった・Orca や窓が止まったものは、送っても読む人がいない。
+MAIL_KINDS = ("main-unhandled:",)
+MAIL_SUBJECT = "【見張り】窓口の判断が要るものがあります"
+
+
+def mail(f):
+    """cockpit-mail で f の案件の窓口に送る。送れたら True。"""
+    cmd = os.environ.get("COCKPIT_MAIL") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "cockpit-mail")
+    body = "%s\n\n止まった worker を見て、続きを頼むか片付けるかを決めてください（見張り stallwatch から）。" % f["text"]
+    try:
+        r = subprocess.run([cmd, f["root"], "--subject", MAIL_SUBJECT, "--body-file", "-"], input=body, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print("cockpit-mail を起こせなかった（%s）: %s" % (f["root"], e))
+        return False
+    if r.returncode != 0:
+        print("cockpit-mail が失敗した（%s）: %s" % (f["root"], " ".join((r.stderr or r.stdout or "出力なし").split())[:300]))
+    return r.returncode == 0
+
+
 def run(a):
     now = now_ms()
     state_path = os.path.join(HOME, "state.json")
@@ -494,6 +514,12 @@ def run(a):
     sent = bool(fresh) and notify([f["text"] for f in fresh])
     # Orca に繋がらない回はメインの様子が分からないので、メインについての記録は解消と見なさずに残す。
     keep = lambda d: {k: v for k, v in d.items() if k.startswith("main-")} if any(f["id"] == "orca-down" for f in found) else {}
+    # 窓口に送ったものは、解消するまで送り直さない（通知と別に覚える。通知が出せなかった回にも送れていれば二度送らない）。
+    mailed = dict(keep(state.get("mailed", {})), **{k: v for k, v in state.get("mailed", {}).items() if any(f["id"] == k for f in active)})
+    for f in active:
+        if f["id"].startswith(MAIL_KINDS) and f.get("root") and f["id"] not in mailed and mail(f):
+            mailed[f["id"]] = stamp
+    state["mailed"] = mailed
     state["seen"] = dict(keep(seen), **{f["id"]: f["since"] for f in found})
     state["notified"] = dict(keep(notified), **{f["id"]: notified.get(f["id"], stamp) for f in active if f["id"] in notified or sent})
     save(state_path, state)

@@ -17,7 +17,7 @@ export type Change = {
   owners?: Owner[]
   intake?: Intake
   applied_ops?: number[]
-  /** 窓口の Run だけを置き換える（null で消す）。main のほかの欄（agent・terminal）は今の値を保つ。 */
+  /** 窓口の Run だけを置き換える。main のほかの欄（agent・terminal）は今の値を保つ。Run は消せない（書いた結果に Run が要る）。 */
   main?: { run_id: string | null }
   /** 窓からの質問の返しを反映した印（質問 id ごとの追加と置き換え。cockpit skill の「窓から質問する」）。 */
   asks?: AskRecord[]
@@ -220,7 +220,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   if (change.applied_ops !== undefined && !(Array.isArray(change.applied_ops) && change.applied_ops.every((n) => Number.isInteger(n) && n > 0)))
     errors.push('applied_ops は op_id（正の整数）の配列で渡す')
   if (change.main !== undefined && !(isObj(change.main) && Object.keys(change.main).join() === 'run_id' && (change.main.run_id === null || RUN_ID(change.main.run_id))))
-    errors.push('main は { run_id } だけを渡す（run_id は run_ で始まる文字列か、消すなら null）')
+    errors.push('main は { run_id } だけを渡す（run_id は run_ で始まる文字列）')
   if (change.intake !== undefined && !INTAKE_SHAPE(change.intake)) errors.push('intake は { through, none, checked_through } の形で渡す（none は発言の id の配列）')
   if (errors.length) return { errors, warnings }
   const ch = change as Change
@@ -267,6 +267,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (['stream', 'agent', 'session', 'terminal'].some((k) => o[k as keyof Owner] !== undefined && typeof o[k as keyof Owner] !== 'string') || (o.state !== undefined && o.state !== 'open' && o.state !== 'done'))
       errors.push(`担当 ${o.id}: stream・agent・session・terminal は文字列、state は open か done`)
     if (!has(streams, o.stream)) errors.push(`担当 ${o.id}: 仕事 ${o.stream} が無い`)
+    // 空の session は「チャットの担当だが session が分からない」と区別できず、窓が Dispatch から引き直す道も塞ぐ。
+    if (o.session === '') errors.push(`担当 ${o.id}: session が空。分からなければ session の欄ごと書かない`)
   }
   for (const t of ch.tasks ?? []) {
     const old = c.tasks.find((x) => x.id === t.id)
@@ -420,6 +422,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   }
   // Run だけの main を消したら、空の main を残さない（main の無い帳簿に戻す）。
   if (next.main && !Object.keys(next.main).length) delete next.main
+  // 窓の合図は窓口の Run にだけ送る（R191）。Run の無い帳簿は、窓で押しても窓口に届かない。
+  if (!RUN_ID(next.main?.run_id)) return { errors: ['main.run_id が無い。窓口の Run を { "main": { "run_id": "run_…" } } で一緒に書く（窓の合図は窓口の Run にだけ送る）'], warnings }
   return { next, errors, warnings }
 }
 
@@ -498,6 +502,7 @@ export function migrateV3(raw: Cockpit, log: UserLog, utterances: Utterance[], r
   const ids = utterances.map((u) => u.id).filter((x): x is string => !!x)
   c.intake = { through: ids.at(-1) ?? '', none: [] }
   summary.push(ids.length ? `仕分けの位置: ${ids.at(-1)}（それまでの発言は仕分け済みとする）` : '発言の記録に id が無いので、仕分けの位置は空（id の付いた発言から検査する）')
+  if (!RUN_ID(c.main?.run_id)) summary.push('main.run_id が無い。窓口の Run を cockpit-write の { "main": { "run_id": "run_…" } } で書く（Run が無いと窓の合図が届かず、cockpit-write はほかの書き込みも断る）')
 
   const inferred: string[] = []
   const unreviewed: string[] = []

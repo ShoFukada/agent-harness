@@ -87,8 +87,21 @@ f=%s/$(basename "$2")
 cat "$f"
 """ % self.launchd)
         self.script("notify", "#!/bin/sh\nprintf '%%s\\t%%s\\n' \"$1\" \"$2\" >> %s\n" % self.notes)
+        self.mail_log = os.path.join(self.tmp, "mails")
+        self.mail_script()
         self.window_log = os.path.join(self.tmp, "window.log")
         open(self.window_log, "w").close()
+
+    def mail_script(self):
+        """偽の cockpit-mail。引数と標準入力の本文を 1 行の JSON で控える。"""
+        self.script("cockpit-mail", "#!/usr/bin/env python3\nimport json, sys\nopen(%r, 'a').write(json.dumps({'args': sys.argv[1:], 'body': sys.stdin.read()}) + '\\n')\n" % self.mail_log)
+
+    def mails(self):
+        try:
+            with open(self.mail_log) as fh:
+                return [json.loads(l) for l in fh]
+        except FileNotFoundError:
+            return []
 
     def set_runtime(self, rid):
         with open(self.runtime, "w") as fh:
@@ -115,7 +128,7 @@ cat "$f"
     def run_watch(self, *args):
         env = dict(os.environ, PATH=self.bin + ":/usr/bin:/bin", STALLWATCH_HOME=os.path.join(self.tmp, "home"),
                    COCKPIT_DIR=os.path.join(self.tmp, "cockpit"), STALLWATCH_NOTIFY=os.path.join(self.bin, "notify"),
-                   ORCA_CLI_COMMAND="orca", HOME=self.tmp)
+                   ORCA_CLI_COMMAND="orca", HOME=self.tmp, COCKPIT_MAIL=os.path.join(self.bin, "cockpit-mail"))
         env.pop("CLAUDE_CONFIG_DIR", None)
         r = subprocess.run([sys.executable, SCRIPT, "--window", self.url, "--window-log", self.window_log] + list(args),
                            env=env, capture_output=True, text=True)
@@ -240,7 +253,7 @@ cat "$f"
         self.assertEqual(self.notes_lines(), [])
         self.assertEqual(self.alerts(), {})
 
-    def test_worker_stopped_and_main_idle_notifies_once_without_mailing_main(self):
+    def test_worker_stopped_and_main_idle_notifies_and_mails_main_once(self):
         self.ps([self.main_agent()],
                 kids=[{"paneKey": "w", "state": "done", "stateStartedAt": now_ms() - 20 * MIN, "conversationName": "W1"}])
         self.run_watch()
@@ -250,7 +263,38 @@ cat "$f"
         self.assertIn("W1", notes[0])
         (a,) = self.alerts().values()
         self.assertEqual(a["root"], self.root)
-        self.assertFalse([c for c in self.orca_calls() if c.startswith("orchestration")], "会話の中へは送らない（起こすのは Orca）")
+        # 窓口の判断が要るので、cockpit-mail で窓口の Run にも 1 回だけ送る（R191）。orca に直に送らない。
+        mails = self.mails()
+        self.assertEqual(len(mails), 1, mails)
+        self.assertEqual(mails[0]["args"], [self.root, "--subject", "【見張り】窓口の判断が要るものがあります", "--body-file", "-"])
+        self.assertIn("W1", mails[0]["body"])
+        self.assertFalse([c for c in self.orca_calls() if c.startswith("orchestration")])
+
+    def test_mailed_survives_an_orca_outage(self):
+        kid = {"paneKey": "w", "state": "done", "stateStartedAt": now_ms() - 20 * MIN}
+        self.ps([self.main_agent()], kids=[kid])
+        self.run_watch()
+        os.remove(self.ps_file)  # Orca に繋がらない回
+        self.run_watch()
+        self.ps([self.main_agent()], kids=[kid])
+        self.run_watch()
+        self.assertEqual(len(self.mails()), 1, "Orca に繋がらなかった回のあとに、同じ停止を送り直さない")
+
+    def test_main_itself_stopped_is_not_mailed(self):
+        self.ps([self.main_agent(hasLivePty=False, mainAgent={"outcome": "failure"})])
+        self.run_watch()
+        self.assertTrue([k for k in self.alerts() if k.startswith("main-dead:")], self.alerts())
+        self.assertEqual(self.mails(), [], "窓口自身が止まった知らせは、窓口に送っても読まれない")
+
+    def test_failed_mail_is_retried_once_delivered(self):
+        self.ps([self.main_agent()],
+                kids=[{"paneKey": "w", "state": "done", "stateStartedAt": now_ms() - 20 * MIN}])
+        self.script("cockpit-mail", "#!/bin/sh\nexit 1\n")
+        self.run_watch()
+        self.mail_script()
+        self.run_watch()
+        self.run_watch()
+        self.assertEqual(len(self.mails()), 1, "送れなかった回のあとに 1 回だけ送り直す")
 
     def test_failed_notification_is_retried(self):
         self.ps([self.main_agent()],

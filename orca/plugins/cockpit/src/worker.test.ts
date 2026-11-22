@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { sample } from '../fixtures/sample.ts'
 import * as main from './worker.ts'
-import { SIGNAL } from './worker.ts'
 
 // focus.json を本物の ~/Library に書かない。
 const FOCUS_DIR = mkdtempSync(path.join(tmpdir(), 'cockpit-focus-'))
@@ -144,8 +143,9 @@ test('担当と話す: カードを話し中にする操作を 1 度だけ記録
   await assert.rejects(w.request('cockpit.talk', { root: '/other', item_id: 'r5', item_rev: 1 }), /表示中のワークスペースが変わりました/)
   // 担当がチャットなら、パネルからは前に出せないので、どこで話すかを返す。
   assert.deepEqual(await w.request('cockpit.talk', { root, item_id: 'd21', item_rev: 1 }), { opened: false, how: 'このワークスペース', tab: 'AWS 構成案（担当）' })
-  assert.deepEqual(await w.request('cockpit.notify'), { sent: true })
-  assert.deepEqual(h.callsOf('terminal.sendText').at(-1), { terminalId: 'term_main', text: `${SIGNAL}（担当と話す d21）`, enter: true })
+  // 窓口への合図は窓が Run に送る（R191）。パネルは窓口の端末に文字を送らない。
+  assert.deepEqual(await w.request('cockpit.notify'), { sent: false, reason: '窓口への合図は操縦席の窓から送ります' })
+  assert.deepEqual(h.callsOf('terminal.sendText'), [])
 })
 
 test('担当と話す: 担当の端末を前に出せなければ理由を返し、カードを話し中にしない（チャットの担当の structworker_ はパネルからは前に出せない）', async () => {
@@ -171,16 +171,6 @@ test('Orca の下の帯に、前面の案件の私の番を出す。期限が 24
   assert.equal(last.text, '私の番 4')
   assert.equal(last.tone, 'danger')
   assert.match(last.tooltip, /青葉物流 配車アプリ: 私の番 4 件（停止 1・判断 1・送信前 1・確認 1）/)
-})
-
-test('メインの端末がワークスペースに無ければ送らず、理由を返す', async () => {
-  // 送るのは送った位置より後の操作だけなので、未反映の操作を 1 つ置く。
-  const root = workspace({ '.orca/cockpit.json': withMain('term_gone'), '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 9, at: new Date().toISOString(), item_id: 'r5', item_rev: 1, type: 'accept' }] }) })
-  const h = host(root)
-  const w = await mountWorker(main, { host: h })
-  const res = await w.request('cockpit.notify')
-  assert.deepEqual(res, { sent: false, reason: 'メインの端末が見つかりません' })
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
 })
 
 test('ワークスペースが切り替わったら、そのワークスペースのファイルを読み直して送る', async () => {
@@ -267,26 +257,16 @@ test('パネルも窓と同じ検証で、本文の無い別の答え・無い�
   assert.equal(existsSync(path.join(root, '.orca/cockpit.user.json')), false)
 })
 
-test('取り消しの猶予が過ぎた操作は、メインが入力待ちになったら自動で合図を送る', async () => {
+test('パネルは窓口に合図を送らない（R191。猶予の過ぎた未反映の操作があっても、窓口の端末に文字を送らない）', async () => {
   const old = new Date(Date.now() - 60_000).toISOString()
   const root = workspace({
     '.orca/cockpit.json': withMain('term_main'),
-    // 見本の applied_ops は [1] なので、未反映の操作は 2 から。
     '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 2, at: old, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }] })
   })
   const h = host(root)
-  const agents = (state: string) => ({ agents: [{ terminalId: 'term_main', title: 'main', agent: 'claude', state, stateStartedAt: 1 }] })
-  h.respond('agents.list', agents('working'))
+  h.respond('agents.list', { agents: [{ terminalId: 'term_main', title: 'main', agent: 'claude', state: 'done', stateStartedAt: 1 }] })
   const w = await mountWorker(main, { host: h })
-  const busy = await w.request('cockpit.get')
-  assert.deepEqual(busy.signal, { state: 'waiting' })
-  assert.equal(h.callsOf('terminal.sendText').length, 0)
-  h.respond('agents.list', agents('done'))
   await w.emit('agent.status.changed', { workspaceId: 'w1', paneKey: 'p', terminalId: 'term_main', state: 'done', receivedAt: 2 })
-  assert.deepEqual(h.callsOf('terminal.sendText'), [{ terminalId: 'term_main', text: SIGNAL, enter: true }])
-  const done = await w.request('cockpit.get')
-  assert.equal(done.notifiedOp, 2)
-  assert.equal(done.signal, undefined)
-  await w.emit('agent.status.changed', { workspaceId: 'w1', paneKey: 'p', terminalId: 'term_main', state: 'done', receivedAt: 3 })
-  assert.equal(h.callsOf('terminal.sendText').length, 1, '届けた操作には二度送らない')
+  assert.equal((await w.request('cockpit.get')).signal, undefined)
+  assert.deepEqual(h.callsOf('terminal.sendText'), [])
 })

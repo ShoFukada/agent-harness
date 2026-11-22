@@ -770,7 +770,6 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
     const xs = live.filter((j) => form(j) === f)
     return `<section class="fsec"><h3>${formChip(f)}<span class="mut">${esc(FORM_DESC[f])}</span>${xs.length ? `<span class="mut">${xs.length} 件</span>` : ''}</h3>${xs.map((j) => streamBox(b, j, ui, todo, now)).join('')}${extra}</section>`
   }
-  // 受け持つ案件の列は、全案件を集めるハーネスの窓だけに出す（案件の窓では全行が同じ案件になる）。
   // 見張る仕事は、その Bot が結び付いた案件の窓にだけ出す（R190。ハーネスの窓にも全案件の分を集めない）。
   const watches = watchRows([b])
   // 中身の無い欄は出さない（初見 12）。

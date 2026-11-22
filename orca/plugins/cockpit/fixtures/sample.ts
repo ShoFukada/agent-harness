@@ -21,7 +21,7 @@ export function sample(now = Date.now()): SampleWs[] {
       { date: iso(today(now, 15) + 2 * 24 * H), label: '定例（画面の確認と構成案の説明）' },
       { date: iso(today(now, 10) + 9 * 24 * H), label: 'stg で受入の試験を始める' }
     ] },
-    main: { agent: 'claude', terminal: 'term_aoba_main' },
+    main: { agent: 'claude', terminal: 'term_aoba_main', run_id: 'run_aoba_main' },
     streams: [
       { id: 's1', title: '配車画面の改修' },
       { id: 's2', title: 'AWS 構成案' },
@@ -119,7 +119,7 @@ export function sample(now = Date.now()): SampleWs[] {
   const konan: Cockpit = {
     version: 2,
     workspace: { name: '港南病院 予約（運用保守）', milestones: [{ date: iso(today(now, 11) + 24 * H), label: '月次の報告会' }] },
-    main: { agent: 'claude', terminal: 'term_konan_main' },
+    main: { agent: 'claude', terminal: 'term_konan_main', run_id: 'run_konan_main' },
     streams: [
       { id: 'n112', title: 'No.112 確定メールの日付' },
       { id: 'n115', title: 'No.115 stg の調査' },
@@ -173,7 +173,7 @@ export function sample(now = Date.now()): SampleWs[] {
   const harness: Cockpit = {
     version: 2,
     workspace: { name: '社内ハーネス' },
-    main: { agent: 'claude', terminal: 'term_h_main' },
+    main: { agent: 'claude', terminal: 'term_h_main', run_id: 'run_h_main' },
     streams: [{ id: 'h1', title: 'ログ集計の見直し' }, { id: 'h2', title: '設計図のページ' }],
     tasks: [
       { id: 'u1', stream: 'h1', phase: '実装', title: '集計の分け方を直す', state: 'run', worker: { task_id: 'task_h_log', dispatch_id: 'ctx_h_log' } },
@@ -219,7 +219,7 @@ export function sample(now = Date.now()): SampleWs[] {
   const hokuto: Cockpit = {
     version: 2,
     workspace: { name: '北斗電機 提案', milestones: [{ date: iso(today(now, 14) + 6 * 24 * H), label: '提案の説明会' }] },
-    main: { agent: 'claude', terminal: '' },
+    main: { agent: 'claude', terminal: '', run_id: 'run_hokuto_main' },
     streams: [{ id: 'q1', title: '提案書の骨組み' }],
     tasks: [{ id: 'v1', stream: 'q1', phase: '要件', title: '骨組みを 15 ページに絞る', state: 'run' }],
     cards: [],

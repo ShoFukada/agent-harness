@@ -449,8 +449,6 @@ export function textError(text: string | undefined): string | undefined {
   return undefined
 }
 
-/** メインが Orca のチャットで動いていて、合図を送る端末が無い。 */
-export const chatMain = (c: Cockpit | undefined) => !c?.main?.terminal
 
 export const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
