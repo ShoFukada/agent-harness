@@ -19,8 +19,10 @@ export type Model = {
 }
 export type Theme = 'light' | 'dark' | 'auto'
 export type Ui = {
-  /** 案件で絞る（root）。無ければ全案件。 */
+  /** 案件で絞る（root）。無ければ全案件。窓では案件のサイドバーで選んだ案件で、無ければ Orca の前面の案件に付いていく。 */
   filter?: string
+  /** 窓の案件のサイドバーを開いているか（localStorage に覚える）。 */
+  sideOpen?: boolean
   /** 開いている票（root#id）。 */
   sel?: string
   /** 選んだ選択肢（root#id → option id）。 */
@@ -609,10 +611,11 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
     </main>${toast}</div>`
 }
 
-export function toastsHtml(ui: Ui, now: number): string {
+/** root を渡すと、その案件の取り消しだけを出す（窓は 1 案件を描くので、別の案件の操作を取り消させない）。 */
+export function toastsHtml(ui: Ui, now: number, root?: string): string {
   const msg = ui.toast && ui.toast.until > now ? `<div class="toast" role="status"><span>${esc(ui.toast.text)}</span></div>` : ''
   const undo = ui.undos
-    .filter((u) => u.until > now)
+    .filter((u) => u.until > now && (!root || u.root === root))
     .map((u) => `<div class="toast undo" role="status"><span>${esc(u.text)}。担当に届けます</span><button type="button" data-act="undo" data-op="${u.opId}" data-root="${esc(u.root)}">元に戻す（${Math.max(1, Math.ceil((u.until - now) / 1000))}）</button></div>`)
     .join('')
   return msg || undo ? `<div class="toasts">${msg}${undo}</div>` : ''

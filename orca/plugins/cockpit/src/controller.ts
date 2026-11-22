@@ -29,6 +29,8 @@ export type Transport = {
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
 
 const THEME_KEY = 'cockpit.theme'
+const SIDE_KEY = 'cockpit.side'
+const narrow = () => matchMedia('(max-width:640px)').matches
 
 /**
  * 本文をコピーしたあとの知らせ。宛先の書式で入れたときはその書式とメールの件名を添える。スレッドを開けたら、今あるボタンの名前で次の操作を案内する。
@@ -107,6 +109,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   } catch {
     // 保存できない画面（パネルのサンドボックス）では明るい地のまま。
   }
+  try {
+    const side = localStorage.getItem(SIDE_KEY)
+    ui.sideOpen = side ? side === 'open' : !narrow()
+  } catch {
+    ui.sideOpen = true
+  }
   const applyTheme = () => (ui.dark = ui.theme === 'dark' || (ui.theme === 'auto' && dark.matches))
   applyTheme()
   dark.addEventListener('change', () => {
@@ -140,7 +148,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     // 窓は 1 案件だけを描き、操縦席の無いワークスペースは並べない（R39）。読めない操縦席だけ理由つきで出す。
     const m: Model = { boards, focused: feed.focused, unseen: win ? unreadable : [...(feed.unseen ?? []), ...unreadable], live: feed.live, errors: feed.errors ?? [], panel: opts.panel }
     if (win) {
-      const b = boardOf(m)
+      const b = boardOf(m, ui.filter)
       shownRoot = b?.root
       // 答えが控えに届いた質問は、待つ表示をやめる（送った時点より答えの節が増えた）。送った案件の控えで見る。
       for (const [k, w] of Object.entries(ui.askWait))
@@ -269,7 +277,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   function onAct(name: string, r: VRow | undefined, el: HTMLElement): void {
     if (name === 'undo') {
       // ボタンからはその操作、u キーからは最後の操作を戻す。
-      const u = el.dataset.op ? ui.undos.find((x) => x.root === el.dataset.root && String(x.opId) === el.dataset.op) : ui.undos.at(-1)
+      const u = el.dataset.op ? ui.undos.find((x) => x.root === el.dataset.root && String(x.opId) === el.dataset.op) : ui.undos.filter((x) => !win || x.root === shownRoot).at(-1)
       if (!u) return
       ui.undos = ui.undos.filter((x) => x !== u)
       void t.op({ root: u.root, item_id: u.itemId, item_rev: u.rev, type: 'undo', undo_of: u.opId }).then((res) => {
@@ -492,12 +500,28 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   /** 窓だけの操作（タブ・畳み・タスクの詳細・カードへ移る・worker の端末・仕事の担当）。扱ったら true。 */
   function onWindow(el: HTMLElement): boolean {
     const d = el.dataset
-    const root = boardOf(model(Date.now()))?.root
+    const root = boardOf(model(Date.now()), ui.filter)?.root
     if (d.ask !== undefined) {
       onAsk(el)
       return true
     }
-    if (d.tab !== undefined) ui.tab = d.tab as Tab
+    if (d.side !== undefined) {
+      ui.sideOpen = d.side === 'open'
+      try {
+        localStorage.setItem(SIDE_KEY, d.side)
+      } catch {
+        // 覚えられないだけで、この窓の開閉は切り替える。
+      }
+    } else if (d.filter !== undefined) {
+      ui.filter = d.filter || undefined
+      if (narrow()) ui.sideOpen = false
+    } else if (d.orca === 'open') {
+      if (root) void t.focusAgent(null, root).then((x) => toast(x.focused ? `${x.how ?? '案件'}を Orca で開きました` : 'この案件は Orca にありません'), fail)
+      return true
+    } else if (d.orca === 'sync') {
+      if (feed.views.some((v) => v.root === feed.focused && v.cockpit)) ui.filter = feed.focused
+    }
+    else if (d.tab !== undefined) ui.tab = d.tab as Tab
     else if (d.toggle !== undefined) ui.open[d.toggle] = el.getAttribute('aria-expanded') !== 'true'
     else if (d.task !== undefined) ui.task = d.task
     else if (d.jump !== undefined) {
@@ -522,7 +546,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   app.addEventListener('click', (e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask],[data-side],[data-orca]')
     if (!el || !app.contains(el)) return
     if (win && onWindow(el)) return
     if (el.dataset.sel !== undefined) return select(el.dataset.sel)
@@ -547,7 +571,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
     if (el.dataset.act !== undefined) return onAct(el.dataset.act, rowOfEl(el), el)
     const r = rowOfEl(el)
-    const root = r?.root ?? feed.views[0]?.root
+    const root = r?.root ?? (win ? shownRoot : undefined) ?? feed.views[0]?.root
     if (root) openTarget(root, el)
   })
   app.addEventListener('toggle', (e) => {
@@ -575,6 +599,14 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const typing = (e.target as Element).closest?.('textarea,input')
     // ボタンやリンクの上の Enter はその操作にする（選んだあと「担当と話す」に移って Enter で決まらないように）。
     const onControl = (e.target as Element).closest?.('button,a,summary')
+    // 狭い幅で案件の一覧を重ねているあいだは、背面の票を操作させない（Esc で一覧を閉じる）。
+    if (win && narrow() && ui.sideOpen) {
+      if (e.key === 'Escape') {
+        ui.sideOpen = false
+        draw()
+      }
+      return
+    }
     if (e.key === 'Escape') {
       ui.sel = undefined
       ;(document.activeElement as HTMLElement | null)?.blur()
@@ -607,7 +639,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
     // 協議のボタンを出さない票（片付いた・顧客待ち）では、キーでも協議を始めない。
     if (e.key === 't' && cur && cur.status !== 'closed' && cur.status !== 'waiting') return void talk(cur)
-    if (e.key === 'u' && ui.undos.length) return onAct('undo', undefined, app)
+    if (e.key === 'u' && ui.undos.some((x) => !win || x.root === shownRoot)) return onAct('undo', undefined, app)
   })
 
   return {

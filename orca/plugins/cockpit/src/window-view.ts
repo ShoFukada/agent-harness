@@ -10,8 +10,22 @@ import type { RulingHit } from './protocol.ts'
 type Svg = (raw: string) => string
 export type Tab = NonNullable<Ui['tab']>
 
-/** 窓が描く案件。前面の案件、無ければ最初の案件（操縦席はハーネスだけ。R39）。 */
-export const boardOf = (m: Model): Board | undefined => m.boards.find((b) => b.root === m.focused) ?? m.boards[0]
+/** 窓が描く案件。サイドバーで選んだ案件、選んでいなければ Orca の前面の案件、無ければ最初の案件（R39）。 */
+export const boardOf = (m: Model, pick?: string): Board | undefined =>
+  m.boards.find((b) => b.root === pick) ?? m.boards.find((b) => b.root === m.focused) ?? m.boards[0]
+
+/**
+ * 案件のサイドバー。名前の順に並べ、件数は私の番（要対応のタブと同じ数）を語つきで、0 件は出さない（R91）。
+ * 名前は workspace.name のまま（命名の決まりは d167 で決める）。
+ */
+function casesSide(m: Model, b: Board, orcaBtns: string): string {
+  const byName = [...m.boards].sort((x, y) => x.v.cockpit!.workspace.name.localeCompare(y.v.cockpit!.workspace.name, 'ja'))
+  const row = (x: Board) => {
+    const n = COUNTED.reduce((s, k) => s + x.d.counts[k], 0)
+    return `<button class="wcase" type="button" data-filter="${esc(x.root)}" aria-current="${x.root === b.root}"><span class="nm">${esc(x.v.cockpit!.workspace.name)}</span>${n ? `<span class="n">私の番 ${n}</span>` : ''}${m.focused === x.root ? '<span class="here">Orca で表示中</span>' : ''}</button>`
+  }
+  return `<nav class="wcases" aria-label="案件"><div class="wch"><b>案件</b><button class="btn quiet" type="button" data-side="close" aria-expanded="true">一覧を畳む</button></div>${byName.map(row).join('')}<div class="wcorca">${orcaBtns}</div></nav>`
+}
 
 const vrows = (b: Board, rows: Row[]): VRow[] => rows.map((r) => ({ ...r, v: b.v }))
 
@@ -647,7 +661,7 @@ function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {
 }
 
 export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
-  const b = boardOf(m)
+  const b = boardOf(m, ui.filter)
   const tab: Tab = ui.tab ?? 'todo'
   const errs = [...m.errors, ...(b?.v.errors ?? []), ...m.unseen.filter((u) => u.why).map((u) => `${u.name}: ${u.why}`)]
   // 欄を外して読めたもの（1 枚のカードの書き間違い）は 1 行に畳み、読めない・繋がらないものだけを赤で出す。
@@ -664,12 +678,16 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
   const stuck = b.d.counts.stuck
   const total = COUNTED.reduce((n, k) => n + b.d.counts[k], 0)
   const body = tab === 'todo' ? viewTodo(b, ui, now, svg) : tab === 'whole' ? viewWhole(b, ui, now, svg) : viewDone(b, ui, now, svg)
-  return `<div class="ck win" data-theme="${ui.dark ? 'dark' : 'light'}">
-    <div class="wtop"><span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
+  const open = ui.sideOpen !== false
+  const front = m.boards.find((x) => x.root === m.focused)
+  const orcaBtns = `<span class="orcab"><button class="btn quiet" type="button" data-orca="open">Orca で開く</button><button class="btn quiet" type="button" data-orca="sync"${!front || front.root === b.root ? ' disabled' : ''}>Orca に合わせる</button></span>`
+  return `<div class="ck win${open ? ' side-open' : ''}" data-theme="${ui.dark ? 'dark' : 'light'}">
+    <div class="wtop">${open ? '' : '<button class="btn quiet sidebtn" type="button" data-side="open" aria-expanded="false">案件の一覧</button>'}<span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
       <div class="tabs" role="tablist">${tabBtn('todo', '要対応', total)}${tabBtn('whole', '全体')}${tabBtn('done', '対応済み', b.d.closed.length, true)}</div>
       <div class="flags">${stuck ? `<span class="err">停止中 ${stuck} 件</span>` : ''}
-        ${theme}</div></div>
+        ${orcaBtns}${theme}</div></div>
+    <div class="wmain">${open ? `${casesSide(m, b, orcaBtns)}<button class="wscrim" type="button" data-side="close" aria-label="案件の一覧を閉じる"></button>` : ''}<div class="wcol">
     ${hard.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
     ${choresHtml(b.d.gaps, soft.length, 'wnotes')}
-    <main class="wbody split">${body}</main>${toastsHtml(ui, now)}</div>`
+    <main class="wbody split">${body}</main></div></div>${toastsHtml(ui, now, b.root)}</div>`
 }

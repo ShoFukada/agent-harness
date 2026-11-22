@@ -290,6 +290,19 @@ body { margin:0; }
 .ck.win .flags .err { color:var(--hot); font-weight:600; }
 .ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
 .ck.win .wnotes { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
+.ck.win .wmain { display:flex; flex:1; min-height:0; position:relative; }
+.ck.win .wcol { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; }
+.ck.win .wcases { flex:none; width:220px; overflow-y:auto; border-right:1px solid var(--rule); background:var(--bg); padding:8px 8px 24px; display:grid; align-content:start; gap:2px; }
+.ck.win .wch { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:2px 6px 8px; }
+.ck.win .wcase { border:0; background:none; text-align:left; border-radius:6px; padding:7px 8px; display:grid; gap:1px; color:var(--ink); }
+.ck.win .wcase:hover { background:var(--sunk); }
+.ck.win .wcase[aria-current="true"] { background:var(--surface); font-weight:700; box-shadow:inset 3px 0 0 var(--focus), 0 0 0 1px var(--rule); }
+.ck.win .wcase .n { font-size:var(--fs-s); color:var(--ink); font-weight:600; }
+.ck.win .wcase .here { font-size:var(--fs-xs); color:var(--ink2); font-weight:400; }
+.ck.win .sidebtn { align-self:center; margin-bottom:10px; }
+.ck.win .orcab { display:inline-flex; gap:6px; margin-right:12px; }
+.ck.win .orcab .btn:disabled { color:var(--ink3); text-decoration:none; cursor:default; }
+.ck.win .wcorca, .ck.win .wscrim { display:none; }
 .ck.win .wbody { display:grid; flex:1; min-height:0; background:var(--surface); }
 .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
 /* 狭い幅では詳細の幅を決めて、一覧の幅を残す（初見 14）。 */
@@ -302,6 +315,11 @@ body { margin:0; }
   .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) 320px; } }
 @media (max-width:640px) {
   .ck.win { height:auto; overflow:visible; }
+  .ck.win .wcases { position:absolute; inset:0 auto 0 0; z-index:5; width:min(280px, 85vw); box-shadow:4px 0 16px rgb(0 0 0 / .18); }
+  .ck.win .wscrim { display:block; position:absolute; inset:0; z-index:4; border:0; padding:0; background:rgb(0 0 0 / .45); }
+  .ck.win .wtop .orcab { display:none; }
+  .ck.win .wcorca { display:block; padding:12px 6px 0; border-top:1px solid var(--rule); margin-top:8px; }
+  .ck.win .wcorca .orcab { display:grid; gap:8px; margin:0; justify-items:start; }
   .ck.win .wbody.split { grid-template-columns:minmax(0,1fr); }
   .ck.win .wside { border-left:0; border-top:1px solid var(--rule); }
   .ck.win .wpane { padding-bottom:20px; } }

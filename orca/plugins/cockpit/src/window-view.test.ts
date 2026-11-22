@@ -149,6 +149,34 @@ test('対応済み: 確認の返答が無いまま閉じた見てに札を付け
   assert.match(text(h), /担当が完了 11\/21\(土\) 09:30・確認の返答なし/)
 })
 
+test('案件のサイドバー: 名前の順に並べ、私の番の件数は語つきで 0 件は出さず、選んだ案件を描く。Orca の前面は語で示し、合わせるボタンは前面と違うときだけ押せる（追加 34）', () => {
+  const views = sample(NOW).map((w): CockpitView => ({ state: 'ok', root: `/ws/${w.dir}`, cockpit: parseCockpit(JSON.stringify(w.cockpit)), log: structuredClone(w.log), archive: [], figures: {}, errors: [], workers: [], notifiedOp: 0 }))
+  const aobaRoot = views.find((v) => v.cockpit!.workspace.name.startsWith('青葉'))!.root!
+  const harness = views.find((v) => v.cockpit!.workspace.name === '社内ハーネス')!.root!
+  const m: Model = { boards: boardsOf(views, NOW), focused: aobaRoot, unseen: [], errors: [] }
+  const h = renderWindow(m, newUi(), NOW, (s) => s)
+  const side = h.slice(h.indexOf('<nav class="wcases"'), h.indexOf('</nav>'))
+  const names = [...side.matchAll(/<span class="nm">([^<]+)<\/span>/g)].map((x) => x[1])
+  assert.deepEqual(names, [...names].sort((a, b) => a!.localeCompare(b!, 'ja')))
+  assert.match(side, new RegExp(`data-filter="${aobaRoot}" aria-current="true"><span class="nm">青葉物流 配車アプリ</span><span class="n">私の番 \\d+</span><span class="here">Orca で表示中</span>`))
+  assert.doesNotMatch(side, /私の番 0/)
+  assert.match(side, /data-side="close" aria-expanded="true">一覧を畳む</)
+  assert.match(h, /data-orca="sync" disabled>Orca に合わせる/)
+  const picked = renderWindow(m, { ...newUi(), filter: harness }, NOW, (s) => s)
+  assert.match(picked, /<span class="pj">社内ハーネス<\/span>/)
+  assert.match(picked, /data-orca="sync">Orca に合わせる/)
+  const closed = renderWindow(m, { ...newUi(), sideOpen: false }, NOW, (s) => s)
+  assert.doesNotMatch(closed, /class="wcases"/)
+  assert.match(closed, /data-side="open" aria-expanded="false">案件の一覧<\/button><span class="pj">青葉物流 配車アプリ/)
+  // Orca の前面が操縦席の無いワークスペースなら、合わせる先が無いので押せない（Codex 重大 3）。
+  const noCockpit = renderWindow({ ...m, focused: '/ws/elsewhere' }, { ...newUi(), filter: harness }, NOW, (s) => s)
+  assert.match(noCockpit, /data-orca="sync" disabled>/)
+  // 別の案件で押した「送信済み」の取り消しは、この案件を描いているあいだ出さない（Codex 重大 2）。
+  const undos = [{ root: aobaRoot, opId: 7, itemId: 's1', rev: 1, text: '送信済みとして記録しました「議事録」', until: NOW + 5000 }]
+  assert.match(renderWindow(m, { ...newUi(), undos }, NOW, (s) => s), /data-act="undo" data-op="7"/)
+  assert.doesNotMatch(renderWindow(m, { ...newUi(), undos, filter: harness }, NOW, (s) => s), /data-act="undo"/)
+})
+
 test('窓口の未処理: 30 分を過ぎた未仕分けの発言は 1 件ずつ並べず件数の 1 行にし、返しで反映された発言は数えない（追加 32）', () => {
   const said = (i: number) => ({ id: `u${i}`, at: new Date(NOW - (60 + i) * 60_000).toISOString(), prompt: `発言の本文 ${i}` })
   const m = aoba((v) => {
