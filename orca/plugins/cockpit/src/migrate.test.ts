@@ -10,7 +10,7 @@ import { overlay, parseCockpit } from './model.ts'
 /** 版 1 の形（架空の案件）。実際の案件にある項目の書き方をひと通り含める。 */
 const v1 = (): V1 => ({
   version: 1,
-  workspace: { name: '見本の案件' },
+  workspace: { name: '社内｜見本の案件' },
   main: { agent: 'claude', terminal: 'term_main' },
   summary: '古い要約',
   streams: [{ id: 's1', title: '画面の改修' }],
@@ -129,4 +129,13 @@ test('plan のあとに窓口が反映した結果を、古い中身で書き戻
   const c = JSON.parse(readFileSync(path.join(dir, 'cockpit.json'), 'utf8'))
   assert.deepEqual(c.applied_ops, [1, 2])
   assert.equal(c.cards.find((x: { id: string }) => x.id === 'd1').resolved_option, 'a')
+})
+
+test('版 1 からの移し替え（追加 43）: 案件の名前が「顧客｜案件」の形でなければ書かずに断り、確かめでは名指しする', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-mig-name-'))
+  mkdirSync(path.join(root, '.orca'))
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify({ ...v1(), workspace: { name: 'agent-harness' } }))
+  assert.match((await plan(root)).summary[0]!, /案件の名前「agent-harness」.*版 1 の cockpit.json の workspace.name を直してから移す.*--write は直すまで断る/)
+  await assert.rejects(write(root, await plan(root)), /移し替えていない: 案件の名前「agent-harness」/)
+  assert.equal(JSON.parse(readFileSync(path.join(root, '.orca', 'cockpit.json'), 'utf8')).version, 1)
 })

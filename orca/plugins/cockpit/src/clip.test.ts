@@ -111,15 +111,32 @@ test('コピーの書式: 見てのカードの見本（追加 25）は、押し
 test('コピーの書式: 期限が切れたら clip-draft が起こした swift ごと止め、あとからクリップボードに書かせない', { skip }, async () => {
   const slow = path.join(dir, 'slow')
   mkdirSync(slow)
-  // 起きた印を残してから眠る（swift が起きる前に期限が切れても通ってしまわないように）。
-  writeFileSync(path.join(slow, 'swift'), '#!/bin/sh\necho started > "$FAKE_SWIFT_OUT.started"\nsleep 3\necho late > "$FAKE_SWIFT_OUT"\n')
+  // 起きた印を残し、試験が合図のファイルを置くまで待ってから書く（swift が起きる前に期限が切れても通ってしまわないように）。
+  // 書く時機を時計でなく合図にし、期限は python と pandoc が重い機械でも起きられる長さにする（1.5 秒では起きる前に切れうる。追加 43）。
+  writeFileSync(path.join(slow, 'swift'), '#!/bin/sh\necho started > "$FAKE_SWIFT_OUT.started"\nwhile [ ! -e "$FAKE_SWIFT_OUT.go" ]; do sleep 0.05; done\necho late > "$FAKE_SWIFT_OUT"\n')
   chmodSync(path.join(slow, 'swift'), 0o755)
   const out = path.join(dir, 'late.json')
-  const r = await clipDraft('本文', 'teams', { bin: BIN, pasteboard: PB, timeoutMs: 1500, env: { ...process.env, PATH: `${slow}:${process.env.PATH}`, FAKE_SWIFT_OUT: out } })
-  assert.deepEqual(r, { copied: false, reason: 'clip-draft が時間内に終わりませんでした' })
-  assert.equal(existsSync(`${out}.started`), true)
-  // 止めなければ swift は起きてから 3 秒で書く。期限の 1.5 秒から 2.5 秒待って、書いていないことを見る。
-  await new Promise((res) => setTimeout(res, 2500))
+  const go = () => writeFileSync(`${out}.go`, '')
+  // 止める処理が壊れて swift が残ると、パイプが閉じず clipDraft が返らない。試験の側の上限で落とし、残った swift も合図で終わらせる（Codex 43 必須 3）。
+  let hang: NodeJS.Timeout | undefined
+  const pending = clipDraft('本文', 'teams', { bin: BIN, pasteboard: PB, timeoutMs: 5000, env: { ...process.env, PATH: `${slow}:${process.env.PATH}`, FAKE_SWIFT_OUT: out } })
+  try {
+    const r = await Promise.race([pending, new Promise<'hang'>((res) => (hang = setTimeout(res, 30_000, 'hang')))])
+    if (r === 'hang') {
+      // 残った swift を合図で終わらせ、パイプが閉じて clipDraft が返るまで待ってから落とす（後片付けが合図ごと消して swift が残らないように）。
+      go()
+      await pending
+      assert.fail('期限のあとも clip-draft が返らない（swift が残っている）')
+    }
+    assert.deepEqual(r, { copied: false, reason: 'clip-draft が時間内に終わりませんでした' })
+    assert.equal(existsSync(`${out}.started`), true)
+    // 止めていなければ、合図から 0.05 秒ほどで書く。合図を置いて 1 秒待ち、書いていないことを見る。
+    go()
+    await new Promise((res) => setTimeout(res, 1000))
+  } finally {
+    clearTimeout(hang)
+    go()
+  }
   assert.equal(existsSync(out), false)
 })
 

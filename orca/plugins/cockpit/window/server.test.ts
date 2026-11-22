@@ -119,8 +119,9 @@ function listen(port: number, token: string) {
     })
   })
   servers.push({ close: async () => void req.destroy() })
+  // 上限は回数でなく時刻で持ち、広く取る。待つ条件は出来事なので、通る回は速さが変わらず、重い機械（ほかの試験と同時）でだけ長く待つ（追加 43）。
   const until = async (ok: (v: WindowView) => boolean): Promise<WindowView> => {
-    for (let n = 0; n < 150; n++) {
+    for (const end = Date.now() + 20_000; Date.now() < end; ) {
       const v = got.findLast(ok)
       if (v) return v
       await new Promise((r) => setTimeout(r, 20))
@@ -711,9 +712,9 @@ test('担当と話す: チャットの担当（terminal に structworker_ を書
 test('担当と話す: 窓を開いた直後（Dispatch を読んでいる途中）に押しても、読み終わるのを待ってチャットの担当を開く', async () => {
   const { a, child, rows, shows, owners } = chatOwner(undefined)
   const { s, port, post } = await start(rows, a, undefined, owners, shows, 400)
-  listen(port, s.token)
-  let r = await post('talk', { root: a, item_id: 'd21', item_rev: 1 })
-  for (let n = 0; r.status === 409 && n < 200; n++) r = await post('talk', { root: a, item_id: 'd21', item_rev: 1 })
+  // 帳簿が読めた（カードが押せる）ことを出来事で待つ。409 を回数で押し直すと、重い機械では読み終わる前に回数が尽きる（追加 43）。
+  await listen(port, s.token).until((w) => !!board(w, a)?.cockpit)
+  const r = await post('talk', { root: a, item_id: 'd21', item_rev: 1 })
   assert.deepEqual(r.body, { opened: true, how: `ワークスペース「${path.basename(child)}」`, tab: '窓の版 3（担当）' })
 })
 

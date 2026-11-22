@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { FAKE_LINT, FIXED_M1, OLD_M1, REAL_SENDS } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
-import { migrate, write } from '../window/write.ts'
+import { init, migrate, write } from '../window/write.ts'
 import { parseCockpit, STATUS_MAX, type Card, type Cockpit, type Request } from './model.ts'
+import { workspaceNameCheck } from './state.ts'
 import { applyChange, draftsToLint, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
+/** 移し替え（migrate-v3 --write）は「顧客｜案件」の形の名前だけを通すので、見本の名前を形に合わせる。 */
+const aobaNamed = (): Cockpit => ({ ...aoba(), workspace: { ...aoba().workspace, name: '青葉物流｜配車アプリ' } })
 const card = (c: Cockpit, id: string) => structuredClone(c.cards.find((x) => x.id === id)!)
 const utter = [{ id: 'u1', at: '2026-11-21T09:00:00+09:00' }, { id: 'u2', at: '2026-11-21T09:10:00+09:00' }, { id: 'u3', at: '2026-11-21T09:20:00+09:00' }]
 
@@ -118,7 +122,7 @@ test('migrate-v3: 話し中 → 相談、run_id の補い、依頼に legacy と
 test('cockpit-write の CLI: 書く前と同じ形の誤りは邪魔せず、ロックの中で一時ファイルから書く。migrate-v3 は元を cockpit.v2.json に控え、2 回目は断る', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'cockpit-write-'))
   mkdirSync(path.join(root, '.orca', 'cockpit'), { recursive: true })
-  const c = aoba() as unknown as { cards: unknown[] }
+  const c = aobaNamed() as unknown as { cards: unknown[] }
   c.cards.push({ id: 'bad', rev: 1, kind: 'ask', title: 'x', state: 'open' })
   writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(c))
   writeFileSync(path.join(root, '.orca', 'cockpit', 'utterances.jsonl'), utter.map((u) => JSON.stringify(u)).join('\n') + '\n')
@@ -192,13 +196,14 @@ test('書く道具: 依頼の済の条件を減らして、既にあるカード
 test('migrate-v3: 書かない（--dry-run）ときはロックを取らない。Orca への問い合わせはロックの外で済ませ、その間の書き込みを消さない（Codex 高 5・中 10）', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'cockpit-mig-'))
   mkdirSync(path.join(root, '.orca'), { recursive: true })
-  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(aoba()))
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(aobaNamed()))
   writeFileSync(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify({ ops: [{ op_id: 9, at: '2026-11-21T01:00:00.000Z', item_id: 'd21', item_rev: 1, type: 'talk' }] }))
-  // 別のプロセスがロックを持っていても、書かない移し替えは待たずに終わる。
-  writeFileSync(path.join(root, '.orca', 'cockpit.json.lock'), '')
-  const t0 = Date.now()
+  // 別のプロセスがロックを持っていても、書かない移し替えはロックに触れずに終わる（取りに行けば「ほかの画面が記録中」で断られる）。
+  // かかった時間では見ない。重い機械では待たなくても 1 秒を超えうる（追加 43）。
+  const held = path.join(root, '.orca', 'cockpit.json.lock')
+  writeFileSync(held, 'other')
   await migrate(root, async () => 'run_x', false, NOW)
-  assert.ok(Date.now() - t0 < 1000, '書かない移し替えはロックを待たない')
+  assert.equal(readFileSync(held, 'utf8'), 'other', '書かない移し替えはロックを取らない・消さない')
   rmSync(path.join(root, '.orca', 'cockpit.json.lock'))
   // 問い合わせの最中に書いた変更は、移し替えの書き込みで消えない。
   await migrate(root, async () => {
@@ -455,4 +460,63 @@ test('状況の文（status、R188）: 仕事とタスクに書け、文字列�
   assert.match(applyChange(c, { streams: [{ ...s1, status: 3 as unknown as string }] }).errors.join('\n'), /summary・status は文字列/)
   assert.match(applyChange(c, { tasks: [{ ...t1, status: 3 as unknown as string }] }).errors.join('\n'), /status の形が違う/)
   assert.match(applyChange(c, { tasks: [{ ...t1, status: '直しておきました' }] }).errors.join('\n'), /status「ておきました」/)
+})
+
+test('案件の名前（追加 43・R165）: cockpit-write で workspace.name だけを書け、形の合う名前は通し、外れた名前は state.ts の 1 文で断る。古い外れた名前は止めずに名指しする', () => {
+  const c = { ...aoba(), main: { run_id: 'run_m' } }
+  const r = applyChange(c, { workspace: { name: '青葉物流｜配車アプリ' } })
+  assert.deepEqual(r.errors, [])
+  assert.equal(r.next!.workspace.name, '青葉物流｜配車アプリ')
+  assert.deepEqual(r.next!.workspace.milestones, c.workspace.milestones, 'milestones は今の値を保つ')
+  assert.deepEqual(r.warnings.filter((w) => w.includes('案件の名前')), [])
+  for (const bad of ['dev-standards', '社内|ハーネス', 'A｜B｜C', ''])
+    assert.deepEqual(applyChange(c, { workspace: { name: bad } }).errors, [workspaceNameCheck(bad)!.message])
+  assert.match(applyChange(c, { workspace: { name: '社内｜x', milestones: [] } }).errors.join(), /workspace は \{ name \} だけ/)
+  // 移した帳簿に形の外れた名前が残っていても、ほかの書き込みは通し、直し方を名指しする。
+  const other = applyChange(c, { streams: [structuredClone(c.streams[0]!)] })
+  assert.deepEqual(other.errors, [])
+  assert.ok(other.warnings.includes(workspaceNameCheck(c.workspace.name)!.message))
+  assert.match(workspaceNameCheck('x')!.message, /cockpit-write に \{ "workspace": \{ "name": "…" \} \}/)
+  // intake を初めて付ける書き込みは版 3 への移し替えに当たるので、migrate-v3 と同じく外れた名前を断り、同じ回に直せば通す（Codex 43 必須 1）。
+  const v2 = { ...c, intake: undefined }
+  const first = { intake: { through: '', none: [] } }
+  assert.deepEqual(applyChange(v2, first).errors, [workspaceNameCheck(c.workspace.name)!.message])
+  assert.deepEqual(applyChange(v2, { ...first, workspace: { name: '青葉物流｜配車アプリ' } }).errors, [])
+})
+
+test('cockpit-write init（追加 43）: 初めて作る帳簿は、版・案件の名前の形・窓口の Run が揃ったものだけを書き、既にあれば上書きしない', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-init-'))
+  const ledger = { ...aobaNamed(), main: { agent: 'claude', terminal: '', run_id: 'run_m' } }
+  const file = path.join(root, '.orca', 'cockpit.json')
+  assert.deepEqual(await init(root, { ...ledger, workspace: { name: 'agent-harness' } }), [workspaceNameCheck('agent-harness', '渡す帳簿の workspace.name を直して init し直す（R165）')!.message])
+  assert.match((await init(root, { ...ledger, main: { agent: 'claude' } })).join(), /main\.run_id が無い/)
+  assert.match((await init(root, { ...ledger, version: 1 })).join(), /version は 2/)
+  assert.match((await init(root, [])).join(), /オブジェクト/)
+  assert.ok(!existsSync(file), '断ったら何も書かない')
+  assert.deepEqual(await init(root, ledger, true), [])
+  assert.ok(!existsSync(path.join(root, '.orca')), '検査だけ（--dry-run）は .orca も作らない')
+  // CLI でも --dry-run は作らない（Codex 43 必須 2）。
+  const cli = path.join(import.meta.dirname, '../bin/cockpit-write')
+  const out = await new Promise<string>((resolve, reject) => {
+    const child = execFile(cli, ['--dry-run', 'init', root], (err, stdout, stderr) => (err ? reject(new Error(stderr)) : resolve(stdout)))
+    child.stdin?.end(JSON.stringify(ledger))
+  })
+  assert.match(out, /検査を通った（作っていない）/)
+  assert.ok(!existsSync(file))
+  assert.deepEqual(await init(root, ledger), [])
+  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Cockpit).workspace.name, '青葉物流｜配車アプリ')
+  assert.match((await init(root, { ...ledger, workspace: { name: '社内｜別' } })).join(), /既にある/)
+  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Cockpit).workspace.name, '青葉物流｜配車アプリ', '既にある帳簿は上書きしない')
+})
+
+test('migrate-v3（追加 43）: 案件の名前が形から外れていれば、--write は書かずに断り、書かない確かめでは名指しする', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-mig-name-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  const file = path.join(root, '.orca', 'cockpit.json')
+  writeFileSync(file, JSON.stringify({ ...aoba(), workspace: { name: 'agent-harness' } }))
+  const dry = await migrate(root, async () => 'run_x', false, NOW)
+  assert.match(dry.summary[0]!, /案件の名前「agent-harness」.*--write は直すまで断る/)
+  await assert.rejects(migrate(root, async () => 'run_x', true, NOW), /移し替えていない: 案件の名前「agent-harness」/)
+  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Cockpit).intake, undefined)
+  assert.ok(!existsSync(path.join(root, '.orca', 'cockpit.v2.json')))
 })

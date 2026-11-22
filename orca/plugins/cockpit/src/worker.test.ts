@@ -224,8 +224,9 @@ test('止まっている worker には理由を付け、帯の印から端末を
   assert.deepEqual(h.callsOf('terminal.focus'), [{ terminalId: 'term_w' }])
 })
 
+// 上限は時刻で広く取る（通る回は条件が揃いしだい返る。重い機械でだけ長く待つ。追加 43）。
 async function waitFor<T>(get: () => T, ok: (v: T) => boolean): Promise<T> {
-  for (let i = 0; i < 100; i++) {
+  for (const end = Date.now() + 20_000; Date.now() < end; ) {
     const v = get()
     if (ok(v)) return v
     await new Promise((r) => setTimeout(r, 20))

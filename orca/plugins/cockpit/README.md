@@ -174,9 +174,12 @@
 bin/cockpit-write <root> < change.json            # 検査して書く（一時ファイルに書いて rename）
 bin/cockpit-write --dry-run <root> < change.json  # 書かずに検査だけ（ロックファイルも作らない）
 bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write が無ければ結果を出すだけ）
+bin/cockpit-write init <root> < cockpit.json      # 操縦席を初めて作る（帳簿が既にあれば断る。--dry-run は検査だけ）
 ```
 
-- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." }, "asks": [...] }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換える（agent・terminal は今の値を保つ）。Run の無い帳簿は書けない（窓の合図は窓口の Run にだけ送る。R191）ので、消すことはできず、無い帳簿には Run を一緒に書く。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
+- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." }, "asks": [...], "workspace": { "name": "顧客｜案件" } }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換える（agent・terminal は今の値を保つ）。Run の無い帳簿は書けない（窓の合図は窓口の Run にだけ送る。R191）ので、消すことはできず、無い帳簿には Run を一緒に書く。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
+- 案件の名前（R165）: `workspace` は `name` だけを置き換える（milestones は今の値を保つ）。「顧客｜案件」の形（`src/state.ts` の `workspaceNameOk`）に合わない名前は、`checks.workspace_name` と同じ 1 文で断る。移した帳簿に形の外れた名前が残っていれば、ほかの書き込みは止めずに注意で名指しする。`intake` を初めて付ける書き込み（版 3 への移し替えに当たる）は、名前が外れていれば断る
+- init: 版・案件の名前の形・`main.run_id`・読み込みの形の誤りを確かめ、通ったものだけを `.orca/cockpit.json` に書く。migrate-v3 の `--write` と版 1 からの移し替え（`window/migrate.ts --write`）も、案件の名前が形から外れていれば書かずに断る
 - `asks` は窓からの質問の返しを反映した印（`{ id: "ask3", card?, task?, memo?, from_returns: ["ask3-1"], held_returns: [], notify: [{ return_id, task?, message_id? }] }`）を質問 id ごとに足すか置き換える。返しの id はその質問のもの（`ask3-<数>`）だけを受ける
 - 検査: 欄の形・参照（仕事・タスク・担当・依頼の id）・`rev`（開いたカードの中身を変えたら 1 上げる。片付けるだけ・要素の行き先を書くだけなら据え置き）・依頼の欄・仕分けの位置・要素の行き先。通らなければ書かずに理由を返す
 - 語調: カードとタスクの人が読む欄（title・purpose・why・next・`last.text`・`look_for`・`options` の label と body・タスクの `done` など）に柔らかい言い回し（ておきました・ですね・ますね・ですよね・かも・しちゃ・ちゃいました・ちゃった）があれば、欄と語を名指しして断る（R84）。draft・quote・request・reason・`background.quote`・深田さんの `last`（by が 私）と、元の行にそのままある文は見ない

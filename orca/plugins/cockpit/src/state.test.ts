@@ -687,7 +687,7 @@ test('案件の名前の形（R165・R181）: 全角の｜でちょうど 2 つ�
   assert.equal(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, null)
   w.cockpit.workspace.name = 'dev-standards'
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, {
-    name: 'dev-standards', message: '案件の名前「dev-standards」が「<顧客>｜<案件>」（社内は「社内｜<案件>」）の形になっていない。cockpit.json の workspace.name を直す（R165）'
+    name: 'dev-standards', message: '案件の名前「dev-standards」が「<顧客>｜<案件>」（社内は「社内｜<案件>」）の形になっていない。cockpit-write に { "workspace": { "name": "…" } } を渡して直す（R165）'
   })
   // 名前の欄が無くても検査で落ちず、無いことを名指しする（Codex 4）。
   delete (w.cockpit.workspace as { name?: string }).name

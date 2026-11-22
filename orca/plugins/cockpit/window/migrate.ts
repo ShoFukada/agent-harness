@@ -5,9 +5,14 @@ import { constants as fsConstants, promises as fsp } from 'node:fs'
 import path from 'node:path'
 import { KIND_LABEL, parseUserLog, VERSION, type Cockpit } from '../src/model.ts'
 import { migrate, migrateArchive, oldWorkers, type V1 } from '../src/migrate.ts'
+import { workspaceNameCheck } from '../src/state.ts'
 import { lockLog, writeAtomic } from '../src/store.ts'
 
 export type MigrateResult = { cockpit?: Cockpit; archive?: { cards: Cockpit['cards'] }; summary: string[]; unapplied: number[] }
+
+/** 版 1 の帳簿は書く道具が読めないので、元の cockpit.json を直してもらう。 */
+const V1_NAME_FIX = '版 1 の cockpit.json の workspace.name を直してから移す（R165）'
+const nameCheck = (c: Cockpit | undefined) => (c ? workspaceNameCheck(c.workspace.name, V1_NAME_FIX) : null)
 
 const readJson = (file: string) => fsp.readFile(file, 'utf8').then((t) => JSON.parse(t) as Record<string, unknown>, () => undefined)
 
@@ -33,7 +38,9 @@ export async function plan(root: string): Promise<MigrateResult> {
     const k = `${KIND_LABEL[c.kind]}${c.state === 'open' ? '（開いている）' : ''}`
     count.set(k, (count.get(k) ?? 0) + 1)
   }
+  const name = nameCheck(cockpit)
   const summary = [
+    ...(name ? [`${name.message}（--write は直すまで断る）`] : []),
     ...(cockpit ? [`${v1.workspace.name}: items ${v1.items.length} 件 → cards ${cockpit.cards.length} 件`] : [`${v1.workspace.name}: cockpit.json は移し替え済み`]),
     ...[...count].map(([k, n]) => `  ${k} ${n}`),
     ...(cockpit?.cards ?? []).filter((c) => c.state === 'open').map((c) => `  開いている ${c.id}: ${KIND_LABEL[c.kind]}「${c.title}」`),
@@ -71,6 +78,8 @@ export async function write(root: string, _shown?: MigrateResult): Promise<Migra
     const r = await plan(root)
     // 未反映の操作は版 1 の項目に押したもの。先にメインが反映してから移す（版 2 では効かなくなるため）。
     if (r.unapplied.length) throw new Error(`未反映の操作があります（op ${r.unapplied.join(', ')}）。メインが反映してから移し替えてください`)
+    const name = nameCheck(r.cockpit)
+    if (name) throw new Error(`移し替えていない: ${name.message}`)
     if (r.cockpit) await backup(path.join(dir, 'cockpit.json'), path.join(dir, 'cockpit.v1.json'))
     if (r.archive) await backup(path.join(dir, 'cockpit.archive.json'), path.join(dir, 'cockpit.archive.v1.json'))
     // archive を先に書く。cockpit.json が版 2 になったら済んだ印なので、最後に書く。

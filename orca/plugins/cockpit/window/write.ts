@@ -1,6 +1,7 @@
 import { constants as fsConstants, promises as fsp } from 'node:fs'
 import path from 'node:path'
-import { parseCockpit, parseUserLog, VERSION, type Cockpit, type UserLog } from '../src/model.ts'
+import { parseCockpit, parseUserLog, RUN_ID, VERSION, type Cockpit, type UserLog } from '../src/model.ts'
+import { workspaceNameCheck } from '../src/state.ts'
 import { lockCockpit, parseUtterances, readInOrca, writeAtomic } from '../src/store.ts'
 import { checkDrafts, type LintOpts } from '../src/lint.ts'
 import { applyChange, draftsToLint, migrateV3, type MigrateV3, type WriteResult } from '../src/write.ts'
@@ -58,7 +59,10 @@ export async function migrate(root: string, runOf: (dispatch: string) => Promise
   try {
     const { raw, log, utterances } = await readLedger(root)
     if (raw.intake) throw new Error('すでに版 3 の形（intake がある）')
+    const name = workspaceNameCheck(raw.workspace?.name)
+    if (name && doWrite) throw new Error(`移し替えていない: ${name.message}`)
     const r = migrateV3(raw, log, utterances, runs, now)
+    if (name) r.summary.unshift(`${name.message}（--write は直すまで断る）`)
     const problems: string[] = []
     parseCockpit(JSON.stringify(r.next), problems)
     if (problems.length) r.summary.push(...problems.map((p) => `読み込みの知らせ: ${p}`))
@@ -70,6 +74,39 @@ export async function migrate(root: string, runOf: (dispatch: string) => Promise
       await save(root, r.next)
     }
     return r
+  } finally {
+    await release()
+  }
+}
+
+/**
+ * 操縦席を初めて作る（cockpit skill の references/setup.md の「最初に作るとき」）。帳簿が既にあれば断る。
+ * 版・案件の名前の形（R165）・窓口の Run（R191）・読み込みの形の誤りのどれかが通らなければ書かず、理由を返す。
+ */
+export async function init(root: string, ledger: unknown, check = false): Promise<string[]> {
+  if (typeof ledger !== 'object' || ledger === null || Array.isArray(ledger)) return ['帳簿は JSON のオブジェクトで渡す']
+  const c = ledger as Partial<Cockpit>
+  const errors: string[] = []
+  if (c.version !== VERSION) errors.push(`version は ${VERSION}`)
+  const name = workspaceNameCheck(c.workspace?.name, '渡す帳簿の workspace.name を直して init し直す（R165）')
+  if (name) errors.push(name.message)
+  if (!RUN_ID(c.main?.run_id)) errors.push('main.run_id が無い。窓口の Run（orca orchestration run-current の runId）を書く（窓の合図は窓口の Run にだけ送る）')
+  if (!errors.length) {
+    try {
+      parseCockpit(JSON.stringify(c), errors)
+    } catch (e) {
+      errors.push((e as Error).message)
+    }
+  }
+  if (errors.length) return errors
+  const exists = [`${root}/.orca/cockpit.json が既にある。書き換えは cockpit-write <root> <変更> で渡す`]
+  if (check) return (await readInOrca(root, '.orca/cockpit.json')) !== undefined ? exists : []
+  await fsp.mkdir(path.join(root, '.orca'), { recursive: true })
+  const release = await lockCockpit(root)
+  try {
+    if (await readInOrca(root, '.orca/cockpit.json') !== undefined) return exists
+    await save(root, c as Cockpit)
+    return []
   } finally {
     await release()
   }
@@ -103,6 +140,14 @@ if (import.meta.main) {
       if (r.sort.length) console.log(`\n窓口が仕分ける古い依頼（id・題・タスク・最後の更新）:\n${r.sort.map((x) => `  ${x.id} ${x.title}｜${x.tasks}｜${x.last ?? '—'}`).join('\n')}`)
       console.log(doWrite ? '\n書き換えた。元は .orca/cockpit.v2.json' : '\n（書き換えていない。--write で書き換える）')
     }, fail)
+  } else if (plain[0] === 'init' && (plain.length === 2 || plain.length === 3)) {
+    readChange(plain[2] ?? '-').then((c) => init(path.resolve(plain[1]!), c, dry)).then((errors) => {
+      if (errors.length) {
+        console.error(`作っていない:\n${errors.map((e) => `  ${e}`).join('\n')}`)
+        process.exit(1)
+      }
+      console.log(dry ? '検査を通った（作っていない）' : '作った')
+    }, fail)
   } else if (plain.length === 1 || plain.length === 2) {
     readChange(plain[1] ?? '-').then((ch) => write(path.resolve(plain[0]!), ch, dry)).then((r) => {
       for (const w of r.warnings) console.log(`注意: ${w}`)
@@ -113,7 +158,7 @@ if (import.meta.main) {
       console.log(dry ? '検査を通った（書いていない）' : '書いた')
     }, fail)
   } else {
-    console.error('使い方: cockpit-write <ワークスペースの root> [変更の JSON ファイル | -] [--dry-run]\n        cockpit-write migrate-v3 [ワークスペースの root] [--write]')
+    console.error('使い方: cockpit-write <ワークスペースの root> [変更の JSON ファイル | -] [--dry-run]\n        cockpit-write init <ワークスペースの root> [帳簿の JSON ファイル | -] [--dry-run]\n        cockpit-write migrate-v3 [ワークスペースの root] [--write]')
     process.exit(2)
   }
 }

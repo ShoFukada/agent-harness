@@ -542,11 +542,13 @@ export const workspaceNameOk = (name: string) => {
   const parts = name.trim().split(WORKSPACE_NAME_SEP)
   return parts.length === 2 && parts.every((p) => p.trim() !== '')
 }
-export const workspaceNameCheck = (name: unknown): { name: string; message: string } | null =>
+/** 直し方は書く道具で示す。移し替えたあとの帳簿の直書きは hook が断るため（監査 13:50 の重大 1）。 */
+const WORKSPACE_NAME_FIX = 'cockpit-write に { "workspace": { "name": "…" } } を渡して直す（R165）'
+export const workspaceNameCheck = (name: unknown, fix = WORKSPACE_NAME_FIX): { name: string; message: string } | null =>
   typeof name !== 'string' || !name.trim()
-    ? { name: '', message: `案件の名前（cockpit.json の workspace.name）が無い。${WORKSPACE_NAME_FORM}の形で書く（R165）` }
+    ? { name: '', message: `案件の名前（cockpit.json の workspace.name）が無い。${WORKSPACE_NAME_FORM}の形で、${fix}` }
     : workspaceNameOk(name) ? null
-    : { name, message: `案件の名前「${name}」が${WORKSPACE_NAME_FORM}の形になっていない。cockpit.json の workspace.name を直す（R165）` }
+    : { name, message: `案件の名前「${name}」が${WORKSPACE_NAME_FORM}の形になっていない。${fix}` }
 
 /**
  * その案件で一任された許可の単位（R95・R173）。深田が「この案件では一任する」を押して窓口が記録した、有効な（置き換えられていない）

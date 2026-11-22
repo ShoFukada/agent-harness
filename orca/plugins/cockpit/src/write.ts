@@ -4,6 +4,7 @@ import {
   ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WATCH_SHAPE, WORKER_SHAPE,
   type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
+import { workspaceNameCheck } from './state.ts'
 
 /**
  * 書く変更。どの欄も id 単位の追加と置き換えで、全体を置き換える入口は作らない（ほかの行を書き間違いで消さないため）。
@@ -21,8 +22,10 @@ export type Change = {
   main?: { run_id: string | null }
   /** 窓からの質問の返しを反映した印（質問 id ごとの追加と置き換え。cockpit skill の「窓から質問する」）。 */
   asks?: AskRecord[]
+  /** 案件の名前だけを置き換える（「顧客｜案件」の形のものだけ。R165）。milestones は今の値を保つ。 */
+  workspace?: { name: string }
 }
-const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops', 'main', 'asks']
+const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops', 'main', 'asks', 'workspace']
 
 export type WriteResult = { next?: Cockpit; errors: string[]; warnings: string[] }
 
@@ -221,6 +224,13 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     errors.push('applied_ops は op_id（正の整数）の配列で渡す')
   if (change.main !== undefined && !(isObj(change.main) && Object.keys(change.main).join() === 'run_id' && (change.main.run_id === null || RUN_ID(change.main.run_id))))
     errors.push('main は { run_id } だけを渡す（run_id は run_ で始まる文字列）')
+  if (change.workspace !== undefined) {
+    if (!(isObj(change.workspace) && Object.keys(change.workspace).join() === 'name')) errors.push('workspace は { name } だけを渡す')
+    else {
+      const bad = workspaceNameCheck(change.workspace.name)
+      if (bad) errors.push(bad.message)
+    }
+  }
   if (change.intake !== undefined && !INTAKE_SHAPE(change.intake)) errors.push('intake は { through, none, checked_through } の形で渡す（none は発言の id の配列）')
   if (errors.length) return { errors, warnings }
   const ch = change as Change
@@ -417,6 +427,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     ...c, streams, tasks, cards, ...(c.owners || ch.owners ? { owners } : {}), ...(c.requests || ch.requests ? { requests } : {}),
     ...(intake ? { intake } : {}),
     ...(ch.main ? { main: withRun(c.main, ch.main.run_id) } : {}),
+    ...(ch.workspace ? { workspace: { ...c.workspace, name: ch.workspace.name } } : {}),
     ...(c.asks || ch.asks ? { asks: upsert(c.asks ?? [], ch.asks ?? []) } : {}),
     applied_ops: [...new Set([...(c.applied_ops ?? []), ...(ch.applied_ops ?? [])])]
   }
@@ -424,6 +435,11 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   if (next.main && !Object.keys(next.main).length) delete next.main
   // 窓の合図は窓口の Run にだけ送る（R191）。Run の無い帳簿は、窓で押しても窓口に届かない。
   if (!RUN_ID(next.main?.run_id)) return { errors: ['main.run_id が無い。窓口の Run を { "main": { "run_id": "run_…" } } で一緒に書く（窓の合図は窓口の Run にだけ送る）'], warnings }
+  // 形の外れた古い名前は、ほかの書き込みを止めずに名指しする（名前は見出しで、合図の届き先と違い、外れても知らせは失われない）。
+  // ただし intake を初めて付ける書き込みは版 3 への移し替えに当たるので、migrate-v3 と同じく断る（Codex 43 必須 1）。
+  const name = workspaceNameCheck(next.workspace?.name)
+  if (name && !c.intake && next.intake) return { errors: [name.message], warnings }
+  if (name) warnings.push(name.message)
   return { next, errors, warnings }
 }
 
