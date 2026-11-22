@@ -132,8 +132,8 @@ def cache(path, rel):
 
 
 def inspect(row, root):
-    """残っている理由を (未 commit・固有のデータなど worktree の中の理由, default に入っていない理由) に分けて返す。
-    後者はブランチの PR がマージ済みと分かれば取り消せる（squash でマージした commit は default の祖先にならない）。
+    """残っている理由を (未 commit・固有のデータ・検査の失敗など, default と比べて入っていなかった commit) に分けて返す。
+    後者はブランチの PR が default にマージ済みと分かれば取り消せる（squash でマージした commit は default の祖先にならない）。
     ルートから写された CLAUDE.local.md なども未追跡のファイルとして数える（確かめたあとに人が保存しうるので、無人では消さない）。"""
     path, reasons = row["path"], []
     st = git(path, "status", "--porcelain", "-z", "--branch", "--untracked-files=all")
@@ -167,10 +167,9 @@ def inspect(row, root):
         reasons.append("作り直せると決めていない gitignore されたディレクトリがある（%s%s）" % ("、".join(dirs[:3]), "、ほか" if len(dirs) > 3 else ""))
     if own:
         reasons.append("gitignore されたファイルがルートと違うかルートに無い（%s%s）" % ("、".join(own[:3]), "、ほか" if len(own) > 3 else ""))
-    r = git(path, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
-    base = r.stdout.strip()[len("refs/remotes/origin/"):] if r.returncode == 0 and r.stdout.startswith("refs/remotes/origin/") else ""
+    base = default_branch(path)
     if not base:
-        return reasons, ["default ブランチを決められない（origin/HEAD が無い）"]
+        return reasons + ["default ブランチを決められない（origin/HEAD が無い）"], []
     # ローカルの default と origin の default のどちらか一方に全部入っていれば入っている扱いにする（PR でマージして pull 前の場合）。
     # 2 つに分かれて入っているものは、どちらにもそろっていないので入っていない扱い。タグと取り違えないよう完全な ref で比べる。
     # git cherry はマージコミットを並べないので、比較先から届かないマージコミット（競合の解決などを含みうる）は別に数える。
@@ -180,12 +179,12 @@ def inspect(row, root):
             continue
         c, m = git(path, "cherry", "-v", upstream, "HEAD"), git(path, "rev-list", "--merges", upstream + "..HEAD")
         if c.returncode != 0 or m.returncode != 0:
-            return reasons, [failed(c if c.returncode else m, "cherry")]
+            return reasons + [failed(c if c.returncode else m, "cherry")], []
         plus, merges = [l[2:] for l in c.stdout.splitlines() if not l.startswith("- ")], m.stdout.split()
         if found is None or not (plus or merges):
             found = (plus, merges)
     if found is None:
-        return reasons, ["%s と比べられない（ローカルにも origin にも無い）" % base]
+        return reasons + ["%s と比べられない（ローカルにも origin にも無い）" % base], []
     plus, merges, unmerged = found + ([],)
     if plus:
         unmerged.append("%s に無い commit %d 件（%s%s。squash で入れたものもここに出る）" % (
@@ -195,12 +194,22 @@ def inspect(row, root):
     return reasons, unmerged
 
 
+def default_branch(path):
+    r = git(path, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    return r.stdout.strip()[len("refs/remotes/origin/"):] if r.returncode == 0 and r.stdout.startswith("refs/remotes/origin/") else ""
+
+
 def merged_pr(path, branch):
     """branch の PR がマージ済みなら (その PR, None)。マージのあとに commit を積んでいれば (None, 理由)、PR が無ければ (None, None)。
     gh は worktree の remote からリポジトリを決める。PR の head の SHA と今の HEAD が同じときだけマージ済みと見なす
-    （同じ名前のブランチを使い回した PR や、別の fork の PR に当てないため）。gh を読めなければ (None, 理由)。"""
+    （同じ名前のブランチを使い回した PR や、別の fork の PR に当てないため）。積み重ねた PR の親のブランチへのマージは
+    default に入ったことにならないので、default あての PR だけを見る。gh を読めなければ (None, 理由)。"""
+    base = default_branch(path)
+    if not base:
+        return None, "default ブランチを決められず、PR を確かめていない"
     try:
-        r = subprocess.run(["gh", "pr", "list", "--state", "merged", "--head", branch, "--json", "number,headRefOid", "--limit", "20"],
+        r = subprocess.run(["gh", "pr", "list", "--state", "merged", "--head", branch, "--base", base, "--json", "number,headRefOid",
+                            "--limit", "20"],
                            cwd=path, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, "gh で PR を確かめられない（%s）" % str(e)[:120]

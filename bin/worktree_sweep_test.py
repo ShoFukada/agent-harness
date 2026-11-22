@@ -52,7 +52,8 @@ with open(os.path.join(d, "gh-calls"), "a") as fh:
     fh.write(" ".join(a) + "\n")
 p = os.path.join(d, "prs.json")
 prs = json.load(open(p)) if os.path.exists(p) else {}
-print(json.dumps(prs.get(a[a.index("--head") + 1], [])))
+base = a[a.index("--base") + 1] if "--base" in a else None
+print(json.dumps([x for x in prs.get(a[a.index("--head") + 1], []) if base in (None, x.get("base", "trunk"))]))
 ''' % sys.executable
 
 
@@ -217,6 +218,25 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(self.kind(out, later), "判断が要る")
         self.assertIn("PR #7 はマージ済みだが、マージのあとに積んだ commit がある", out)
         self.assertEqual(self.removed(), [])
+
+    def test_pr_merged_into_a_stacked_parent_is_not_taken_as_merged(self):
+        # 積み重ねた PR: child → parent だけがマージ済みで、parent → trunk はまだ。
+        child = self.worktree("child", finished=False, idle=30)
+        self.commit(child, "b.txt", "b")
+        self.prs["child"] = [{"number": 8, "headRefOid": git(child, "rev-parse", "HEAD"), "base": "parent"}]
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.kind(out, child), "判断が要る")
+        self.assertEqual(self.removed(), [])
+        with open(os.path.join(self.fake, "gh-calls")) as fh:
+            self.assertIn("--head child --base trunk", fh.read())
+
+    def test_merged_pr_does_not_clear_a_failed_comparison(self):
+        squashed = self.squash_merged("squashed")
+        git(self.root, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+        out = self.run_sweep("--apply")
+        self.assertIn("default ブランチを決められない", out)
+        self.assertEqual(self.removed(), [])
+        self.assertTrue(os.path.exists(squashed))
 
     def test_squash_merged_pr_with_uncommitted_changes_or_a_working_agent_is_kept(self):
         dirty = self.squash_merged("dirty", idle=30)
