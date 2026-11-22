@@ -2,7 +2,7 @@
 
 cockpit skill の SKILL.md から分けた細部。担当か worker を立てたときに帳簿へ書く欄（`worker`・`owners[]`）と、担当から判断の依頼が届いたときの受け方。
 
-立て方と知らせの受け方は worktree-flow skill の「窓口・担当・worker」。メインは窓口で、担当と自分で立てた worker の coordinator になる。帳簿を版 3 に移す前（`.orca/cockpit.v2.json` が無い間）は、下の `run_id`・`--cockpit-task` の代わりに references/setup.md の「版 3 の道具が入るまで」の書き方にする（`dispatch_id` を書き、続きで書き換える。`--title` で立てる）。
+立て方と知らせの受け方は worktree-flow skill の「窓口・担当・worker」。メインは窓口で、担当と自分で立てた worker の coordinator になる。帳簿を版 3 に移す前（帳簿に `intake` が無い間）は、下の `run_id`・`--cockpit-task` の代わりに references/setup.md の「版 3 の道具が入るまで」の書き方にする（`dispatch_id` を書き、続きで書き換える。`--title` で立てる）。
 
 - worker は `orca-launch --cockpit-task <タスクの id> --spec-file <brief>` で立てる（道具は cockpit.json を書かない。名前と親子は worktree-flow skill の references/sidebar.md の「worker を立てるとき」）
 - 立てたときの受け取り（`orca-launch` か `worker-start` が出す `runId`・`taskId`）を、そのタスクの `worker: { "run_id": "...", "task_id": "..." }` に書く道具で書く。あとから書き換えない。担当に `send` で続きを渡すと Orca は Task と Dispatch を新しく作るが、state.ts が最初の Task から続き（`follow_up_of`）をたどって今の Dispatch を引く。`dispatch_id` は書かない。表示名やコメントの文からは推し量らない

@@ -3,11 +3,12 @@
 cockpit skill の SKILL.md から分けた細部。ワークスペースに操縦席を初めて作るとき、hook が「移し替えが要る」と出したときに読む。
 
 ## 最初に作るとき
-1. `template.json` を `.orca/cockpit.json` に写し、案件の docs・WBS・Issue・確認事項から埋める（`version: 2` は消さない）
-   - `workspace.name` は worktree-flow skill の references/sidebar.md の案件の行の形で書く。リポジトリ名をそのまま書かない（窓のサイドバーに案件の名前として並ぶ）
-2. `main` を埋める: `{"agent": "claude", "terminal": "<$ORCA_TERMINAL_HANDLE の値>"}`。Orca の端末で動いていれば環境変数 `ORCA_TERMINAL_HANDLE`（`term_…`）が自分の端末の値。無ければ `orca terminal list --worktree active --json` で `agentIdentity` が自分の種類の行の `handle` を使う。codex なら agent を `codex` にする。深田が操作して 10 秒たつと、パネルと窓はこの端末に合図の 1 行を自動で送る（作業中は送らず、入力待ちになってから送る）
-   - 自分が Orca のチャット（端末ではない）で動いていて `ORCA_TERMINAL_HANDLE` も一覧の行も無いときは、`{"agent": "claude", "terminal": ""}` と空にし、下の `main.run_id` を必ず書く。窓は Orca の外のプロセスで、送り主の端末が無いと `orchestration send` を断られる（2026-11-21 に確かめた）ので、AI を動かさない郵便受けの端末（タブ名「操縦席｜郵便受け」。窓が窓口の worktree に作る）を送り主にして、深田の操作を窓口の Run に知らせる（経路の決まりは worktree-flow skill の「知らせの経路」）。`main.run_id` が無いと知らせは届かないので、深田に話しかけられたターンの最初に `cockpit.user.json` の未反映の操作を処理して拾う
-   - `main.run_id` に窓口の Orca の Run の id を書く: `orca orchestration run-current --json` の `runId`。カードの相談が返しをここへ送る（references/consult.md の「カードの相談」）。`null` なら空のまま置き、返しは相談のメモから拾う
+1. `template.json` を作業用のファイル（例 `$TMPDIR/cockpit.json`）に写し、案件の docs・WBS・Issue・確認事項から埋める（`version: 2` は消さない）。`.orca/cockpit.json` には直接写さない
+   - `workspace.name` は「<顧客>｜<案件>」（社内は「社内｜<案件>」）の形で書く（worktree-flow skill の references/sidebar.md の案件の行）。リポジトリ名をそのまま書かない（窓のサイドバーに案件の名前として並ぶ）
+2. `main` を埋める: `{"agent": "claude", "terminal": "<自分の端末の handle。チャットなら空>", "run_id": "<窓口の Run の id>"}`
+   - `run_id` は必ず書く。値は `orca orchestration run-current --json` の `runId`。深田が窓で操作すると、窓は郵便受けの端末（タブ名「操縦席｜郵便受け」。AI を動かさない端末を窓が窓口の worktree に作る）を送り主にして、この Run に知らせを送る（端末の窓口にもチャットの窓口にも同じ経路。経路の決まりは worktree-flow skill の「知らせの経路」）。カードの相談と窓からの質問の返しも、この Run に届く（references/consult.md）。Run が取れないうちは init しない（`run_id` の無い帳簿は cockpit-write が断る）
+   - `terminal`: Orca の端末で動いていれば環境変数 `ORCA_TERMINAL_HANDLE`（`term_…`）の値を書く。無ければ `orca terminal list --worktree active --json` で `agentIdentity` が自分の種類の行の `handle` を使う。チャットで動いていて端末が無いときは空にする。codex なら `agent` を `codex` にする
+   - 書けたら `cockpit-write init <root> --dry-run < 作業用のファイル` で検査を通し、`cockpit-write init <root> < 作業用のファイル` で `.orca/cockpit.json` を作る。形の合わない案件名・`run_id` の無い帳簿・既にある帳簿・待ちの書き方（R193）に合わないタスクは、理由を返して断られる
 3. ワークスペースのメインの題を「<案件の役割> 窓口」にする: チャットなら `orca chat rename --name "<役割> 窓口"`、端末なら `orca terminal rename --terminal "$ORCA_TERMINAL_HANDLE" --title "<役割> 窓口"`
 4. 画面が見えているかを深田に聞かない
 5. 0 から作り直すと頼まれたときは、前の cockpit.json を下敷きにせず、Slack・Teams・議事録・管理表の一連を読み直して今の状態から組む
@@ -38,13 +39,13 @@ hook が「cockpit.json が版 1 のままで、状態を読めない。移し�
    - 深田の操作が無いまま閉じた確認に `closed_without_review: true` を付ける（対応済みのタブで「確認なしで閉じた」と出る）
 4. 窓口が版 3 の前に別に控えた依頼の台帳（`ledger-*.json`）があれば、そこから起こした依頼を `cockpit-write` で `legacy` の無い行として足し、元の台帳の件数・id と、足した `requests[]` を突き合わせて取りこぼしが無いかを確かめる
 5. `state.ts <root>` が通り、件数と `checks` が窓と合うことを確かめる。`incomplete_cards` に出た開いたカードは、必須の欄を埋める
-6. 帳簿の直書きを止める hook と、仕分けていない発言の Stop を入れる: `~/.config/nix-darwin/claude/settings.json` の `env` の `COCKPIT_LEDGER_GUARD` を `"1"` にする（次に開いたセッションから効く）。設定は全案件に共通だが、hook は移し替えの控え `.orca/cockpit.v2.json` のある案件だけで動くので、まだ移していない案件には効かない。戻すときは `"0"` に戻す
+6. 帳簿の直書きを止める hook と、仕分けていない発言の Stop を入れる: `~/.config/nix-darwin/claude/settings.json` の `env` の `COCKPIT_LEDGER_GUARD` を `"1"` にする（次に開いたセッションから効く）。設定は全案件に共通だが、hook は版 3 の帳簿（`intake` の欄がある）だけで動くので、まだ移していない案件には効かない（R195。`cockpit-write init` で作った帳簿には移し替えの控えが無いので、控えでは見分けない）。戻すときは `"0"` に戻す
 
 ## 窓が Orca の前面に合わせて切り替わらないとき
 - Orca の操縦席のプラグインが承認待ち・止まっていると、窓が Orca の前面に合わせて切り替わらない。窓の上の帯に理由が出て、hook も名指しする。承認を深田に頼む許可のカードを出す（開発用の読み込みが残っているだけなら `orca plugin dev unload <dir>` で外す）
 
 ## 版 3 の道具が入るまで
-この skill は版 3（相談・依頼の帳簿・書く道具・worker の `run_id`）の形で書いてある。ワークスペースの帳簿を `cockpit-write migrate-v3` で移すまで（`.orca/cockpit.v2.json` が無い間）は、古い窓・パネルが新しい形を読めず、帳簿を丸ごと読めなくなる。それまでは次のとおりにする。
+この skill は版 3（相談・依頼の帳簿・書く道具・worker の `run_id`）の形で書いてある。ワークスペースの帳簿を `cockpit-write migrate-v3` で移すまで（帳簿に `intake` が無い間）は、古い窓・パネルが新しい形を読めず、帳簿を丸ごと読めなくなる。それまでは次のとおりにする。
 - `cockpit-write` が無ければ、これまでどおり一時ファイルに書いてから rename する
 - `consult` のカードを書かない（相談は判断か確認で出す）。新しく作る操縦席では `template.json` の `consult` のカードを消す
 - worker には受け取りの `task_id` と `dispatch_id` を書く（`run_id` も書いてよい）。続きで新しい `dispatchId` が出たら `dispatch_id` を書き換える

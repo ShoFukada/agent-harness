@@ -1642,8 +1642,16 @@ def on_posttool(root, inp):
 def ledger_guard(dot_orca):
     """帳簿の直書きを止める hook と未仕分けの Stop の入り切り。agent-harness の窓・書く道具が入り、
     帳簿を migrate-v3 で移したあとに窓口が settings.json の env で 1 にする（設計 6 章の 7 の ⑤）。
-    設定は全案件に共通なので、移し替えの控え（cockpit.v2.json）がある案件だけに効かせる。"""
-    return os.environ.get("COCKPIT_LEDGER_GUARD") == "1" and os.path.isfile(os.path.join(dot_orca, "cockpit.v2.json"))
+    設定は全案件に共通なので、版 3 の帳簿（intake の欄がある）だけに効かせる。cockpit-write init で作った案件には
+    移し替えの控え（cockpit.v2.json）が無いので、控えでは見分けない（R195）。periodic-reminder.sh も `ledger-guard` でこれを呼ぶ。"""
+    if os.environ.get("COCKPIT_LEDGER_GUARD") != "1":
+        return False
+    try:
+        with open(os.path.join(dot_orca, "cockpit.json"), encoding="utf-8") as fh:
+            ledger = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(ledger, dict) and "intake" in ledger
 
 
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit")
@@ -1838,6 +1846,9 @@ def tool(argv):
         except ValueError:
             inp = {}
         sys.exit(0 if isinstance(inp, dict) and is_relay(inp.get("prompt")) else 1)
+    if cmd == "ledger-guard":
+        # periodic-reminder.sh が未仕分けの発言を出すかを、この hook と同じ判定で決める（0 で効く、1 で効かない）
+        sys.exit(0 if rest and ledger_guard(os.path.join(rest[0], ".orca")) else 1)
     thread = "compaction-keep: 相談スレッドは判断の記録を書かない。決まったことは窓口に返す（役割の「窓口に返す」）"
     if cmd in ("rule", "resume") and (os.environ.get("CONSULT_THREAD") or chat_card(os.getcwd())):
         sys.exit(thread)

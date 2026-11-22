@@ -47,7 +47,7 @@ JSON
 `template.json` が全項目の例。必須は `version: 2`・`workspace.name`・`streams`・`tasks`・`cards`。窓と hook は版 2 だけを読み、版 1（`items`）のファイルには「移し替えが要る」と出す（references/setup.md の「移し替え」）。
 
 - `workspace`: `name`（表示名。形は worktree-flow skill の references/sidebar.md の案件の行）、`milestones[]`（`date`・`label`）。案件の今に今日以降の節目を近い順に 3 件出す
-- `main`: `{"agent": "claude", "terminal": "<自分の端末の term_…>", "run_id": "<窓口の Orca の Run の id>"}`。埋め方は references/setup.md の「最初に作るとき」。`run_id` は、カードの相談と窓からの質問の返しの知らせの宛先（`--to run:<run_id>`）で、hook が窓口の会話を `main-session.json` に書くときの照合にも使う（無いと質問のタブは立たない）
+- `main`: `{"agent": "claude", "terminal": "<自分の端末の term_…>", "run_id": "<窓口の Orca の Run の id>"}`。埋め方は references/setup.md の「最初に作るとき」。`run_id` は、窓の操作の知らせ（窓の郵便受けの端末から送る。R191）と、カードの相談と窓からの質問の返しの知らせの宛先（`--to run:<run_id>`）で、必須（無い帳簿は cockpit-write が断る）。hook が窓口の会話を `main-session.json` に書くときの照合にも使う（無いと質問のタブは立たない）
 - `phases[]`: 工程。5 つの固定の並び `["調査", "決定", "作成", "確認", "反映"]`（R83・R135）で、案件ごとに変えない。今の窓は工程の並びをここから読むので書いておく。窓の版 3 は読まないので、新しい窓に入れ替えたあとは省いてよい
 - `streams[]`: 仕事（`id`・`title`・`form`・`summary`・`sources[]`）。深田の案件の単位（管理表の行・顧客の指摘・依頼）でメインが決める。窓の「案件の今」は仕事ごとに 1 行（私待ち・止まっている・作業中・顧客待ち・未着手・済と、次にやること・担当）を出し、Orca のサイドバーの表示名にもこの `title` を使う
   - `title`: 20 字以内の名詞句で、何の仕事かが先頭で分かる日本語（例「AWS 構成案」「配車画面の改修」）。超えると `checks.long_names` に出る。管理表の番号や指摘の日付は `summary` か `sources` に書く

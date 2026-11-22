@@ -49,7 +49,7 @@ sweep_line() {
 names() { pick "[(.checks.$1 // [])[] | if type == \"object\" then (.id // \"?\") + (if (.missing | type) == \"array\" then \"（\" + (.missing | join(\"・\")) + \"）\" else \"\" end) else tostring end] | join(\"、\")"; }
 
 # 帳簿の形の直しの検査。名前ごとに件数と先頭 3 件（版 3 の { id, ... } は id、案件の名前は name）を「・」で並べる。
-LEDGER_FIXES='"missing_context","local_deliverables","missing_workers","orphan_waits","orphan_cards","incomplete_cards","stale_tasks","loose_tasks","unknown_phase","no_form","long_names","watch_missing","watch_unknown","stale_consults","workspace_name","status_missing"'
+LEDGER_FIXES='"missing_context","local_deliverables","missing_workers","orphan_waits","orphan_cards","incomplete_cards","stale_tasks","loose_tasks","unknown_phase","no_form","long_names","watch_missing","watch_unknown","stale_consults","workspace_name","status_missing","idle_unexplained"'
 ledger_fixes() {
   pick "[($LEDGER_FIXES) as \$k | (.checks[\$k] // empty) | (if type == \"array\" then . else [.] end)
     | map(if type == \"object\" then (.id // .name // \"?\") else tostring end) | select(length > 0)
@@ -182,8 +182,8 @@ case "$event" in
       routes=$(names routes)
       [ -n "$routes" ] &&
         printf '\n【操縦席】連絡を拾えていない経路: %s。見張りが止まっていないか確かめ、直せないもの（ログイン切れなど）は深田さんに頼む許可か判断のカードにする\n' "$routes"
-      # 未仕分けは帳簿を版 3 に移したあとだけ意味を持つ（移す前は古い発言が全部並ぶ）。Stop で止めるのと同じ切り替えと、移し替えの控えで見る
-      if [ "${COCKPIT_LEDGER_GUARD:-0}" = 1 ] && [ -f "$root/.orca/cockpit.v2.json" ]; then
+      # 未仕分けは帳簿が版 3（intake の欄がある）のときだけ意味を持つ（その前は古い発言が全部並ぶ）。Stop で止めるのと同じ判定を compaction-keep.py に聞く（R195）
+      if [ "${COCKPIT_LEDGER_GUARD:-0}" = 1 ] && "$(dirname "$0")/compaction-keep.py" ledger-guard "$root"; then
         unsorted=$(names unsorted)
         [ -n "$unsorted" ] &&
           printf '\n【操縦席】仕分けていない発言: %s。このターンのうちに、新しい依頼・既存の依頼への追記か返答・依頼でない、のどれかに仕分けて cockpit-write で書く（cockpit skill の「受付と仕分け」）\n' "$unsorted"

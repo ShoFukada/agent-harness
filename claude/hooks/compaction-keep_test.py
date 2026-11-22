@@ -150,7 +150,7 @@ class Utterances(Base):
                          [("u-1", "前の依頼"), ("u-3", "新しい発言"), ("u-4", "次の発言")])
 
     def test_the_signal_the_window_types_is_not_her_utterance(self):
-        # 窓・パネルは深田さんの操作のあと、窓口の端末に合図の 1 行を打つ（agent-harness の store.ts の SIGNAL）
+        # 窓は深田さんの操作のあと、窓口の Run に「【操縦席】未反映の操作があります」の知らせを送る（R191）。深田さんの発言には数えない
         for signal in ("【操縦席】未反映の操作があります", "【操縦席】未反映の操作があります（直してほしい v91: 表の幅を\n狭く）"):
             self.hook("UserPromptSubmit", prompt=signal)
         self.hook("UserPromptSubmit", prompt="【操縦席】未反映の操作がありますって出るけど何？")
@@ -1069,11 +1069,12 @@ class LedgerGuard(Base):
         self.migrated(True)
 
     def migrated(self, yes):
-        p = os.path.join(self.root, ".orca", "cockpit.v2.json")
+        # 版 3 の帳簿は intake の欄を持つ（R195。移し替えの控え cockpit.v2.json の有無では見ない）
         if yes:
-            open(p, "w").close()
-        elif os.path.exists(p):
-            os.remove(p)
+            self.cockpit["intake"] = {"through": "", "none": []}
+        else:
+            self.cockpit.pop("intake", None)
+        self.write_cockpit()
 
     def write_state(self):
         with open(self.fake_state, "w") as fh:
@@ -1097,8 +1098,9 @@ class LedgerGuard(Base):
         self.assertFalse(os.path.exists(self.calls))  # 切っている間は state.ts も呼ばない
 
     def test_a_workspace_not_yet_moved_to_version_3_is_left_alone(self):
-        # 設定は全案件に共通なので、移し替えの控え（cockpit.v2.json）が無い案件では効かせない
+        # 設定は全案件に共通なので、版 3 でない帳簿（intake が無い）では効かせない。移し替えの控えだけがあっても同じ（R195）
         self.migrated(False)
+        open(os.path.join(self.root, ".orca", "cockpit.v2.json"), "w").close()
         self.assertIsNone(self.write_to("Write", self.ledger, env=self.on()))
         self.unsorted = ["u-3"]
         self.write_state()
@@ -1128,6 +1130,22 @@ class LedgerGuard(Base):
                      os.path.join(self.root, ".orca", "cockpit.json.bak")):
             self.assertIsNone(self.write_to("Write", path, env=self.on()), path)
         self.assertIsNone(self.write_to("Read", self.ledger, env=self.on()))
+
+    def test_a_ledger_made_by_init_without_the_v2_copy_is_guarded(self):
+        # cockpit-write init で作った版 3 の帳簿には移し替えの控えが無いが、直書きは止める（R195）
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".orca", "cockpit.v2.json")))
+        self.assertEqual(self.write_to("Write", self.ledger, env=self.on())["permissionDecision"], "deny")
+
+    def test_the_ledger_guard_command_answers_with_the_same_rule(self):
+        # periodic-reminder.sh が未仕分けの出し分けに使う口。0 で効く、1 で効かない
+        cmd = lambda env: subprocess.run([HOOK, "ledger-guard", self.root], env=env, capture_output=True).returncode
+        self.assertEqual(cmd(self.on()), 0)
+        self.assertEqual(cmd(self.env()), 1)
+        self.migrated(False)
+        self.assertEqual(cmd(self.on()), 1)
+        with open(self.ledger, "w") as fh:
+            fh.write("{ 壊れた")
+        self.assertEqual(cmd(self.on()), 1)
 
     def test_a_relative_path_or_a_link_to_the_ledger_is_denied(self):
         dot = os.path.join(self.root, ".orca")

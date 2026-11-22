@@ -470,11 +470,11 @@ class Version3Checks(unittest.TestCase):
     setUp = Cockpit.setUp
     write = Cockpit.write
 
-    def v3_prompt(self, checks, reminder=None, **env):
+    def v3_prompt(self, checks, reminder=None, ledger=None, **env):
         fake = os.path.join(self.dir, "fake-state.js")
         with open(fake, "w") as fh:
             fh.write("console.log(%s)" % json.dumps(json.dumps({"checks": checks}, ensure_ascii=False)))
-        self.write("cockpit.json", {})
+        self.write("cockpit.json", ledger or {})
         return run(reminder, env={**os.environ, "COCKPIT_STATE": fake, **env}, hook_event_name="UserPromptSubmit",
                    session_id=str(uuid.uuid4()), cwd=self.dir)
 
@@ -516,6 +516,11 @@ class Version3Checks(unittest.TestCase):
         out = self.v3_prompt({"status_missing": ["s3", "s4", "t2", "t9"]})
         self.assertIn("status_missing 4 件（s3、s4、t2 ほか）", out)
 
+    def test_idle_tasks_without_a_reason_are_counted_on_one_line(self):
+        # 書く道具を通らずに残った、理由の無い idle（R193。state.ts の checks.idle_unexplained）
+        out = self.v3_prompt({"idle_unexplained": ["t7", "t8"]})
+        self.assertIn("idle_unexplained 2 件（t7、t8）", out)
+
     def test_incomplete_cards_stale_loose_and_off_phase_tasks_are_named(self):
         out = self.v3_prompt({"incomplete_cards": [{"id": "v90", "missing": ["evidence", "fallback"]}, "p97"],
                                 "stale_tasks": ["t58"], "loose_tasks": [{"id": "t70"}], "unknown_phase": ["t66"],
@@ -526,10 +531,15 @@ class Version3Checks(unittest.TestCase):
 
     def test_unsorted_utterances_are_named_once_the_switch_is_on_and_the_ledger_is_moved(self):
         out = self.v3_prompt({"unsorted": ["u-160", {"id": "u-161"}]}, COCKPIT_LEDGER_GUARD="1")
-        self.assertNotIn("u-160", out)  # 移し替えの控えが無い案件には出さない
+        self.assertNotIn("u-160", out)  # 版 3 でない帳簿（intake が無い）には出さない
         self.write("cockpit.v2.json", {})
         out = self.v3_prompt({"unsorted": ["u-160", {"id": "u-161"}]}, COCKPIT_LEDGER_GUARD="1")
-        self.assertIn("仕分けていない発言: u-160、u-161。", out)
+        self.assertNotIn("u-160", out)  # 移し替えの控えだけがあっても、intake が無ければ出さない（R195）
+        os.remove(os.path.join(self.dir, ".orca", "cockpit.v2.json"))
+        v3 = {"intake": {"through": "", "none": []}}
+        out = self.v3_prompt({"unsorted": ["u-160", {"id": "u-161"}]}, ledger=v3, COCKPIT_LEDGER_GUARD="1")
+        self.assertIn("仕分けていない発言: u-160、u-161。", out)  # init で作った帳簿（控えが無い）にも出す
+        self.assertNotIn("u-160", self.v3_prompt({"unsorted": ["u-160"]}, ledger=v3, COCKPIT_LEDGER_GUARD="0"))  # 切り替えが切れていれば出さない
 
     # 受入（設計 9.8）: 11/21 の台帳で抜けた 4 件を、窓口に名指しする
     def test_A006_an_approval_without_the_element_map_is_named(self):
@@ -545,8 +555,7 @@ class Version3Checks(unittest.TestCase):
         self.assertIn("見直していないタスク: R39→t50。", out)
 
     def test_B035_a_commitment_left_unsorted_is_named(self):
-        self.write("cockpit.v2.json", {})
-        out = self.v3_prompt({"unsorted": ["u-171"]}, COCKPIT_LEDGER_GUARD="1")
+        out = self.v3_prompt({"unsorted": ["u-171"]}, ledger={"intake": {"through": "", "none": []}}, COCKPIT_LEDGER_GUARD="1")
         self.assertIn("仕分けていない発言: u-171。", out)
 
     def test_nothing_is_said_when_the_checks_are_empty(self):

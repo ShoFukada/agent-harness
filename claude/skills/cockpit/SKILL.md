@@ -22,7 +22,7 @@ metadata:
 | サイドバーの名前・親子・状態をそろえる | worktree-flow skill の [references/sidebar.md](../worktree-flow/references/sidebar.md) |
 | カードの相談から返しが届いた、hook が反映していない返しか残った相談のタブを名指しした | [references/consult.md](references/consult.md)「カードの相談」 |
 | 窓からの質問の返しが届いた、hook が質問の返し・返しの無い「この答えを窓口に返す」・担当に伝えていない返しを名指しした | [references/consult.md](references/consult.md)「窓から質問する」 |
-| 帳簿を版 3 に移す前（`.orca/cockpit.v2.json` が無い間） | [references/setup.md](references/setup.md)「版 3 の道具が入るまで」 |
+| 帳簿を版 3 に移す前（帳簿に `intake` が無い間） | [references/setup.md](references/setup.md)「版 3 の道具が入るまで」 |
 
 # 役割
 - メインは、そのワークスペースで深田とやり取りする窓口。まとまった作業は担当と worker に出し、結果を取り込み、操縦席を最新に保つ
@@ -90,7 +90,7 @@ node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts <ワークス�
 # いつ更新するか
 - 状態が変わったターンの終わり
 - 担当・worker の結果を取り込んだとき（Orca が worker_done で起こす）
-- 深田が画面で操作したとき（`【操縦席】未反映の操作があります` が届く。チャットの窓口には、窓が郵便受けの端末から窓口の Run に送る知らせで届く。届かなくても hook の件数で拾う）
+- 深田が画面で操作したとき（`【操縦席】未反映の操作があります` の知らせが、窓の郵便受けの端末から窓口の Run に届く。端末の窓口にもチャットの窓口にも同じ経路で、届かなくても hook の件数で拾う）
 - 深田が確かめる成果物のあるタスクは、その確認が済むまで `ok` にしない。`wait` にし、確認の `tasks` でそのタスクを指す。確かめてもらう前に「済」と出さない
 - 担当が深田と話して詰めたいことは、相談のカード（`kind: "consult"`、`issue` と `stance`）で出す。深田が「担当と協議」を押すと協議中の印が付く（相談は件数に数えない）。話がまとまったら判断・確認・送信前に書き換えて `rev` を上げる
 - 更新したら、ワークスペースのカードのコメントとサイドバーを判定済みの状態にそろえる（worktree-flow skill の references/sidebar.md の「状態と片付け」）
