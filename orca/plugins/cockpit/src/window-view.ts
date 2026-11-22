@@ -5,6 +5,7 @@ import {
   actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, sp, stripHtml, toastsHtml, rowIdHtml,
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
+import { markdown } from './markdown.ts'
 import type { AutomationFact, RulingHit } from './protocol.ts'
 
 type Svg = (raw: string) => string
@@ -351,7 +352,7 @@ function askThreadHtml(b: Board, a: AskThread, ui: Ui, now: number): string {
     if (e.kind === 'n') return ''
     const p = answerParts(e.text)
     const at = p.at ?? a.at
-    return `<div class="aa"><span class="mut">答え ${esc(e.time)}${at ? `（窓口の ${esc(at)} までの会話から）` : ''}</span>${rich(p.body, b.v.cockpit!.tasks.find((t) => t.id === a.task)?.repo, true)}</div>`
+    return `<div class="aa"><span class="mut">答え ${esc(e.time)}${at ? `（窓口の ${esc(at)} までの会話から）` : ''}</span>${markdown(p.body, b.v.cockpit!.tasks.find((t) => t.id === a.task)?.repo)}</div>`
   }
   // 決める候補は最後の質問より後の答えだけ（続きの答えを待つあいだ、前の答えで決めさせない。Codex 重大 3）。控えの全文から常駐のプロセスが出す。
   const answer = pend ? undefined : a.decide
@@ -749,7 +750,7 @@ function watchDetail(r: WatchRow, now: number): string {
       fld('送り先', esc(r.s.watch.to)),
       fld('次回', a?.nextRunAt && a.enabled !== false ? esc(nearDate(new Date(a.nextRunAt).toISOString(), now)) : ''),
       fld('前回の結果', a?.name ? esc(lastRunText(a, now, false)) : ''),
-      fld('出力', out ? rich(out, undefined, true) : '')
+      fld('出力', out ? markdown(out) : '')
     ].join('')}</div>
     ${a?.last?.chat ? `<div class="dbtn"><div class="acts"><button class="btn" type="button" data-term="${esc(a.last.chat)}">この実行のチャットを開く</button></div></div>` : ''}</div>`
 }
@@ -780,7 +781,8 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   // 進行中の仕事のある置き場所を先に、空の置き場所は最後に 1 行でまとめる（見張るは経路と届いた連絡があれば空にしない）。
   const filled = (f: StreamForm) => live.some((j) => form(j) === f) || (f === 'watch' && (routes.length > 0 || inbox.length > 0 || watches.length > 0))
   const ms = upcomingMilestones(c.workspace.milestones, now)[0]
-  const main = askHtml(b, { kind: 'whole' }, ui, now) + (ms ? `<p class="mut">次の節目: ${esc(ms.label)}（${esc(fmtDate(ms.date))}）</p>` : '')
+  // 案件への質問は右の欄に置く（R166）。一覧の上には置かない（R91「全体は詰め込まない」）。
+  const main = (ms ? `<p class="mut">次の節目: ${esc(ms.label)}（${esc(fmtDate(ms.date))}）</p>` : '')
     // 仕事の一覧を先に、見張る（経路と届いた連絡）は最後に置く。空の置き場所は出さない。
     + FORM_ORDER.filter((f) => f !== 'watch' && filled(f)).map((f) => sec(f)).join('')
     + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo, now)).join('')}</section>` : '')
@@ -790,7 +792,15 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
     + (done.length ? `<button type="button" class="wmore" data-toggle="done" aria-expanded="${!!ui.open.done}">${ui.open.done ? '完了した仕事を閉じる' : `完了した仕事 ${done.length} 件を表示`}</button>${ui.open.done ? done.map((j) => streamBox(b, j, ui, todo, now)).join('') : ''}` : '')
   const t = b.d.tasks.get(ui.task ?? '')
   const w = watches.find((x) => x.key === ui.watch)
-  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${w ? '見張る仕事の詳細' : 'タスクの詳細'}">${w ? watchDetail(w, now) : t ? taskDetail(b, t, ui, now) : ''}</aside>`
+  // 右の欄はタスク・見張る仕事の詳細が既定で、案件への質問に切り替えられる（R166）。選んだものが無ければ質問を出す。
+  const side = t || w ? ui.wholeSide ?? 'detail' : 'ask'
+  const label = w ? '見張る仕事の詳細' : 'タスクの詳細'
+  const n = asksOf(b, { kind: 'whole' }, ui).length
+  const sw = t || w
+    ? `<div class="wsw" role="group" aria-label="右の欄に出すもの">${[['detail', label], ['ask', `案件への質問${n ? `<span class="n">${n}</span>` : ''}`]].map(([k, l]) => `<button type="button" data-wside="${k}" aria-pressed="${side === k}">${l}</button>`).join('')}</div>`
+    : ''
+  const ask = `<div class="wdet"><div class="dh"><div class="crumbs"><span>${esc(c.workspace.name)}</span></div><h2>案件への質問</h2></div>${askHtml(b, { kind: 'whole' }, ui, now)}</div>`
+  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${side === 'ask' ? '案件への質問' : label}">${sw}${side === 'ask' ? ask : w ? watchDetail(w, now) : taskDetail(b, t!, ui, now)}</aside>`
 }
 
 function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {

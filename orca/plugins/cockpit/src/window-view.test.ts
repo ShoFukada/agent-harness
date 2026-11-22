@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { answerParts, parseCockpit, STAGES, stageOf, taskSig, type DraftFormat } from './model.ts'
+import { answerHead, answerParts, parseCockpit, STAGES, stageOf, taskSig, type DraftFormat } from './model.ts'
 import type { ClipResult, CockpitView } from './protocol.ts'
 import { copyDraft, copyMessage, copyTarget } from './controller.ts'
 import { boardsOf, dropRulings, newUi, render, rowId, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
@@ -579,16 +579,23 @@ const askMemo = (id: string, over: Partial<NonNullable<CockpitView['asks']>[numb
   id, path: `/ws/aoba/.orca/consult/ask-${id}.md`, returnsPath: `/ws/aoba/.orca/consult/ask-${id}.returns.jsonl`, at: '09:05', answers: 0, entries: [], returns: [], ...over
 })
 
-test('質問: 全体の上・カードの詳細・タスクの詳細に 4 行の入力欄を置き、結んだ質問だけをそれぞれに出す', () => {
+test('質問: 全体の右の欄・カードの詳細・タスクの詳細に 4 行の入力欄を置き、結んだ質問だけをそれぞれに出す', () => {
   const m = aoba((v) => {
     v.asks = [askMemo('ask1', { entries: [{ kind: 'q', time: '09:10', text: '全体の質問' }] }), askMemo('ask2', { card: 'd21', entries: [{ kind: 'q', time: '09:11', text: 'カードの質問' }] }), askMemo('ask3', { task: 't1', entries: [{ kind: 'q', time: '09:12', text: 'タスクの質問' }] })]
   })
-  const whole = page(m, { tab: 'whole', task: 't1', askMine: { '/ws/aoba#ask1': true } })
+  // 全体の右の欄はタスクの詳細が既定で、「案件への質問」に切り替えると案件全体の質問を出す（R166）。一覧の上には置かない。
+  const detail = page(m, { tab: 'whole', task: 't1', askMine: { '/ws/aoba#ask1': true } })
+  assert.match(detail, /<div class="wsw" role="group" aria-label="右の欄に出すもの"><button type="button" data-wside="detail" aria-pressed="true">タスクの詳細<\/button><button type="button" data-wside="ask" aria-pressed="false">案件への質問<span class="n">1<\/span><\/button><\/div>/)
+  assert.match(detail, /data-askdraft="\/ws\/aoba#task:t1"/)
+  assert.match(text(detail), /タスクの質問/)
+  assert.doesNotMatch(detail, /data-askdraft="\/ws\/aoba#whole"/)
+  assert.doesNotMatch(text(detail), /全体の質問|カードの質問/)
+  const whole = page(m, { tab: 'whole', task: 't1', wholeSide: 'ask', askMine: { '/ws/aoba#ask1': true } })
+  assert.match(whole, /<aside class="wside" aria-label="案件への質問"><div class="wsw"[^>]*>.*data-wside="ask" aria-pressed="true"/)
   assert.match(whole, /<textarea id="ask-whole" data-askdraft="\/ws\/aoba#whole" rows="4"/)
   assert.match(text(whole), /全体の質問/)
-  assert.match(whole, /data-askdraft="\/ws\/aoba#task:t1"/)
-  assert.match(text(whole), /タスクの質問/)
-  assert.doesNotMatch(text(whole), /カードの質問/)
+  assert.doesNotMatch(text(whole), /タスクの質問|カードの質問/)
+  assert.doesNotMatch(whole.split('<aside')[0]!, /data-askdraft/, '一覧の側に質問の欄を置かない')
   const card = page(m, { sel: '/ws/aoba#d21' })
   assert.match(card, /data-askdraft="\/ws\/aoba#card:d21"/)
   assert.match(text(card), /カードの質問/)
@@ -601,8 +608,10 @@ test('質問: 全体の上・カードの詳細・タスクの詳細に 4 行の
 })
 
 test('質問の答え: 頭の時点の行を見出しに移し、末尾の窓口への返しの塊と太字の印を本文から外す。時点の行が無ければ控えの頭の時点を出す', () => {
-  assert.deepEqual(answerParts('窓口の会話 22:40 時点（それより後に決まったことは知らない）\n**1 つ**にする\n\n【窓口への返し】\n```json\n{}\n```'), { at: '22:40', body: '1 つにする' })
+  assert.deepEqual(answerParts('窓口の会話 22:40 時点（それより後に決まったことは知らない）\n**1 つ**にする\n\n【窓口への返し】\n```json\n{}\n```'), { at: '22:40', body: '**1 つ**にする' })
   assert.deepEqual(answerParts('時点の行が無い答え'), { body: '時点の行が無い答え' })
+  // 本文は太字の記号を残し（窓が Markdown で描く）、決める候補の頭の文だけ外す（今までの頭の文と同じ値にする）。
+  assert.equal(answerHead('窓口の会話 22:40 時点\n**1 つ**にする'), '1 つにする')
   const m = aoba((v) => {
     v.asks = [askMemo('ask1', { answers: 1, entries: [{ kind: 'q', time: '09:10', text: '入口は？' }, { kind: 'a', time: '09:11', text: '1 つにする' }] })]
   })
@@ -848,4 +857,15 @@ test('確認日の印（R142）: 済んでいないタスクに「確認日 11/2
   assert.match(h, /<b class="chk">確認日 11\/21\(土\)<\/b>/)
   assert.equal((h.match(/class="chk"/g) ?? []).length, 2, '済んだ t4 には出さない')
   assert.match(page(m, { tab: 'whole', task: 't2' }), /<div class="kl">.*<span class="chk">確認日 11\/24\(火\)<\/span><\/div>/s)
+})
+
+test('質問の答え（R167）: 右の欄の案件への質問の答えを Markdown で描く。生の HTML は文字のまま', () => {
+  const answer = '窓口の会話 09:05 時点\n## 結論\n入口は **1 つ** にする。\n| 案 | 手間 |\n|---|---|\n| A | 小さい |\n- 一覧を直す\n<script>alert(1)</script>'
+  const m = aoba((v) => {
+    v.asks = [askMemo('ask1', { answers: 1, entries: [{ kind: 'q', time: '09:10', text: '入口は？' }, { kind: 'a', time: '09:11', text: answer }] })]
+  })
+  const h = page(m, { tab: 'whole', wholeSide: 'ask', askMine: { '/ws/aoba#ask1': true } })
+  assert.match(h, /<div class="rich md"><h5 class="mdh">結論<\/h5><p>入口は <strong>1 つ<\/strong> にする。<\/p><div class="mdtbl"><table>/)
+  assert.match(h, /<ul><li>一覧を直す<\/li><\/ul><p>&#60;script&#62;alert\(1\)&#60;\/script&#62;<\/p>/)
+  assert.doesNotMatch(h, /<script>alert/)
 })

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -63,6 +63,7 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
     },
     activate: async (root) => void calls.push(['activate', root]),
     switchTerminal: async (t) => void calls.push(['switch', t]),
+    closeTerminal: async (t) => void calls.push(['close', t]),
     openFile: async (root, abs, line) => void calls.push(line ? ['open', root, abs, String(line)] : ['open', root, abs]),
     openUrl: async (url) => void calls.push(['url', url]),
     runTasks: async () => [],
@@ -100,7 +101,7 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
     })
     return { status: r.status, body: await r.json() }
   }
-  return { s, port, origin, post, setFocus, dir, calls: fake.calls, showCalls: fake.showCalls }
+  return { s, port, origin, post, setFocus, dir, orca: fake.orca, calls: fake.calls, showCalls: fake.showCalls }
 }
 
 function listen(port: number, token: string) {
@@ -650,6 +651,140 @@ test('これで決める: op を先に書き、題で探した質問のタブに
   open = true
   assert.deepEqual((await post('asktab', { root: a, ask: 'ask3' })).body, { opened: true })
   assert.deepEqual(calls.at(-1), ['switch', 'term_ask3'])
+})
+
+test('質問のタブを自動で閉じる（R180）: 返しが全部反映され、返しの無い「窓口に返す」が無く、最後の質問に答えがあり、1 時間たったものだけ。窓が立てた端末だけを閉じる', async () => {
+  const { a, b, rows } = workspaces()
+  const dir = path.join(a, '.orca/consult')
+  mkdirSync(dir, { recursive: true })
+  const qa = (id: string, more = '') => writeFileSync(path.join(dir, `ask-${id}.md`), `# 質問｜案件A｜${id}\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n${more}`)
+  for (const id of ['ask1', 'ask2', 'ask3', 'ask5', 'ask6', 'ask7', 'ask8']) qa(id)
+  qa('ask4', '### 質問 09:20（u-2）\n図は？\n\n')
+  writeFileSync(path.join(dir, 'ask-ask2.returns.jsonl'), JSON.stringify({ return_id: 'ask2-1', ask: 'ask2', decisions: [{ text: '入口は 1 つ' }] }) + '\n')
+  writeFileSync(path.join(dir, 'ask-ask6.returns.jsonl'), JSON.stringify({ return_id: 'ask6-1', ask: 'ask6', decisions: [{ text: '入口は 1 つ' }] }) + '\n')
+  // ask6 の返しは判断の記録と帳簿の asks[] の両方に反映済み。ask3 は返しの無い「この答えを窓口に返す」が残る。
+  mkdirSync(path.join(a, '.orca/cockpit'), { recursive: true })
+  writeFileSync(path.join(a, '.orca/cockpit/rulings.jsonl'), JSON.stringify({ id: 'R1', at: '2026-11-21T09:12:00+09:00', kind: 'decision', text: '入口は 1 つ', from_return: 'ask6-1' }) + '\n')
+  const c = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.json'), 'utf8'))
+  writeFileSync(path.join(a, '.orca/cockpit.json'), JSON.stringify({ ...c, asks: [{ id: 'ask6', from_returns: ['ask6-1'], held_returns: [] }] }))
+  writeFileSync(path.join(a, '.orca/cockpit.user.json'), JSON.stringify({ ops: [{ op_id: 50, at: '2026-11-21T00:11:00.000Z', item_id: '#ask:ask3', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } }] }))
+  const now = Date.now()
+  const old = new Date(now - 2 * 3600_000)
+  for (const id of ['ask1', 'ask2', 'ask3', 'ask4', 'ask6', 'ask7', 'ask8']) utimesSync(path.join(dir, `ask-${id}.md`), old, old)
+  let connected = false
+  const tabs: Orca['tabs'] = async (root) => root === a
+    ? [
+        ...['ask1', 'ask2', 'ask3', 'ask4', 'ask5', 'ask6'].map((id) => ({ title: askTitle('案件A', id), handles: [`term_${id}`] })),
+        // ask7: 同じ題で人が開いたタブ（窓が立てた記録と端末が違う）。ask8: 窓が立てたタブの端末が一時的に繋がっていない。
+        { title: askTitle('案件A', 'ask7'), handles: ['term_human'] },
+        { title: askTitle('案件A', 'ask8'), handles: connected ? ['term_ask8'] : [] },
+        { title: 'ほか', handles: ['term_x'] }
+      ]
+    : root === b ? [{ title: askTitle('案件A', 'ask1'), handles: ['term_b_ask1'] }] : []
+  const { s, port, calls, post, orca, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs, ask: async (_root, id) => `term_${id}` })
+  await listen(port, s.token).until((v) => (board(v, a)?.asks ?? []).length === 8)
+  // 開いているタブに続きを送ったときは覚えない（consult は同じ題のタブを使い回すので、人のタブかもしれない）。新しく立てたタブの端末は覚える。
+  assert.equal((await post('ask', { root: a, ask: 'ask7', question: '続き' })).body.opened, true)
+  assert.ok(!existsSync(path.join(wdir, 'asktabs.json')), '開いているタブに送った分は覚えない')
+  const fresh = await post('ask', { root: a, question: '新しい質問' })
+  assert.deepEqual(JSON.parse(readFileSync(path.join(wdir, 'asktabs.json'), 'utf8')), { [a]: { [fresh.body.ask]: `term_${fresh.body.ask}` } })
+  writeFileSync(path.join(wdir, 'asktabs.json'), JSON.stringify({ [a]: { ...Object.fromEntries(['ask1', 'ask2', 'ask3', 'ask4', 'ask5', 'ask6', 'ask8'].map((id) => [id, `term_${id}`])), ask7: 'term_ask7' } }))
+  // 閉じる端末の 1 つ目は一度だけ失敗させる。
+  let fail = true
+  const close = orca.closeTerminal!
+  orca.closeTerminal = async (t) => {
+    if (fail) {
+      fail = false
+      throw new Error('一時的に失敗')
+    }
+    return close(t)
+  }
+  utimesSync(path.join(dir, 'ask-ask1.md'), old, old)
+  await s.sweepAsks(now)
+  // 閉じない: ask2（返しが帳簿に無い）・ask3（返しの無い決める）・ask4（答え待ち）・ask5（1 時間未満）・ask7（人のタブ）・ask8（繋がっていない）。
+  // ask1 は閉じるのに失敗し、ask6 は閉じた。
+  assert.deepEqual(calls.filter((x) => x[0] === 'close'), [['close', 'term_ask6']])
+  // 失敗したもの・繋がっていなかったものは、次の回にもう一度見る。閉じたもの・人のタブは、控えが変わるまで見直さない。
+  connected = true
+  await s.sweepAsks(now)
+  assert.deepEqual(calls.filter((x) => x[0] === 'close'), [['close', 'term_ask6'], ['close', 'term_ask1'], ['close', 'term_ask8']])
+  await s.sweepAsks(now)
+  assert.equal(calls.filter((x) => x[0] === 'close').length, 3)
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(path.join(wdir, 'asktabs.json'), 'utf8'))[a]).sort(), ['ask2', 'ask3', 'ask4', 'ask5', 'ask7'], '閉じた端末の記録は消す')
+  assert.ok(!calls.some((x) => x[0] === 'close' && ['term_x', 'term_b_ask1', 'term_human', 'term_ask7'].includes(x[1]!)), '別の題・別の案件・人のタブは閉じない')
+  assert.ok(existsSync(path.join(dir, 'ask-ask1.md')) && existsSync(path.join(dir, 'ask-ask6.returns.jsonl')), '控えと返しの記録は消さない')
+})
+
+test('質問のタブを自動で閉じる（R180）: 閉じる直前に控えを読み直し、その間に続きを聞いたものは閉じない', async () => {
+  const { a, rows } = workspaces()
+  const dir = path.join(a, '.orca/consult')
+  mkdirSync(dir, { recursive: true })
+  const memo = path.join(dir, 'ask-ask1.md')
+  writeFileSync(memo, '# 質問｜案件A｜ask1\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n')
+  const now = Date.now()
+  const old = new Date(now - 2 * 3600_000)
+  utimesSync(memo, old, old)
+  const { s, port, calls, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs: async (root) => (root === a ? [{ title: askTitle('案件A', 'ask1'), handles: ['term_ask1'] }] : []) })
+  writeFileSync(path.join(wdir, 'asktabs.json'), JSON.stringify({ [a]: { ask1: 'term_ask1' } }))
+  await listen(port, s.token).until((v) => (board(v, a)?.asks ?? []).length === 1)
+  // 見張りの知らせが届く前（窓の持つ控えは古いまま）に、続きの質問が書かれた。
+  writeFileSync(memo, readFileSync(memo, 'utf8') + '### 質問 09:20（u-2）\n図は？\n\n')
+  utimesSync(memo, old, old)
+  await s.sweepAsks(now)
+  assert.ok(!calls.some((x) => x[0] === 'close'), '答え待ちになった質問のタブは閉じない')
+})
+
+test('質問のタブを自動で閉じる（R180）: 「この答えを窓口に返す」と閉じる処理は同じ順番に並び、閉じたあとに知らせを送らない', async () => {
+  const { a, rows } = workspaces()
+  const dir = path.join(a, '.orca/consult')
+  mkdirSync(dir, { recursive: true })
+  const memo = path.join(dir, 'ask-ask1.md')
+  writeFileSync(memo, '# 質問｜案件A｜ask1\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n')
+  const now = Date.now()
+  utimesSync(memo, new Date(now - 2 * 3600_000), new Date(now - 2 * 3600_000))
+  let gate!: () => void
+  const held = new Promise<void>((r) => (gate = r))
+  let closed = false
+  let first = true
+  const tabs: Orca['tabs'] = async (root) => {
+    if (root !== a) return []
+    if (first) {
+      first = false
+      await held
+    }
+    return closed ? [] : [{ title: askTitle('案件A', 'ask1'), handles: ['term_ask1'] }]
+  }
+  const { s, port, calls, post, orca, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs })
+  const close = orca.closeTerminal!
+  orca.closeTerminal = async (t) => ((closed = true), close(t))
+  writeFileSync(path.join(wdir, 'asktabs.json'), JSON.stringify({ [a]: { ask1: 'term_ask1' } }))
+  await listen(port, s.token).until((v) => (board(v, a)?.asks ?? []).length === 1)
+  // 閉じる処理が Orca のタブの返事を待っている間に「この答えを窓口に返す」を押す。
+  const sweep = s.sweepAsks(now)
+  await new Promise((r) => setTimeout(r, 50))
+  const decide = post('askdecide', { root: a, ask: 'ask1', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  await new Promise((r) => setTimeout(r, 50))
+  gate()
+  await sweep
+  const r = await decide
+  // 先に閉じ、そのあとに記録した操作は、閉じたタブに知らせを送らずに理由を返す。
+  assert.deepEqual(calls.filter((x) => x[0] === 'close' || x[0] === 'send'), [['close', 'term_ask1']])
+  assert.equal(r.body.sent, false)
+  assert.match(r.body.reason, /閉じています/)
+})
+
+test('質問のタブを自動で閉じる（R180）: 窓のブラウザが開いていなくても、Orca から案件を読んで閉じる', async () => {
+  const { a, rows } = workspaces()
+  const dir = path.join(a, '.orca/consult')
+  mkdirSync(dir, { recursive: true })
+  const memo = path.join(dir, 'ask-ask1.md')
+  writeFileSync(memo, '# 質問｜案件A｜ask1\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n')
+  const now = Date.now()
+  utimesSync(memo, new Date(now - 2 * 3600_000), new Date(now - 2 * 3600_000))
+  const { s, calls, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs: async (root) => (root === a ? [{ title: askTitle('案件A', 'ask1'), handles: ['term_ask1'] }] : []) })
+  writeFileSync(path.join(wdir, 'asktabs.json'), JSON.stringify({ [a]: { ask1: 'term_ask1' } }))
+  await s.sweepAsks(now)
+  assert.deepEqual(calls.filter((x) => x[0] === 'close'), [['close', 'term_ask1']])
 })
 
 test('質問のタブは、root の worktree のタブだけから、繋がっている端末を題で引く（consult の live_thread と同じ読み方）', () => {

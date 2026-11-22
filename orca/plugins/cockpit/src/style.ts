@@ -454,6 +454,24 @@ body { margin:0; }
 .ck.win .aq .verb { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; }
 .ck.win .aa .rich p { margin:0 0 4px; }
 .ck.win .aa .rich ul { margin:0 0 4px; padding-left:1.4em; }
+/* 答え・見張る仕事の出力の Markdown（R167）。字の段は今の体系の中で選ぶ（見出しは本文と同じ大きさで太さだけ変える）。 */
+.ck .md ol { margin:0 0 4px; padding-left:1.6em; }
+.ck .md .mdh { margin:10px 0 4px; font-size:var(--fs-m); font-weight:700; line-height:1.5; color:var(--ink); }
+.ck .md h6.mdh { font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
+.ck .md > .mdh:first-child { margin-top:0; }
+.ck .md strong { font-weight:700; color:var(--ink); }
+.ck .md blockquote { margin:4px 0; border-left:3px solid var(--rule); padding:2px 0 2px 10px; color:var(--ink2); }
+.ck .md hr { border:0; border-top:1px solid var(--rule2); margin:8px 0; }
+.ck .md .mdtbl { overflow-x:auto; margin:4px 0 8px; }
+.ck .md table { border-collapse:collapse; font-size:var(--fs-s); min-width:100%; }
+.ck .md th, .ck .md td { border:1px solid var(--rule); padding:4px 8px; text-align:left; vertical-align:top; }
+.ck .md th { background:var(--sunk); font-weight:600; white-space:nowrap; }
+.ck .md .mdpre { margin:4px 0 8px; padding:8px 10px; background:var(--sunk); border:1px solid var(--rule2); border-radius:6px; overflow-x:auto; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); line-height:1.55; white-space:pre; }
+/* 全体の右の欄の切り替え（タスクの詳細｜案件への質問。R166） */
+.ck.win .wsw { position:sticky; top:0; z-index:2; display:flex; gap:4px; padding:10px 16px 8px; background:var(--surface); border-bottom:1px solid var(--rule2); }
+.ck.win .wsw button { flex:1 1 0; min-width:0; border:1px solid var(--rule); background:none; border-radius:7px; padding:5px 10px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); display:inline-flex; justify-content:center; align-items:center; gap:6px; }
+.ck.win .wsw button[aria-pressed="true"] { background:var(--ink); border-color:var(--ink); color:var(--surface); }
+.ck.win .wsw .n { font-weight:700; }
 .ck.win .askdone { margin:0; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
 
 /* 全体: 形ごとの置き場所と仕事の箱 */

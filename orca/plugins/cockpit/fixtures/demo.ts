@@ -133,7 +133,7 @@ export function writeAskSample(root: string, now = Date.now()): void {
   ].map((x) => JSON.stringify(x)).join('\n') + '\n')
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.md'), `# ${askTitle('青葉物流 配車アプリ', 'ask1')}\n- 写した窓口の会話: s1（窓口の会話 ${hhmm(now - 40 * 60_000)} 時点）\n\n`
     + `### 質問 ${hhmm(now - 35 * 60_000)}（u-41）\n定例の前に、森さんに先に送っておくべきものはある？\n\n`
-    + `### 答え ${hhmm(now - 34 * 60_000)}\n窓口の会話 ${hhmm(now - 40 * 60_000)} 時点（それより後に決まったことは知らない）\n2 つあります。\n- 構成案（Drive）の共有。定例で説明するので前日までに見てもらう\n- 議事録の共有のお願い。送信前のカードが期限切れのままです\n\n`)
+    + `### 答え ${hhmm(now - 34 * 60_000)}\n窓口の会話 ${hhmm(now - 40 * 60_000)} 時点（それより後に決まったことは知らない）\n## 結論\n**2 つ**あります。どちらも定例の前日までに送ります。\n\n| 送るもの | 置き場所 | 状態 |\n|---|---|---|\n| 構成案 | Drive（[構成案](https://example.com/aws-plan)） | 本文は済、図の確認待ち |\n| 議事録の共有のお願い | 送信前のカード | 期限切れのまま |\n\n### 次の手\n1. 構成案の図を \`t2\` で直す\n2. 議事録のカードを送る\n\n`)
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.returns.jsonl'), JSON.stringify({ return_id: 'ask1-1', rulings_seen: 'R33', decisions: [{ text: '構成案は定例の前日までに森さんへ共有する', quote: 'じゃあ構成案は前日までに送っておいて', utterance: 'u-42' }], requests: [], open: [], affects: [], ask: 'ask1' }) + '\n')
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask2.md'), `# ${askTitle('青葉物流 配車アプリ', 'ask2')}\n- カード: d21\n- 写した窓口の会話: s1（窓口の会話 ${hhmm(now - 20 * 60_000)} 時点）\n\n`
     + `### 質問 ${hhmm(now - 15 * 60_000)}（u-44）\n社内向けの入口を図に描かないと、森さんは困る？\n\n`

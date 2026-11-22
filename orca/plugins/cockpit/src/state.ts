@@ -1,7 +1,7 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, taskSig, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
+  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
   type AskMark, type AskThread, type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type StreamForm, type Task, type TaskSeen, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
@@ -781,6 +781,15 @@ export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos
   const named = new Set(out.map((x) => x.id))
   const rest = [...held].filter(([id]) => !named.has(id as string)).sort(([a], [b]) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
   return [...out, ...rest.map(([id, card]): Unreflected => ({ id: id as string, card, missing: ['保留'], memo: null })), ...(asks ? unreflectedAsks(asks, inRulings) : [])]
+}
+
+/**
+ * 写しのタブを閉じてよい質問（R180）: 返しが全部帳簿に反映され（unreflected_returns に無い）、返しの無い「この答えを窓口に返す」も無く、
+ * 最後の質問に答えが届いているもの。返しが 1 件も無い質問も、ほかの条件を満たせば入る。時間の条件（最後の質問か答えから 1 時間）は呼ぶ側が見る。
+ */
+export function settledAsks(s: AskSide, rulings: Ruling[]): string[] {
+  const open = new Set(unreflectedAsks(s, new Set(rulings.map((r) => r.from_return))).map((x) => x.ask))
+  return s.threads.filter((a) => !open.has(a.id) && a.entries.some((e) => e.kind === 'q') && !unanswered(a.entries)).map((a) => a.id)
 }
 
 /** 質問の返しの照合に要るもの。root は控えと返しの記録のパスを作るのに使う（python と同じ絶対パス）。 */

@@ -555,6 +555,35 @@ export async function writeNotified(dir: string, root: string, op: number): Prom
   }
 }
 
+/**
+ * 窓が consult --ask で立てた質問のタブの端末（窓の置き場所の asktabs.json、案件ごとに 質問 id → handle）。
+ * 自動で閉じるのは、題が合い、かつここに記録した handle の端末だけ（同じ題で人が開いたタブを閉じない。Codex 36 重大 1）。
+ */
+export async function readAskTabs(dir: string): Promise<Record<string, Record<string, string>>> {
+  try {
+    const v = JSON.parse(await fsp.readFile(path.join(dir, 'asktabs.json'), 'utf8'))
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  } catch (e) {
+    // 無い・壊れたものは空から作り直す（失うのは自動で閉じる記録だけ）。読めなかったときは、書き込みで他の案件の記録を消さないよう投げる。
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT' || e instanceof SyntaxError) return {}
+    throw e
+  }
+}
+
+export async function writeAskTab(dir: string, root: string, id: string, handle: string | null): Promise<void> {
+  const file = path.join(dir, 'asktabs.json')
+  const release = await lock(`${file}.lock`)
+  try {
+    const v = await readAskTabs(dir)
+    const mine = (v[root] ??= {})
+    if (handle) mine[id] = handle
+    else delete mine[id]
+    await writeAtomic(file, JSON.stringify(v) + '\n')
+  } finally {
+    await release()
+  }
+}
+
 /** 「path:12」を ファイルと行に分ける。行の無いパスと、名前に : を含むだけのパスはそのまま。 */
 export function splitLine(href: string): { file: string; line?: number } {
   const m = /^(.*\S):(\d+)$/.exec(href)

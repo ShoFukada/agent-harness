@@ -344,9 +344,10 @@ export function answerParts(text: string): { at?: string; body: string } {
   const at = /^\s*窓口の会話\s*(.+?)\s*時点/.exec(lines[0] ?? '')?.[1]
   const rest = (at ? lines.slice(1) : lines).join('\n')
   const cut = rest.search(/^【窓口への返し】/m)
-  return { ...(at && { at }), body: (cut >= 0 ? rest.slice(0, cut) : rest).replace(/\*\*(.+?)\*\*/g, '$1').trim() }
+  return { ...(at && { at }), body: (cut >= 0 ? rest.slice(0, cut) : rest).trim() }
 }
-export const answerHead = (text: string) => answerParts(text).body.replace(/\s+/g, ' ').slice(0, 80)
+/** 決める候補の頭の文。太字の記号は外して読む（本文は窓が Markdown で描く。R167）。 */
+export const answerHead = (text: string) => answerParts(text).body.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\s+/g, ' ').slice(0, 80)
 export function latestAnswer(entries: AskEntry[]): AskAnswer | undefined {
   const lastQ = entries.findLastIndex((e) => e.kind === 'q')
   const a = entries.slice(lastQ + 1).findLast((e) => e.kind === 'a')

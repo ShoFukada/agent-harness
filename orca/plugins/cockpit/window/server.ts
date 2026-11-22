@@ -12,16 +12,16 @@ import { ASK_ID, askItem, escapeAskSections, requestCards, OP_TYPES, overlay, te
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
 import type { Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
-import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances } from '../src/state.ts'
+import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks } from '../src/state.ts'
 import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { sendFromMailbox, type MailOrca } from './mail.ts'
-import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeNotified, type Files, type SendRun } from '../src/store.ts'
+import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readAskTabs, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAskTab, writeNotified, type Files, type SendRun } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
-const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts'])
+const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts', 'src/markdown.ts'])
 /** カードの詳細に出す、相談で決まったことの件数（window-view.ts の consultHtml と同じ）。 */
 const SHOWN_DECISIONS = 3
 /** 窓に送る、質問 1 つの控えの節の数と 1 節の字数（長い答えを毎回の配信に載せない）。 */
@@ -35,6 +35,8 @@ export const askTitle = (workspace: string, id: string) => `質問｜${workspace
 const CLOSED_DAYS = 14
 /** ページが表示されている間に Orca の状態を確かめる間隔。プロセスが落ちた worker は Orca から知らせが来ないため。 */
 const POLL_MS = 60_000
+/** 答えの済んだ質問のタブを閉じるまでの、最後の質問か答えからの時間（R180）。 */
+const ASK_IDLE_MS = 60 * 60_000
 const REFRESH_GAP_MS = 5_000
 
 export type TerminalRow = { handle: string; tabId: string; leafId: string }
@@ -85,6 +87,8 @@ export type Orca = {
   mailbox?(root: string): Promise<string>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
+  /** 端末を閉じる（orca terminal close）。答えの済んだ質問のタブを閉じる（R180）。 */
+  closeTerminal?(terminal: string): Promise<void>
   openFile(root: string, abs: string, line?: number): Promise<void>
   /** 既定のブラウザで開く。http(s) かどうかは呼ぶ側が確かめる。 */
   openUrl(url: string): Promise<void>
@@ -188,6 +192,7 @@ export function orcaCli(bin = 'orca'): Orca {
     },
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
+    closeTerminal: async (terminal) => void (await run(['terminal', 'close', '--terminal', terminal])),
     openFile: async (root, abs, line) =>
       void (await run(['file', 'open', abs, '--worktree', `path:${root}`, '--focus', ...(line ? ['--line', String(line)] : [])])),
     openUrl: (url) =>
@@ -218,6 +223,8 @@ type Ws = {
   signalTimer?: ReturnType<typeof setTimeout>
   /** 送っている最中の合図（notify を案件ごとに 1 つずつにする）。 */
   sending?: Promise<unknown>
+  /** 質問のタブを閉じるかを確かめた、控えの最後の書き込みの時刻（質問 id → mtime）。同じ時点では探し直さない（R180）。 */
+  askChecked?: Map<string, number>
 }
 
 type Focus = { path?: string; agents_at?: number }
@@ -317,6 +324,12 @@ export function createServer(opts: Options) {
   const questionsBy = new Map<string, QuestionFact[]>()
   /** 案件ごとの、質問 id を採って consult --ask を呼ぶ順番（同じ id を 2 つの質問に付けない）。 */
   const asking = new Map<string, Promise<unknown>>()
+  /** 同じ案件の質問の処理（聞く・続けて聞く・窓口に返す・タブを閉じる）を 1 本の順番に並べる。 */
+  const inQueue = <T>(root: string, fn: () => Promise<T>): Promise<T> => {
+    const run = (asking.get(root) ?? Promise.resolve()).then(fn)
+    asking.set(root, run.catch(() => undefined))
+    return run
+  }
   /** 端末の画面から読んだ問い（「handle@止まった時刻」→ 問い）。同じ停止のあいだは読み直さない。 */
   let screens = new Map<string, Ask>()
   let orcaError: string | undefined
@@ -336,6 +349,9 @@ export function createServer(opts: Options) {
   let focusTimer: ReturnType<typeof setTimeout> | undefined
   let sendTimer: ReturnType<typeof setTimeout> | undefined
   let refreshTimer: ReturnType<typeof setTimeout> | undefined
+  let askSweep: ReturnType<typeof setInterval> | undefined
+  // close() のあとに、Orca の返事を待っていた回が端末を閉じに進まないようにする。
+  let stopped = false
   let refreshing: Promise<void> | undefined
   let lastRefresh = 0
   const jsCache = new Map<string, { mtime: number; code: string }>()
@@ -716,6 +732,77 @@ export function createServer(opts: Options) {
     return p
   }
 
+  /**
+   * 答えの済んだ質問のタブを閉じる（R180）。条件は state.ts の settledAsks と、控えの最後の書き込み（質問か答え）から 1 時間たったこと。
+   * 閉じるのは、その案件の worktree の「質問｜…｜<質問 id>」の題のタブにある、窓が consult --ask で立てたと記録した端末だけ。控えと返しの記録は消さない。
+   * 窓から聞く・続けて聞く処理と同じ案件の順番（asking）に並べ、閉じる直前に控え・返し・op を読み直して条件を見直す（その間に聞かれた・返されたものを閉じない）。
+   * 窓のブラウザが開いていなくても、常駐のプロセスが POLL_MS ごとに見る。
+   */
+  async function sweepAsks(now = Date.now()): Promise<void> {
+    if (!orca.tabs || !orca.closeTerminal) return
+    const idle = async (ws: Ws): Promise<{ id: string; at: number }[]> => {
+      const c = ws.files.cockpit
+      if (!c) return []
+      const out: { id: string; at: number }[] = []
+      for (const id of settledAsks({ root: ws.root, threads: ws.files.asks, marks: ws.files.askMarks, log: ws.files.log, applied: c.applied_ops ?? [] }, ws.files.rulings)) {
+        const at = (await fsp.stat(ws.files.asks.find((x) => x.id === id)!.path).catch(() => undefined))?.mtimeMs
+        if (at !== undefined && now - at >= ASK_IDLE_MS && ws.askChecked?.get(id) !== at) out.push({ id, at })
+      }
+      return out
+    }
+    for (const ws of wss.values()) {
+      if (!(await idle(ws)).length) continue
+      await inQueue(ws.root, async () => {
+        await reload(ws)
+        const due = await idle(ws)
+        if (!due.length || !ws.files.cockpit) return
+        const tabs = await orca.tabs!(ws.root)
+        const mine = (await readAskTabs(opts.dir))[ws.root] ?? {}
+        for (const { id, at } of due) {
+          const hit = tabs.filter((t) => t.title === askTitle(ws.files.cockpit!.workspace.name, id))
+          const done = () => (ws.askChecked ??= new Map()).set(id, at)
+          // タブが無い（もう閉じた）なら、控えが変わるまで探し直さない。題はあるが端末が繋がっていないときは、次の回にもう一度見る。
+          if (!hit.length) {
+            done()
+            continue
+          }
+          const handles = hit.flatMap((t) => t.handles)
+          if (!handles.length) continue
+          if (!mine[id]) {
+            done()
+            console.error(`質問のタブを閉じない（${id}）: 窓が立てた端末の記録が無い（${handles.join('、')}）`)
+            continue
+          }
+          // 窓が立てた端末が見えない（同じ題のほかのタブだけが繋がっている）ときは、次の回にもう一度見る。
+          if (!handles.includes(mine[id])) continue
+          if (stopped) return
+          try {
+            await orca.closeTerminal!(mine[id])
+            done()
+            await writeAskTab(opts.dir, ws.root, id, null).catch((e: Error) => console.error(`asktabs.json: ${e.message}`))
+            console.error(`質問のタブを閉じた: ${ws.root} ${id}`)
+          } catch (e) {
+            console.error(`質問のタブを閉じられない（${id}）: ${(e as Error).message}`)
+          }
+        }
+      }).catch((e: Error) => console.error(`質問のタブ: ${e.message}`))
+    }
+  }
+
+  /** 窓のブラウザが開いていない間も、質問のタブを閉じるために案件の一覧を Orca から読んで見張る（開いている間は読み直しの見張りが読む）。 */
+  let ticking: Promise<void> | undefined
+  function sweepTick(now = Date.now()): Promise<void> {
+    return (ticking ??= (async () => {
+      if (!clients.size) {
+        const rows = await orca.ps()
+        if (stopped) return
+        ps = rows
+        await sync()
+      }
+      if (!stopped) await sweepAsks(now)
+    })().finally(() => (ticking = undefined)))
+  }
+
   /** 質問のタブの端末（題で探す）。閉じていれば理由。 */
   async function askTab(ws: Ws, id: string): Promise<{ handle: string } | { reason: string }> {
     const closed = { reason: '写しの会話は閉じています。続けて聞くと、窓口の今の会話から写し直します' }
@@ -869,14 +956,17 @@ export function createServer(opts: Options) {
       if (card && !c.cards.some((x) => x.id === card)) throw new HttpError(409, 'カードが見つかりません。再読み込みしてからもう一度押してください')
       if (task && !c.tasks.some((x) => x.id === task)) throw new HttpError(409, 'タスクが見つかりません。再読み込みしてからもう一度押してください')
       if (!opts.ask) return { opened: false, reason: '質問の道具（consult --ask）が渡されていません' }
-      const run = (asking.get(ws.root) ?? Promise.resolve()).then(async (): Promise<AskResult> => {
+      return inQueue(ws.root, async (): Promise<AskResult> => {
         // 新しい質問は id を予約し、consult が控えの頭を書くまでほかのプロセスにも採らせない。
         const r = cont ? undefined : await reserveAskId(ws.root)
         const id = cont ?? r!.id
         try {
           // 続きは順番が来た時点の控えで、前の質問の答えが届いているかを見る（別の窓・開き直した窓から重ねて送らない）。
           if (cont && unanswered((await readAsks(ws.root)).find((a) => a.id === cont)?.entries ?? [])) return { opened: false, ask: cont, reason: '前の質問の答えを待っています。答えが届いてから続けて聞いてください' }
-          await opts.ask!(ws.root, id, { card, task, question })
+          // 題のタブが無いときだけ consult が端末を立てる。立てた端末だけを窓のものとして覚える（開いているタブに送った分は覚え直さない）。
+          const before = cont ? await askTab(ws, cont).catch(() => undefined) : { reason: '' }
+          const handle = await opts.ask!(ws.root, id, { card, task, question })
+          if (before && 'reason' in before) await writeAskTab(opts.dir, ws.root, id, handle).catch((e: Error) => console.error(`asktabs.json: ${e.message}`))
         } catch (e) {
           return { opened: false, ask: cont, reason: (e as Error).message }
         } finally {
@@ -887,8 +977,6 @@ export function createServer(opts: Options) {
         broadcast()
         return { opened: true, ask: id }
       })
-      asking.set(ws.root, run.catch(() => undefined))
-      return run
     },
     /** 質問の前に、判断の記録から有効な判断を語で引く。 */
     async asklookup(b): Promise<{ hits: RulingHit[] }> {
@@ -904,23 +992,26 @@ export function createServer(opts: Options) {
       if (!id || !a) throw new HttpError(409, '質問が見つかりません。再読み込みしてからもう一度押してください')
       const ans = b.answer as { at?: unknown; head?: unknown; n?: unknown } | undefined
       const answer = { at: str(ans?.at) ?? '', head: str(ans?.head) ?? '', n: typeof ans?.n === 'number' ? ans.n : 0 }
-      const { log, added } = await appendOpOnce(ws.root, ws.files.cockpit, { root: ws.root, item_id: askItem(id), item_rev: 0, type: 'ask_decide', answer })
-      if (!added) {
+      // 記録から知らせまでを、タブを自動で閉じる処理と同じ順番に並べる（返しを待つタブを閉じない。Codex 36 2 巡目 2）。
+      return inQueue(ws.root, async (): Promise<AskDecideResult> => {
+        const { log, added } = await appendOpOnce(ws.root, ws.files.cockpit, { root: ws.root, item_id: askItem(id), item_rev: 0, type: 'ask_decide', answer })
+        if (!added) {
+          ws.files = { ...ws.files, log }
+          broadcast()
+          return { op: lastAskDecide(log, askItem(id), answer)?.op_id ?? 0, sent: false, again: true }
+        }
+        const op = added.op_id
         ws.files = { ...ws.files, log }
         broadcast()
-        return { op: lastAskDecide(log, askItem(id), answer)?.op_id ?? 0, sent: false, again: true }
-      }
-      const op = added.op_id
-      ws.files = { ...ws.files, log }
-      broadcast()
-      const tab = await askTab(ws, id).catch((e: Error) => ({ reason: `タブを探せませんでした: ${e.message}` }))
-      if ('reason' in tab) return { op, sent: false, reason: tab.reason }
-      try {
-        await orca.send(tab.handle, askNotice(op))
-        return { op, sent: true }
-      } catch (e) {
-        return { op, sent: false, reason: `写しの会話に送れませんでした: ${(e as Error).message}` }
-      }
+        const tab = await askTab(ws, id).catch((e: Error) => ({ reason: `タブを探せませんでした: ${e.message}` }))
+        if ('reason' in tab) return { op, sent: false, reason: tab.reason }
+        try {
+          await orca.send(tab.handle, askNotice(op))
+          return { op, sent: true }
+        } catch (e) {
+          return { op, sent: false, reason: `写しの会話に送れませんでした: ${(e as Error).message}` }
+        }
+      })
     },
     /** 質問のタブを前に出す。閉じていれば立て直さずに理由を返す（立て直すと窓口の会話をもう一度読み込むため、続きを聞いたときだけ立てる）。 */
     async asktab(b): Promise<OpenResult> {
@@ -1074,9 +1165,16 @@ export function createServer(opts: Options) {
       for (const ws of wss.values()) void autoSignal(ws).catch((e) => console.error(e))
       await new Promise<void>((resolve) => server.listen(opts.port, opts.host ?? '127.0.0.1', resolve))
       port = (server.address() as { port: number }).port
+      askSweep = setInterval(() => void sweepTick().catch((e) => console.error(`質問のタブ: ${(e as Error).message}`)), POLL_MS)
       return port
     },
+    /** 答えの済んだ質問のタブを閉じる（常駐のプロセスが POLL_MS ごとに呼ぶ。試験は時刻を渡して呼ぶ）。 */
+    sweepAsks: sweepTick,
     async close(): Promise<void> {
+      stopped = true
+      clearInterval(askSweep)
+      // 回っている回の sync が作った見張りも、下で閉じる。
+      await ticking?.catch(() => undefined)
       stopPolling()
       focusWatcher?.close()
       for (const t of [focusTimer, sendTimer, refreshTimer]) clearTimeout(t)

@@ -372,6 +372,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     else if (task) {
       ui.task = k
       ui.watch = undefined
+      ui.wholeSide = 'detail'
     }
     // 窓の要対応は詳細を常に開くので、押し直しても閉じない。全体の受信の票は開け閉めする。
     else ui.sel = win && tb === 'todo' ? k : ui.sel === k ? undefined : k
@@ -529,16 +530,19 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       if (d.task) {
         ui.task = d.task
         ui.watch = undefined
+        ui.wholeSide = 'detail'
       }
     }
     else if (d.toggle !== undefined) ui.open[d.toggle] = el.getAttribute('aria-expanded') !== 'true'
     else if (d.task !== undefined) {
       ui.task = d.task
       ui.watch = undefined
+      ui.wholeSide = 'detail'
     } else if (d.watch !== undefined) {
       ui.watch = d.watch
       ui.task = undefined
-    }
+      ui.wholeSide = 'detail'
+    } else if (d.wside !== undefined) ui.wholeSide = d.wside === 'ask' ? 'ask' : 'detail'
     else if (d.jump !== undefined) {
       // 済んだカードは対応済みのタブで開く。
       if (rows.get(d.jump)?.status === 'closed') {
@@ -561,7 +565,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   app.addEventListener('click', (e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask],[data-side],[data-orca],[data-watch]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask],[data-side],[data-orca],[data-watch],[data-wside]')
     if (!el || !app.contains(el)) return
     if (win && onWindow(el)) return
     if (el.dataset.sel !== undefined) return select(el.dataset.sel)

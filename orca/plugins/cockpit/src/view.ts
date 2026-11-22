@@ -45,6 +45,8 @@ export type Ui = {
   task?: string
   /** 窓の全体で右に詳細を出している見張る仕事（root#仕事の id）。タスクの詳細と入れ替わりに出す。 */
   watch?: string
+  /** 窓の全体の右の欄に出すもの。detail はタスク・見張る仕事の詳細、ask は案件への質問（R166）。既定は detail（選んだものが無ければ ask）。 */
+  wholeSide?: 'detail' | 'ask'
   theme: Theme
   dark: boolean
   /** 窓からの質問の書きかけ（欄の鍵 → 文）。欄の鍵は <root>#whole・<root>#card:<id>・<root>#task:<id>（新しい質問）と <root>#id:<質問 id>（続き）。 */
@@ -144,16 +146,18 @@ export const dropRulings = (text: string) => text.replace(RULINGS, '').replace(R
 /** 説明の文を表示の形にする（判断の記録の番号を除いて esc）。 */
 export const note = (text: string | undefined) => esc(text ? dropRulings(text) : text)
 
+/** 本文の 1 行を HTML にする（esc したうえで、URL と PR の番号をボタンに、コミット・ブランチ・識別子・ID を等幅にする）。src/markdown.ts と共有する。 */
+export const inlineRich = (s: string, repo?: Repo) =>
+  esc(s)
+    .replace(/https?:\/\/[^\s<>"'）)\uE000-\uE003]+/g, (u) => `<button class="inl" type="button" data-url="${u}">${linkKind(u.replace(/&#38;/g, '&')) === 'PR' ? 'PR' : 'リンク'}</button>`)
+    .replace(/(^|[\s（(、])#(\d+)\b/g, (m, pre, n) => (typeof repo === 'string' ? `${pre}<button class="inl" type="button" data-url="https://github.com/${esc(repo)}/pull/${n}">#${n}</button>` : m))
+    .replace(CODE, monoPart)
+
 /** 本文。keep は対象など帳簿の値をそのまま見せる欄（判断の記録の番号を除かない）。 */
 export function rich(text: string | undefined, repo?: Repo, keep = false): string {
   if (!text) return ''
   if (!keep) text = dropRulings(text)
-  const inline = (s: string) =>
-    esc(s)
-      .replace(/https?:\/\/[^\s<>"'）)]+/g, (u) => `<button class="inl" type="button" data-url="${u}">${linkKind(u.replace(/&#38;/g, '&')) === 'PR' ? 'PR' : 'リンク'}</button>`)
-      .replace(/(^|[\s（(、])#(\d+)\b/g, (m, pre, n) => (typeof repo === 'string' ? `${pre}<button class="inl" type="button" data-url="https://github.com/${esc(repo)}/pull/${n}">#${n}</button>` : m))
-      .replace(CODE, monoPart)
-      // コミット・ブランチ・識別子・ID は等幅にする（タグの中は触らない）。
+  const inline = (s: string) => inlineRich(s, repo)
   const lines = text.split('\n')
   const out: string[] = []
   let list: string[] = []
