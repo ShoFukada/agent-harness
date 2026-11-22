@@ -40,7 +40,7 @@ export async function stateOf(root: string, orca = orcaCli(process.env.COCKPIT_O
   // 見張る仕事の automation が Orca にあるか（checks.watch_unknown）。読めなければ確かめない。
   if (facts && orca.automations && files.cockpit.streams.some((x) => x.form === 'watch' && x.watch))
     facts.automations = await orca.automations().then((xs) => xs.map(({ id, name }) => ({ id, name })), () => undefined)
-  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, firstSeen: files.firstSeen, taskSeen: files.taskSeen, rulings: files.rulings, consults: files.consults, marks: files.marks, asks: files.asks, askMarks: files.askMarks, root })
+  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, notices: files.notices, firstSeen: files.firstSeen, taskSeen: files.taskSeen, rulings: files.rulings, consults: files.consults, marks: files.marks, asks: files.asks, askMarks: files.askMarks, root })
 }
 
 if (import.meta.main) {

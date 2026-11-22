@@ -365,15 +365,6 @@ class Cockpit(unittest.TestCase):
     def test_stop_blocks_only_once(self):
         self.assertEqual(self.turn_then_stop("決めてください。", active=True), "")
 
-    def test_waiting_tasks_not_pointed_to_by_an_open_item_are_named(self):
-        self.write("cockpit.json", {
-            "cards": [card("d1", "decide", stream="s1", tasks=["t2"]),
-                      card("d0", "decide", "done", stream="s1", tasks=["t1"]),
-                      card("a1", "report", stream="s1", tasks=["t4"])],
-            "tasks": [task("t1", "stop"), task("t2", "stop"), task("t3", "wait", waiting_on="顧客"),
-                      task("t4", "wait"), task("t5", "run")]})
-        self.assertIn("orphan_waits 2 件（t1、t4）", self.prompt())
-
     @staticmethod
     def show(stage, liveness="live", done_ms_ago=None):
         import datetime
@@ -513,13 +504,14 @@ class Version3Checks(unittest.TestCase):
         self.assertIn("watch_missing 1 件（s3）・watch_unknown 1 件（s4）", out)
 
     def test_jobs_and_tasks_without_status_are_counted_on_one_line(self):
-        out = self.v3_prompt({"status_missing": ["s3", "s4", "t2", "t9"]})
-        self.assertIn("status_missing 4 件（s3、s4、t2 ほか）", out)
+        out = self.v3_prompt({"status_missing": ["s3", "s4", "s7", "s9"]})
+        self.assertIn("status_missing 4 件（s3、s4、s7 ほか）", out)
 
-    def test_idle_tasks_without_a_reason_are_counted_on_one_line(self):
-        # 書く道具を通らずに残った、理由の無い idle（R193。state.ts の checks.idle_unexplained）
-        out = self.v3_prompt({"idle_unexplained": ["t7", "t8"]})
-        self.assertIn("idle_unexplained 2 件（t7、t8）", out)
+    def test_stale_status_and_unsorted_notices_are_named(self):
+        # 元の事実が変わった状況の文と、開いた待ちと照らしていない知らせ（R204。state.ts の checks.stale_status・unsorted_notices）
+        out = self.v3_prompt({"stale_status": [{"id": "s1", "changes": ["t3「直す」: 完了（前: run）", "v9: 閉じた・無くなった", "x"]}], "unsorted_notices": ["n-4", "n-5"]})
+        self.assertIn("状況の文が古い仕事: s1（t3「直す」: 完了（前: run）／v9: 閉じた・無くなった）", out)
+        self.assertIn("開いた待ちと照らしていない知らせ: n-4、n-5", out)
 
     def test_incomplete_cards_stale_loose_and_off_phase_tasks_are_named(self):
         out = self.v3_prompt({"incomplete_cards": [{"id": "v90", "missing": ["evidence", "fallback"]}, "p97"],

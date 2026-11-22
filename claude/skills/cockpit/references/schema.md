@@ -14,9 +14,11 @@ cockpit skill の SKILL.md から分けた細部。cockpit.json を作る・欄�
 | `cockpit.user.json` | 画面（パネルと窓）だけ | 深田の操作の追記ログ。メインは読むだけ |
 | `cockpit.archive.json` | メインだけ | 片付けて 14 日を過ぎたカード。`{ "cards": [...] }` |
 | `cockpit.v1.json`・`cockpit.archive.v1.json` | 移し替えのコマンドだけ | 版 1 の控え。読まない・消さない |
+| `cockpit.v3.json`・`cockpit.v3-<時刻>.json` | 移し替えのコマンド（`cockpit-write migrate-facts --write`）だけ | 待ちと済を事実から決める形に移す前の控え。戻すときはこれを `cockpit.json` に写す。読まない・消さない |
+| `cockpit/notices.jsonl` | hook だけ | 窓口に届いた Orca の知らせ（「──── From: … ────」の見出しで始まる本文）。UserPromptSubmit が `id`（`n-<行番号>`）・`at`・`session`・`prompt`（頭の 400 字）を追記する。待ちを解く `wait.met[].by` と、仕分けの位置 `intake.notices_through` がこの `id` で指す |
 | `cockpit/figures/<name>.svg` | メインだけ | 図。カードの `figure` から相対パスで指す |
 | `cockpit/rulings.jsonl` | メインだけ（references/rulings.md の「いつ書くか」のコマンドで） | 決定・制約・許可・却下した案の元の記録。追記だけで、撤回も置き換えの行で書く。カードの相談と窓からの質問の返しから書いた行は `from_return`（return_id）を持つ |
-| `cockpit/utterances.jsonl` | hook だけ | 深田の発言の原文。UserPromptSubmit が `id`（`u-<行番号>`）・`at`・`session`・`prompt` を追記する。カードの相談の中の発言は `card`（カード id）、窓からの質問の中の発言は `ask`（質問 id）も付く（窓口と同じロックと採番）。Orca の知らせ（「──── From: … ────」の見出しで始まる本文）、Claude Code の背景の作業の知らせ（本文の全体が `<task-notification>` の塊）と、references/consult.md の「カードの相談」の書式の `【相談の知らせ】` は記録しない。依頼の帳簿の仕分けはこの `id` で発言を指す |
+| `cockpit/utterances.jsonl` | hook だけ | 深田の発言の原文。UserPromptSubmit が `id`（`u-<行番号>`）・`at`・`session`・`prompt` を追記する。カードの相談の中の発言は `card`（カード id）、窓からの質問の中の発言は `ask`（質問 id）も付く（窓口と同じロックと採番）。Orca の知らせ（「──── From: … ────」の見出しで始まる本文。`cockpit/notices.jsonl` に別に記録する）、Claude Code の背景の作業の知らせ（本文の全体が `<task-notification>` の塊）と、references/consult.md の「カードの相談」の書式の `【相談の知らせ】` は記録しない。依頼の帳簿の仕分けはこの `id` で発言を指す |
 | `consult/<カード id>.md` | カードの相談（`consult --card` が立てたタブ）だけ | 相談のメモ。前提のカードの rev・決めたこと・新しく出た依頼・残っている論点・窓口に返したもの（返しの JSON をそのまま ```json の塊で）。窓の詳細からリンクする。片付いても消さない |
 | `consult/ask-<質問 id>.md` | `consult --ask`（頭）と hook（質問と答え）だけ | 窓からの質問と答えの控え（表示専用）。頭に結んだカード（`- カード: d21`）とタスク（`- タスク: t50`）、写した窓口の会話。続きに `### 質問 HH:MM（u-12）`・`### 答え HH:MM`・`### 知らせ HH:MM` の節を時刻の順に足す。窓口はここから返しを探さない |
 | `consult/ask-<質問 id>.returns.jsonl` | hook だけ | 窓からの質問の返しの記録。相手の最後の返事の末尾の `【窓口への返し】` の JSON に `ask`・`saved_at`・`session` を足して 1 行ずつ。同じ return_id は 1 行。窓口と state.ts は返しをここだけから読む |
@@ -38,7 +40,7 @@ cockpit skill の SKILL.md から分けた細部。cockpit.json を作る・欄�
 JSON
 ```
 
-- 渡すのは変えるものだけ。`cards`・`tasks`・`requests`・`streams`・`owners` は id ごとの追加か置き換え（1 件の全部の欄を渡す）、`intake` は置き換え、`applied_ops` は足す op_id。全体を置き換える入口は無い
+- 渡すのは変えるものだけ。`cards`・`tasks`・`requests`・`streams`・`owners` は id ごとの追加か置き換え（1 件の全部の欄を渡す）、`intake` は置き換え、`applied_ops` は足す op_id、`unaffected` は新しく済になったタスクを受けて見直し、関係ないと確かめたタスクの id（下の `tasks[]` の「済にしたら見直す」）。全体を置き換える入口は無い
 - 道具は保存の前に、型（`evidence` は文字列の配列、など全部の欄）・参照（`stream`・`tasks`・`owner`・`request_id` の id が在るか）・`rev`（中身を変えたカードは `rev` が 1 上がっているか）・仕分けの規則（下の「依頼の帳簿」）を検査する。通らなければ書かずに理由を返すので、直して渡し直す
 - 操作の反映は、カード・タスク・依頼の変更と `applied_ops` を同じ 1 回で渡す（2 回に分けると、間に読んだ画面と hook が同じ op を未反映と数える）
 - 道具は一時ファイルに書いてから rename する（画面が書きかけを読まない）
@@ -49,7 +51,7 @@ JSON
 - `workspace`: `name`（表示名。形は worktree-flow skill の references/sidebar.md の案件の行）、`milestones[]`（`date`・`label`）。案件の今に今日以降の節目を近い順に 3 件出す
 - `main`: `{"agent": "claude", "terminal": "<自分の端末の term_…>", "run_id": "<窓口の Orca の Run の id>"}`。埋め方は references/setup.md の「最初に作るとき」。`run_id` は、窓の操作の知らせ（窓の郵便受けの端末から送る。R191）と、カードの相談と窓からの質問の返しの知らせの宛先（`--to run:<run_id>`）で、必須（無い帳簿は cockpit-write が断る）。hook が窓口の会話を `main-session.json` に書くときの照合にも使う（無いと質問のタブは立たない）
 - `phases[]`: 工程。5 つの固定の並び `["調査", "決定", "作成", "確認", "反映"]`（R83・R135）で、案件ごとに変えない。今の窓は工程の並びをここから読むので書いておく。窓の版 3 は読まないので、新しい窓に入れ替えたあとは省いてよい
-- `streams[]`: 仕事（`id`・`title`・`form`・`summary`・`sources[]`）。深田の案件の単位（管理表の行・顧客の指摘・依頼）でメインが決める。窓の「案件の今」は仕事ごとに 1 行（私待ち・止まっている・作業中・顧客待ち・未着手・済と、次にやること・担当）を出し、Orca のサイドバーの表示名にもこの `title` を使う
+- `streams[]`: 仕事（`id`・`title`・`form`・`summary`・`sources[]`）。深田の案件の単位（管理表の行・顧客の指摘・依頼）でメインが決める。窓の「案件の今」は仕事ごとに 1 行（私待ち・止まっている・作業中・顧客待ち・出来事待ち・未着手・済と、次にやること・担当）を出し、Orca のサイドバーの表示名にもこの `title` を使う
   - `title`: 20 字以内の名詞句で、何の仕事かが先頭で分かる日本語（例「AWS 構成案」「配車画面の改修」）。超えると `checks.long_names` に出る。管理表の番号や指摘の日付は `summary` か `sources` に書く
   - `form`: 仕事の形。`delegate`（任せる）・`cowork`（一緒に作る）・`watch`（見張る）。決め方は SKILL.md の「仕事の形」。タスクは仕事の形を引き継ぐ（タスクに欄は無い）。無い仕事は `checks.no_form` に出て、窓の全体のタブの下に「形が書かれていない仕事」として並ぶ
   - `watch`: 見張る（`form: "watch"`）の仕事だけに書く。この仕事を受け持つ Orca の Bot（定期確認の automation）の設定 `{ "automation": "<orca automations の id>", "targets": ["<見張る対象の 1 行の名前>"], "to": "<気づいたことの送り先の 1 行>" }`。3 つとも必須で、`targets` は 1 件以上（例 `targets: ["管理表『運用保守対応』", "Slack 7 チャンネル"]`・`to: "Main · sample-app"`）。保ち方は SKILL.md の「仕事の形」（R152）
@@ -57,24 +59,32 @@ JSON
     - 前回の結果も書かない。窓が `orca automations runs --id <id> --limit 1 --json` の `status`・`scheduledFor`・`outputSnapshot.content`・`chatSessionId` から引く
     - `automation` の id が Orca に無いときは、窓が「Orca に設定が無い」と出す。Bot を終了したら、窓口が `watch` を消すか仕事を済にする
   - `summary`: 何ができたら終わりか 1〜2 行
-  - `status`: 状況。窓の一覧の 3 行目にそのまま出る。前の流れを覚えていない人が初見で分かる 2〜3 行の文で、今どうなっていて次に何を待つかを書く（例「Bot の設計は決まった。各案件の窓口が見張る仕事を書き終えるのを待つ」）。100 字まで（前後の空白を除く。超えると cockpit-write が断る）。状態が変わったターンで書き直す。無いと `checks.status_missing` に出る（見張る仕事は除く）
-  - `summary`・`status`・タスクの `goal`・`status` は、SHA・関数名・判断の番号・作業の経緯の羅列を書かない（経緯は `done[]` と作業メモ、次の手順は `next`。`next` は右の詳細に出る）
+  - `status`: 状況。窓の一覧の 3 行目にそのまま出る。前の流れを覚えていない人が初見で分かる 2〜3 行の文で、今どうなっていて次に何を待つかを書く（例「Bot の設計は決まった。各案件の窓口が見張る仕事を書き終えるのを待つ」）。100 字まで（前後の空白を除く。超えると cockpit-write が断る。柔らかい言い回しも断る）。無いと `checks.status_missing` に出る（見張る仕事は除く）。状況の文を書くのは仕事だけで、タスクには書かない（R204）
+  - `status_basis`: 書く道具が書く。`status` を書いたときの元の事実（その仕事のタスクの判定と、閉じていないカードの状態と版。`"t3:wait:person:0/1:…"`・`"w1:waiting@2"` の形）。帳簿から写した値はそのまま渡してよいが、変えると断る
+    - 書き込みのあとの帳簿で、ある仕事の元の事実が控えと違う（タスクが済んだ・待ちが解けた・カードが押された・日付が来た）のに、その書き込みに仕事の行が無ければ、cockpit-write が「状況の文が古くなった」と断る。仕事の行を渡し、今の事実に合わせて `status` を書き直す。前に控えがあった仕事は、前と同じ文では断る（同じ文を渡し直すだけで古い説明を確定させない。R204）
+    - 窓は Orca の様子を入れずに同じ計算をして、控えと違う仕事は古い文を出さず「状況の文が古いので、窓口が書き直すまで事実だけを出しています。待ち 1・完了 2/3」のような事実の文に差し替える（hook は `checks.stale_status`）
+  - `summary`・`status`・タスクの `goal` は、SHA・関数名・判断の番号・作業の経緯の羅列を書かない（経緯は `done[]` と作業メモ、次の手順は `next`。`next` は右の詳細に出る）
   - 仕事の状態は、配下のタスクとカードから state.ts が決める。書く欄は無い
-- `tasks[]`: `id`・`stream`・`phase`・`title`・`state`・`waiting_on`・`waiting_since`・`goal`（何のため。窓の概要）・`status`（状況。上の `streams[].status` と同じ書き方）・`next`（次にやること。右の詳細）・`check_on`・`done[]`・`sources[]`・`repo`・`worker`
+- `tasks[]`: `id`・`stream`・`phase`・`title`・`state`・`wait`・`after[]`・`goal`（何のため。窓の概要）・`next`（次にやること。右の詳細）・`done[]`・`sources[]`・`repo`・`worker`
   - タスクは 1 つの仕事に入れ、工程を 1 つ付ける。`stream` の無いタスクは `checks.loose_tasks`、5 つの工程に無い工程名は `checks.unknown_phase` に出る
   - `phase`: 工程は 5 つに固定する: `調査`・`決定`・`作成`・`確認`・`反映`（R83。名前は R135 で業務の漢語にした）。済は工程ではなく `state: "ok"`。窓は前からある名前も読み替える（調べる → 調査、決める・要件・設計 → 決定、作る・実装 → 作成、確かめる・確かめ・実地確認・見てもらう・見直し → 確認、入れる・push・switch 待ち → 反映）が、新しく書くときは 5 つの名前だけを使う。迷ったら、そのタスクが終わったときに何ができているかで選ぶ（分かったこと → 調査、決まったこと → 決定、動くもの・書いたもの → 作成、確認した結果 → 確認、main・本番・相手に届いたこと → 反映）。見張る（`form: watch`）の仕事のタスクは省いてよい
   - `title`: 20 字以内の名詞句（例「担当と協議が開かない」）。超えると `checks.long_names` に出る。worker の worktree の表示名にもなる（`orca-launch --cockpit-task`）
-  - `state`: `stop`（止まっている）・`run`（進行中）・`wait`（外部待ち: 顧客待ち・合意待ち）・`idle`（未着手）・`ok`（完了）。worker の記録があるタスクは、窓と hook が Orca の Dispatch から状態を決める（SKILL.md の「状態を読む」）
-    - `idle` と `wait` は外の理由で待つときだけに使う（R193。決まりの本文は agents/common.md「判断」の「聞かずにやる」）。`idle` で置けるのは空き枠が無いあいだの順番待ちだけで、`waiting_on` に「空き枠」か、先に進める進行中のタスクと理由を書く（例「t120 の取り込み（同じファイルを触る）」）。空き枠があれば `idle` で置かずに出す（SKILL.md「空いた枠に待ちの仕事を出す」）。深田を待つ `wait` は `waiting_on` を書かず、カードから指す（下の `stop` と `wait` の項）
+  - `state`: 手で書くのは `open`（済んでいない）と `ok`（完了）だけ（R204）。止まっている・作業中・待ち・未着手は、state.ts が事実（深田の操作・カード・worker の Orca の様子・`wait`・`after`・日付）から決める。決め方は下の「タスクの今の決まり方」。確認のカード（`review`）の「承認」で済になるタスクは、窓口が `ok` と書かなくても済と出る
+  - `wait`: 外の理由で待つときだけに 1 つ書く（R193。決まりの本文は agents/common.md「判断」の「聞かずにやる」）。深田を待つものは書かず、頼むカードの `tasks` から指す（cockpit-write が `who` の深田とカードの id を断る）。種類は 4 つ:
+    - `{ "kind": "person", "who": "先方の担当者", "what": "認証情報", "since": "2026-11-17", "where"?: "Slack #aoba" }`: 外の相手（顧客・他社・他のメンバー）の返事。窓は「先方の担当者の返事待ち（認証情報）」と出し、仕事の行は「顧客待ち」
+    - `{ "kind": "event", "what": "Bot 3 体が次に知らせを送る", "since": "…", "need"?: 3 }`: 人の返事でない出来事。窓は「〜を待つ」と出し、仕事の行は「出来事待ち」（顧客待ちと呼ばない）。`need` は届く件数（既定 1）
+    - `{ "kind": "date", "on": "2026-12-04", "what": "ログインが切れたときの通知が出たかを確かめる" }`: 日付が来ないと取れないデータ・起きない出来事を確かめる日（Asia/Tokyo）。その日の 0:00 に「着手できる」になり、要対応に 1 行出る（R171。放置の検出と同じ経路、R170）。日付は済の証拠にしない。月だけの日付や都合で決めた日付でタスクを寝かせない
+    - `{ "kind": "slot", "why": "worker の上限（同時 3 体）" }`: 空き枠が無いあいだの順番待ち。窓口が外すまで「未着手」。空き枠があれば置かずに出す（SKILL.md「空いた枠に待ちの仕事を出す」）
+    - `met[]`: person・event の待ちを解いた事実 `{ "by": "u-290" | "n-12" | "op:812" | "<議事録のパス>", "at": "…", "note"?: "届いた中身 1 行" }`。`by` の発言・知らせ・操作は記録に在るものだけ（cockpit-write が照らす）。`need` 件そろうと解ける。会議の中での返事は、議事録を取り込んだ窓口が議事録のパスで書く
+    - 何を待つかが無い日付・期間だけの文（「12月」「来週」）と、都合での先送り（「落ち着いてから」）は cockpit-write が断る（`who`・`what`・`why`・`next` を `~/.claude/hooks/defer-guard.py` にかける）
+  - `after[]`: 先に済む要るタスクの id（`["t104"]`）。どれかが済んでいなければ「前提待ち」（未着手）。`next`・`goal` に書いたタスクの id は、前提なら `after` に入れる
   - `worker`: `{ "run_id": "<Orca の Run の id>", "task_id": "<最初の Orca の Task の id>" }`。このタスクを進める担当か worker を立てたときの受け取り（`runId`・`taskId`）をそのまま書き、あとから書き換えない（references/workers.md）。続きを `send` で頼むと Orca は Task も Dispatch も新しく作るが、state.ts が最初の Task から続き（`follow_up_of`）をたどって今の Dispatch を引く。`dispatch_id` は書かない（古い行にあれば読み込みで受け、移し替えで `run_id` を補う）。
-  - Orca では今の Dispatch が済んで取り込まれたのに、手書きの `state` が `run` のままのタスクは `checks.stale_tasks` に出る
-  - `waiting_on`: `wait` で外の相手（顧客・他社・他のメンバー）を待つときの相手の名前と、待っているもの（`idle` の順番待ちの書き方は上の `state`）。例「先方の担当者（認証情報）」。深田を待つタスクには書かない。今待っている相手 1 人（1 組）にし、その先の相手（「先方の担当者がサポートに問い合わせ中」）は括弧に書く。出来事や作業を待つとき（人でないとき）は、その出来事を書く（例「次に上限に当たったときの席の切り替え」）。窓は括弧の外が名前だけのものを「〜の返事待ち」、ほかを「〜を待つ」と出す。窓口・担当の都合（「落ち着いてから」「12 月に」）は待つ理由にならない（agents/common.md「判断」の「聞かずにやる」）ので書かず、そのタスクは今進めるか、順番を決めて今の枠に入れる
-  - `waiting_since`: 外の相手を待ち始めた日（`2026-11-17`）。`wait` にしたときに書く
+  - Orca では今の Dispatch が済んで取り込まれたのに、`state` が `open` のままのタスクは `checks.stale_tasks` に出る
   - `reviewed_for[]`: 範囲・届け先・対象を変える判断（判断の記録の `affects` がこのタスクを挙げたもの）を受けて、このタスクを見直した判断の id（`R39`）。done_when を直したか、判断のカードに載せたら足す。足していないと `checks.affected_tasks` に出る
-  - `next`: 次にやること。`wait` のタスクには、返事が届いたら何をするかを書く（例「届いたら、12/1 の週に検証環境へ入れる日程を確定する」）。待っていることを書き直さない（`waiting_on` と 2 回並ぶ）
-  - `check_on`: 任意。見直す日（`"2026-12-04"`。Asia/Tokyo の日付）。「12/4 ごろ通知が出たかを見る」のように、日付が来たら見直すタスクの `next` を書くときに一緒に書く。日付を `next` の文中だけに書かない（窓が拾えない）。窓が常に判定し、その日の 0:00 に、`state` が `ok` でないタスクを線を越えたものとして要対応に 1 行出し、窓口へ最初の 1 回だけ知らせる（R171。放置の検出と同じ経路、R170）。日付が来るまでは放置の検出で拾わない。使うのは、日付が来ないと取れないデータや起きない出来事を確かめるときだけ。月だけの日付（「12 月に」）や都合で決めた日付でタスクを寝かせない（R193）
+  - `next`: 次にやること。待つタスクには、待ちが解けたら何をするかを書く（例「届いたら、12/1 の週に検証環境へ入れる日程を確定する」）。待っていることを書き直さない（`wait` と 2 回並ぶ）。済にするタスクには新しく書かない（残りの確認は別のタスクにする。cockpit-write が断る）
   - `done[]`: 済んだ作業。`{ "text": "...", "at": "2026-11-17T16:10:00+09:00" }`
-  - `stop` と `wait` のタスクは、開いた私の番のカード（停止・許可・判断・送信前・確認）か、送ったあと返事を待つカード（`state: "waiting"`）の `tasks` から指す（`waiting_on` のあるものを除く）。深田の番が件数に出ず、止まったまま残るため（2026-11-16 に 3 件）。switch のような深田の手作業を待つときも、それを頼むカードを作る。メイン側の hook が、指されていないタスクを発言のたびに名指しする
+  - 済にしたら見直す: 書き込みのあとの帳簿で新しく済になったタスク（手書きの `ok` でも、確認のカードの承認でも）があれば、同じ仕事の開いたタスクと、`after`・`next`・`goal` でそのタスクを指す開いたタスクを、同じ書き込みで直して渡すか、関係ないと確かめて変更の `unaffected` に id を並べる。どちらも無ければ cockpit-write が断る（帳簿に書かれていない前提を見落とさない。R204）
+  - 古い欄（`status`・`waiting_on`・`waiting_since`・`check_on`）と、手書きの `run`・`wait`・`idle`・`stop` は cockpit-write が断る。読み込み（窓・hook・書く道具）は古い帳簿を次の規則で補って読む: `run`・`wait`・`idle`・`stop` は `open`、`waiting_on` が名前だけなら person・`idle` で「空き枠」なら slot・ほかは event、`idle` の `waiting_on` が指すタスクは `after`、`check_on` は date、タスクの `status` は捨てる。帳簿そのものは `cockpit-write migrate-facts` で移す（下の「移し替え（migrate-facts）」）
   - `repo`: 本文の `#123` を GitHub の PR へのリンクにするリポジトリ（`owner/name`）。前置きで分けるなら `{ "BE": "owner/be", "FE": "owner/fe" }`
 - `owners[]`: 仕事の担当（話し相手のエージェント）。`id`（`o1` から）・`title`（仕事の名前。20 字以内）・`stream`・`agent`・`session`（Orca のチャットのセッション id。`orca agent list --json` の `orcaSessionId`）・`terminal`（担当が端末で動くときの `term_…`。`worker-start --agent claude` の受け取りの `terminal` は `structworker_…` というチャットの handle で端末ではないので、ここに書かず `session` を書く。2026-11-21 に書き違えて「担当と協議」が開かなかった）・`state`（open / done）。カードの「担当と協議」は、カードの `owner`、無ければ仕事の担当、それも無ければ窓口を開く
 - `routes[]`: 連絡を拾う経路（Slack・Teams・メール）。`id`・`label`（「Slack #aoba-dev」）・`read_at`（見張りが最後に読んだ時刻）・`error`・`stale_minutes`（既定 120）。古い・失敗した経路は窓に「見ていない」と出て、hook も `checks.routes` で名指しする。見張りが書く欄で、メインは経路を足すときだけ書く。`streams[].watch` との違い: `routes[]` は経路ごとに最後に読んだ時刻を見張りが書き込む記録で、`watch` は Bot の設定への参照を窓口が保つ欄（前回の結果は Orca から引き、帳簿には書き込まない）
@@ -83,8 +93,43 @@ JSON
 - `asks[]`: 窓からの質問のうち、返しを反映したもの（references/consult.md の「窓から質問する」）。`{ "id": "ask3", "card": "d21"?, "task": "t50"?, "memo": ".orca/consult/ask-ask3.md", "from_returns": ["ask3-1"], "held_returns": [], "notify": [{ "return_id": "ask3-1", "task": "t50", "message_id": "msg_…"? }] }`。`from_returns` に足すのが反映の最後の書き込み、`held_returns` は増えた判断で保留にした返し、`notify[]` は担当・worker に伝える返しで、送れたら `message_id` を書く。返しの記録にあって `from_returns` に無い返し・`held_returns` に残る返し・`message_id` の無い `notify` は `checks.unreflected_returns` に出る
 - `notes_ref`: 任意。案件のメモの場所
 - `requests[]`: 依頼の帳簿。形はこのファイルの「依頼の帳簿」
-- `intake`: 発言の仕分けの位置。形はこのファイルの「依頼の帳簿」
+- `intake`: 発言と知らせの仕分けの位置。形はこのファイルの「依頼の帳簿」
+- `facts_since`: 待ちと済を事実から決める形（R204）に移した時刻。`cockpit-write migrate-facts --write` と、初めて作る `cockpit-write init`（渡した状況の文の控えも押す）が書く。これがある帳簿だけ、cockpit-write が状況の文の古さと済にしたあとの見直しを検査する
 - 版 1 の `items`・`summary`・`updated_at`・`items[].related`・`asked_at`・`decided`・`requests[].deliverables` は版 2 で使わない。`cockpit.talk.json` と `window/reply.ts`（話したいことへの回答）は無くなった
+
+### タスクの今の決まり方
+state.ts の `judgeTasks` が、上から順に最初に当たったもので決める（R204）。窓・パネル・hook・書く道具が同じ関数を通す。
+
+1. 済: `state: "ok"`、または結んだカードの効果が「済」のカードが承認された（下のカードの効果）
+2. 止まっている: 結んだ開いた停止（`stuck`）のカード
+3. 深田さん待ち: 結んだ開いた私の番のカード（許可・判断・送信前・確認・相談）。worker が動いていても深田さん待ち。「担当と話す」を押したカードは「深田さんと協議中」
+4. 止まっている: worker が Orca で止まった・見つからない
+5. 取り込み待ち・作業中: worker が worker_done を返した・動いている
+6. 修正中: 確認で「直しを伝える」を押したカード（深田さん待ちにしない）
+7. 相手待ち: 送ったあと返事を待つカード（`state: "waiting"`）。「<awaiting.who>の返事待ち（<awaiting.what>）」
+8. 待ち: 解けていない `wait`（person・event・date の日付の前）。slot は未着手（順番待ち）
+9. 前提待ち: `after` のタスクが済んでいない（未着手）
+10. 着手できる: 上のどれでもない。date の日付が来たタスクは「確かめる日が来た: <what>」
+
+カードの効果（カードの種類の今の意味。cards.md の各カードの「押したあと」）: `review` の承認は結んだタスクを済にする。`report`・`inbox` は効果なし。ほかの種類（`decide`・`permit`・`send`・`stuck`・`consult`）は、閉じるとタスクの待ちが外れて着手できる。1 枚のカードに「済になるタスク」と「着手するタスク」が混ざるときだけ、カードの `effects` に結び付きごとの効果を書く（`{ "t65": "start", "t66": "done" }`。`done`・`start`・`none`）。`closes_tasks` の欄は無い。反映の前に取り消した承認は効かない（窓口はカードを開いたままにする）。反映のあとに取り消したものは、窓口が閉じたカードの結果を残し、取り消しの op を未反映の操作として扱う（ops.md の undo）
+
+仕事の行の語（`jobs[].state` と `label`）:
+
+| 仕事のタスクとカード | 仕事の行 | 例 |
+|---|---|---|
+| 開いた深田さんのカード | 私待ち | 「私待ち 2 件」 |
+| 送ったカードの返事・person の待ち | 顧客待ち | 「田中さんの返事待ち（利用上限の回答）」 |
+| event の待ち | 出来事待ち | 「Bot 3 体が次に知らせを送るを待つ（1/3 件届いた）」 |
+| date の待ち（日付の前） | 出来事待ち | 「12/4 に確かめる: 通知が出たか」 |
+| slot・after | 未着手 | 「前提待ち（t104「…」）」 |
+
+### 移し替え（migrate-facts）
+古い形（タスクの `status`・`waiting_on`・`waiting_since`・`check_on` と手書きの `run`・`wait`・`idle`・`stop`）の帳簿を、事実から決める形に移す。窓口だけが打つ。
+
+1. 下見: `cockpit-write migrate-facts <root>`。帳簿を書かずに、読み替えの要約と「意味の変わる行（id・題｜前｜後｜理由）」を出す。【決める】の付いた行（待ちの文と確認日が両方あった行）と、`next` に日付がある行は、原文と証拠で照らして直す値を決める
+2. 移す: `cockpit-write migrate-facts <root> --write`。元を `.orca/cockpit.v3.json` に残し（既にあって中身が違えば上書きせず、`cockpit.v3-<時刻>.json` に残す。どちらに残したかを要約の「元の控え」に出す）、タスクを読み替え、残りの確認らしい `next` を持つ済のタスク（下見で行に出たもの）の `next` を空にし、`facts_since` を書く。カードと操作の記録は変えない（`rev` を上げると、開いたカードに押された操作が古い版の扱いになる）。`status_basis` はまだ書かない
+3. 最初の書き込み: 見張る仕事を除く全部の仕事の行を、照合した `status` で渡す（控えがここで押される）。1 で決めた直し（date の待ちなど）も同じ書き込みで渡す
+4. 戻すとき: 要約の「元の控え」のファイル（ふつうは `.orca/cockpit.v3.json`）を `.orca/cockpit.json` に写す。窓と hook は古い形も読み込みで補って読むので、戻しても画面は止まらない
 
 ## カード
 共通の欄:
@@ -97,6 +142,7 @@ JSON
 | `state` | `open`（深田か担当の手の中）・`waiting`（送ったあと顧客の返事を待つ。`awaiting` を持つ）・`done` |
 | `at`・`due` | 出た時刻と期限（ISO 8601 の日時か日付）。`at` は必ず書く（必須の欄が欠けたまま 30 分たったかをここから数える。`created_at` は版 3 で使わない）。期限 24 時間を切ると朱、過ぎると「期限切れ」に並ぶ。メインを起こす仕組みは無いので、期限を過ぎて何をするかは `fallback` に書く |
 | `stream`・`tasks[]`・`owner` | どの仕事・タスク・担当の話か。窓の「案件の今」の私待ち・顧客待ちに載るのは `stream` を書いたカードだけなので、仕事の話なら `tasks` だけで済ませず `stream` も書く。どれも無い開いたカードは `checks.orphan_cards` に出る（受信を除く） |
+| `effects` | 任意。押したときの結んだタスクへの効果を結び付きごとに上書きする（`{ "t65": "start" }`。`done`・`start`・`none`）。1 枚に「済になるタスク」と「着手するタスク」が混ざるときだけ書く。既定は上の「タスクの今の決まり方」のカードの効果 |
 | `purpose` | 何のため 1 行（例「構成案の図が決まり、送る版を作れる」）。窓は題の直下に出す |
 | `fallback` | 返事が無いとき窓口が何をするか（references/cards.md） |
 | `request_id` | このカードが応える依頼の帳簿の id（`r30`）。依頼の原文は `request`（確認）に、帳簿への参照はこちらに分ける |
@@ -201,6 +247,8 @@ JSON
 `intake` は発言の仕分けの位置。
 - `through`: ここまでは仕分けた、という発言の id。どの依頼にも `none` にも結ばれていない発言をまたいで進めると、書く道具が断る
 - `none[]`: 依頼でない発言の id（相づち・「ok」・返答への短い返事）。1 件ずつ書かず、仕分けたときにまとめて足す
+- `notices_through`: ここまでは仕分けた、という知らせの id（`n-12`）
+- `no_wait[]`: どの待ちも解かないと照らした発言・知らせの id。開いた person・event の待ちがあるあいだに `through` か `notices_through` を進める書き込みは、またいだ発言・知らせ（待ちを始めた時刻より後のもの）を 1 件ずつ、どれかのタスクの `wait.met[].by` で指すか `no_wait` に入れないと cockpit-write が断る（口頭の返事と届いた知らせを見落とさない。R204）。待ちが無ければ求めない。照らしていない知らせは `checks.unsorted_notices` に出る
 - `checked_through`: ここまでは検査済みという境界。移し替えのときと、`none` を畳む（14 日より古い id を消す）ときに書く道具が書く。`intake` を置き換えるときも、今の `checked_through` を消さずに渡す
 - state.ts は、`through` より後の発言と、`through` 以前でどの依頼にも `none` にも結ばれていない発言（`checked_through` 以前を除く）を `checks.unsorted` に出す
 - 相談・質問の返しで決まった発言は、`intake` に書かなくても仕分け済みになる: 返しの `decisions[].utterance` はその返しの `from_return` を持つ判断の記録の行があれば、`requests[].utterance` はその返しの `from_return` を持つ依頼があれば、`checks.unsorted` に出ない
@@ -212,8 +260,8 @@ JSON
 | `requests[]` | 依頼ごとの判定済みの `state`（受付・進行中・確認待ち・済） |
 | `talking`・`waiting` | 協議中のカードと、顧客待ち（誰の何を・いつから・催促の日） |
 | `jobs[]` | 仕事ごとの今（`state`・`label`・`next`）と、Orca のサイドバーに出す形 `orca`（`display_name`・`status`・`unread`） |
-| `tasks[]`・`workers[]` | 画面に出るタスクの状態と、その出どころ（`from`: 手書き・作業中・取り込み待ち・止まった・見つからない） |
-| `checks` | hook がメインに直させること: `pending_ops`・`missing_context`・`local_deliverables`・`orphan_waits`・`orphan_cards`・`remind_due`・`intake`（取り込み待ちの worker）・`missing_workers`・`push_check`・`plugin`・`routes`・`long_names`（仕事・担当・タスクの題）。版 3 で足したもの: `incomplete_cards`（必須の欄が欠けたカード）・`unsorted`（仕分けていない発言）・`unmapped_elements`（承認の op が来たのに `element_map` が欠けたカード `{ card, missing[] }`）・`unproven`（タスクは全部済なのに証拠の無い済の条件が残る依頼 `{ request, when[] }`）・`affected_tasks`（判断の `affects` に挙がったのに見直していないタスク `{ ruling, task }`）・`stale_tasks`（取り込まれたのに run のままのタスク）・`loose_tasks`（仕事に入っていないタスク）・`unknown_phase`（5 つの工程に無い工程名）・`no_form`（形の無い仕事）。カードの相談で足したもの: `unreflected_returns`（相談のメモにあって、判断の記録の `from_return` かカードの `from_returns` に無い返し `{ id: return_id, card, missing[] }`。`missing` は `判断の記録`・`帳簿`・`保留`（カードの `held_returns` に残っている）。窓からの質問の分は `card` の代わりに `ask` を持つ: `{ id: return_id, ask, missing[], tasks? }`（`missing` に `判断の記録`・`帳簿`（`asks[].from_returns`）・`保留`・`担当への通知`（`asks[].notify[]` の `message_id` の無い行。`tasks` にそのタスク））と、返しの無い「この答えを窓口に返す」 `{ id: null, ask, op, missing: ['返し'] }`（`ask_decide` の op に結ばれた返しが無く、op が `applied_ops` にも無い））・`stale_consults`（カードが片付いたのに残っている相談のタブ `{ id: カード id, terminal }`）。仕事の形で足したもの: `watch_missing`（`watch` の 3 欄が欠けた見張る仕事）・`watch_unknown`（`watch.automation` の Bot が Orca に無い見張る仕事）・`workspace_name`（形の合わない案件の名前 `{ name, message }`。形は `workspace` の行）・`idle_tasks`（線を越えて動いていないタスク `{ task, since, hours }`。`check_on` の行）。hook は深田の発言のターンに、未処理の要対応と重要な警告を 1 件ずつ、帳簿の形の直し（どれが当たるかは `claude/hooks/periodic-reminder.sh` の `LEDGER_FIXES`）を検査の名前と件数の 1 行で流す。直し方はこのファイルの各欄の行 |
+| `tasks[]`・`workers[]` | 画面に出るタスクの状態（`state`）と人が読む 1 行（`label`。例「田中さんの返事待ち（利用上限の回答）」「前提待ち（t104「…」）」）、その出どころ（`from`: 帳簿と操作・作業中・取り込み待ち・止まった・見つからない） |
+| `checks` | hook がメインに直させること: `pending_ops`・`missing_context`・`local_deliverables`・`orphan_cards`・`remind_due`・`intake`（取り込み待ちの worker）・`missing_workers`・`push_check`・`plugin`・`routes`・`long_names`（仕事・担当・タスクの題）。版 3 で足したもの: `incomplete_cards`（必須の欄が欠けたカード）・`unsorted`（仕分けていない発言）・`unmapped_elements`（承認の op が来たのに `element_map` が欠けたカード `{ card, missing[] }`）・`unproven`（タスクは全部済なのに証拠の無い済の条件が残る依頼 `{ request, when[] }`）・`affected_tasks`（判断の `affects` に挙がったのに見直していないタスク `{ ruling, task }`）・`stale_tasks`（取り込まれたのに open のままのタスク）・`loose_tasks`（仕事に入っていないタスク）・`unknown_phase`（5 つの工程に無い工程名）・`no_form`（形の無い仕事）。カードの相談で足したもの: `unreflected_returns`（相談のメモにあって、判断の記録の `from_return` かカードの `from_returns` に無い返し `{ id: return_id, card, missing[] }`。`missing` は `判断の記録`・`帳簿`・`保留`（カードの `held_returns` に残っている）。窓からの質問の分は `card` の代わりに `ask` を持つ: `{ id: return_id, ask, missing[], tasks? }`（`missing` に `判断の記録`・`帳簿`（`asks[].from_returns`）・`保留`・`担当への通知`（`asks[].notify[]` の `message_id` の無い行。`tasks` にそのタスク））と、返しの無い「この答えを窓口に返す」 `{ id: null, ask, op, missing: ['返し'] }`（`ask_decide` の op に結ばれた返しが無く、op が `applied_ops` にも無い））・`stale_consults`（カードが片付いたのに残っている相談のタブ `{ id: カード id, terminal }`）。仕事の形で足したもの: `watch_missing`（`watch` の 3 欄が欠けた見張る仕事）・`watch_unknown`（`watch.automation` の Bot が Orca に無い見張る仕事）・`workspace_name`（形の合わない案件の名前 `{ name, message }`。形は `workspace` の行）・`idle_tasks`（線を越えて動いていないタスク `{ task, since, hours }`。`wait` の date の行）。事実から決める形で足したもの: `stale_status`（状況の文の元の事実が控えと違う仕事 `{ id, changes[] }`。`status_basis` の行）・`unsorted_notices`（開いた待ちがあるのに仕分けていない知らせ。`intake` の `no_wait` の行）。hook は深田の発言のターンに、未処理の要対応と重要な警告を 1 件ずつ、帳簿の形の直し（どれが当たるかは `claude/hooks/periodic-reminder.sh` の `LEDGER_FIXES`）を検査の名前と件数の 1 行で流す。直し方はこのファイルの各欄の行 |
 | `overview`・`card` | hook が流す全体の 1 行・ワークスペースのカードのコメント |
 
 ## リンク（href）
@@ -227,10 +275,12 @@ JSON
 
 | 事実 | 持つ場所 | ほかの場所 |
 |---|---|---|
-| タスクの状態 | worker のいるタスクは Orca の Dispatch。ほかは `tasks[].state` | 画面・hook は state.ts の判定 |
+| タスクの状態 | 済は `tasks[].state: "ok"` か確認のカードの承認。ほかは深田の操作・カード・Orca の Dispatch・`wait`・`after`・日付 | 画面・hook・書く道具は state.ts の `judgeTasks` の判定。手で止まり・待ちを書かない |
+| 仕事の状況の文 | `streams[].status`（窓口が書く人の文） | 元の事実が変わったら書き直す。窓は古い文の代わりに判定から作った事実の文を出す |
 | 仕事の状態 | 配下のタスクとカード | 窓の案件の今と Orca のサイドバーは state.ts の `jobs[]` から |
 | 深田を待っていること | 開いた私の番のカードの `tasks`・`stream` | 仕事の「私待ち」はそこから出る |
-| 外の相手を待っていること | 送ったカードの `awaiting`、タスクの `waiting_on` | 仕事の「<相手>の返事待ち」 |
+| 外の相手・出来事を待っていること | 送ったカードの `awaiting`、タスクの `wait`（person・event・date・slot） | 仕事の「顧客待ち」（人の返事）・「出来事待ち」（出来事・日付） |
+| 待ちが解けたこと | タスクの `wait.met[]`（発言・知らせ・操作・議事録を指す） | 窓口の会話で「届いた」と言うだけにしない |
 | 件数・期限・次の節目 | `cards[]`・`milestones[]` | 画面・hook の全体の 1 行・カードのコメントは state.ts から。要約の文は書かない |
 | worker・担当とタスクの結び付き | `tasks[].worker`（Orca の Run と最初の Task の id） | 担当・worker の状態と知らせは Orca の orchestration が持つ（`worker-show`・`task-list`・`inbox`）。写しを作らない |
 | 担当の話し相手の場所 | `owners[]` の `session`・`terminal` | カードは `owner` か `stream` で引く |

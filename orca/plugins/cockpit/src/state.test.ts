@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit, requestCards, stageOf, taskSig, type Card, type Cockpit, type Ruling, type TaskSeen } from './model.ts'
+import { legacyWait, overlay, parseCockpit, waitMet, requestCards, stageOf, taskSig, type Card, type Cockpit, type Ruling, type TaskSeen, type UserLog } from './model.ts'
 import type { AgentRow, OwnerLive, QuestionFact } from './protocol.ts'
-import { bucketOf, byUrgency, coworkSessions, derive, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, waitLabel, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
+import { bucketOf, byUrgency, coworkSessions, derive, judgeTasks, streamBasis, statusFallback, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, waitLabel, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
 import { chatHandles, liveChats } from '../window/orca-state.ts'
 import { orcaFacts } from '../window/state.ts'
@@ -125,7 +125,7 @@ test('Dispatch で落ちた・Orca に見つからない worker は、端末が�
   assert.ok(!done.queue.some((r) => r.card.kind === 'stuck'))
 })
 
-test('hook が読む検査: 一時フォルダのままの成果物と、どのカードも外の相手も指さない止まったタスク', () => {
+test('hook が読む検査: 一時フォルダのままの成果物。タスクの待ちはカードと wait から決まり、手書きの state は読み替える（R204）', () => {
   const c: Cockpit = {
     version: 2, workspace: { name: 'x' }, streams: [{ id: 's1', title: '仕事' }],
     tasks: [
@@ -150,9 +150,13 @@ test('hook が読む検査: 一時フォルダのままの成果物と、どの�
       { id: 'd2', rev: 1, kind: 'decide', title: 'd2', state: 'open', stream: 's1', tasks: ['t7'] }
     ]
   }
-  const r = report(c, { ops: [{ op_id: 1, at: '2026-11-21T09:00:00+09:00', item_id: 'd2', item_rev: 1, type: 'talk' }] }, [], undefined, 'skipped', NOW)
+  const r = report(parseCockpit(JSON.stringify(c)), { ops: [{ op_id: 1, at: '2026-11-21T09:00:00+09:00', item_id: 'd2', item_rev: 1, type: 'talk' }] }, [], undefined, 'skipped', NOW)
   assert.deepEqual(r.checks.local_deliverables, ['a1', 'a2'])
-  assert.deepEqual(r.checks.orphan_waits, ['t1', 't4'])
+  // 閉じた判断の待ちは解け（t1）、報告は待ちにならない（t4）。手書きの stop・wait は事実が無ければ着手できる、と出す（どこからも指されない待ちが残らない）
+  assert.deepEqual(r.tasks.map((t) => [t.id, t.state, t.label]), [
+    ['t1', 'run', '着手できる'], ['t2', 'wait', '深田さんの判断待ち（d1）'], ['t3', 'wait', '顧客の返事待ち（返事）'], ['t4', 'run', '着手できる'],
+    ['t5', 'run', '着手できる'], ['t6', 'wait', '田中さんの返事待ち（回答）'], ['t7', 'wait', '深田さんと協議中（d2）']
+  ])
   // 必須の欄が欠けたカードは私の番に出さず、窓口に名指しする。
   assert.deepEqual(r.mine, [])
   assert.deepEqual(r.checks.incomplete_cards.map((x) => x.id), ['d1', 'a2', 'a3', 'd2'])
@@ -652,15 +656,11 @@ test('Orca の名前（R146）: 仕事と担当は頭に形（一緒に｜・任
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.long_names, [`s9（${NAME_MAX + 1} 字）`])
 })
 
-test('checks.status_missing（R188）: 済んでいない仕事・タスクで状況の文（status）が無いものの id を出す。済んだものと書いたものは出さない', () => {
+test('checks.status_missing（R188）: 済んでいない仕事で状況の文（status）が無いものの id を出す。タスクには状況の文が無い（事実から決める。R204）', () => {
   const w = ws(0)
   const c = w.cockpit
-  const open = c.tasks.filter((t) => t.state !== 'ok').map((t) => t.id)
   const missing = () => report(c, w.log, [], undefined, 'skipped', NOW).checks.status_missing
-  const before = missing()
-  for (const id of open) assert.ok(before.includes(id), id)
-  for (const t of c.tasks.filter((x) => x.state === 'ok')) assert.ok(!before.includes(t.id), t.id)
-  for (const x of [...c.streams, ...c.tasks]) x.status = '今どうなっていて次に何を待つか'
+  for (const x of c.streams) x.status = '今どうなっていて次に何を待つか'
   assert.deepEqual(missing(), [])
   c.streams[0]!.status = '  '
   assert.deepEqual(missing(), [c.streams[0]!.id])
@@ -699,21 +699,24 @@ test('案件の名前の形（R165・R181）: 全角の｜でちょうど 2 つ�
   assert.equal(src.split('<顧客>').length - 1, 1)
 })
 
-test('待ちの語（追加 42）: 相手が人や相手方の名前だけなら「〜の返事待ち」、出来事・作業は「〜を待つ」（動詞で終われば「〜のを待つ」）', () => {
-  assert.equal(waitLabel('田中さん'), '田中さんの返事待ち')
-  assert.equal(waitLabel('先方'), '先方の返事待ち')
-  assert.equal(waitLabel('岩田さん（日程案への返事と認証情報）'), '岩田さんの返事待ち（日程案への返事と認証情報）')
-  assert.equal(waitLabel('A 社の担当'), 'A 社の担当の返事待ち')
-  assert.equal(waitLabel('次に上限に当たったときの本物の席の切り替え'), '次に上限に当たったときの本物の席の切り替えを待つ')
-  assert.equal(waitLabel('深田さんのスマホでの Orca Mobile の撮影'), '深田さんのスマホでの Orca Mobile の撮影を待つ')
-  assert.equal(waitLabel('深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめる（r67 の3）'), '深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめるのを待つ（r67 の3）')
-  assert.equal(waitLabel('深田さんが確かめる'), '深田さんが確かめるのを待つ')
-  // 仕事の状態の語に使う（顧客待ちの仕事）。
+test('待ちの語（追加 42・R204）: 相手は「〜の返事待ち（何を）」、出来事は「〜を待つ」、日付は「<日> に確かめる」。仕事の行は人の返事だけを顧客待ちと呼び、出来事・日付は出来事待ち', () => {
+  assert.equal(waitLabel({ kind: 'person', who: '岩田さん', what: '日程案への返事と認証情報' }), '岩田さんの返事待ち（日程案への返事と認証情報）')
+  assert.equal(waitLabel({ kind: 'event', what: '次に上限に当たったときの本物の席の切り替え' }), '次に上限に当たったときの本物の席の切り替えを待つ')
+  assert.equal(waitLabel({ kind: 'event', what: 'ログインが実際に切れる日を待つ' }), 'ログインが実際に切れる日を待つ')
+  assert.equal(waitLabel({ kind: 'event', what: 'Bot 3 体の知らせ', need: 3, met: [{ by: 'n-1', at: 'x' }] }), 'Bot 3 体の知らせを待つ（1/3 件届いた）')
+  assert.equal(waitLabel({ kind: 'date', on: '2026-12-04', what: '通知が出たかを確かめる' }), `${fmtDate('2026-12-04')} に確かめる: 通知が出たかを確かめる`)
+  assert.equal(waitLabel({ kind: 'slot', why: '空き枠' }), '空き枠の順番待ち（空き枠）')
   const w = ws(0)
   const s = w.cockpit.streams[0]!.id
-  w.cockpit.tasks = [{ id: 'k1', stream: s, phase: '確認', title: '撮影を待つ', state: 'wait', waiting_on: '深田さんのスマホでの撮影' }]
   w.cockpit.cards = w.cockpit.cards.filter((c) => c.stream !== s)
-  assert.equal(derive(w.cockpit, w.log, [], '/a', undefined, NOW).jobs.find((j) => j.id === s)!.label, '深田さんのスマホでの撮影を待つ')
+  const job = () => derive(w.cockpit, w.log, [], '/a', undefined, NOW).jobs.find((j) => j.id === s)!
+  w.cockpit.tasks = [{ id: 'k1', stream: s, phase: '確認', title: '撮影を待つ', state: 'open', wait: { kind: 'event', what: 'スマホでの撮影' } }]
+  assert.deepEqual([job().state, job().label], ['outside', 'スマホでの撮影を待つ'])
+  w.cockpit.tasks.push({ id: 'k2', stream: s, phase: '確認', title: '返事', state: 'open', wait: { kind: 'person', who: '田中さん', what: '認証情報' } })
+  assert.deepEqual([job().state, job().label], ['customer', '田中さんの返事待ち（認証情報）'])
+  // 解いた事実（met）がそろえば待ちが解け、着手できる。
+  w.cockpit.tasks[1]!.wait!.met = [{ by: 'u-3', at: '2026-11-21T09:00:00+09:00' }]
+  assert.equal(derive(w.cockpit, w.log, [], '/a', undefined, NOW).tasks.get('k2')!.label, '着手できる')
 })
 
 test('push の一任（R95・R173）: 有効な permission（scope push・allow true）があれば push の許すを出させず、窓口が自分で push する印を出す。置き換えられた一任は数えない', () => {
@@ -735,31 +738,35 @@ test('push の一任（R95・R173）: 有効な permission（scope push・allow 
   assert.deepEqual(parseRulings('{"id":"R9","kind":"permission","scope":"push","allow":true}\n').map((r) => [r.scope, r.allow]), [['push', true]])
 })
 
-test('確認日（R142・R171）: 日付が来た済んでいないタスクは、その日の 0:00 より後に動いていなければ待つ相手があっても 1 行出す。日付の前と、動いたあとは出さない', () => {
+test('確認日（R142・R171・R204）: date の待ちは、その日が来たら着手できる（済にはしない）にし、その日の 0:00 より後に動いていなければ 1 行出す。日付の前と、動いたあとは出さない', () => {
   const w = ws(0)
   const s = w.cockpit.streams[0]!.id
   w.cockpit.owners = []
   const today = tokyoDay(NOW)
   w.cockpit.tasks = [
-    { id: 'k1', stream: s, phase: '確認', title: '先方の返事を確かめる', state: 'wait', waiting_on: '田中さん', check_on: today },
-    { id: 'k2', stream: s, phase: '確認', title: '来週見直す', state: 'wait', check_on: '2026-11-30' },
-    { id: 'k3', stream: s, phase: '確認', title: '済んだもの', state: 'ok', check_on: today }
+    { id: 'k1', stream: s, phase: '確認', title: '通知を確かめる', state: 'open', wait: { kind: 'date', on: today, what: 'ログインが切れたときの通知が出たか' } },
+    { id: 'k2', stream: s, phase: '確認', title: '来週見直す', state: 'open', wait: { kind: 'date', on: '2026-11-30', what: '見直す' } },
+    { id: 'k3', stream: s, phase: '確認', title: '済んだもの', state: 'ok' }
   ]
   const start = tokyoStart(today)
   const seen = (at: number): TaskSeen => Object.fromEntries(w.cockpit.tasks.map((t) => [t.id, { sig: taskSig(t), at: new Date(at).toISOString() }]))
   const facts = { workers: [], terminals: [] as string[] }
   const d = derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start - 3_600_000) })
   assert.deepEqual(d.idle.map((x) => [x.task, x.check, x.since]), [['k1', today, new Date(start).toISOString()]])
-  assert.equal(d.queue.find((r) => r.card.id === '#idle:k1')!.card.title, '「先方の返事を確かめる」の確認日が来た')
-  // その日に窓口がタスクを動かしたら出さない。0:00 ちょうどの動きは「0:00 より後」ではないので出す（Codex 2）。
-  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start + 60_000) }).idle, [])
-  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start) }).idle.map((x) => x.task), ['k1'])
+  assert.equal(d.queue.find((r) => r.card.id === '#idle:k1')!.card.title, '「通知を確かめる」の確認日が来た')
+  // 日付が来ても済にはしない（日付は証拠ではない。Astra 2 の 5）。日付の前は待ち。
+  assert.deepEqual([d.tasks.get('k1')!.state, d.tasks.get('k1')!.label], ['run', '確かめる日が来た: ログインが切れたときの通知が出たか'])
+  assert.deepEqual([d.tasks.get('k2')!.state, d.tasks.get('k2')!.hold?.kind], ['wait', 'date'])
+  // その日に窓口がタスクを動かしたら確認日の行は出さない（着手できるタスクとして、2 時間の線で見る）。0:00 ちょうどの動きは「0:00 より後」ではないので出す（Codex 2）。
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start + 60_000) }).idle.map((x) => [x.task, x.check, x.line]), [['k1', undefined, 2]])
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, start + 90 * 60_000, { taskSeen: seen(start + 60_000) }).idle, [])
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start) }).idle.map((x) => [x.task, x.check]), [['k1', today]])
   // 手元の時計が UTC でも、東京の 0:01 には確認日が来ている（Codex 2）。
   const tz = process.env.TZ
   try {
     process.env.TZ = 'UTC'
     const at = start + 60_000
-    assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, at, { taskSeen: seen(start - 3_600_000) }).idle.map((x) => x.task), ['k1'])
+    assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, at, { taskSeen: seen(start - 3_600_000) }).idle.map((x) => [x.task, x.check]), [['k1', today]])
   } finally {
     if (tz === undefined) delete process.env.TZ
     else process.env.TZ = tz
@@ -782,15 +789,15 @@ test('見張る仕事の検査（R152）: watch の無い見張る仕事と、Or
   assert.deepEqual(checks(undefined).watch_unknown, [])
 })
 
-test('放置の検出（R170）: worker も担当も動いていない作業中は 2 時間、未着手・待機は 24 時間で 1 行。待つ相手・確認日の前は拾わず、checks は動くたびに起点が変わる', async () => {
+test('放置の検出（R170）: worker も担当も動いていない作業中・着手できるは 2 時間、順番待ち・深田さん待ちは 24 時間で 1 行。外の待ち（相手・出来事・日付の前）は拾わず、checks は動くたびに起点が変わる', async () => {
   const w = ws(0)
   const s = w.cockpit.streams[0]!.id
   w.cockpit.owners = []
   w.cockpit.tasks = [
-    { id: 'k1', stream: s, phase: '作成', title: '一覧を作る', state: 'run' },
-    { id: 'k2', stream: s, phase: '調査', title: '前提を調べる', state: 'idle' },
-    { id: 'k3', stream: s, phase: '確認', title: '先方の返事を待つ', state: 'wait', waiting_on: '田中さん' },
-    { id: 'k4', stream: s, phase: '確認', title: '来週見直す', state: 'wait', check_on: '2026-11-30' }
+    { id: 'k1', stream: s, phase: '作成', title: '一覧を作る', state: 'open' },
+    { id: 'k2', stream: s, phase: '調査', title: '前提を調べる', state: 'open', wait: { kind: 'slot', why: '空き枠' } },
+    { id: 'k3', stream: s, phase: '確認', title: '先方の返事を待つ', state: 'open', wait: { kind: 'person', who: '田中さん', what: '返事' } },
+    { id: 'k4', stream: s, phase: '確認', title: '来週見直す', state: 'open', wait: { kind: 'date', on: '2026-11-30', what: '見直す' } }
   ]
   const at = (min: number) => new Date(NOW - min * 60_000).toISOString()
   const seen = (mins: Record<string, number>): TaskSeen => Object.fromEntries(w.cockpit.tasks.map((t) => [t.id, { sig: taskSig(t), at: at(mins[t.id] ?? 0) }]))
@@ -857,15 +864,86 @@ test('放置の検出の起点: 常駐のプロセスがタスクの中身の変
   assert.equal((await recordTaskSeen(root, files, NOW + 120_000)).k1!.at, new Date(NOW + 120_000).toISOString())
 })
 
-test('idle の理由の無いタスク（追加 48・R193）: state が idle で waiting_on が空のタスクを checks.idle_unexplained に名指しする', () => {
-  const c: Cockpit = {
+test('古い帳簿の読み替え（R204）: 手書きの run・idle・wait・stop は open に、waiting_on は wait に（名前だけなら person、空き枠は slot、ほかは event、順番待ちの先は after）、check_on は date に。済のタスクの待ちと status は捨てる', () => {
+  const raw = {
     version: 2, workspace: { name: '社内｜x' }, streams: [{ id: 's1', title: '仕事' }], cards: [],
     tasks: [
-      { id: 't1', stream: 's1', phase: '作成', title: 'a', state: 'idle' },
+      { id: 't1', stream: 's1', phase: '作成', title: 'a', state: 'idle', status: '古い状況' },
       { id: 't2', stream: 's1', phase: '作成', title: 'b', state: 'idle', waiting_on: '空き枠' },
-      { id: 't3', stream: 's1', phase: '作成', title: 'c', state: 'idle', waiting_on: '  ' },
-      { id: 't4', stream: 's1', phase: '作成', title: 'd', state: 'wait' }
+      { id: 't3', stream: 's1', phase: '作成', title: 'c', state: 'idle', waiting_on: 't1 の取り込み（同じファイルを触る）' },
+      { id: 't4', stream: 's1', phase: '確認', title: 'd', state: 'wait', waiting_on: '岩田さん（認証情報）', waiting_since: '2026-11-17' },
+      { id: 't5', stream: 's1', phase: '確認', title: 'e', state: 'wait', waiting_on: 'Bot の次の知らせ' },
+      { id: 't6', stream: 's1', phase: '確認', title: 'f', state: 'idle', check_on: '2026-12-04', next: '通知が出たかを確かめる' },
+      { id: 't7', stream: 's1', phase: '確認', title: 'g', state: 'ok', waiting_on: '深田さんの switch' },
+      { id: 't8', stream: 's1', phase: '確認', title: 'h', state: 'wait', waiting_on: '先方（日程）', check_on: '2026-12-01' }
     ]
   }
-  assert.deepEqual(report(c, { ops: [] }, [], undefined, 'skipped', NOW).checks.idle_unexplained, ['t1', 't3'])
+  const c = parseCockpit(JSON.stringify(raw))
+  assert.deepEqual(c.tasks.map((t) => [t.id, t.state, t.wait ?? null, t.after ?? null]), [
+    ['t1', 'open', null, null],
+    ['t2', 'open', { kind: 'slot', why: '空き枠' }, null],
+    ['t3', 'open', null, ['t1']],
+    ['t4', 'open', { kind: 'person', who: '岩田さん', what: '認証情報', since: '2026-11-17' }, null],
+    ['t5', 'open', { kind: 'event', what: 'Bot の次の知らせ' }, null],
+    ['t6', 'open', { kind: 'date', on: '2026-12-04', what: '通知が出たかを確かめる' }, null],
+    ['t7', 'ok', null, null],
+    // 待ちの文と確認日が両方あれば待ちの文を採る（日付で解くと、返事が無いまま着手できると出る。Astra 3 の中 3）
+    ['t8', 'open', { kind: 'person', who: '先方', what: '日程' }, null]
+  ])
+  for (const t of c.tasks) for (const k of ['status', 'waiting_on', 'waiting_since', 'check_on']) assert.equal((t as Record<string, unknown>)[k], undefined)
+  const d = derive(c, { ops: [] }, [], '/x', undefined, NOW)
+  assert.deepEqual([...d.tasks.values()].map((t) => [t.task.id, t.state]), [['t1', 'run'], ['t2', 'idle'], ['t3', 'idle'], ['t4', 'wait'], ['t5', 'wait'], ['t6', 'wait'], ['t7', 'ok'], ['t8', 'wait']])
+})
+
+test('タスクの判定（R204）: 見ての承認で済。反映前に取り消した承認・効果を start にした結び付きは済にしない。開いた私の番は worker が動いていても深田さん待ち、直しを伝えたら修正中', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  c.cards.find((x) => x.id === 'r5')!.tasks = ['t1']
+  const at = '2026-11-21T00:30:00.000Z'
+  const judge = (log: UserLog, facts?: Parameters<typeof judgeTasks>[3]) => judgeTasks(c, log, overlay(c, log), facts, NOW).get('t1')!
+  const acc: UserLog = { ops: [{ op_id: 50, at, item_id: 'r5', item_rev: 1, type: 'accept' }] }
+  assert.deepEqual([judge(acc).state, judge(acc).done], ['ok', 'card'])
+  assert.notEqual(judge({ ops: [...acc.ops, { op_id: 51, at, item_id: 'r5', item_rev: 1, type: 'undo', undo_of: 50 }] }).state, 'ok')
+  // 開いた見ては、worker が作業中でも深田さんの番（Astra 3 の中 1）。
+  const working = { workers: [], dispatches: { ctx_aoba_list: { state: 'dispatched', liveness: 'live' } } }
+  assert.equal(judge({ ops: [] }, working).state, 'wait')
+  assert.match(judge({ ops: [] }, working).label, /^深田さんの.+待ち（r5）$/)
+  // 直しを伝えた（本文つきの talk）は修正中で、深田さん待ちにしない。
+  const fix: UserLog = { ops: [{ op_id: 52, at, item_id: 'r5', item_rev: 1, type: 'talk', text: '並び順を逆に' }] }
+  assert.deepEqual([judge(fix).state, judge(fix).label], ['run', '修正中（r5 の直し）'])
+  assert.equal(judge(fix, working).label, 'worker が修正中（r5 の直し）')
+  // 結び付きの効果を start にすれば、承認は着手の合図で済にはしない。
+  c.cards.find((x) => x.id === 'r5')!.effects = { t1: 'start' }
+  assert.equal(judge(acc).state, 'run')
+  // 承認 → 反映前に取消 → 同じ版で別の操作で閉じた: 過去の承認で済にしない（Astra 4 の重大 1）。
+  c.cards.find((x) => x.id === 'r5')!.effects = { t1: 'done' }
+  Object.assign(c.cards.find((x) => x.id === 'r5')!, { state: 'done', resolved_by: 'user', resolved_at: at })
+  const closedByOther: UserLog = { ops: [...acc.ops, { op_id: 51, at, item_id: 'r5', item_rev: 1, type: 'undo', undo_of: 50 }, { op_id: 52, at, item_id: 'r5', item_rev: 1, type: 'skip' }] }
+  assert.notEqual(judge(closedByOther).state, 'ok')
+  assert.equal(judge(acc).state, 'ok')
+  // 反映して閉じたあとの取り消しは、窓口の再判断まで済を残す（Astra 5 の重大）。
+  assert.equal(judge({ ops: [...acc.ops, { op_id: 53, at: '2026-11-21T01:00:00.000Z', item_id: 'r5', item_rev: 1, type: 'undo', undo_of: 50 }] }).state, 'ok')
+})
+
+test('待ちの解け方（R204）: 同じ証拠は 1 件に数え、旧い待ちの半角の括弧も何を待つかに読む', () => {
+  const met = (by: string[]) => ({ kind: 'event' as const, what: '知らせ', need: 2, met: by.map((b) => ({ by: b, at: '' })) })
+  assert.equal(waitMet(met(['n-7', 'n-7'])), false)
+  assert.match(waitLabel({ ...met(['n-7', 'n-7']), need: 3 }), /（1\/3 件届いた）/)
+  assert.equal(waitMet(met(['n-7', 'n-8'])), true)
+  assert.deepEqual(legacyWait({ id: 't1', waiting_on: '田中さん (認証情報)' }, 'wait').wait, { kind: 'person', who: '田中さん', what: '認証情報' })
+})
+
+test('状況の文の元（R204）: 仕事のタスクの判定と開いたカードを並べ、待ちが解けると変わる。古い文の代わりは判定から作る', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  const views = overlay(c, w.log)
+  const basis = (cc: Cockpit) => streamBasis(cc, judgeTasks(cc, w.log, views, undefined, NOW), views, 's3')
+  const before = basis(c)
+  assert.ok(before.some((x) => x.startsWith('t3:wait:person:0/1:')), before.join())
+  assert.ok(before.includes('w1:waiting@2'))
+  const met = structuredClone(c)
+  met.tasks.find((t) => t.id === 't3')!.wait!.met = [{ by: 'u-1', at: '2026-11-21T09:00:00+09:00' }]
+  assert.notDeepEqual(basis(met), before)
+  const tasks = [...judgeTasks(c, w.log, views, undefined, NOW).values()].filter((t) => t.task.stream === 's3')
+  assert.match(statusFallback(tasks), /状況の文が古い/)
 })

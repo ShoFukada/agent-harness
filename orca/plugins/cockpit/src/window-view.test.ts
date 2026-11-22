@@ -45,7 +45,7 @@ test('見てほしい点の「1 …」の番号は一覧の番号にし（二重
 test('全体の仕事の行（追加 42）: 題は切らずに 1 行目に出し、長い待ちの文は 3 行目の状況に寄せる（題が幅 0 になって消えた）。担当は閉じていない担当を全部出す', () => {
   const m = aoba((v) => {
     const s = v.cockpit!.streams[0]!
-    v.cockpit!.tasks = v.cockpit!.tasks.map((t) => (t.stream === s.id ? { ...t, state: 'wait' as const, waiting_on: '深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめる（r67 の3）' } : t))
+    v.cockpit!.tasks = v.cockpit!.tasks.map((t) => (t.stream === s.id ? { ...t, state: 'open' as const, worker: undefined, wait: { kind: 'event' as const, what: 'スマホで、カードの詳細に要る情報が出ているかを使いながら確かめる（r67 の3）' } } : t))
     v.cockpit!.cards = v.cockpit!.cards.filter((c) => c.stream !== s.id)
     v.cockpit!.owners = [{ id: 'o1', title: s.title, stream: s.id, agent: 'claude', state: 'open' }, { id: 'o3', title: 'Botの組み直し', stream: s.id, agent: 'claude', state: 'open' }, { id: 'o5', title: '任せる｜決まりの一本化', stream: s.id, agent: 'claude', state: 'open' }, { id: 'o4', title: '済んだ担当', stream: s.id, agent: 'claude', state: 'done' }]
   })
@@ -54,7 +54,7 @@ test('全体の仕事の行（追加 42）: 題は切らずに 1 行目に出し
   const box = h.slice(h.indexOf(`data-toggle="s:${s.id}"`))
   const head = box.slice(0, box.indexOf('</div>'))
   assert.match(head, new RegExp(`<span class="nm">${s.title}</span></button>`))
-  assert.match(text(head), /状況 深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめるのを待つ（r67 の3）/)
+  assert.match(text(head), /状況 スマホで、カードの詳細に要る情報が出ているかを使いながら確かめる（r67 の3）を待つ/)
   // 協議の相手（ownerOf の 1 人目）が仕事と同じ名前でも、担当が 2 人以上なら全部出す（Codex）。
   assert.match(text(head), new RegExp(`担当: ${s.title}・Botの組み直し・任せる｜決まりの一本化`))
   assert.doesNotMatch(head, /済んだ担当/)
@@ -80,14 +80,13 @@ test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中�
   assert.doesNotMatch(t, /未完了の依頼/)
 })
 
-test('全体の仕事の行（追加 38・R188）: 題・概要・状況。状況は状態の語のあとに窓口の書いた status を切らずに出し、next は出さない。タスクの行と詳細も概要（goal）と状況（status）', () => {
+test('全体の仕事の行（追加 38・R188・R204）: 題・概要・状況。状況は状態の語のあとに窓口の書いた status を切らずに出し、next は出さない。タスクの行と詳細は概要（goal）と、事実から決めた状況', () => {
   const status = '一覧の並べ替えは stg に出した。田中さんが画面を見て返事をくれるのを待っている。返事が来たら本番に出す日を決める。'
   const m = aoba((v) => {
     v.cockpit!.streams[0]!.summary = '配車画面の一覧を探しやすくする'
     v.cockpit!.streams[0]!.status = status
     const t1 = v.cockpit!.tasks.find((x) => x.id === 't1')!
     t1.goal = '配車の一覧で探す手間を減らす'
-    t1.status = '並べ替えは済み。絞り込みを作っている'
     v.workers = [{ terminalId: 'term_w', title: '一覧の改修（worker）', agent: 'claude', state: 'working', since: NOW, task: 't1', where: 'テストを直している' }]
   })
   const h = page(m, { tab: 'whole', task: 't1' })
@@ -105,14 +104,16 @@ test('全体の仕事の行（追加 38・R188）: 題・概要・状況。状�
   const other = c.streams.find((x) => !x.status && !x.summary)!
   assert.doesNotMatch(text(box(other.id)), /概要/)
   assert.doesNotMatch(box(other.id), /class="said"/)
-  // タスクの行: 題・概要（goal、2 行で畳み全文は title）・状況（status）。詳細には状況と、別に次にやること。
+  // タスクの行: 題・概要（goal、2 行で畳み全文は title）・状況（事実から決めた 1 行。R204）。詳細には状況と、別に次にやること。
+  const label = m.boards[0]!.d.tasks.get('t1')!.label
+  assert.ok(label)
   const row = h.slice(h.indexOf('data-task="t1"'), h.indexOf('</button>', h.indexOf('data-task="t1"')))
-  assert.match(row, /<span class="nx gl" title="配車の一覧で探す手間を減らす">配車の一覧で探す手間を減らす<\/span><span class="nx">並べ替えは済み。絞り込みを作っている<\/span>/)
+  assert.match(row, new RegExp(`<span class="nx gl" title="配車の一覧で探す手間を減らす">配車の一覧で探す手間を減らす</span><span class="nx">${label}</span>`))
   const side = text(h.slice(h.indexOf('aria-label="タスクの詳細"')))
-  assert.ok(side.includes('状況 並べ替えは済み。絞り込みを作っている'), side)
+  assert.ok(side.includes(`状況 ${label}`), side)
   assert.ok(side.includes('次にやること レビューの指摘を直して stg に出す'), side)
-  // status の無いタスクは待つ相手だけを出し、next は出さない。
-  const t2 = c.tasks.find((x) => x.id !== 't1' && x.next && !x.waiting_on && x.state !== 'ok')
+  // タスクの行に next は出さない。
+  const t2 = c.tasks.find((x) => x.id !== 't1' && x.next && x.state !== 'ok')
   if (t2) {
     const open = page(m, { tab: 'whole', open: { [`s:${t2.stream}`]: true } })
     const r2 = open.slice(open.indexOf(`data-task="${t2.id}"`), open.indexOf('</button>', open.indexOf(`data-task="${t2.id}"`)))
@@ -849,11 +850,12 @@ test('見張る仕事の表（R190）: どの案件の窓も、その案件の�
   assert.doesNotMatch(shown('/ws/aoba'), /Bot vh/)
 })
 
-test('確認日の印（R142）: 済んでいないタスクに「確認日 11/24(火)」を一覧と詳細に出し、日付が来たら太くする。済んだタスクには出さない', () => {
+test('確認日の印（R142・R204 の date の待ち）: 済んでいないタスクに「確認日 11/24(火)」を一覧と詳細に出し、日付が来たら太くする。済んだタスクには出さない', () => {
   const m = aoba((v) => {
-    v.cockpit!.tasks.find((t) => t.id === 't2')!.check_on = '2026-11-24'
-    v.cockpit!.tasks.find((t) => t.id === 't3')!.check_on = '2026-11-21'
-    v.cockpit!.tasks.find((t) => t.id === 't4')!.check_on = '2026-11-21'
+    const day = (id: string, on: string) => (v.cockpit!.tasks.find((t) => t.id === id)!.wait = { kind: 'date', on, what: '確かめる' })
+    day('t2', '2026-11-24')
+    day('t3', '2026-11-21')
+    day('t4', '2026-11-21')
   })
   const h = page(m, { tab: 'whole', open: { 's:s2': true, 's:s3': true, 's:s4': true } })
   assert.match(h, /<span class="chk">確認日 11\/24\(火\)<\/span>/)

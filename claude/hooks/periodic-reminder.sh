@@ -49,7 +49,7 @@ sweep_line() {
 names() { pick "[(.checks.$1 // [])[] | if type == \"object\" then (.id // \"?\") + (if (.missing | type) == \"array\" then \"（\" + (.missing | join(\"・\")) + \"）\" else \"\" end) else tostring end] | join(\"、\")"; }
 
 # 帳簿の形の直しの検査。名前ごとに件数と先頭 3 件（版 3 の { id, ... } は id、案件の名前は name）を「・」で並べる。
-LEDGER_FIXES='"missing_context","local_deliverables","missing_workers","orphan_waits","orphan_cards","incomplete_cards","stale_tasks","loose_tasks","unknown_phase","no_form","long_names","watch_missing","watch_unknown","stale_consults","workspace_name","status_missing","idle_unexplained"'
+LEDGER_FIXES='"missing_context","local_deliverables","missing_workers","orphan_cards","incomplete_cards","stale_tasks","loose_tasks","unknown_phase","no_form","long_names","watch_missing","watch_unknown","stale_consults","workspace_name","status_missing"'
 ledger_fixes() {
   pick "[($LEDGER_FIXES) as \$k | (.checks[\$k] // empty) | (if type == \"array\" then . else [.] end)
     | map(if type == \"object\" then (.id // .name // \"?\") else tostring end) | select(length > 0)
@@ -188,6 +188,13 @@ case "$event" in
         [ -n "$unsorted" ] &&
           printf '\n【操縦席】仕分けていない発言: %s。このターンのうちに、新しい依頼・既存の依頼への追記か返答・依頼でない、のどれかに仕分けて cockpit-write で書く（cockpit skill の「受付と仕分け」）\n' "$unsorted"
       fi
+      # 状況の文が古い仕事と、開いた待ちと照らしていない知らせ（R204）。どちらも次の cockpit-write で直す（書く道具が同じ判定で断る）
+      stale=$(pick '[(.checks.stale_status // [])[] | "\(.id)（\((.changes // [])[0:2] | join("／"))）"] | join("、")')
+      [ -n "$stale" ] &&
+        printf '\n【操縦席】状況の文が古い仕事: %s。次の cockpit-write で、その仕事の status を今の事実に合わせて書き直す（R204。同じ文の渡し直しは断られる）\n' "$stale"
+      notices=$(names unsorted_notices)
+      [ -n "$notices" ] &&
+        printf '\n【操縦席】開いた待ちと照らしていない知らせ: %s。待ちを解くならそのタスクの wait.met に by として書き、解かないなら intake.no_wait に足して intake.notices_through を進める（R204）\n' "$notices"
       # 線を越えて動いていないタスク（R170）。task@since ごとに最初の 1 回だけ流す（since はタスクが動くたびに変わるので、戻ってまた越えたらもう 1 回）
       idle_seen="$state_dir/idle-notified.txt"
       idle_new=$(pick '(.checks.idle_tasks // [])[] | "\(.task)@\(.since)\t\(.task)（\(.hours) 時間）"' | while IFS="$(printf '\t')" read -r key label; do
@@ -195,7 +202,7 @@ case "$event" in
         printf '%s %s\n' "$root" "$key" >> "$idle_seen"; printf '%s、' "$label"
       done)
       [ -n "$idle_new" ] &&
-        printf '\n【操縦席】線を越えて動いていないタスク: %s。止まっている理由（worker・担当の今）を確かめ、今やれるなら次の手を打つ。止めてよいのは外の理由があるときだけで（R193。agents/common.md「判断」の「聞かずにやる」）、そのときは state・waiting_on・check_on を直す。深田さんの判断が要るなら判断のカードにする\n' "${idle_new%、}"
+        printf '\n【操縦席】線を越えて動いていないタスク: %s。止まっている理由（worker・担当の今）を確かめ、今やれるなら次の手を打つ。止めてよいのは外の理由があるときだけで（R193。agents/common.md「判断」の「聞かずにやる」）、そのときはタスクの wait（相手・出来事・日付・空き枠）か after を書く。深田さんの判断が要るなら判断のカードにする\n' "${idle_new%、}"
       # 承認・照合・範囲の変更の抜け（設計 9.2・9.4・9.5）。要素は { card, missing[] }・{ request, when[] }・{ ruling, task }
       unmapped=$(pick '[(.checks.unmapped_elements // [])[] | "\(.card)（要素 \((.missing // []) | map(tostring) | join("・"))）"] | join("、")')
       [ -n "$unmapped" ] &&

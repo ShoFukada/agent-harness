@@ -30,6 +30,8 @@ export type Files = {
   handoff?: Handoff
   /** 発言の記録（.orca/cockpit/utterances.jsonl）のうち id のある行。仕分けの検査に使うので、本文は頭だけ持つ。 */
   utterances: Utterance[]
+  /** Orca の知らせの記録（.orca/cockpit/notices.jsonl、hook が書く n-…）。開いた待ちと照らしていない知らせの検査に使う（R204）。 */
+  notices: Utterance[]
   /** at の無い開いたカードを、窓の常駐のプロセスが最初に見つけた時刻（.orca/cockpit/firstseen.json）。抜けの 30 分を数える。 */
   firstSeen: Record<string, string>
   /** 済んでいないタスクの中身が最後に変わった時刻（.orca/cockpit/taskseen.json）。放置の検出の起点に使う。 */
@@ -45,7 +47,7 @@ export type Files = {
   askMarks: AskMark[]
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, taskSeen: {}, rulings: [], consults: [], marks: [], asks: [], askMarks: [] })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], notices: [], firstSeen: {}, taskSeen: {}, rulings: [], consults: [], marks: [], asks: [], askMarks: [] })
 
 /** ファイルの生の欄（cards・asks）。読めなければ無い（python の read_json の既定と同じ）。 */
 function rawList(text: string | undefined, key: 'cards' | 'asks'): unknown {
@@ -267,7 +269,7 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
   const next: Files = {
     cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff,
-    utterances: prev.utterances, firstSeen: prev.firstSeen, taskSeen: prev.taskSeen, rulings: prev.rulings, consults: prev.consults, marks: [], asks: prev.asks, askMarks: []
+    utterances: prev.utterances, notices: prev.notices, firstSeen: prev.firstSeen, taskSeen: prev.taskSeen, rulings: prev.rulings, consults: prev.consults, marks: [], asks: prev.asks, askMarks: []
   }
   const asked: AskMark[][] = [[], []]
   const marks: ReturnMark[][] = [[], []]
@@ -298,6 +300,9 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   })
   await one('cockpit/utterances.jsonl', '', (text) => {
     next.utterances = text === undefined ? [] : parseUtterances(text)
+  })
+  await one('cockpit/notices.jsonl', '', (text) => {
+    next.notices = text === undefined ? [] : parseUtterances(text)
   })
   await one('cockpit/rulings.jsonl', '', (text) => {
     next.rulings = text === undefined ? [] : parseRulings(text)

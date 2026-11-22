@@ -1,11 +1,11 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WATCH_SHAPE, WORKER_SHAPE,
-  type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
+  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, LEGACY_TASK_KEYS, missingFields, overlay, parseCockpit, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_MARKS, TASK_SHAPE, timeOf, unmappedElements, upgradeCard, upgradeTask, WATCH_SHAPE, WORKER_SHAPE,
+  type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskMark, type UserLog, type Utterance
 } from './model.ts'
 import type { DeferCheck, DeferItem } from './defer.ts'
-import { workspaceNameCheck } from './state.ts'
+import { basisChanges, judgeTasks, openOutsideWaits, sortedForWaits, streamBasis, workspaceNameCheck } from './state.ts'
 
 /**
  * 書く変更。どの欄も id 単位の追加と置き換えで、全体を置き換える入口は作らない（ほかの行を書き間違いで消さないため）。
@@ -25,8 +25,13 @@ export type Change = {
   asks?: AskRecord[]
   /** 案件の名前だけを置き換える（「顧客｜案件」の形のものだけ。R165）。milestones は今の値を保つ。 */
   workspace?: { name: string }
+  /**
+   * 済になったタスクの見直しで「関係ない」と確かめたタスクの id（R204。保存しない）。同じ仕事の開いたタスクと、after・next・goal で済になったタスクを指すタスクは、
+   * この書き込みで直す（行を渡して中身を変える）か、ここに並べる。
+   */
+  unaffected?: string[]
 }
-const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops', 'main', 'asks', 'workspace']
+const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops', 'main', 'asks', 'workspace', 'unaffected']
 
 export type WriteResult = { next?: Cockpit; errors: string[]; warnings: string[] }
 
@@ -57,14 +62,15 @@ const CARD_KEYS: Keys = {
     links: ['label', 'href'], manual: ['where', 'command', 'steps', 'check'], elements: ['n', 'text'], element_map: ['n', 'task', 'request', 'skip']
   }
 }
-const TASK_KEYS: Keys = { top: ['id', 'title', 'phase', 'state', 'worker', ...Object.keys(TASK_SHAPE)], nested: { worker: ['task_id', 'run_id', 'dispatch_id'], done: ['text', 'at'] } }
+// 廃止した欄は「書けない欄」でなく taskErrors の廃止の文で断る（何に書き換えるかを返すため）。
+const TASK_KEYS: Keys = { top: ['id', 'title', 'phase', 'state', 'worker', ...Object.keys(TASK_SHAPE), ...LEGACY_TASK_KEYS], nested: { worker: ['task_id', 'run_id', 'dispatch_id'], done: ['text', 'at'], wait: ['kind', 'who', 'what', 'where', 'since', 'on', 'why', 'probe', 'need', 'met'] } }
 const REQUEST_KEYS: Keys = {
   top: ['id', 'deliverables', ...Object.keys(REQUEST_SHAPE)],
   nested: { utterances: ['id', 'quote'], evidence: ['when', 'kind', 'ref', 'card', 'rev'], source: ['session', 'at', 'quote'] }
 }
-const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'status', 'sources', 'form', 'watch'], nested: { watch: ['automation', 'targets', 'to'] } }
+const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'status', 'status_basis', 'sources', 'form', 'watch'], nested: { watch: ['automation', 'targets', 'to'] } }
 const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'state'], nested: {} }
-const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through'], nested: {} }
+const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through', 'notices_through', 'no_wait'], nested: {} }
 const ASK_KEYS: Keys = { top: ['id', 'card', 'task', 'memo', 'from_returns', 'held_returns', 'notify'], nested: { notify: ['return_id', 'task', 'message_id'] } }
 
 /** asks[] の 1 行の形の誤り。返しの id はその質問のもの（ask3-1）だけを受ける（compaction-keep.py の照合で別の質問の返しと取り違えないため）。 */
@@ -107,7 +113,7 @@ const CARD_PROSE: Keys = {
     background: ['text'], elements: ['text'], manual: ['steps', 'check']
   }
 }
-const TASK_PROSE: Keys = { top: ['title', 'goal', 'status', 'next', 'done'], nested: { done: ['text'] } }
+const TASK_PROSE: Keys = { top: ['title', 'goal', 'next', 'done'], nested: { done: ['text'], wait: ['who', 'what', 'why'] } }
 /** status が長すぎるときの断りの文。窓では切らないので、書き直してもらう。 */
 const statusError = (who: string, v: unknown) =>
   typeof v === 'string' && [...v.trim()].length > STATUS_MAX ? `${who}: status は ${STATUS_MAX} 字まで（今 ${[...v.trim()].length} 字）。窓では切らずに出すので、今どうなっていて次に何を待つかに絞って書き直す` : undefined
@@ -164,58 +170,148 @@ export function draftsToLint(change: unknown): { id: string; to: DraftFormat; te
   })
 }
 
-/** 待ちの状態。先送りの言い回しはこの状態のタスクの文だけを見る（R193）。 */
-const WAITING = new Set(['idle', 'wait'])
-/** 待ちの理由を書く欄。先送りの検査はこの欄を見る。 */
-const DEFER_FIELDS = ['waiting_on', 'next', 'status'] as const
+/** 待ちの理由を書く欄。先送りの検査は、開いた待ちのあるタスクのこの欄を見る（R193）。 */
+const DEFER_FIELDS = ['wait.who', 'wait.what', 'wait.why', 'next'] as const
+const field = (t: Record<string, unknown>, f: string): unknown => f.split('.').reduce<unknown>((v, k) => (v && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined), t)
 /**
- * 日付・期間だけの waiting_on（何を待つかが無い）。日まで決まった日付も、出来事が無ければ同じく断る。
+ * 日付・期間だけの待ちの文（何を待つかが無い）。日まで決まった日付も、出来事が無ければ同じく断る。
  * 全角の数字と、数字と単位のあいだの空白（「１２月」「12 月」）を均してから当てる。
  */
 const DATE_ONLY = /^(?:(?:\d{4}[-/年])?\d{1,2}(?:月(?:\d{1,2}日)?|[-/]\d{1,2}日?)|\d{4}[-/年]\d{1,2}月?|今週末|来週末|週末|来週|再来週|来月|再来月|月末|月初|週明け|年明け|年末)(?:上旬|中旬|下旬|ごろ|頃|以降|まで|中|の?うち)?$/
 const dateOnly = (s: string) => DATE_ONLY.test(s.normalize('NFKC').replace(/\s+/g, ''))
-/** waiting_on が指すタスクの id。 */
 const TASK_REF = /\bt\d+\b/g
+/** 深田さんを指す語。深田さんを待つものはカードから決まるので、待ちの相手には書かない。 */
+const USER_NAME = /深田|^私$|^user$/
 
 /**
- * 先送りの検査（defer-guard.py）にかける文: 変更のうち、待ちの状態（idle・wait）のタスクの waiting_on・next・status。
+ * 先送りの検査（defer-guard.py）にかける文: 変更のうち、待ち（wait）のある開いたタスクの wait.who・what・why と next。
  * 元の行にそのままある文も含める（どれを断るかは applyChange が元の行と比べて決める）。
  */
 export function deferToCheck(change: unknown): DeferItem[] {
   const tasks = isObj(change) && Array.isArray(change.tasks) ? change.tasks : []
   const last = new Map(tasks.filter((x: unknown) => isObj(x) && typeof x.id === 'string').map((x: Record<string, unknown>) => [x.id as string, x]))
-  return [...last.values()].filter((t) => WAITING.has(t.state as string)).flatMap((t) =>
-    DEFER_FIELDS.flatMap((f) => (typeof t[f] === 'string' && (t[f] as string).trim() ? [{ key: `${t.id as string}.${f}`, text: t[f] as string }] : [])))
+  return [...last.values()].filter((t) => t.state !== 'ok' && isObj(t.wait)).flatMap((t) =>
+    DEFER_FIELDS.flatMap((f) => {
+      const v = field(t, f)
+      return typeof v === 'string' && v.trim() ? [{ key: `${t.id as string}.${f}`, text: v }] : []
+    }))
 }
 
 /**
- * 待ちの書き方の断り（R193）。元の行と同じ値で、待ちの状態も前から続くものは見ない（書く道具を通らずに残った古い行は state.ts の checks が拾う）。
- * defer は defer-guard.py の結果（key は id.欄）。無いか error なら、検査できなかったとして断る（fail closed）。
+ * タスクの書き方の断り（R193・R204）。古い欄・state・済のタスクの待ちと次・待ちの相手と文・前提・解いた事実の出どころを見る。
+ * 元の行と同じ文は先送りの検査にかけない（書く道具を通らずに残った古い行は state.ts の checks が拾う）。
  */
-function waitErrors(t: Task, old: Task | undefined, tasks: Task[], defer: Record<string, DeferCheck>): string[] {
+function taskErrors(t: Task, old: Task | undefined, ctx: { tasks: Task[]; cards: Card[]; utterances: Utterance[]; notices: Utterance[]; log: UserLog }, defer: Record<string, DeferCheck>): string[] {
   const out: string[] = []
-  const wasWaiting = !!old && WAITING.has(old.state)
-  const fresh = (f: (typeof DEFER_FIELDS)[number]) => !(wasWaiting && (old![f] ?? '') === (t[f] ?? ''))
-  const why = typeof t.waiting_on === 'string' ? t.waiting_on.trim() : ''
-  // idle に変えたときは、前の待ち（wait）の waiting_on をそのまま持ち越しても見る（Codex 48 必須 1）。
-  if (t.state === 'idle' && (old?.state !== 'idle' || fresh('waiting_on'))) {
-    if (!why) out.push(`タスク ${t.id}: idle は空き枠が無いあいだの順番待ちだけ。waiting_on に「空き枠」か、先に進める進行中のタスクと理由を書く。今やれるなら run にして出す（R193、schema.md の tasks[].state）`)
-    for (const id of new Set(why.match(TASK_REF) ?? [])) {
-      const ahead = tasks.find((x) => x.id === id)
-      if (!ahead || (ahead.state !== 'run' && ahead.state !== 'stop'))
-        out.push(`タスク ${t.id}: 順番待ちの先 ${id} が${ahead ? ` ${ahead.state} で` : '無く、'}動いていない。先のタスクが済んだ・止めたなら、このタスクを run にして出す（R193）`)
+  const rec = t as unknown as Record<string, unknown>
+  const legacy = LEGACY_TASK_KEYS.filter((k) => rec[k] !== undefined)
+  if (legacy.length) out.push(`タスク ${t.id}: ${legacy.join('・')} は廃止した（R204）。外の待ちは wait（person・event・date・slot）、前提は after、状況は仕事の status に書く。深田さんの待ちはカードの tasks から決まる`)
+  if (!TASK_MARKS.includes(t.state as TaskMark)) out.push(`タスク ${t.id}: state は open か ok（動いている・待ち・止まりは state.ts が事実から決める。R204）`)
+  const w = t.wait
+  if (t.state === 'ok' && w) out.push(`タスク ${t.id}: 済のタスクに待ちは書かない。残りの確認があるなら別のタスクにする（R204）`)
+  if (t.state === 'ok' && t.next?.trim() && (old?.next ?? '') !== t.next)
+    out.push(`タスク ${t.id}: 済にするタスクに next を書かない。済んだことは done[] に、残りの確認は別のタスクにする（R204）`)
+  if (w) {
+    if (w.who && USER_NAME.test(w.who.trim())) out.push(`タスク ${t.id}.wait.who: 深田さんを待つものは書かない。頼むカードを作り、カードの tasks から指す`)
+    const cardIds = new Set(ctx.cards.map((x) => x.id))
+    const named = [w.who, w.what, w.why].flatMap((x) => (x ?? '').match(/\b[a-z]\d+\b/g) ?? []).filter((x) => cardIds.has(x))
+    if (named.length) out.push(`タスク ${t.id}.wait: カード ${named.join('・')} を待ちに書かない。カードを待つものはカードの tasks から決まる（同じ事実を 2 か所に書かない）`)
+    const what = (w.what ?? w.why ?? '').trim()
+    if (what && dateOnly(what) && JSON.stringify(old?.wait ?? null) !== JSON.stringify(w))
+      out.push(`タスク ${t.id}.wait: 日付・期間だけ（「${what}」）では何を待つかが分からない。日付で確かめるなら kind: date の on と what に確かめることを書く（R193）`)
+    const by = (w.met ?? []).map((m) => m.by)
+    if (new Set(by).size !== by.length) out.push(`タスク ${t.id}.wait.met: 同じ証拠を 2 回書かない（届いた件数は証拠の数で数える）`)
+    for (const m of w.met ?? []) {
+      const ok = /^u-/.test(m.by) ? ctx.utterances.some((u) => u.id === m.by) : /^n-/.test(m.by) ? ctx.notices.some((u) => u.id === m.by)
+        : /^op:/.test(m.by) ? ctx.log.ops.some((o) => `op:${o.op_id}` === m.by) : true
+      if (!ok) out.push(`タスク ${t.id}.wait.met: ${m.by} が発言・知らせ・操作の記録に無い`)
     }
   }
-  if (why && dateOnly(why) && (old?.waiting_on ?? '') !== (t.waiting_on ?? ''))
-    out.push(`タスク ${t.id}.waiting_on: 日付・期間だけ（「${why}」）では何を待つかが分からない。待つ出来事を書き、日付で確かめるなら check_on と next に書く（R193）`)
-  if (WAITING.has(t.state))
+  for (const id of t.after ?? []) if (id === t.id || !ctx.tasks.some((x) => x.id === id)) out.push(`タスク ${t.id}.after: ${id === t.id ? '自分自身を前提にしない' : `タスク ${id} が無い`}`)
+  // 元の行も待っていて同じ文なら見ない。待ちを新しく書いた行は、持ち越した next も見る（追加 48 の Codex 必須 1）。
+  const wasWaiting = !!old && old.state !== 'ok' && !!old.wait
+  if (t.state !== 'ok' && w)
     for (const f of DEFER_FIELDS) {
-      if (!(typeof t[f] === 'string' && t[f]!.trim()) || !fresh(f)) continue
+      const v = field(rec, f)
+      if (!(typeof v === 'string' && v.trim()) || (wasWaiting && field(old as unknown as Record<string, unknown>, f) === v)) continue
       const d = defer[`${t.id}.${f}`]
       if (!d || d.error) out.push(`タスク ${t.id}.${f}: 都合での先送りかを確かめられない（${d?.error ?? '先送りの検査をしていない'}）`)
       else if (d.hit) out.push(`タスク ${t.id}.${f}: 都合での先送り「${d.hit}」。外の理由（人の返事・承認、日付で初めて取れるデータ・出来事、利用枠）を書くか、今進める（R193）`)
     }
   return out
+}
+
+/** 読み込みと同じ形（古い欄の読み替え・形の誤りの除外）にした帳簿。書く道具の判定は窓・hook と同じこの形で行う。 */
+const asRead = (c: Cockpit) => parseCockpit(JSON.stringify(c))
+
+/**
+ * 事実の変化に追いつかない書き込みを断る（R204）。c は書く前、next は書いたあとの帳簿（どちらも生の形）。
+ * - 仕事の状況の文: 元の事実（streamBasis）が控え（status_basis）と違う仕事は、この書き込みで status を書き直す。前に控えがあれば文も変える
+ *   （同じ文を渡し直すだけで古い説明を確定させない。Astra 3 の重大 1）。控えが無い（移し替えのあと初めて）なら、照合した同じ文でもよい
+ * - 新しく済になったタスク（控えで済でなかったか、控えのあとにできて済のもの。カードの承認で済になったものも）があれば、同じ仕事の開いたタスクと、
+ *   after・next・goal で済になったタスクを指す開いたタスクを、この書き込みで直すか unaffected に並べる（Astra 3 の重大 2・小 3）
+ * 書いたあとの帳簿に、控えを書き直した status_basis を返す。facts_since の無い帳簿（移し替えの前）は何もしない。
+ */
+function basisErrors(c: Cockpit, next: Cockpit, ch: Change, log: UserLog, archive: Card[], now: number): { errors: string[]; streams: Stream[] } {
+  if (!next.facts_since) return { errors: [], streams: next.streams }
+  const read = asRead(next)
+  const views = overlay(read, log, archive)
+  const judged = judgeTasks(read, log, views, undefined, now)
+  const errors: string[] = []
+  const passed = new Set((ch.streams ?? []).map((s) => s.id))
+  const changedTask = (id: string) => {
+    const row = ch.tasks?.find((x) => x.id === id)
+    const old = c.tasks.find((x) => x.id === id)
+    return !!row && (!old || JSON.stringify(stable(upgradeTask(structuredClone(old)))) !== JSON.stringify(stable(row)))
+  }
+  const unaffected = new Set(ch.unaffected ?? [])
+  const streams = next.streams.map((s) => {
+    const basis = streamBasis(read, judged, views, s.id)
+    const was = c.streams.find((x) => x.id === s.id)
+    const stored = was?.status_basis
+    // 控えを省いて渡した行（題だけの直しなど）でも、保存済みの控えを戻す（行の置き換えで控えが消えると、次の書き込みが初回扱いになる。Astra 4 の重大 3）。
+    if (stored && stored.length === basis.length && stored.every((x, i) => x === basis[i])) return { ...s, status_basis: stored }
+    // 新しく済になったタスク。控えの無い仕事は、どれが新しいか分からないので見ない（移し替えのあとの最初の書き直しで控える）。
+    const doneNow = basis.filter((x) => /^t[^:]*:ok$/.test(x)).map((x) => x.split(':')[0]!)
+    const fresh = stored ? doneNow.filter((id) => !stored.includes(`${id}:ok`)) : []
+    for (const id of fresh) {
+      const mention = new RegExp(`\\b${id}\\b`)
+      const targets = [...judged.values()].filter((t) => t.state !== 'ok' && t.task.id !== id
+        && (t.task.stream === s.id || t.task.after?.includes(id) || mention.test(`${t.task.next ?? ''}\n${t.task.goal ?? ''}`)))
+      const missed = targets.filter((t) => !changedTask(t.task.id) && !unaffected.has(t.task.id))
+      if (missed.length) errors.push(`${id}「${judged.get(id)?.task.title ?? ''}」が済になった。前提が変わったかを見直す: ${missed.map((t) => `${t.task.id}「${t.task.title}」（次: ${t.task.next?.trim() || '—'}）`).join('・')}。直すなら行を渡して next などを書き換え、関係ないなら unaffected に id を並べる（R204）`)
+    }
+    if (s.form === 'watch') return { ...s, status_basis: basis }
+    const changes = basisChanges(stored, basis, judged).join('／')
+    if (!passed.has(s.id)) {
+      errors.push(`仕事 ${s.id}「${s.title}」の状況の文が古くなった（${changes}）。この書き込みで仕事の行を渡し、status を今の事実に合わせて書き直す（R204）`)
+      return s
+    }
+    if (stored && (was?.status ?? '').trim() === (s.status ?? '').trim())
+      errors.push(`仕事 ${s.id}「${s.title}」: status が前と同じ文。元の事実が変わったので（${changes}）、今どうなっていて次に何を待つかを書き直す（R204）`)
+    else if (!s.status?.trim()) errors.push(`仕事 ${s.id}「${s.title}」: status が無い。今どうなっていて次に何を待つかを書く（R204）`)
+    return { ...s, status_basis: basis }
+  })
+  return { errors, streams }
+}
+
+/**
+ * 発言と知らせの仕分けで待ちを解く（R204）。intake.through か notices_through を進める書き込みで、開いた相手・出来事の待ちがあれば、
+ * 越えた発言・知らせ（待ちを始めた時刻より後のもの）を 1 件ずつ、どれかの待ちの met.by で指すか、intake.no_wait に入れる（Astra 3 の重大 3）。
+ */
+function waitSortErrors(c: Cockpit, next: Cockpit, utterances: Utterance[], notices: Utterance[], done: Set<string>): string[] {
+  const waits = openOutsideWaits(c, done)
+  if (!waits.length) return []
+  const from = Math.min(...waits.map((w) => w.from))
+  const crossed = (list: Utterance[], was: string | undefined, now: string | undefined) => {
+    const at = (id: string | undefined) => (id ? list.findIndex((u) => u.id === id) : -1)
+    return at(now) > at(was) ? list.slice(at(was) + 1, at(now) + 1).filter((u) => u.id && timeOf(u.at) >= from) : []
+  }
+  const seen = sortedForWaits(next)
+  const loose = [...crossed(utterances, c.intake?.through, next.intake?.through), ...crossed(notices, c.intake?.notices_through, next.intake?.notices_through)].filter((u) => !seen.has(u.id!))
+  if (!loose.length) return []
+  const open = waits.map((w) => `${w.task}（${w.wait.kind === 'person' ? `${w.wait.who}: ${w.wait.what}` : w.wait.what}）`).join('・')
+  return [`開いた待ち ${open} と照らしていない発言・知らせがある: ${loose.map((u) => `${u.id}「${(u.prompt ?? '').replace(/\s+/g, ' ').slice(0, 40)}」`).join('・')}。待ちを解くなら、そのタスクの wait.met に { by: <id>, at, note } を足す。どの待ちも解かないなら intake.no_wait に id を足す（R204）`]
 }
 
 const QUOTE_MAX = 40
@@ -267,7 +363,7 @@ function upsert<T extends { id: string }>(rows: T[], incoming: T[]): T[] {
  * lint は draftsToLint の文面を書式の検査にかけた結果（カード id ごと）、defer は deferToCheck の文を先送りの検査にかけた結果（id.欄ごと）。
  * 検査は入出力の境界（window/write.ts）が行い、ここは結果だけを見る。
  */
-export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }, lint: Record<string, DraftCheck> = {}, defer: Record<string, DeferCheck> = {}): WriteResult {
+export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }, lint: Record<string, DraftCheck> = {}, defer: Record<string, DeferCheck> = {}, more: { notices?: Utterance[]; archive?: Card[]; now?: number } = {}): WriteResult {
   const errors: string[] = []
   const warnings: string[] = []
   if (!isObj(change)) return { errors: ['変更は JSON のオブジェクトで渡す'], warnings }
@@ -287,7 +383,12 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       if (bad) errors.push(bad.message)
     }
   }
-  if (change.intake !== undefined && !INTAKE_SHAPE(change.intake)) errors.push('intake は { through, none, checked_through } の形で渡す（none は発言の id の配列）')
+  if (change.intake !== undefined && !INTAKE_SHAPE(change.intake)) errors.push('intake は { through, none, checked_through, notices_through, no_wait } の形で渡す（none・no_wait は id の配列）')
+  if (change.unaffected !== undefined && !(Array.isArray(change.unaffected) && change.unaffected.every((x) => typeof x === 'string'))) errors.push('unaffected はタスクの id の配列で渡す')
+  // 帳簿から写した行の控えはそのまま受ける（書いたあとに道具が押し直す）。控えを手で変えて古さの検査を抜けるのは断る。
+  for (const s of Array.isArray(change.streams) ? change.streams : [])
+    if (isObj(s) && s.status_basis !== undefined && JSON.stringify(s.status_basis) !== JSON.stringify(c.streams.find((x) => x.id === s.id)?.status_basis))
+      errors.push(`仕事 ${String(s.id)}: status_basis は書く道具が書く。帳簿の値から変えない`)
   if (errors.length) return { errors, warnings }
   const ch = change as Change
   const NAMES = { cards: ['カード', CARD_KEYS], tasks: ['タスク', TASK_KEYS], requests: ['依頼', REQUEST_KEYS], streams: ['仕事', STREAM_KEYS], owners: ['担当', OWNER_KEYS] } as const
@@ -323,6 +424,9 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       errors.push(`仕事 ${s.id}: summary・status は文字列、sources は文字列の配列`)
     const long = statusError(`仕事 ${s.id}`, s.status)
     if (long) errors.push(long)
+    // 状況の文は仕事にだけ書くので、タスクの status で見ていた語調も仕事で見る（R84・R204）。
+    const soft = softError(`仕事 ${s.id}`, s, c.streams.find((x) => x.id === s.id), { top: ['status'], nested: {} })
+    if (soft) errors.push(soft)
     if (s.form !== undefined && !FORMS.includes(s.form as StreamForm)) errors.push(`仕事 ${s.id}: form は ${FORMS.join('・')} のどれか`)
     if (s.form === undefined) warnings.push(`仕事 ${s.id}: form（delegate・cowork・watch）が無い`)
     if (s.form === 'watch' ? !WATCH_SHAPE(s.watch) : s.watch !== undefined)
@@ -339,18 +443,15 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   for (const t of ch.tasks ?? []) {
     const old = c.tasks.find((x) => x.id === t.id)
     if (typeof t.title !== 'string' || !t.title.trim() || typeof t.phase !== 'string') errors.push(`タスク ${t.id}: title・phase が無い`)
-    if (!TASK_STATES.includes(t.state as TaskState)) errors.push(`タスク ${t.id}: state は ${TASK_STATES.join('・')} のどれか`)
     if (!has(streams, t.stream)) errors.push(`タスク ${t.id}: 仕事 ${t.stream} が無い`)
     const soft = softError(`タスク ${t.id}`, t, old, TASK_PROSE)
     if (soft) errors.push(soft)
-    const long = statusError(`タスク ${t.id}`, t.status)
-    if (long) errors.push(long)
-    errors.push(...waitErrors(t, old, tasks, defer))
+    errors.push(...taskErrors(t, old, { tasks, cards, utterances, notices: more.notices ?? [], log }, defer))
     const rec = t as unknown as Record<string, unknown>
     // null は、その行に元から null で書かれていた欄だけ書き戻してよい（読み込みは null の欄を無いものとして読む）。
     const was = old as unknown as Record<string, unknown> | undefined
     const bad = Object.keys(TASK_SHAPE).filter((k) => rec[k] !== undefined && !(rec[k] === null && was?.[k] === null) && !TASK_SHAPE[k]!(rec[k]))
-    if (bad.length) errors.push(`タスク ${t.id}: ${bad.join('・')} の形が違う（done は文字列か { text, at } の配列、reviewed_for・sources は文字列の配列、check_on は YYYY-MM-DD の日付、ほかは文字列）`)
+    if (bad.length) errors.push(`タスク ${t.id}: ${bad.join('・')} の形が違う（done は文字列か { text, at } の配列、reviewed_for・sources・after は文字列の配列、wait は { kind: person（who・what）・event（what）・date（on: YYYY-MM-DD・what）・slot（why）, since?, where?, probe?, need?, met?: [{ by, at, note? }] }、ほかは文字列）`)
     if (t.worker !== undefined) {
       if (!WORKER_SHAPE(t.worker)) errors.push(`タスク ${t.id}: worker は { run_id, task_id }`)
       // 今の Dispatch は窓が Run の続きから引く。dispatch_id は版 2 の記録をそのまま持ち越すときだけ受ける。
@@ -479,6 +580,9 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     }
   }
 
+  for (const id of ch.unaffected ?? []) if (!tasks.some((t) => t.id === id)) errors.push(`unaffected: タスク ${id} が無い`)
+  if (ch.intake?.notices_through && !(more.notices ?? []).some((n) => n.id === ch.intake!.notices_through)) errors.push(`intake.notices_through ${ch.intake.notices_through} が知らせの記録に無い`)
+
   if (errors.length) return { errors, warnings }
   const next: Cockpit = {
     ...c, streams, tasks, cards, ...(c.owners || ch.owners ? { owners } : {}), ...(c.requests || ch.requests ? { requests } : {}),
@@ -490,6 +594,14 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   }
   // Run だけの main を消したら、空の main を残さない（main の無い帳簿に戻す）。
   if (next.main && !Object.keys(next.main).length) delete next.main
+  const before = asRead(c)
+  // カードの承認で済になったタスクの待ちは、もう仕分けを求めない（窓と同じ判定。Astra 4 の中 2）。
+  const doneBefore = new Set([...judgeTasks(before, log, overlay(before, log, more.archive ?? []), undefined, more.now ?? Date.now()).values()].filter((t) => t.state === 'ok').map((t) => t.task.id))
+  errors.push(...waitSortErrors(before, asRead(next), utterances, more.notices ?? [], doneBefore))
+  const basis = basisErrors(c, next, ch, log, more.archive ?? [], more.now ?? Date.now())
+  errors.push(...basis.errors)
+  if (errors.length) return { errors, warnings }
+  next.streams = basis.streams
   // 窓の合図は窓口の Run にだけ送る（R191）。Run の無い帳簿は、窓で押しても窓口に届かない。
   if (!RUN_ID(next.main?.run_id)) return { errors: ['main.run_id が無い。窓口の Run を { "main": { "run_id": "run_…" } } で一緒に書く（窓の合図は窓口の Run にだけ送る）'], warnings }
   // 形の外れた古い名前は、ほかの書き込みを止めずに名指しする（名前は見出しで、合図の届き先と違い、外れても知らせは失われない）。
@@ -593,4 +705,70 @@ export function migrateV3(raw: Cockpit, log: UserLog, utterances: Utterance[], r
   }
   summary.push(`resolved_at を補った閉じたカード: ${inferred.length} 件`, `深田さんの操作の無いまま閉じた見て: ${unreviewed.join('・') || 'なし'}`)
   return { next: c, summary, sort }
+}
+
+/** 移し替え（migrate-facts）で意味の変わる行: 古い手書きの状態と待ちの文、新しい判定と待ちの 1 行、なぜ変わるか。conflict は窓口が 1 件ずつ決める行。 */
+export type FactsRow = { id: string; title: string; before: string; after: string; why: string; conflict?: boolean }
+export type MigrateFacts = { next: Cockpit; rows: FactsRow[]; summary: string[] }
+
+/** 帳簿の今の事実で、全部の仕事の状況の文の控え（status_basis）を押す。初めて作る帳簿（init）が使う。 */
+export function withBasis(c: Cockpit, log: UserLog, archive: Card[], now: number): Cockpit {
+  const read = asRead(c)
+  const views = overlay(read, log, archive)
+  const judged = judgeTasks(read, log, views, undefined, now)
+  return { ...c, streams: c.streams.map((s) => ({ ...s, status_basis: streamBasis(read, judged, views, s.id) })) }
+}
+
+/** 済のタスクの next のうち、残りの確認らしい文。 */
+const LEFTOVER = /確か|見る|待つ|次の/
+
+/**
+ * 帳簿を、待ちと済を事実から決める形（R204）に移す（migrate-facts）。タスクの古い欄を読み込みと同じ規則（upgradeTask）で読み替え、facts_since を書く。
+ * カードは触らない（rev を上げると開いたカードに押された操作が旧版扱いになる。Astra 2 の 4）。仕事の status_basis は書かない
+ * （照合する前の状況の文に控えを押さない。移し替えのあとの最初の書き込みで、窓口が文を照合して書き直す。Astra 3 の中 3）。
+ * rows は、同じ操作の記録で、古い手書きの状態と新しい判定（Orca の様子は入れない）の意味が変わる行。
+ */
+export function migrateFacts(raw: Cockpit, log: UserLog, archive: Card[], now: number): MigrateFacts {
+  if (raw.facts_since) throw new Error(`すでに事実から決める形（facts_since: ${raw.facts_since}）`)
+  const next = structuredClone(raw)
+  for (const t of next.tasks) upgradeTask(t)
+  // 残りの確認らしい next を持つ済のタスクは next を空にする（残りの確認は別のタスクに移っていることを窓口が照合した。t122 の照合 2）。
+  // ほかの済のタスクの next は残す（窓は済のタスクの next を出さない）。元の文は cockpit.v3.json に残る。
+  const cleared = next.tasks.filter((t) => t.state === 'ok' && t.next?.trim() && LEFTOVER.test(t.next))
+  for (const t of cleared) t.next = ''
+  next.facts_since = new Date(now).toISOString()
+  const read = asRead(next)
+  const judged = judgeTasks(read, log, overlay(read, log, archive), undefined, now)
+  const WORD: Record<string, string> = { stop: '止まっている', run: '作業中', wait: '待ち', idle: '未着手', ok: '完了', open: '開いている' }
+  const rows: FactsRow[] = []
+  for (const t of raw.tasks) {
+    const r = t as unknown as Record<string, unknown>
+    const j = judged.get(t.id)
+    if (!j) continue
+    const on = typeof r.waiting_on === 'string' ? r.waiting_on.trim() : ''
+    const check = typeof r.check_on === 'string' ? r.check_on : ''
+    const before = [WORD[String(r.state)] ?? String(r.state), on && `待ち「${on}」`, check && `確認日 ${check}`, typeof r.status === 'string' && r.status.trim() && `状況「${r.status.trim()}」`].filter(Boolean).join('・')
+    const after = `${WORD[j.state]}・${j.label}${j.done === 'card' ? '（カードの承認で済）' : ''}`
+    const why: string[] = []
+    const oldState = String(r.state)
+    if (oldState !== j.state && !(oldState === 'ok' && j.state === 'ok')) why.push(`手書きの ${oldState} が、事実から ${j.state} になる`)
+    if (oldState === 'ok' && (on || check)) why.push('済のタスクに残っていた待ちを捨てる')
+    if (on && check) why.push('待ちの文と確認日が両方ある。待ちの文を採り、確認日は捨てる（日付を解ける条件にすると、返事が無いまま着手できると出るため）。どちらで待つかを決める')
+    if (oldState !== 'ok' && on) why.push(`待ちの文を ${j.task.wait?.kind ?? (j.task.after?.length ? 'after' : '—')} に読み替えた（${j.task.wait ? JSON.stringify(j.task.wait) : `after ${j.task.after?.join('・')}`}）。種類と文を確かめる`)
+    if (oldState !== 'ok' && !on && check) why.push(`確認日を date の待ちにした（${check}）`)
+    const day = oldState !== 'ok' && !check && typeof r.next === 'string' ? /(\d{1,2})\/(\d{1,2})/.exec(r.next) : null
+    if (day) why.push(`next に日付（${day[0]}）がある。その日にならないと確かめられないなら kind: date（on: ${new Date(now).getFullYear()}-${day[1]!.padStart(2, '0')}-${day[2]!.padStart(2, '0')}・what に確かめること）にする`)
+    if (oldState === 'ok' && typeof r.next === 'string' && r.next.trim() && LEFTOVER.test(r.next)) why.push('済のタスクの next に残りの確認らしい文がある。移し替えで next を空にする（残っている確認があれば別のタスクにする）')
+    if (j.done === 'card' && oldState !== 'ok') why.push('結んだ確認のカードが承認されているので済になる')
+    if (!why.length) continue
+    rows.push({ id: t.id, title: t.title, before, after, why: why.join('。'), ...(on && check && { conflict: true }) })
+  }
+  const live = judged.size - [...judged.values()].filter((x) => x.state === 'ok').length
+  const summary = [
+    `タスク ${raw.tasks.length} 件（済んでいない ${live} 件）を読み替えた。意味の変わる行 ${rows.length} 件（決める行 ${rows.filter((x) => x.conflict).length} 件）`,
+    `仕事 ${raw.streams.filter((s) => s.form !== 'watch').length} 件の状況の文は、移し替えのあとの最初の書き込みで照合して書き直す（status_basis はまだ書かない）`,
+    `済のタスク ${cleared.length} 件の next を空にした（済んだ事実は done[] に残る）`,
+    'カードと操作の記録は変えていない（rev はそのまま）'
+  ]
+  return { next, rows, summary }
 }

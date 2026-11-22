@@ -5,7 +5,11 @@ import type { DispatchFact } from './protocol.ts'
 
 export const VERSION = 2
 
+/** 画面と hook に出すタスクの状態。帳簿には書かず、state.ts が事実から決める（R204）。 */
 export type TaskState = 'stop' | 'run' | 'wait' | 'idle' | 'ok'
+/** 窓口が書くタスクの state。開いているか済かだけで、動いている・待ち・止まりは state.ts が事実から決める（R204）。 */
+export type TaskMark = 'open' | 'ok'
+export const TASK_MARKS: TaskMark[] = ['open', 'ok']
 /**
  * カードの種類。件数に数えるのは send・decide・review・permit・stuck の 5 種類。consult（相談）は要対応に並べるが、深田さんに聞くまで数えない（R52・v40）。
  * inbox は振り分けが済むまで、report は件数に入れない。talk は版 2 の古い種類で、開いたものは読み込みで consult として扱う。
@@ -40,15 +44,13 @@ export type Task = {
   stream: string
   phase: string
   title: string
-  state: TaskState
-  /** wait で外の相手（顧客・他社）を待つときの相手。 */
-  waiting_on?: string
-  /** 確認日（YYYY-MM-DD、R142）。その日までは放置の検出で拾わず、その日の 0:00 に線を越えたものとして要対応に出す（R171）。 */
-  check_on?: string
-  waiting_since?: string
+  /** 窓口が書くのは open と ok だけ。古い帳簿の run・idle・wait・stop は読み込み（upgradeTask）で open にする。 */
+  state: TaskMark
+  /** 外の理由の待ち 1 つ（R193・R204）。深田さんを待つものは書かない（カードの tasks から決める）。 */
+  wait?: Wait
+  /** 前提のタスク。全部が済になるまで「前提待ち」。 */
+  after?: string[]
   goal?: string
-  /** 仕事の status と同じ（R188）。 */
-  status?: string
   next?: string
   done?: DoneEntry[]
   sources?: string[]
@@ -61,11 +63,24 @@ export type Task = {
   /** 見直した判断（rulings.jsonl の id）。判断の affects に挙がったタスクは、見直したらその id を足す（9.5）。 */
   reviewed_for?: string[]
 }
+/**
+ * 外の理由の待ち（R193）。person は外の相手の返事、event は起きれば分かる出来事、date はその日にならないと取れないデータ・起きない出来事、
+ * slot は空き枠の順番待ち。person・event は解いた事実（met: 発言 u-…・知らせ n-…・操作 op:…・議事録などの場所）が need 件そろうと解ける。
+ * date は東京の日付が on に来ると「着手できる」になるだけで、済の証拠にはしない（Astra 2 の 5）。slot は窓口が外すまで残る。
+ */
+export type WaitKind = 'person' | 'event' | 'date' | 'slot'
+export const WAIT_KINDS: WaitKind[] = ['person', 'event', 'date', 'slot']
+export type WaitMet = { by: string; at: string; note?: string }
+export type Wait = { kind: WaitKind; who?: string; what?: string; where?: string; since?: string; on?: string; why?: string; probe?: string; need?: number; met?: WaitMet[] }
+/** 解けた person・event の待ちか（met が need 件そろった）。 */
+/** person・event の待ちが解けたか。同じ証拠（by）は 1 件に数える（同じ知らせを 3 行書いて 3 件にしない。Astra 4 の重大 2）。 */
+export const metCount = (w: Wait) => new Set((w.met ?? []).map((m) => m.by)).size
+export const waitMet = (w: Wait) => (w.kind === 'person' || w.kind === 'event') && metCount(w) >= (w.need ?? 1)
 export type TaskWorker = { task_id: string; run_id?: string; dispatch_id?: string }
 /** タスク id → 中身の印と、その印になった時刻（taskseen.json）。 */
 export type TaskSeen = Record<string, { sig: string; at: string }>
 /** 放置の検出で「動いた」とみなす欄。窓口が状態・工程・次・待つ相手・worker・済んだことを書き換えたら変わる。 */
-export const taskSig = (t: Task) => JSON.stringify([t.state, t.phase, t.next ?? '', t.waiting_on ?? '', t.check_on ?? '', t.worker?.task_id ?? '', t.done?.length ?? 0])
+export const taskSig = (t: Task) => JSON.stringify([t.state, t.phase, t.next ?? '', t.wait ?? null, t.after ?? [], t.worker?.task_id ?? '', t.done?.length ?? 0])
 /** 仕事の形（R51）。delegate: 任せる・cowork: 一緒に作る・watch: 見張る。タスクは仕事の形を引き継ぐ。 */
 export type StreamForm = 'delegate' | 'cowork' | 'watch'
 export const FORMS: StreamForm[] = ['cowork', 'delegate', 'watch']
@@ -76,8 +91,11 @@ export const FORM_LABEL: Record<StreamForm, string> = { delegate: '任せる', c
  */
 export type StreamWatch = { automation: string; targets: string[]; to: string }
 /** 仕事（大タスク）。担当のチャットは仕事ごとに 1 つまで。watch は form が watch の仕事だけが持ち、その仕事には要る。 */
-/** status: 今どうなっていて次に何を待つかを、初見で分かる文で（R188）。状態の語（作業中など）は窓が前に付けるので書かない。 */
-export type Stream = { id: string; title: string; summary?: string; status?: string; sources?: string[]; form?: StreamForm; watch?: StreamWatch }
+/**
+ * status: 今どうなっていて次に何を待つかを、初見で分かる文で（R188・R203）。状態の語（作業中など）は窓が前に付けるので書かない。
+ * status_basis: 書く道具が控える、status を書いたときの元の事実（state.ts の streamBasis）。今の事実と違えば status は古い（R204）。
+ */
+export type Stream = { id: string; title: string; summary?: string; status?: string; status_basis?: string[]; sources?: string[]; form?: StreamForm; watch?: StreamWatch }
 /** status の上限の字数。窓の全体のタブの仕事の行で 3 行に収まる長さ（幅 1280 で案件の一覧を開いた形が 1 行 34 字）。超えたら書く道具が断る（窓では切らない）。 */
 export const STATUS_MAX = 100
 
@@ -260,7 +278,15 @@ export type Card = {
   held_returns?: string[]
   /** 要素ごとの行き先。task（タスクの id）・request（「r30#2」の形で依頼と済の条件の番号）・skip（やらない理由）のどれか 1 つ。 */
   element_map?: ElementMap[]
+  /**
+   * 1 枚のカードに「済になるタスク」と「着手するタスク」が混ざるときだけ書く、結び付きごとの効果（タスクの id → done・start・none）。
+   * 書かなければ種類の今の意味で決める（state.ts の cardEffect。R204）。
+   */
+  effects?: Record<string, CardEffect>
 }
+/** カードを押したときに、結んだタスクに起きること。done: 済、start: このカードの待ちが解けて着手できる、none: 何も起きない。 */
+export type CardEffect = 'done' | 'start' | 'none'
+export const CARD_EFFECTS: CardEffect[] = ['done', 'start', 'none']
 export type ElementMap = { n: number; task?: string; request?: string; skip?: string }
 /** 行き先（element_map）の無い要素の番号。 */
 export const unmappedElements = (c: Pick<Card, 'elements' | 'element_map'>) =>
@@ -295,7 +321,11 @@ export type Request = {
   from_return?: string
 }
 /** 発言の仕分けの位置（utterances.jsonl の id）。through までの発言は、依頼に結んだか none に入れてある。 */
-export type Intake = { through?: string; none?: string[]; checked_through?: string }
+/**
+ * notices_through は Orca の知らせ（notices.jsonl の n-…）の仕分けの位置。no_wait は、開いた person・event の待ちと照らして、
+ * どの待ちも解かなかった発言・知らせの id（解いたものは tasks[].wait.met の by が指す。R204）。
+ */
+export type Intake = { through?: string; none?: string[]; checked_through?: string; notices_through?: string; no_wait?: string[] }
 /** .orca/cockpit/rulings.jsonl の 1 行のうち、窓が読む欄。affects は範囲を変える判断で見直すタスク（9.5）。 */
 export type Ruling = {
   id: string; affects?: string[]; from_return?: string
@@ -375,6 +405,8 @@ export type Cockpit = {
   notes_ref?: string
   applied_ops?: number[]
   asks?: AskRecord[]
+  /** 待ちと済を事実から決める形（R204）に移した時刻。移し替え（migrate-facts）が書く。あれば書く道具が状況の文の古さと見直しを確かめる。 */
+  facts_since?: string
 }
 
 /**
@@ -452,6 +484,8 @@ export function textError(text: string | undefined): string | undefined {
 
 
 export const TASK_STATES: TaskState[] = ['stop', 'run', 'wait', 'idle', 'ok']
+/** 読み込みで受けるタスクの state。open・ok のほか、版 3 までの手書きの状態（upgradeTask で open に直す）。 */
+const READ_STATES: string[] = [...TASK_MARKS, 'stop', 'run', 'wait', 'idle']
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
 type Shape = (v: unknown) => boolean
@@ -497,7 +531,8 @@ export const CARD_SHAPE: Record<string, Shape> = {
   links: list(obj(['label', 'href'])),
   elements: list((v) => isObj(v) && Number.isInteger(v.n) && str(v.text)),
   element_map: list((v) => isObj(v) && Number.isInteger(v.n) && ['task', 'request', 'skip'].filter((k) => v[k] !== undefined).length === 1 && ['task', 'request', 'skip'].every((k) => v[k] === undefined || str(v[k]))),
-  repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
+  repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str)),
+  effects: (v) => isObj(v) && Object.values(v).every((x) => CARD_EFFECTS.includes(x as CardEffect))
 }
 
 /** 形の違う欄の名前（書く道具は書く前に断り、読み込みは外して名指しする）。 */
@@ -540,12 +575,67 @@ export function upgradeCard(c: Card): Card {
   return c
 }
 
+/** 版 3 までのタスクの欄（R204 で廃止）。読み込み（upgradeTask）と移し替え（migrate-facts）だけが読む。 */
+export const LEGACY_TASK_KEYS = ['status', 'waiting_on', 'waiting_since', 'check_on'] as const
+/** 外の相手の名前だけの待ち（「田中さん」「先方の担当」。括弧の中は見ない）。版 3 の waitLabel と同じ見分け方。 */
+const PERSON_ONLY = (bare: string) => /^[^のがを]{0,20}(さん|様|氏|先方|顧客|担当|窓口|チーム|部)$/.test(bare) || /^[^がを]{0,20}の(担当|窓口|チーム)$/.test(bare)
+
+/**
+ * 版 3 までの手書きの待ちを、決まった形の待ちに読み替える（読み込みと移し替えが同じ規則を使う）。
+ * 人の名前だけなら person（括弧の中を待つもの）、順番待ち（idle）の「空き枠」は slot、ほかは event。文の中の t<数> は after に足す。
+ * waiting_on と check_on が両方あれば waiting_on を採る（日付を解ける条件にすると、返事が無いまま翌日に着手できると出るため。Astra 3 の中 3）。
+ * 済（ok）のタスクの古い待ちは捨てる。
+ */
+export function legacyWait(t: Record<string, unknown>, state: string): { wait?: Wait; after: string[] } {
+  const on = typeof t.waiting_on === 'string' ? t.waiting_on.trim() : ''
+  const since = typeof t.waiting_since === 'string' && t.waiting_since ? t.waiting_since : undefined
+  const after = [...new Set(on.match(/\bt\d+\b/g) ?? [])].filter((x) => x !== t.id)
+  if (on) {
+    const [, body, wide, narrow] = /^(.*?)\s*(?:（([^）]*)）|\(([^)]*)\))?$/.exec(on) ?? []
+    const note = wide || narrow
+    const bare = (body ?? on).replace(/（[^）]*）|\([^)]*\)/g, '').trim()
+    // 版 3 の idle は空き枠の順番待ちか、先に進めるタスクの後の順番待ち（R193）。
+    if (state === 'idle' && /空き枠/.test(on)) return { wait: { kind: 'slot', why: on }, after }
+    if (state === 'idle' && after.length) return { after }
+    if (PERSON_ONLY(bare)) return { wait: { kind: 'person', who: bare, what: note || '返事', ...(since && { since }) }, after: [] }
+    return { wait: { kind: 'event', what: on, ...(since && { since }) }, after: [] }
+  }
+  if (DAY(t.check_on)) return { wait: { kind: 'date', on: t.check_on as string, what: typeof t.next === 'string' && t.next.trim() ? t.next.trim() : String(t.title) }, after: [] }
+  return { after: [] }
+}
+
+/**
+ * 版 3 までのタスクを、待ちと済を事実から決める形（R204）に読み替える。state は open・ok だけにし、waiting_on・check_on は wait に、
+ * 文の中の順番待ちの先は after に移し、status・waiting_since は捨てる（状況はタスクの事実から state.ts が決める）。カードは触らない（rev を上げると、開いたカードに押された操作が旧版扱いになる。Astra 2 の 4）。
+ */
+export function upgradeTask<T extends object>(row: T): T {
+  const t = row as Record<string, unknown>
+  const state = String(t.state)
+  if (state !== 'ok' && state !== 'open') t.state = 'open'
+  if (t.wait === undefined && state !== 'ok') {
+    const { wait, after } = legacyWait(t, state)
+    if (wait) t.wait = wait
+    if (after.length) t.after = [...new Set([...(Array.isArray(t.after) ? t.after : []), ...after])]
+  }
+  for (const k of LEGACY_TASK_KEYS) delete t[k]
+  return row
+}
+
 /** タスクの省略できる欄の形（id・title・phase・state・worker は parseCockpit が先に断る）。 */
 export const TASK_SHAPE: Record<string, Shape> = {
-  stream: str, next: str, goal: str, status: str, waiting_on: str, waiting_since: str, check_on: DAY, sources: strs, reviewed_for: strs,
+  stream: str, next: str, goal: str, sources: strs, reviewed_for: strs,
   done: list((d) => str(d) || obj(['text'], ['at'])(d)),
-  repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
+  repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str)),
+  wait: (v) => WAIT_SHAPE(v), after: strs
 }
+const WAIT_TEXT: Record<WaitKind, string[]> = { person: ['who', 'what'], event: ['what'], date: ['on', 'what'], slot: ['why'] }
+/** 待ちの形。種類ごとに要る欄（person: who・what、event: what、date: on・what、slot: why）と、解いた事実 met の形。 */
+export const WAIT_SHAPE: Shape = (v) =>
+  isObj(v) && WAIT_KINDS.includes(v.kind as WaitKind) && WAIT_TEXT[v.kind as WaitKind].every((k) => filled(v[k]))
+  && Object.keys(v).every((k) => ['kind', 'who', 'what', 'where', 'since', 'on', 'why', 'probe', 'need', 'met'].includes(k))
+  && ['who', 'what', 'where', 'since', 'why', 'probe'].every((k) => v[k] === undefined || str(v[k]))
+  && (v.on === undefined || DAY(v.on)) && (v.need === undefined || (Number.isInteger(v.need) && (v.need as number) >= 1))
+  && (v.met === undefined || list((m) => obj(['by', 'at'], ['note'])(m) && filled((m as WaitMet).by))(v.met))
 /** 時刻の文字列を比べられる数にする。操作の UTC（Z）と窓口が書いた +09:00 が混ざるので、文字列のまま比べない。読めなければ 0。 */
 export const timeOf = (s: string | undefined): number => {
   const t = Date.parse(s ?? '')
@@ -590,11 +680,12 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
   v.tasks = (v.tasks as Record<string, unknown>[]).filter((t) => {
     const why = !isObj(t) || typeof t.id !== 'string' ? 'id を読めない'
       : typeof t.title !== 'string' || typeof t.phase !== 'string' ? 'title・phase を読めない'
-      : !TASK_STATES.includes(t.state as TaskState) ? `state が不正: ${String(t.state)}`
+      : !READ_STATES.includes(t.state as string) ? `state が不正: ${String(t.state)}`
       : t.worker !== undefined && !WORKER_SHAPE(t.worker) ? 'worker の形が不正。{ run_id, task_id } で書く'
       : undefined
     if (why) problems.push(`形の誤り: cockpit.json のタスク ${String(t?.id)}（${why}）。このタスクは表示していません`)
     if (why) return false
+    upgradeTask(t)
     const bad = Object.keys(TASK_SHAPE).filter((k) => t[k] != null && !TASK_SHAPE[k]!(t[k]))
     for (const k of bad) delete t[k]
     if (bad.length) problems.push(`cockpit.json のタスク ${String(t.id)} の ${bad.join('・')} の形が違うので、その欄を出さずに表示しています`)
@@ -611,8 +702,8 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
       delete st.form
     }
   for (const st of v.streams as Record<string, unknown>[])
-    for (const k of ['summary', 'status'] as const)
-      if (isObj(st) && st[k] != null && typeof st[k] !== 'string') {
+    for (const k of ['summary', 'status', 'status_basis'] as const)
+      if (isObj(st) && st[k] != null && (k === 'status_basis' ? !strs(st[k]) : typeof st[k] !== 'string')) {
         problems.push(`cockpit.json の仕事 ${String(st.id)} の ${k} が文字列でないので、その欄を外して読んでいます`)
         delete st[k]
       }
@@ -821,17 +912,16 @@ export type ShownWhy = 'ok' | 'record' | 'working' | 'intake' | 'stopped' | 'mis
 export type TaskShown = { state: TaskState; why: ShownWhy; stop?: string }
 
 /**
- * 画面に出すタスクの状態。worker の記録があるタスクは、メインの書いた state ではなく Orca の Dispatch の様子から決める
- * （メインが書き忘れると「worker が作業中なのに動いていない」のような矛盾が出たため、2026-11-16）。
- * fact は undefined なら Orca を読んでいない（パネル）、null なら Orca に無い。
- * - state が ok なら完了、wait（外の相手を待つ）はメインの書いた state のまま
+ * worker の記録があるタスクの、Orca の Dispatch から分かる様子（メインが書き忘れると「worker が作業中なのに動いていない」のような矛盾が出たため、2026-11-16）。
+ * 済・深田さん待ち・外の待ちとの重ね方は state.ts の judgeTasks が決める。fact は undefined なら Orca を読んでいない（パネル・書く道具）、null なら Orca に無い。
+ * worker の無い・Orca を読んでいないタスクは undefined。
  * - worker_done を返していれば、メインの取り込み待ち
  * - 起動できない・落ちた・端末が消えた・人の確認待ちなら、止まっている
  * - それ以外は進行中（担当が利用者と話している間や worker を待つ間も、Dispatch は開いたまま）
  */
-export function shownTask(t: Task, fact: DispatchFact | null | undefined): TaskShown {
+export function shownTask(t: Task, fact: DispatchFact | null | undefined): TaskShown | undefined {
   if (t.state === 'ok') return { state: 'ok', why: 'ok' }
-  if (!t.worker || fact === undefined || t.state === 'wait') return { state: t.state, why: 'record' }
+  if (!t.worker || fact === undefined) return undefined
   if (fact === null) return { state: 'stop', why: 'missing' }
   if (fact.state === 'succeeded') return { state: 'wait', why: 'intake' }
   if (fact.state === 'failed' || fact.liveness === 'exited') return { state: 'stop', why: 'stopped', stop: fact.liveness === 'exited' ? 'dead' : 'error' }

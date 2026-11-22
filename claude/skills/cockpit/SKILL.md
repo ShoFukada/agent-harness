@@ -35,7 +35,7 @@ metadata:
 - `cockpit.json` は書く道具 `cockpit-write` だけで書く（使い方は references/schema.md の「書く道具」）。型・参照・`rev`・仕分けを検査し、通らなければ書かずに理由を返す。Write・Edit で書くと hook が断る
 - 時刻（カードの `at`・`due`、依頼の `at`、作業メモの時刻）は、`date '+%Y-%m-%dT%H:%M:%S%z'` で今の時刻を取ってから書く。推し量って書かない（2026-11-21 に、窓口と担当の作業メモの時刻が実際より約 5 時間 20 分進んでいた）
 - 必須の欄・工程・カードの種類とその値は references/schema.md の「cockpit.json の形」「カード」「必須の欄」が持ち、書く道具が入口で検査する。`workspace.name` の形は worktree-flow skill の references/sidebar.md の案件の行。ここには値を写さない
-- 仕事（`streams`）の下にタスク（`tasks`）とカード（`cards`）がぶら下がる。仕事には形 `form` を書き（下の「仕事の形」）、タスクは 1 つの仕事に入れて工程を 1 つ付ける。`stop` と `wait` のタスクをカードの `tasks` から指す条件（外の相手を待つ `waiting_on` の例外を含む）は references/schema.md の `tasks[]` に従う
+- 仕事（`streams`）の下にタスク（`tasks`）とカード（`cards`）がぶら下がる。仕事には形 `form` を書き（下の「仕事の形」）、タスクは 1 つの仕事に入れて工程を 1 つ付ける。タスクの `state` は `open` と `ok` だけを書き、止まり・待ち・未着手は state.ts が事実（カード・操作・worker・`wait`・`after`・日付）から決める。深田を待つタスクはカードの `tasks` から指し、外の相手・出来事・日付・空き枠は `wait`、先に済む要るタスクは `after` に書く。書き方は references/schema.md の `tasks[]` と「タスクの今の決まり方」
 - カードの中身（選択肢・対象・本文・期限）を変えたら `rev` を 1 上げる。どのカードにも出た時刻 `at` を書く。確認依頼は、種類ごとの必須の欄がそろったものだけが窓に出る
 
 # 状態を読む
@@ -81,17 +81,17 @@ node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts <ワークス�
 - 一度深田が答えたこと・自明なことをカードにしない。過去の決定は判断の記録と片付いたカードを探してから出す
 
 # 空いた枠に待ちの仕事を出す
-同時に動かす worker の数は worktree-flow skill の「窓口・担当・worker」の決まり（上限の数は `compaction-keep.py` の `WORKER_LIMIT` だけが持つ）。worker_done を取り込んだとき・セッションの開始と再開のとき（圧縮のあとを含む）に、空き枠と待ちのタスク（未着手のタスク）を突き合わせ、優先の順に出す。作業中と未着手は state.ts の判定で数える（手書きの `run` は worker_done のあとも残る）。開始・再開と圧縮のあとには、hook が空き枠と待ちのタスクを出す（`compaction-keep.py slots <root>` でも出せる）。待ちのタスクを起こす仕組み（wake）は付けない。
+同時に動かす worker の数は worktree-flow skill の「窓口・担当・worker」の決まり（上限の数は `compaction-keep.py` の `WORKER_LIMIT` だけが持つ）。worker_done を取り込んだとき・セッションの開始と再開のとき（圧縮のあとを含む）に、空き枠と待ちのタスク（未着手のタスク）を突き合わせ、優先の順に出す。作業中と未着手は state.ts の判定で数える（タスクの手書きの状態は `open` と `ok` だけ）。開始・再開と圧縮のあとには、hook が空き枠と待ちのタスクを出す（`compaction-keep.py slots <root>` でも出せる）。待ちのタスクを起こす仕組み（wake）は付けない。
 
 # 担当・worker を立てたとき
 立て方と知らせの受け方は worktree-flow skill の「窓口・担当・worker」、名前と親子は worktree-flow skill の references/sidebar.md。帳簿に書く欄（`worker`・`owners[]`）と、担当から判断の依頼が届いたときの受け方は references/workers.md。
 - brief に、タスクの id と、関係する判断の本文と原文を書く。担当の brief には「操縦席を書かない」も書く（worker には orca-launch が worktree-flow skill の references/worker-rules.md を足す）
 
 # いつ更新するか
-- 状態が変わったターンの終わり
+- 状態が変わったターンの終わり（仕事の元の事実が変わったら、その書き込みで仕事の `status` も書き直す。cockpit-write が古い文を断る）
 - 担当・worker の結果を取り込んだとき（Orca が worker_done で起こす）
 - 深田が画面で操作したとき（`【操縦席】未反映の操作があります` の知らせが、窓の郵便受けの端末から窓口の Run に届く。端末の窓口にもチャットの窓口にも同じ経路で、届かなくても hook の件数で拾う）
-- 深田が確かめる成果物のあるタスクは、その確認が済むまで `ok` にしない。`wait` にし、確認の `tasks` でそのタスクを指す。確かめてもらう前に「済」と出さない
+- 深田が確かめる成果物のあるタスクは、その確認が済むまで `ok` にしない。`open` のまま確認のカードの `tasks` でそのタスクを指す（state.ts が深田さん待ちと出し、承認で済にする）。確かめてもらう前に「済」と出さない
 - 担当が深田と話して詰めたいことは、相談のカード（`kind: "consult"`、`issue` と `stance`）で出す。深田が「担当と協議」を押すと協議中の印が付く（相談は件数に数えない）。話がまとまったら判断・確認・送信前に書き換えて `rev` を上げる
 - 更新したら、ワークスペースのカードのコメントとサイドバーを判定済みの状態にそろえる（worktree-flow skill の references/sidebar.md の「状態と片付け」）
 

@@ -379,6 +379,25 @@ def append_utterance(root, row):
     return uid
 
 
+NOTICE_HEAD = 400
+
+
+def append_notice(root, row):
+    """Orca の知らせ（worker・担当・Bot から窓口に届いたもの）に id「n-<行番号>」を付けて notices.jsonl に足す。
+
+    窓口が開いた相手・出来事の待ち（帳簿の tasks[].wait）と照らし、解いたら wait.met の by にこの id を書く（R204）。
+    本文は頭だけ持つ（全文は orca orchestration inbox で読める）。"""
+    path = path_of(root, "notices.jsonl")
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            n = sum(1 for line in fh.read().split("\n") if line.strip())
+    except FileNotFoundError:
+        n = 0
+    nid = "n-%d" % (n + 1)
+    append_jsonl(path, {"id": nid, **row, "prompt": (row.get("prompt") or "")[:NOTICE_HEAD]})
+    return nid
+
+
 # ---------- 操縦席の読み取り（書かない） ----------
 
 def cockpit(root):
@@ -412,7 +431,11 @@ def open_lines(c):
         if isinstance(t, dict) and t.get("state") != "ok":
             w = worker_id(t)
             who = " worker %s" % w if w else ""
-            lines.append("- %s タスク（%s）: %s。次: %s%s" % (t.get("id"), t.get("state"), norm(t.get("title")), norm(t.get("next")) or "-", who))
+            # 状態は state.ts が事実から決める（R204）。帳簿の生の値で書けるのは外の待ち（wait）と前提（after）だけ
+            w = t.get("wait") if isinstance(t.get("wait"), dict) else {}
+            wait = "。待ち（%s）: %s" % (w.get("kind"), norm(w.get("who") or w.get("what") or w.get("why") or w.get("on"))) if w else ""
+            after = "。前提: %s" % "・".join(t["after"]) if isinstance(t.get("after"), list) and t["after"] else ""
+            lines.append("- %s タスク: %s。次: %s%s%s%s" % (t.get("id"), norm(t.get("title")), norm(t.get("next")) or "-", wait, after, who))
     return lines
 
 
@@ -1094,7 +1117,7 @@ def slot_lines(root):
     shown = report.get("tasks") if isinstance(report, dict) else None
     if not isinstance(shown, list):
         head = "## 空き枠と待ちのタスク（上限 %d。state.ts を読めず、作業中の数と空きは不明。node %s <root> で確かめる）" % (WORKER_LIMIT, cockpit_state_path())
-        idle = [t for t in rows.values() if t.get("state") == "idle"]
+        idle = [t for t in rows.values() if t.get("state") == "idle" or (isinstance(t.get("wait"), dict) and t["wait"].get("kind") == "slot")]
     else:
         busy = sum(1 for t in shown if isinstance(t, dict) and t.get("from") == "working")
         head = "## 空き枠と待ちのタスク（上限 %d・作業中 %d・空き %d。worker_done の取り込みと再開のときに、優先の順に空き枠へ出す）" % (WORKER_LIMIT, busy, max(0, WORKER_LIMIT - busy))
@@ -1444,6 +1467,9 @@ def on_prompt(root, inp):
         for old in ("turn_at", "turn_clock", "stop_nudged"):  # セッションごとに持つ前の欄
             keep.pop(old, None)
         if is_relay(prompt):
+            # Orca の知らせだけを記録する（窓の合図・相談の知らせ・背景の作業の知らせは、待ちを解く出来事ではない）
+            if RELAY_HEAD.match(prompt.strip()):
+                append_notice(root, {"at": iso(), "session": session, "prompt": prompt.strip()})
             save_keep(root, keep)
             # 知らせが続く離席中も順番を見失わないよう、ID と理由だけを流す（R186。件数・念押し・checks は流さない）
             lines = order_lines(root, relay=True)

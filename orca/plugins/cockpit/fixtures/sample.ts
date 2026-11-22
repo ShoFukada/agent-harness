@@ -29,9 +29,9 @@ export function sample(now = Date.now()): SampleWs[] {
       { id: 's4', title: '定例と議事録' }
     ],
     tasks: [
-      { id: 't1', stream: 's1', phase: '実装', title: '一覧の並べ替えと絞り込み', state: 'run', next: 'レビューの指摘を直して stg に出す', worker: { task_id: 'task_aoba_list', dispatch_id: 'ctx_aoba_list' } },
-      { id: 't2', stream: 's2', phase: '設計', title: '構成案の図と本文', state: 'wait', next: '入口の描き方を決めてから送る版を作る' },
-      { id: 't3', stream: 's3', phase: '設計', title: '利用上限の確認', state: 'wait', waiting_on: '田中さん', waiting_since: iso(now - 50 * H), next: '回答が来たら繋ぎ込みの見積もり' },
+      { id: 't1', stream: 's1', phase: '実装', title: '一覧の並べ替えと絞り込み', state: 'open', next: 'レビューの指摘を直して stg に出す', worker: { task_id: 'task_aoba_list', dispatch_id: 'ctx_aoba_list' } },
+      { id: 't2', stream: 's2', phase: '設計', title: '構成案の図と本文', state: 'open', next: '入口の描き方を決めてから送る版を作る' },
+      { id: 't3', stream: 's3', phase: '設計', title: '利用上限の確認', state: 'open', wait: { kind: 'person', who: '田中さん', what: '利用上限の回答', since: iso(now - 50 * H) }, next: '回答が来たら繋ぎ込みの見積もり' },
       { id: 't4', stream: 's4', phase: '要件', title: '議事録の取りまとめ', state: 'ok' }
     ],
     owners: [
@@ -126,8 +126,8 @@ export function sample(now = Date.now()): SampleWs[] {
       { id: 'ops', title: '夜間の反映' }
     ],
     tasks: [
-      { id: 'k1', stream: 'n112', phase: '受入', title: '本番への反映', state: 'wait', next: '本番の許可を待つ' },
-      { id: 'k2', stream: 'n115', phase: '調査', title: 'stg の DB の接続', state: 'stop', next: '鍵を入れ直して再現する' },
+      { id: 'k1', stream: 'n112', phase: '受入', title: '本番への反映', state: 'open', next: '本番の許可を待つ' },
+      { id: 'k2', stream: 'n115', phase: '調査', title: 'stg の DB の接続', state: 'open', next: '鍵を入れ直して再現する' },
       { id: 'k3', stream: 'ops', phase: '受入', title: 'No.110・111 を stg に出す', state: 'ok' }
     ],
     owners: [{ id: 'o5', title: 'No.115 stg の調査', stream: 'n115', agent: 'claude', terminal: 'term_konan_w2' }],
@@ -176,7 +176,7 @@ export function sample(now = Date.now()): SampleWs[] {
     main: { agent: 'claude', terminal: 'term_h_main', run_id: 'run_h_main' },
     streams: [{ id: 'h1', title: 'ログ集計の見直し' }, { id: 'h2', title: '設計図のページ' }],
     tasks: [
-      { id: 'u1', stream: 'h1', phase: '実装', title: '集計の分け方を直す', state: 'run', worker: { task_id: 'task_h_log', dispatch_id: 'ctx_h_log' } },
+      { id: 'u1', stream: 'h1', phase: '実装', title: '集計の分け方を直す', state: 'open', worker: { task_id: 'task_h_log', dispatch_id: 'ctx_h_log' } },
       { id: 'u2', stream: 'h2', phase: '実装', title: '流れと構成の図', state: 'ok' }
     ],
     cards: [
@@ -221,7 +221,7 @@ export function sample(now = Date.now()): SampleWs[] {
     workspace: { name: '北斗電機 提案', milestones: [{ date: iso(today(now, 14) + 6 * 24 * H), label: '提案の説明会' }] },
     main: { agent: 'claude', terminal: '', run_id: 'run_hokuto_main' },
     streams: [{ id: 'q1', title: '提案書の骨組み' }],
-    tasks: [{ id: 'v1', stream: 'q1', phase: '要件', title: '骨組みを 15 ページに絞る', state: 'run' }],
+    tasks: [{ id: 'v1', stream: 'q1', phase: '要件', title: '骨組みを 15 ページに絞る', state: 'open' }],
     cards: [],
     applied_ops: []
   }

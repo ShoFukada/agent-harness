@@ -224,16 +224,16 @@ test('path:行 をファイルと行に分ける', () => {
   assert.deepEqual(splitLine('docs/a:b.md'), { file: 'docs/a:b.md' })
 })
 
-test('worker の記録があるタスクは Dispatch の様子から、外の相手を待つタスクと記録の無いタスクと Orca を読んでいない画面はメインの state のまま', () => {
-  const t = { id: 't', stream: 's', phase: 'p', title: 't', state: 'idle' as const, worker: { task_id: 'task_1', dispatch_id: 'ctx_1' } }
+test('worker の記録があるタスクは Dispatch の様子から決め、記録の無いタスクと Orca を読んでいない画面では様子が無い（重ね方は state.ts の judgeTasks）', () => {
+  const t = { id: 't', stream: 's', phase: 'p', title: 't', state: 'open' as const, worker: { task_id: 'task_1', dispatch_id: 'ctx_1' } }
   assert.deepEqual(shownTask(t, { state: 'dispatched', liveness: 'live' }), { state: 'run', why: 'working' })
   assert.deepEqual(shownTask(t, { state: 'succeeded' }), { state: 'wait', why: 'intake' })
   assert.deepEqual(shownTask(t, { state: 'dispatched', liveness: 'exited' }), { state: 'stop', why: 'stopped', stop: 'dead' })
   assert.deepEqual(shownTask(t, { state: 'failed' }), { state: 'stop', why: 'stopped', stop: 'error' })
   assert.deepEqual(shownTask(t, { state: 'dispatched', waiting: true }), { state: 'stop', why: 'stopped', stop: 'blocked' })
   assert.deepEqual(shownTask(t, null), { state: 'stop', why: 'missing' })
-  assert.deepEqual(shownTask(t, undefined), { state: 'idle', why: 'record' })
-  assert.deepEqual(shownTask({ ...t, state: 'wait' }, { state: 'dispatched' }), { state: 'wait', why: 'record' })
+  assert.equal(shownTask(t, undefined), undefined)
+  assert.equal(shownTask({ ...t, worker: undefined }, { state: 'dispatched' }), undefined)
   assert.deepEqual(shownTask({ ...t, state: 'ok' }, null), { state: 'ok', why: 'ok' })
 })
 

@@ -177,6 +177,11 @@ class Utterances(Base):
         self.hook("UserPromptSubmit", prompt=relay)
         self.hook("UserPromptSubmit", prompt="次")
         self.assertEqual([(u["id"], u["prompt"]) for u in self.jsonl("utterances.jsonl")], [("u-1", "状況を教えて"), ("u-2", "次")])
+        # 発言には入れず、待ちと照らす知らせとして n-<行番号> で残す（R204）
+        self.assertEqual([(u["id"], u["prompt"]) for u in self.jsonl("notices.jsonl")], [("n-1", relay.strip()[:400])])
+        self.hook("UserPromptSubmit", prompt=self.TASK_NOTICE)
+        self.hook("UserPromptSubmit", prompt=relay)
+        self.assertEqual([u["id"] for u in self.jsonl("notices.jsonl")], ["n-1", "n-2"])
 
     # 2026-11-21 22:38 に発言として記録された subagent の完了の知らせ（ハーネスの utterances.jsonl の u-216）を縮めた形
     TASK_NOTICE = ("<task-notification>\n<task-id>aca9879aae583e335</task-id>\n<tool-use-id>toolu_01YFmep9nSPqCG6we6sBHZDo</tool-use-id>\n"
@@ -504,7 +509,7 @@ class Verify(Base):
         done = self.resume(workers=["task_a", "task_v3"])
         self.assertEqual(done.returncode, 0, done.stdout)
         text = json.loads(self.hook("SessionStart", source="compact"))["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("t3 タスク（run）: 窓の作り直し。次: - worker task_v3", text)
+        self.assertIn("t3 タスク: 窓の作り直し。次: - worker task_v3", text)
         self.assertIn("worker.task_id", text)
 
     def test_the_summary_itself_is_checked_for_the_same_three(self):

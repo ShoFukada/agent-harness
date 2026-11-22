@@ -568,7 +568,7 @@ function jobsHtml(b: Board, now: number, label: string): string {
   }
   const job = (j: JobView) => {
     const who = ownerText(j)
-    return `<li class="job ${j.state}"><span class="js" aria-hidden="true"></span><span class="t">${esc(j.title)}</span><span class="st">${esc(j.label)}${j.since ? `（${esc(fmtDate(j.since.slice(0, 10)))} から）` : ''}</span>
+    return `<li class="job ${j.state === 'outside' ? 'customer' : j.state}"><span class="js" aria-hidden="true"></span><span class="t">${esc(j.title)}</span><span class="st">${esc(j.label)}${j.since ? `（${esc(fmtDate(j.since.slice(0, 10)))} から）` : ''}</span>
     ${j.next || who ? `<span class="nx sp">${sp([j.next && `<b class="pl">次</b>${mono(note(j.next))}`, who && `<span class="nw"><b class="pl">担当</b>${esc(who)}</span>`])}</span>` : ''}</li>`
   }
   return `<section class="pane" aria-label="案件の今"><h2>${esc(c.workspace.name)} <small>${esc(label)}</small></h2>

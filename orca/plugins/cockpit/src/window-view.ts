@@ -1,6 +1,6 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
 import { actionVerb, COUNTED, COWORK_ID, IDLE_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
-import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, tokyoDay, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
+import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, statusFallback, tokyoDay, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, sp, stripHtml, toastsHtml, rowIdHtml,
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
@@ -98,7 +98,7 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
     : r.agent?.ask && c.since ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
   // 番号はどの行でも右の列の 2 段目に置く（時刻の無い行で、時刻の位置に番号だけが来ないように。Neon・初見の目）。
   // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。動いていないタスクは、題にタスク名があるので止まっている手がかり。
-  const sub = r.agent?.ask?.from ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.waiting_on && `待ち ${t.task.waiting_on}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
+  const sub = r.agent?.ask?.from ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.wait?.what && `確かめること ${t.task.wait.what}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${markTag(mark)}${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
@@ -225,7 +225,7 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
             ? fld('確認日', esc(`${fmtDate(r.idle.check)}。この日になってもタスクが進んでいないので出しています`))
             : fld('最後の動き', esc(`${fmtDate(r.idle.since)}（${r.idle.from}）。${st ? `${TSTATE[st]}のまま` : ''}${r.idle.line}時間を超えたので出しています`)),
           fld('worker・担当', esc(r.idle.worker)),
-          r.idle.check ? fld('待っているもの', esc(r.v?.cockpit?.tasks.find((t) => t.id === r.idle!.task)?.waiting_on)) : '',
+          r.idle.check ? fld('確かめること', esc(r.v?.cockpit?.tasks.find((t) => t.id === r.idle!.task)?.wait?.what)) : '',
           fld('次にやること', esc(c.next)),
           fld('対応のしかた', esc(r.idle.check
             ? `「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で、確認日に確かめること（返事が来たか・進めてよいか）を伝えます。タスクが動けば（確認日を先に延ばすことも含む）、この行は消えます。`
@@ -469,7 +469,7 @@ function phaseBar(ts: TaskView[], form?: StreamForm, job?: JobState): string {
   const unsorted = live.some((t) => !stageOf(t.task.phase))
   const at = !live.length ? STAGES.length : unsorted ? -1 : Math.min(...live.map((t) => STAGES.indexOf(stageOf(t.task.phase)!)))
   const name = live.length ? (unsorted ? '工程の外あり' : stagesHtml(at, true))
-    : job === 'done' ? '全工程 完了' : job === 'mine' ? 'タスク完了・確認待ち' : job === 'customer' ? 'タスク完了・顧客待ち' : 'タスク完了'
+    : job === 'done' ? '全工程 完了' : job === 'mine' ? 'タスク完了・確認待ち' : job === 'customer' ? 'タスク完了・顧客待ち' : job === 'outside' ? 'タスク完了・出来事待ち' : 'タスク完了'
   return `<span class="pbar">${name}</span>`
 }
 
@@ -509,7 +509,7 @@ const stateOf = (t: TaskView, rows: Row[]): TaskState => (t.state !== 'ok' && ro
 const replyWait = (rows: Row[]) => rows.some((r) => r.card.id.startsWith(COWORK_ID) && !!r.agent?.ask)
 
 function checkOnHtml(t: TaskView, now: number): string {
-  const day = t.task.check_on
+  const day = t.task.wait?.kind === 'date' ? t.task.wait.on : undefined
   if (!day || t.state === 'ok') return ''
   return tokyoDay(now) >= day ? `<b class="chk">確認日 ${esc(fmtDate(day))}</b>` : `<span class="chk">確認日 ${esc(fmtDate(day))}</span>`
 }
@@ -518,8 +518,8 @@ function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined
   const st = stateOf(t, todo.get(t.task.id) ?? [])
   const reply = st !== 'ok' && replyWait(todo.get(t.task.id) ?? [])
   const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r)}を開く</button>`).join('')
-  // 状況の文（status、R188）が無ければ、待つ相手だけを出す。next（作業の手順）は詳細の「次にやること」で読む。
-  const sub = t.task.status?.trim() || (t.task.waiting_on ? `待ち: ${t.task.waiting_on}` : '')
+  // 状況は事実から決めた 1 行（待っているもの・前提・作業の様子。R204）。next（作業の手順）は詳細の「次にやること」で読む。
+  const sub = st === 'ok' ? '' : t.label
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
   return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${reply ? 'stop' : st}">${reply ? REPLY_LABEL : TSTATE[st]}</span>
@@ -527,7 +527,9 @@ function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined
     <span class="wk">${chips}</span></div>`
 }
 
-const PILL: Record<JobState, string> = { mine: '要対応', stopped: '停止中', working: '作業中', customer: '顧客待ち', idle: '未着手', done: '完了' }
+const PILL: Record<JobState, string> = { mine: '要対応', stopped: '停止中', working: '作業中', customer: '顧客待ち', outside: '出来事待ち', idle: '未着手', done: '完了' }
+/** 仕事の状態の見た目。人でない外の待ちは、色は顧客待ちと同じ（待ちの色）にし、語だけ分ける（見た目の値は style.ts が持つ）。 */
+export const jobClass = (s: JobState) => (s === 'outside' ? 'customer' : s)
 
 function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now: number): string {
   const s = b.v.cockpit!.streams.find((x) => x.id === j.id)
@@ -538,7 +540,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now:
   // 要対応に停止で出ている worker は作業中に数えない（Neon 初見 2 巡目）。
   const halted = ts.filter((t) => t.why === 'working' && stateOf(t, todo.get(t.task.id) ?? []) === 'stop').length
   const working = ts.filter((t) => t.why === 'working').length - halted
-  const label = j.state === 'mine' ? [j.reply && REPLY_LABEL, j.mine && `要対応 ${j.mine} 件`].filter(Boolean).join('・') : j.state === 'customer' ? j.label : PILL[j.state]
+  const label = j.state === 'mine' ? [j.reply && REPLY_LABEL, j.mine && `要対応 ${j.mine} 件`].filter(Boolean).join('・') : j.state === 'customer' || j.state === 'outside' ? j.label : PILL[j.state]
   const groups = stageGroups(ts)
   // 選べるタスクが無い仕事は右に詳細を出せないので、協議のボタンを箱の中に置く。
   const talk = groups.length ? '' : `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(j.id)}">${j.owner ? '担当と協議' : '窓口と協議'}</button></div>`
@@ -553,8 +555,10 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now:
   const allDone = ts.length > 0 && ts.every((t) => t.state === 'ok')
   const live = [working && `worker ${working} 件作業中`, halted && `worker ${halted} 件停止`, late && `放置のタスク ${late} 件`, due && `確認日の来たタスク ${due} 件`, allDone && j.state !== 'done' && 'タスクはすべて完了'].filter(Boolean).join('・')
   // 状況は状態の語（窓が決める）のあとに、窓口が書いた状況の文（status、R188）を並べる。next（作業の手順）は出さない。
-  const said = s?.status?.trim()
-  const status = `<span class="pst ${j.state}${j.reply ? ' reply' : ''}">${esc(label)}</span>${live ? `<span>・${esc(live)}</span>` : ''}${said ? `<span class="said">${mono(note(said))}</span>` : ''}`
+  // 元の事実が変わって古くなった文は出さず、事実から決めた短い文に差し替える（R204）。
+  const stale = b.d.stale.get(j.id)
+  const said = stale ? statusFallback(ts) : s?.status?.trim()
+  const status = `<span class="pst ${jobClass(j.state)}${j.reply ? ' reply' : ''}">${esc(label)}</span>${live ? `<span>・${esc(live)}</span>` : ''}${said ? `<span class="said"${stale ? ' title="状況の文が古い（窓口が次の書き込みで書き直す）"' : ''}>${mono(note(said))}</span>` : ''}`
   const line = (lb: string, body: string, cls = '', full = '') => `<span class="sx${cls}"${full ? ` title="${esc(full)}"` : ''}><span class="lb">${lb}</span><span class="sv">${body}</span></span>`
   // 担当は、その仕事に結ばれた閉じていない担当を全部（1 人だけ出すと、ほかの担当の仕事まで 1 人のものに見える。追加 42）。
   const all = (b.v.cockpit!.owners ?? []).filter((o) => o.stream === j.id && o.state !== 'done').map((o) => o.title)
@@ -614,7 +618,6 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
     const quote = r.req.utterances?.map((u) => u.quote).join('\n') || r.req.quote || ''
     return `<div class="rqd"><div><span class="code">${esc(r.req.id)}</span>${esc(r.req.title)}<span class="rst">${esc(r.state)}</span></div>${clampQuote(quote, ui, `cont:${task.id}:${r.req.id}`)}</div>`
   }).join('')
-  const now = task.waiting_on ? `待ち: ${task.waiting_on}${task.waiting_since ? `（${fmtDate(task.waiting_since)} から）` : ''}` : task.next ? task.next : ''
   const worker = task.worker
     ? `<div class="wk2"><span class="mut">worker</span><b>${esc(a?.title ?? task.title)}</b>${shown === 'stop' && t.why !== 'stopped' ? '<span class="chip bad">停止</span>' : `<span class="chip${t.why === 'working' ? ' live' : t.why === 'stopped' || t.why === 'missing' ? ' bad' : ''}">${esc(workerState(t))}</span>`}${a?.where ? `<span class="mut">今: ${esc(a.where)}</span>` : ''}${a ? `<button type="button" class="act" data-term="${esc(a.terminalId ?? '')}" data-wt="${esc(a.worktree ?? '')}">${a.chat ? 'チャットを開く' : '端末を開く'}</button>` : ''}</div>`
     : ''
@@ -625,9 +628,10 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const srcs = (task.sources ?? []).filter((x) => /^(https?:\/\/|\/|~\/)/.test(x))
   const first = [
     fld('何のため', note(task.goal)),
-    fld('状況', task.status?.trim() ? mono(note(task.status.trim())) : ''),
+    // 状況は事実から決めた 1 行（R204）。待ちは誰の何を、いつからかを出す。
+    fld('状況', shown === 'ok' ? '' : mono(note(`${t.label}${t.hold?.since ? `（${fmtDate(t.hold.since)} から）` : ''}`))),
     conds ? fld('済の条件', conds) : '',
-    fld(task.waiting_on ? '待っているもの' : '次にやること', now ? mono(note(now)) : ''),
+    fld('次にやること', shown !== 'ok' && task.next?.trim() ? mono(note(task.next)) : ''),
     fld('依頼していること', asking.map(cardLine).join('')),
     fld('依頼の原文', origin)
   ].join('')

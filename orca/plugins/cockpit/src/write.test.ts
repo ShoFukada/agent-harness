@@ -6,11 +6,11 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { FAKE_LINT, FIXED_M1, OLD_M1, REAL_SENDS } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
-import { init, migrate, write } from '../window/write.ts'
+import { init, migrate, migrateToFacts, write } from '../window/write.ts'
 import type { DeferCheck } from './defer.ts'
 import { parseCockpit, STATUS_MAX, type Card, type Cockpit, type Request, type Task } from './model.ts'
 import { workspaceNameCheck } from './state.ts'
-import { applyChange, deferToCheck, draftsToLint, migrateV3 } from './write.ts'
+import { applyChange, deferToCheck, draftsToLint, migrateFacts, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
@@ -73,8 +73,12 @@ test('書く道具: 新しい依頼は発言・済の条件・種類が要り、
 
 test('書く道具: 結ばれていない発言をまたいで仕分けの位置（intake.through）を進めない', () => {
   const c = { ...aoba(), intake: { through: '', none: [] } }
-  assert.match(applyChange(c, { intake: { through: 'u2' } }, utter).errors[0]!, /発言 u1・u2 を依頼か none に結ぶ/)
-  assert.ok(applyChange(c, { intake: { through: 'u2', none: ['u2'] }, requests: [{ id: 'q1', at: '', title: 't', utterances: [{ id: 'u1', quote: '' }], kind: 'question', done_when: ['答える'] }] }, utter).next)
+  assert.match(applyChange(c, { intake: { through: 'u2' } }, utter).errors.join('\n'), /発言 u1・u2 を依頼か none に結ぶ/)
+  const bound = { through: 'u2', none: ['u2'] }
+  const q1 = { id: 'q1', at: '', title: 't', utterances: [{ id: 'u1', quote: '' }], kind: 'question' as const, done_when: ['答える'] }
+  // 見本の t3 は田中さんの返事を待っているので、またいだ発言は待ちと照らしたこと（met か no_wait）も要る（R204）。
+  assert.match(applyChange(c, { intake: bound, requests: [q1] }, utter).errors.join('\n'), /開いた待ち t3（田中さん: 利用上限の回答） と照らしていない発言・知らせがある: u1.*u2/)
+  assert.ok(applyChange(c, { intake: { ...bound, no_wait: ['u1', 'u2'] }, requests: [q1] }, utter).next)
   assert.match(applyChange(c, { intake: { through: 'u9' } }, utter).errors[0]!, /u9 が発言の記録に無い/)
 })
 
@@ -231,7 +235,7 @@ test('書く道具（Codex 2 回目）: 欄の順だけ違う閉じ方は中身�
   const reversed = Object.fromEntries(Object.entries({ ...d, state: 'done', resolved_by: 'owner', resolved_at: '2026-11-21T10:00:00+09:00' }).reverse()) as Card
   assert.deepEqual(applyChange(c, { cards: [reversed] }).errors, [])
   assert.match(applyChange(c, { tasks: [{ ...c.tasks[0]!, sources: null as never }] }).errors.join('\n'), /タスク t1: sources の形が違う/)
-  const withNull = { ...c, tasks: [{ ...c.tasks[0]!, waiting_on: null as never }, ...c.tasks.slice(1)] }
+  const withNull = { ...c, tasks: [{ ...c.tasks[0]!, goal: null as never }, ...c.tasks.slice(1)] }
   assert.deepEqual(applyChange(withNull, { tasks: [{ ...withNull.tasks[0]!, title: '題を直した' }] }).errors, [])
   c.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '一覧', utterances: [{ id: 'u1', quote: 'x' }], kind: 'work', done_when: ['A', 'B', 'C'] }]
   c.cards.push({ id: 'v9', rev: 1, kind: 'review', state: 'done', title: '見て', elements: [{ n: 1, text: 'x' }], element_map: [{ n: 1, request: 'r1#2' }] })
@@ -426,15 +430,17 @@ test('見張る仕事の watch と確認日の欄（追加 31）: 書ける欄�
   assert.match(applyChange(c, { streams: [stream({ form: 'delegate', watch })] }).errors.join('\n'), /仕事 v1: watch は見張る仕事（form: watch）だけに書く/)
   assert.match(applyChange(c, { streams: [stream({ watch: { ...watch, every: '30m' } })] }).errors.join('\n'), /仕事 v1: 書けない欄 watch\.every/)
   const task = { ...structuredClone(c.tasks[1]!) }
-  assert.deepEqual(applyChange(c, { tasks: [{ ...task, check_on: '2026-11-24' }] }).errors, [])
+  const date = (on: string) => ({ kind: 'date' as const, on, what: '回答が届いたかを確かめる' })
+  const dated = { tasks: [{ ...task, wait: date('2026-11-24') }] }
+  assert.deepEqual(applyChange(c, dated, [], { ops: [] }, {}, deferOf(dated)).errors, [])
   for (const bad of ['2026/11/24', '2026-02-30', '2026-13-01', '2026-11-00', '11-24'])
-    assert.match(applyChange(c, { tasks: [{ ...task, check_on: bad }] }).errors.join('\n'), /check_on の形が違う|check_on は YYYY-MM-DD/)
+    assert.match(applyChange(c, { tasks: [{ ...task, wait: date(bad) }] }).errors.join('\n'), /wait の形が違う/)
   // 読み込みは、見張る仕事でない watch と形の違う watch を外して名指しする。
   const problems: string[] = []
   const raw = {
     ...c,
     streams: [...c.streams, stream({ form: 'cowork', watch }), { ...stream({ watch: { automation: '' } }), id: 'v2' }, { ...stream({ watch: { ...watch, every: '30m' } }), id: 'v3' }],
-    tasks: [...c.tasks, { ...task, id: 'k13', check_on: '2026-13-01' }]
+    tasks: [...c.tasks, { ...task, id: 'k13', wait: date('2026-13-01') }]
   }
   // 月 13 の確認日で読み込みが止まらない（Codex 1）。読み書きで余分な欄の扱いをそろえる（Codex 任意）。
   const read = parseCockpit(JSON.stringify(raw), problems)
@@ -445,24 +451,22 @@ test('見張る仕事の watch と確認日の欄（追加 31）: 書ける欄�
   assert.match(problems.join('\n'), /仕事 v2 の watch の形が違う/)
 })
 
-test('状況の文（status、R188）: 仕事とタスクに書け、文字列で STATUS_MAX 字まで。超えたら切らずに断り、柔らかい言い回しも断る', () => {
+test('状況の文（status、R188・R204）: 仕事にだけ書け、文字列で STATUS_MAX 字まで。超えたら切らずに断り、柔らかい言い回しも断る。タスクの status は廃止', () => {
   const c = aoba()
   const s1 = structuredClone(c.streams[0]!)
   const t1 = structuredClone(c.tasks.find((x) => x.id === 't1')!)
-  const ok = applyChange(c, { streams: [{ ...s1, status: 'stg に出した。田中さんの返事を待っている' }], tasks: [{ ...t1, status: '並べ替えは済み。絞り込みを作っている' }] })
+  const ok = applyChange(c, { streams: [{ ...s1, status: 'stg に出した。田中さんの返事を待っている' }] })
   assert.deepEqual(ok.errors, [])
   assert.equal(ok.next!.streams[0]!.status, 'stg に出した。田中さんの返事を待っている')
-  assert.equal(ok.next!.tasks.find((x) => x.id === 't1')!.status, '並べ替えは済み。絞り込みを作っている')
+  assert.match(applyChange(c, { tasks: [{ ...t1, status: '並べ替えは済み' } as Task] }).errors.join('\n'), /タスク t1: status は廃止した（R204）/)
   const long = 'あ'.repeat(STATUS_MAX + 1)
   assert.match(applyChange(c, { streams: [{ ...s1, status: long }] }).errors.join('\n'), new RegExp(`仕事 ${s1.id}: status は ${STATUS_MAX} 字まで（今 ${STATUS_MAX + 1} 字）`))
-  assert.match(applyChange(c, { tasks: [{ ...t1, status: long }] }).errors.join('\n'), new RegExp(`タスク t1: status は ${STATUS_MAX} 字まで`))
-  assert.deepEqual(applyChange(c, { tasks: [{ ...t1, status: 'あ'.repeat(STATUS_MAX) }] }).errors, [])
+  assert.deepEqual(applyChange(c, { streams: [{ ...s1, status: 'あ'.repeat(STATUS_MAX) }] }).errors, [])
   // 字はサロゲートも 1 字に数える（😀 は 2 つの UTF-16 の単位）。
-  assert.deepEqual(applyChange(c, { tasks: [{ ...t1, status: '😀'.repeat(STATUS_MAX) }] }).errors, [])
-  assert.match(applyChange(c, { tasks: [{ ...t1, status: '😀'.repeat(STATUS_MAX + 1) }] }).errors.join('\n'), /status は/)
+  assert.deepEqual(applyChange(c, { streams: [{ ...s1, status: '😀'.repeat(STATUS_MAX) }] }).errors, [])
+  assert.match(applyChange(c, { streams: [{ ...s1, status: '😀'.repeat(STATUS_MAX + 1) }] }).errors.join('\n'), /status は/)
   assert.match(applyChange(c, { streams: [{ ...s1, status: 3 as unknown as string }] }).errors.join('\n'), /summary・status は文字列/)
-  assert.match(applyChange(c, { tasks: [{ ...t1, status: 3 as unknown as string }] }).errors.join('\n'), /status の形が違う/)
-  assert.match(applyChange(c, { tasks: [{ ...t1, status: '直しておきました' }] }).errors.join('\n'), /status「ておきました」/)
+  assert.match(applyChange(c, { streams: [{ ...s1, status: '直しておきました' }] }).errors.join('\n'), /仕事 s1: 柔らかい言い回し status「ておきました」/)
 })
 
 test('案件の名前（追加 43・R165）: cockpit-write で workspace.name だけを書け、形の合う名前は通し、外れた名前は state.ts の 1 文で断る。古い外れた名前は止めずに名指しする', () => {
@@ -537,47 +541,52 @@ const put = (c: Cockpit, rows: Partial<Task>[]) => {
   return applyChange(c, ch, [], { ops: [] }, {}, deferOf(ch)).errors
 }
 
-test('待ちの書き方（追加 48・R193）: idle は waiting_on が要り、指す先のタスクが run・stop のものだけ。日付だけの waiting_on と、待つタスクの文の先送りを断る', () => {
+test('待ちの書き方（追加 48・R193・R204）: 古い欄と open・ok 以外の state を断る。wait は種類ごとの欄が要り、日付だけの文・深田さん・カードの id を書けない。after は在るタスクだけ。待つタスクの文の先送りを断る', () => {
   const c = { ...aobaNamed(), main: { run_id: 'run_m' } }
-  c.tasks = [...c.tasks, { id: 't80', stream: 's1', phase: '作成', title: '先', state: 'run' }, { id: 't81', stream: 's1', phase: '作成', title: '済', state: 'ok' }]
-  // 1. idle で waiting_on が空
-  assert.match(put(c, [{ id: 't90', state: 'idle' }]).join(), /タスク t90: idle は空き枠が無いあいだの順番待ちだけ/)
-  assert.deepEqual(put(c, [{ id: 't90', state: 'idle', waiting_on: '空き枠（worker の上限）' }]), [])
-  // 2. 指す先が run・stop でない（済・無い）なら断り、run なら通す
-  assert.deepEqual(put(c, [{ id: 't90', state: 'idle', waiting_on: 't80 が同じファイルを触るので、済んでから' }]), [])
-  assert.match(put(c, [{ id: 't90', state: 'idle', waiting_on: 't81 のあと' }]).join(), /順番待ちの先 t81 が ok で動いていない/)
-  assert.match(put(c, [{ id: 't90', state: 'idle', waiting_on: 't99 のあと' }]).join(), /順番待ちの先 t99 が無く、動いていない/)
-  // 同じ変更で先を run にすれば通る
-  assert.deepEqual(put(c, [{ id: 't81', state: 'run' }, { id: 't90', state: 'idle', waiting_on: 't81 のあと' }]), [])
-  // 4. 日付・期間だけ（全角・単位の前の空白も。Codex 48 必須 3）
+  c.tasks = [...c.tasks, { id: 't80', stream: 's1', phase: '作成', title: '先', state: 'open' }, { id: 't81', stream: 's1', phase: '作成', title: '済', state: 'ok' }]
+  // 古い欄と古い state は書けない（読み込みだけが補う）。
+  assert.match(put(c, [{ id: 't90', state: 'idle' as never }]).join(), /タスク t90: state は open か ok/)
+  assert.match(put(c, [{ id: 't90', state: 'open', waiting_on: '田中さんの回答' } as Partial<Task>]).join(), /タスク t90: waiting_on は廃止した（R204）/)
+  // 種類ごとに要る欄（slot は why、person は who と what、date は on と what）。
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'slot' } as never }]).join(), /タスク t90: wait の形が違う/)
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'person', what: '回答' } as never }]).join(), /wait の形が違う/)
+  assert.deepEqual(put(c, [{ id: 't90', state: 'open', wait: { kind: 'slot', why: 'worker の上限' } }]), [])
+  // 深田さんを待つものと、カードを待つものはカードから決まる。
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'person', who: '深田さん', what: '承認' } }]).join(), /深田さんを待つものは書かない/)
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'event', what: 'd21 の答え' } }]).join(), /カード d21 を待ちに書かない/)
+  // 日付・期間だけ（全角・単位の前の空白も。Codex 48 必須 3）。日付で確かめるなら date に確かめることを書く。
   for (const w of ['12月', '12 月', '１２月', '12/4', '2026-12-04', '2026-12', '12月4日以降', '12月中旬', '来週', '来週末', '月末まで', '年明け'])
-    assert.match(put(c, [{ id: 't90', state: 'wait', waiting_on: w }]).join(), /waiting_on: 日付・期間だけ/, w)
-  for (const w of ['12/4 の定例で田中さんが決める', '12 月の定例で田中さんが決める'])
-    assert.deepEqual(put(c, [{ id: 't90', state: 'wait', waiting_on: w, check_on: '2026-12-04' }]), [], w)
-  // 3. 待つタスクの waiting_on・next・status の先送り。run のタスクは見ない
-  assert.match(put(c, [{ id: 't90', state: 'wait', waiting_on: '田中さんの回答', next: '落ち着いてから進める' }]).join(), /タスク t90\.next: 都合での先送り「落ち着いてから」/)
-  assert.deepEqual(put(c, [{ id: 't90', state: 'run', next: '落ち着いてから進める' }]), [])
+    assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'event', what: w } }]).join(), /日付・期間だけ/, w)
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'date', on: '2026-12-04', what: '12月' } }]).join(), /日付・期間だけ/)
+  assert.deepEqual(put(c, [{ id: 't90', state: 'open', wait: { kind: 'date', on: '2026-12-04', what: '定例で田中さんが決めたかを確かめる' } }]), [])
+  // 前提は在るタスクだけ。自分は指せない。
+  assert.deepEqual(put(c, [{ id: 't90', state: 'open', after: ['t80'] }]), [])
+  assert.match(put(c, [{ id: 't90', state: 'open', after: ['t99'] }]).join(), /t90\.after: タスク t99 が無い/)
+  assert.match(put(c, [{ id: 't90', state: 'open', after: ['t90'] }]).join(), /自分自身を前提にしない/)
+  // 解いた事実は記録に在るものだけ（発言 u-…・知らせ n-…・操作 op:…）。
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答', met: [{ by: 'u-9', at: '2026-11-21T09:00:00+09:00' }] } }]).join(), /u-9 が発言・知らせ・操作の記録に無い/)
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'event', what: '知らせ', need: 2, met: [{ by: 'x', at: '' }, { by: 'x', at: '' }] } }]).join(), /同じ証拠を 2 回書かない/)
+  // 済のタスクに待ちと新しい next は書かない（残りの確認は別のタスク）。
+  assert.match(put(c, [{ id: 't81', state: 'ok', wait: { kind: 'event', what: '届く' } }]).join(), /済のタスクに待ちは書かない/)
+  assert.match(put(c, [{ id: 't81', state: 'ok', next: '届いたかを見る' }]).join(), /済にするタスクに next を書かない/)
+  // 待つタスクの文の先送り。待ちの無いタスクは見ない。
+  assert.match(put(c, [{ id: 't90', state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答' }, next: '落ち着いてから進める' }]).join(), /タスク t90\.next: 都合での先送り「落ち着いてから」/)
+  assert.deepEqual(put(c, [{ id: 't90', state: 'open', next: '落ち着いてから進める' }]), [])
   // 検査の結果が無い・検査できないときは通さない（fail closed）
-  const ch = { tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '田中さんの回答' }] }
-  assert.match(applyChange(c, ch).errors.join(), /t90\.waiting_on: 都合での先送りかを確かめられない（先送りの検査をしていない）/)
-  assert.match(applyChange(c, ch, [], { ops: [] }, {}, { 't90.waiting_on': { error: 'CLI が無い' } }).errors.join(), /確かめられない（CLI が無い）/)
+  const ch = { tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'open' as const, wait: { kind: 'person' as const, who: '田中さん', what: '回答' } }] }
+  assert.match(applyChange(c, ch).errors.join(), /t90\.wait\.who: 都合での先送りかを確かめられない（先送りの検査をしていない）/)
+  assert.match(applyChange(c, ch, [], { ops: [] }, {}, { 't90.wait.who': {}, 't90.wait.what': { error: 'CLI が無い' } }).errors.join(), /確かめられない（CLI が無い）/)
 })
 
-test('待ちの書き方（追加 48）: 元の行にそのままある値は断らない。待ちに変えた行の古い文と、書き換えた文は断る', () => {
+test('待ちの書き方（追加 48）: 元から待っていた行の同じ文は断らない。待ちを新しく書いた行の持ち越した文と、書き換えた文は断る', () => {
   const c = { ...aobaNamed(), main: { run_id: 'run_m' } }
   c.tasks = [...c.tasks,
-    { id: 't91', stream: 's1', phase: '作成', title: '古い idle', state: 'idle' },
-    { id: 't92', stream: 's1', phase: '作成', title: '古い待ち', state: 'wait', waiting_on: '来週', next: '落ち着いてから進める' },
-    { id: 't93', stream: 's1', phase: '作成', title: '動いている', state: 'run', next: '落ち着いてから進める' }]
+    { id: 't92', stream: 's1', phase: '作成', title: '古い待ち', state: 'open', wait: { kind: 'event', what: '来週' }, next: '落ち着いてから進める' },
+    { id: 't93', stream: 's1', phase: '作成', title: '動いている', state: 'open', next: '落ち着いてから進める' }]
   const row = (id: string) => structuredClone(c.tasks.find((t) => t.id === id)!)
-  assert.deepEqual(put(c, [{ ...row('t91'), title: '題だけ直す' }]), [])
   assert.deepEqual(put(c, [{ ...row('t92'), title: '題だけ直す' }]), [])
   assert.match(put(c, [{ ...row('t92'), next: 'まだ落ち着いてから' }]).join(), /t92\.next: 都合での先送り/)
-  assert.match(put(c, [{ ...row('t93'), state: 'wait', waiting_on: '田中さんの回答' }]).join(), /t93\.next: 都合での先送り/)
-  // wait から idle に変えたら、持ち越した waiting_on も idle の決まりで見る（Codex 48 必須 1）。
-  c.tasks.push({ id: 't94', stream: 's1', phase: '作成', title: '待ち', state: 'wait', waiting_on: '' }, { id: 't95', stream: 's1', phase: '作成', title: '待ち', state: 'wait', waiting_on: 't99' })
-  assert.match(put(c, [{ ...row('t94'), state: 'idle' }]).join(), /タスク t94: idle は空き枠が無いあいだの順番待ちだけ/)
-  assert.match(put(c, [{ ...row('t95'), state: 'idle' }]).join(), /順番待ちの先 t99 が無く/)
+  assert.match(put(c, [{ ...row('t93'), wait: { kind: 'person', who: '田中さん', what: '回答' } }]).join(), /t93\.next: 都合での先送り/)
 })
 
 test('cockpit-write（追加 48）: 待つタスクの文を defer-guard.py（差し替えた偽のスクリプト）で検査し、当たり・起動できないときは書かない', async () => {
@@ -588,7 +597,7 @@ test('cockpit-write（追加 48）: 待つタスクの文を defer-guard.py（�
   // 本物と同じ入口（--text の文。当たれば標準出力に当たりを出して 1）。
   writeFileSync(guard, '#!/bin/sh\ncase "$2" in *落ち着いてから*) echo 落ち着いてから; exit 1 ;; *壊れた*) exit 3 ;; esac\nexit 0\n')
   chmodSync(guard, 0o755)
-  const task = (next: string) => ({ tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '田中さんの回答', next }] })
+  const task = (next: string) => ({ tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答' }, next }] })
   assert.match((await write(root, task('落ち着いてから進める'), false, {}, { bin: guard })).errors.join(), /t90\.next: 都合での先送り「落ち着いてから」/)
   assert.match((await write(root, task('壊れた'), false, {}, { bin: guard })).errors.join(), /t90\.next: 都合での先送りかを確かめられない（先送りの検査（.*）が 3 で終わった/)
   assert.match((await write(root, task('x'), false, {}, { bin: path.join(root, 'missing') })).errors.join(), /確かめられない（先送りの検査（.*）を起動できない/)
@@ -611,12 +620,114 @@ test('cockpit-write init（追加 48）: 初めて作る帳簿のタスクも、
   chmodSync(guard, 0o755)
   const base = freshLedger()
   const withTask = (t: Partial<Task>) => ({ ...base, tasks: [...base.tasks, { id: 't90', stream: 's1', phase: '作成', title: 'x', ...t }] })
-  assert.match((await init(root, withTask({ state: 'idle' }), true, { bin: guard })).join(), /タスク t90: idle は空き枠/)
-  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '田中さんの回答', next: '落ち着いてから進める' }), true, { bin: guard })).join(), /t90\.next: 都合での先送り/)
-  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '田中さんの回答' }), true, { bin: path.join(root, 'missing') })).join(), /確かめられない/)
-  assert.deepEqual(await init(root, withTask({ state: 'wait', waiting_on: '田中さんの回答' }), true, { bin: guard }), [])
+  assert.match((await init(root, withTask({ state: 'idle' as never }), true, { bin: guard })).join(), /タスク t90: state は open か ok/)
+  assert.match((await init(root, withTask({ state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答' }, next: '落ち着いてから進める' }), true, { bin: guard })).join(), /t90\.next: 都合での先送り/)
+  assert.match((await init(root, withTask({ state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答' } }), true, { bin: path.join(root, 'missing') })).join(), /確かめられない/)
+  assert.deepEqual(await init(root, withTask({ state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答' } }), true, { bin: guard }), [])
   // 同じ id の行が重なると、先の行が後の行の検査結果で通ってしまうので、重なりごと断る（Codex 48 の 2 巡目）。
-  const twice = withTask({ state: 'wait', waiting_on: '田中さんの回答', next: '落ち着いてから進める' })
-  twice.tasks.push({ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '田中さんの回答', next: '承認を確かめる' })
+  const twice = withTask({ state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答' }, next: '落ち着いてから進める' })
+  twice.tasks.push({ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'open', wait: { kind: 'person', who: '田中さん', what: '回答' }, next: '承認を確かめる' })
   assert.match((await init(root, twice, true, { bin: guard })).join(), /tasks に同じ id の行が重なっている: t90/)
+})
+
+/** 移し替えのあと（facts_since あり）で、仕事の状況の文を一度照合して控え（status_basis）を押した帳簿。s1 に開いたタスク t5 を足す。 */
+const factsLedger = (): Cockpit => {
+  const c = { ...aoba(), facts_since: '2026-11-21T00:00:00.000Z' }
+  c.tasks.push({ id: 't5', stream: 's1', phase: '実装', title: '一覧の件数表示', state: 'open', next: 't1 の並べ替えに合わせて件数を出す' })
+  const first = applyChange(c, { streams: c.streams.map((s) => ({ ...s, status: `${s.title}を進めている` })) })
+  assert.deepEqual(first.errors, [])
+  assert.ok(first.next!.streams.every((s) => s.status_basis?.length))
+  return first.next!
+}
+
+test('状況の文の古さ（R204・Astra 3 の重大 1）: 元の事実が変わった仕事は、同じ書き込みで status を別の文に書き直す。渡さない・同じ文は断り、書き直せば控えを押し直す', () => {
+  const c = factsLedger()
+  const t3 = structuredClone(c.tasks.find((t) => t.id === 't3')!)
+  const met = { ...t3, wait: { ...t3.wait!, met: [{ by: 'u1', at: '2026-11-21T09:00:00+09:00', note: '上限は 1 日 1 万件' }] } }
+  assert.match(applyChange(c, { tasks: [met] }).errors.join('\n'), /仕事 s3「.+」の状況の文が古くなった（.*t3.*）。この書き込みで仕事の行を渡し/)
+  const s3 = structuredClone(c.streams.find((s) => s.id === 's3')!)
+  assert.match(applyChange(c, { tasks: [met], streams: [s3] }).errors.join('\n'), /仕事 s3「.+」: status が前と同じ文/)
+  const ok = applyChange(c, { tasks: [met], streams: [{ ...s3, status: '田中さんから上限の回答が届いた。見積もりに入る' }] })
+  assert.deepEqual(ok.errors, [])
+  assert.notDeepEqual(ok.next!.streams.find((s) => s.id === 's3')!.status_basis, s3.status_basis)
+  assert.match(applyChange(c, { tasks: [met], streams: [{ ...s3, status: '回答が届いた', status_basis: [] }] }).errors.join('\n'), /status_basis は書く道具が書く/)
+  // 控えを省いた仕事の行（題だけの直し）でも控えは消えない（Astra 4 の重大 3）。
+  const renamed = applyChange(c, { streams: [{ id: 's3', title: '利用上限', form: s3.form, status: s3.status } as never] })
+  assert.deepEqual(renamed.errors, [])
+  assert.deepEqual(renamed.next!.streams.find((s) => s.id === 's3')!.status_basis, s3.status_basis)
+  // 事実の変わらない書き込み（題だけ）は仕事の行を求めない。
+  assert.deepEqual(applyChange(c, { tasks: [{ ...structuredClone(c.tasks.find((t) => t.id === 't2')!), title: '構成案の図' }] }).errors, [])
+})
+
+test('済にしたら同じ仕事を見直す（R204・Astra 3 の重大 2）: 新しく済になったタスクと同じ仕事の開いたタスクは、直すか unaffected に並べる', () => {
+  const c = factsLedger()
+  const t1 = { ...structuredClone(c.tasks.find((t) => t.id === 't1')!), state: 'ok' as const, next: '' }
+  const s1 = { ...structuredClone(c.streams.find((s) => s.id === 's1')!), status: '並べ替えと絞り込みは済んだ。件数表示に入る' }
+  assert.match(applyChange(c, { tasks: [t1], streams: [s1] }).errors.join('\n'), /t1「.+」が済になった。前提が変わったかを見直す: t5「一覧の件数表示」（次: t1 の並べ替えに合わせて件数を出す）/)
+  assert.deepEqual(applyChange(c, { tasks: [t1], streams: [s1], unaffected: ['t5'] }).errors, [])
+  const t5 = { ...structuredClone(c.tasks.find((t) => t.id === 't5')!), next: '並べ替えの結果の件数を出す' }
+  assert.deepEqual(applyChange(c, { tasks: [t1, t5], streams: [s1] }).errors, [])
+})
+
+test('migrate-facts（R204）: 古い欄を読み込みと同じ規則で読み替え、済のタスクの next を空にし、facts_since を書く。カードは触らず控えは押さない。--write は元を cockpit.v3.json に残す', async () => {
+  const raw = aoba() as unknown as Record<string, unknown> & Cockpit
+  raw.tasks = [
+    { id: 't1', stream: 's1', phase: '実装', title: '一覧', state: 'run', status: '作っている' },
+    { id: 't6', stream: 's3', phase: '設計', title: '返事', state: 'wait', waiting_on: '田中さん', check_on: '2026-11-25' },
+    { id: 't7', stream: 's3', phase: '設計', title: '日付', state: 'wait', check_on: '2026-11-25', next: '11/25 に届いたかを見る' },
+    { id: 't4', stream: 's4', phase: '要件', title: '議事録', state: 'ok', next: '次の定例で確かめる' },
+    { id: 't8', stream: 's4', phase: '要件', title: '済んだ', state: 'ok', next: '送る版を作る' }
+  ] as never
+  const r = migrateFacts(raw, { ops: [] }, [], NOW)
+  const t = (id: string) => r.next.tasks.find((x) => x.id === id)!
+  assert.equal(r.next.facts_since, new Date(NOW).toISOString())
+  assert.deepEqual([t('t1').state, (t('t1') as unknown as Record<string, unknown>).status], ['open', undefined])
+  assert.deepEqual(t('t6').wait, { kind: 'person', who: '田中さん', what: '返事' })
+  assert.deepEqual(t('t7').wait, { kind: 'date', on: '2026-11-25', what: '11/25 に届いたかを見る' })
+  assert.equal(t('t4').next, '')
+  assert.equal(t('t8').next, '送る版を作る', '残りの確認らしくない済のタスクの next は残す')
+  assert.deepEqual(r.next.cards, raw.cards)
+  assert.ok(r.next.streams.every((s) => !s.status_basis))
+  assert.ok(r.rows.find((x) => x.id === 't6')!.conflict)
+  assert.match(r.rows.find((x) => x.id === 't4')!.why, /next を空にする/)
+  assert.throws(() => migrateFacts(r.next, { ops: [] }, [], NOW), /すでに事実から決める形/)
+
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-facts-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  const file = path.join(root, '.orca', 'cockpit.json')
+  writeFileSync(file, JSON.stringify(raw))
+  await migrateToFacts(root, false, NOW)
+  assert.equal(readFileSync(file, 'utf8'), JSON.stringify(raw), '下見は書かない')
+  await migrateToFacts(root, true, NOW)
+  assert.equal(readFileSync(path.join(root, '.orca', 'cockpit.v3.json'), 'utf8'), JSON.stringify(raw))
+  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Cockpit).facts_since, new Date(NOW).toISOString())
+  // 戻して直した帳簿をもう一度移すと、前の控えは残し、時刻つきの別の控えを作る（Astra 4 の中 3）。
+  const edited = JSON.stringify({ ...raw, workspace: { ...raw.workspace, name: '直した' } })
+  writeFileSync(file, edited)
+  const again = await migrateToFacts(root, true, NOW + 1000)
+  const other = again.summary.find((x) => x.startsWith('元の控え'))!.match(/cockpit\.v3-\d{8}T\d{6}Z\.json/)![0]
+  assert.equal(readFileSync(path.join(root, '.orca', other), 'utf8'), edited)
+  assert.equal(readFileSync(path.join(root, '.orca', 'cockpit.v3.json'), 'utf8'), JSON.stringify(raw))
+  rmSync(root, { recursive: true })
+})
+
+test('cockpit-write init（R204・Astra 4 の重大 4）: 初めて作る帳簿は facts_since と状況の文の控えを押す', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-init-facts-'))
+  const guard = path.join(root, 'defer-guard')
+  writeFileSync(guard, '#!/bin/sh\nexit 0\n')
+  chmodSync(guard, 0o755)
+  assert.deepEqual(await init(root, freshLedger(), false, { bin: guard }), [])
+  const saved = JSON.parse(readFileSync(path.join(root, '.orca', 'cockpit.json'), 'utf8')) as Cockpit
+  assert.ok(saved.facts_since)
+  assert.ok(saved.streams.every((s) => s.status_basis?.length))
+  rmSync(root, { recursive: true })
+})
+
+test('仕分けと待ち（Astra 4 の中 2）: 確認の承認で済になったタスクの待ちには、仕分けを求めない', () => {
+  const c = { ...aoba(), intake: { through: '', none: [] } }
+  c.cards.push({ id: 'v9', rev: 1, kind: 'review', state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T09:30:00+09:00', title: '見て', tasks: ['t3'] })
+  const log = { ops: [{ op_id: 9, at: '2026-11-21T00:30:00.000Z', item_id: 'v9', item_rev: 1, type: 'accept' as const }] }
+  const ch = { intake: { through: 'u2', none: ['u1', 'u2'] } }
+  assert.match(applyChange(c, ch, utter).errors.join('\n'), /開いた待ち t3/)
+  assert.deepEqual(applyChange(c, ch, utter, log).errors, [])
 })
