@@ -957,6 +957,16 @@ def lead_run(handle):
     return None
 
 
+HANDOFF_SUFFIX = "（席の切り替えで引き継ぎ）"
+
+
+def handoff_title(title):
+    """出し直すたびに印が重ならないよう、付いている印を外してから 1 つだけ付ける。"""
+    while title.endswith(HANDOFF_SUFFIX):
+        title = title[:-len(HANDOFF_SUFFIX)]
+    return title + HANDOFF_SUFFIX
+
+
 def handoff_brief(x, now):
     """止まった担当の出し直しの brief と、取れなかった材料の一覧。人の要約に頼らず、Orca と手元の記録から機械的に集める。"""
     d = x["shown"].get("dispatch") or {}
@@ -1155,7 +1165,7 @@ def handoff_chats(mine, dry_run, now):
         wt = ((x["shown"].get("worker") or {}).get("worktreeId") or "").partition("::")[2]
         model = ((((x["shown"].get("worker") or {}).get("startOptions") or {}).get("launch") or {}).get("requested") or {}).get("model")
         start = ["orchestration", "worker-start", "--spec-file", path, "--agent", "claude", "--worktree", "path:" + wt, "--keep-open",
-                 "--task-title", "%s（席の切り替えで引き継ぎ）" % title] + (["--model", model] if model else [])
+                 "--task-title", handoff_title(title)] + (["--model", model] if model else [])
         if dry_run:
             done.append("%s（%s）→ 新しいチャットに出し直す（brief: %s%s）: orca %s" % (
                 title, old, path, "。取れなかった材料: " + "、".join(missing) if missing else "", " ".join(start)))

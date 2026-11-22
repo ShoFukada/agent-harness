@@ -1538,5 +1538,16 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertIn("Orca に無い席", self.notes()[0])
 
 
+class HandoffTitleTest(unittest.TestCase):
+    def test_suffix_is_not_repeated(self):
+        import importlib.machinery, importlib.util
+        loader = importlib.machinery.SourceFileLoader("account_failover", SCRIPT)
+        mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("account_failover", loader))
+        loader.exec_module(mod)
+        once = "任せる｜窓の版3（席の切り替えで引き継ぎ）"
+        self.assertEqual(mod.handoff_title("任せる｜窓の版3"), once)
+        self.assertEqual(mod.handoff_title(once + "（席の切り替えで引き継ぎ）（席の切り替えで引き継ぎ）"), once)
+
+
 if __name__ == "__main__":
     unittest.main()
