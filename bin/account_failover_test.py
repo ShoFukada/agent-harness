@@ -883,6 +883,35 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertEqual(self.sends(), [])
         self.assertNotIn("起動し直した先が分からない端末", self.notes()[0])
 
+    def test_switch_does_not_close_a_claude_a_person_opened_in_another_pane(self):
+        # 切り替えを待つ間に、人が同じ worktree の別の枠で自分の claude を開いた（Orca の開き直しの行が無い）。
+        self.lost_with_coordinator_racing(True, True)
+        self.put("heads.json", {"t1": {"tail": ["claude --model opus --settings " + WORKER_SETTINGS]},
+                                "n1": {"tail": ["", "'%s'xx 崩れた行" % S2]}})
+        self.run_failover()
+        self.assertFalse(any(c.startswith("terminal close") for c in self.calls()))
+        self.assertEqual(self.sends(), [])
+
+    def test_switch_does_not_relaunch_a_conversation_started_after_orcas_restart(self):
+        # Orca の開き直しのあと、人が同じ端末で claude を終えて別の会話を始めた（起動の行は拾えない）。
+        self.finished_worker()
+        self.put("heads.json", {"t1": {"tail": ["❯"]}, "t1-new": {"tail": self.garbled_head(S1)["tail"] + [
+            "Resume this session with:", "claude --resume " + S1, "clenv '…"]}})
+        self.seat_session(B, S2, "/w/t1")
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+
+    def test_switch_closes_orcas_restart_when_the_same_task_was_dispatched_again(self):
+        # coordinator が失った Task そのものを、立て直した w1 に出し直した。
+        self.lost_with_coordinator_racing(True, False)
+        with open(os.path.join(self.fake, "workers-after.json")) as fh:
+            rows = json.load(fh)
+        self.put("workers-after.json", [dict(w, taskId="task_1") if w["dispatchId"] == "ctx_8" else w for w in rows])
+        self.run_failover()
+        self.assertIn("terminal close --terminal t1-new", self.calls())
+        self.assertIn("結び直さない worker task_1: 結び直し済み（ctx_8）。Orca が起こし直した t1-new は worker の設定なしで動くので閉じた",
+                      self.notes()[0])
+
     def test_switch_relaunches_a_lost_worker_reopened_in_another_pane(self):
         # coordinator が立て直していなければ、別の枠の起こし直しを worker の設定で起こし直してから結び直す。
         self.lost_with_coordinator_racing(False, True)
