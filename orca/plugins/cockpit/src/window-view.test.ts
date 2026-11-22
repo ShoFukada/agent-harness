@@ -820,7 +820,7 @@ test('見張る仕事の表（R152）: 全体のタブに Bot・受け持つ案�
   assert.match(text(page(aoba((v) => void v.cockpit!.streams.push(watch('v1', 'auto-1'))), { tab: 'whole' })), /Orca から読めていない/)
 })
 
-test('見張る仕事の表: ハーネス（nix-darwin）の窓は全案件の見張る仕事を集め、ほかの案件の窓はその案件の分だけ', () => {
+test('見張る仕事の表（R190）: どの案件の窓も、その案件の帳簿の見張る仕事だけを出す（ハーネス（nix-darwin）の窓にもほかの案件の分を集めない）。受け持つ案件の名は出さない', () => {
   const w = sample(NOW)
   const view = (root: string, i: number, sid: string): CockpitView => {
     const c = parseCockpit(JSON.stringify(w[i]!.cockpit))
@@ -829,8 +829,11 @@ test('見張る仕事の表: ハーネス（nix-darwin）の窓は全案件の�
   }
   const m: Model = { boards: boardsOf([view('/ws/aoba', 0, 'va'), view('/Users/x/.config/nix-darwin', 2, 'vh')], NOW), focused: '/ws/aoba', unseen: [], errors: [] }
   const shown = (filter: string) => text(renderWindow(m, { ...newUi(), tab: 'whole', filter }, NOW, (s) => s))
-  assert.match(shown('/Users/x/.config/nix-darwin'), /見張る仕事 2 件 Bot va 青葉物流 配車アプリ 対象 対象 .*Bot vh /)
-  assert.match(shown('/ws/aoba'), /見張る仕事 1 件/)
+  const harness = shown('/Users/x/.config/nix-darwin')
+  assert.match(harness, /見張る仕事 1 件 Bot vh /)
+  assert.doesNotMatch(harness, /Bot va/)
+  assert.doesNotMatch(harness, /青葉物流 配車アプリ 対象/)
+  assert.match(shown('/ws/aoba'), /見張る仕事 1 件 Bot va /)
   assert.doesNotMatch(shown('/ws/aoba'), /Bot vh/)
 })
 

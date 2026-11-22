@@ -726,15 +726,12 @@ function watchRows(boards: Board[]): WatchRow[] {
       ? [{ b, s: { ...s, watch: s.watch }, a: b.v.automations?.find((x) => x.id === s.watch!.automation), key: `${b.root}#${s.id}` }]
       : []))
 }
-/** ハーネスの操縦席（R152: nix-darwin の案件一覧は各操縦席の見張る仕事を集めた表示）。 */
-const isHarness = (b: Board) => /\/nix-darwin\/?$/.test(b.root)
-
-function watchTable(rows: WatchRow[], ui: Ui, now: number, all: boolean): string {
+function watchTable(rows: WatchRow[], ui: Ui, now: number): string {
   if (!rows.length) return ''
-  // 右に詳細の列がある幅では 6 列の表が収まらないので、線で区切った 3 行の行にする（1 行目 Bot と頻度、2 行目 受け持つ案件・対象・送り先、3 行目 前回の結果）。
+  // 右に詳細の列がある幅では 6 列の表が収まらないので、線で区切った 3 行の行にする（1 行目 Bot と頻度、2 行目 対象・送り先、3 行目 前回の結果）。
   const row = (r: WatchRow) => `<li class="wrow${ui.watch === r.key ? ' cur' : ''}" data-watch="${esc(r.key)}">
       <span class="wl1"><button type="button" class="wbot" data-watch="${esc(r.key)}"${ui.watch === r.key ? ' aria-current="true"' : ''}>${esc(r.a?.name ?? r.s.title)}</button><span class="mut">${r.a?.rrule ? esc(rruleText(r.a.rrule)) : ''}${r.a?.enabled === false ? '（止めている）' : ''}</span></span>
-      <span class="wl2 mut sp">${sp([all && esc(r.b.v.cockpit!.workspace.name), `対象 ${esc(r.s.watch.targets.join('・'))}`, `送り先 ${esc(r.s.watch.to)}`])}</span>
+      <span class="wl2 mut sp">${sp([`対象 ${esc(r.s.watch.targets.join('・'))}`, `送り先 ${esc(r.s.watch.to)}`])}</span>
       <span class="wl3${!r.a?.name || r.a.last?.status === 'failed' ? ' hotc' : ''}">${r.a?.last ? '前回の結果 ' : ''}${esc(lastRunText(r.a, now))}</span></li>`
   return `<div class="subh">見張る仕事 ${rows.length} 件</div><ul class="wrows" role="list">${rows.map(row).join('')}</ul>`
 }
@@ -757,7 +754,7 @@ function watchDetail(r: WatchRow, now: number): string {
     ${a?.last?.chat ? `<div class="dbtn"><div class="acts"><button class="btn" type="button" data-term="${esc(a.last.chat)}">この実行のチャットを開く</button></div></div>` : ''}</div>`
 }
 
-function viewWhole(b: Board, ui: Ui, now: number, svg: Svg, boards: Board[] = [b]): string {
+function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const c = b.v.cockpit!
   const todo = new Map<string, VRow[]>()
   for (const [, xs] of todoGroups(b)) for (const r of xs) for (const t of r.card.tasks ?? []) todo.set(t, [...(todo.get(t) ?? []), r])
@@ -774,9 +771,10 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg, boards: Board[] = [b
     return `<section class="fsec"><h3>${formChip(f)}<span class="mut">${esc(FORM_DESC[f])}</span>${xs.length ? `<span class="mut">${xs.length} 件</span>` : ''}</h3>${xs.map((j) => streamBox(b, j, ui, todo, now)).join('')}${extra}</section>`
   }
   // 受け持つ案件の列は、全案件を集めるハーネスの窓だけに出す（案件の窓では全行が同じ案件になる）。
-  const watches = watchRows(isHarness(b) ? boards : [b])
+  // 見張る仕事は、その Bot が結び付いた案件の窓にだけ出す（R190。ハーネスの窓にも全案件の分を集めない）。
+  const watches = watchRows([b])
   // 中身の無い欄は出さない（初見 12）。
-  const watchExtra = `<div class="watch">${watchTable(watches, ui, now, isHarness(b))}${routes.length ? `<div class="subh">見張っている経路</div><ul class="rows" role="list">${routes.join('')}</ul>` : ''}
+  const watchExtra = `<div class="watch">${watchTable(watches, ui, now)}${routes.length ? `<div class="subh">見張っている経路</div><ul class="rows" role="list">${routes.join('')}</ul>` : ''}
     ${inbox.length ? `<div class="subh">届いた連絡 ${inbox.length} 件</div><div class="strips">${inbox.map((r) => stripHtml(r, ui, now, svg, false)).join('')}</div>` : ''}</div>`
   const noForm = live.filter((j) => !form(j))
   const loose = looseTasks(b)
@@ -827,7 +825,7 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
     `<button type="button" role="tab" data-tab="${k}" aria-selected="${tab === k}">${label}${n === undefined ? '' : `<span class="n${n && !quiet ? '' : ' z'}">${n}</span>`}</button>`
   const stuck = b.d.counts.stuck
   const total = COUNTED.reduce((n, k) => n + b.d.counts[k], 0)
-  const body = tab === 'todo' ? viewTodo(b, ui, now, svg) : tab === 'whole' ? viewWhole(b, ui, now, svg, m.boards) : viewDone(b, ui, now, svg)
+  const body = tab === 'todo' ? viewTodo(b, ui, now, svg) : tab === 'whole' ? viewWhole(b, ui, now, svg) : viewDone(b, ui, now, svg)
   const open = ui.sideOpen !== false
   const unsent = m.boards.filter((x) => x.v.signal?.state === 'failed').map((x) =>
     `<div>${esc(x.v.cockpit?.workspace.name ?? '')} のメインに、押した操作が届いていません（${esc(x.v.signal!.reason ?? '')}）。<button class="btn quiet" type="button" data-act="notify" data-root="${esc(x.root)}">もう一度送る</button></div>`).join('')
