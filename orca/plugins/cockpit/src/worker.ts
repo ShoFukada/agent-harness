@@ -9,7 +9,7 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import { clipDraft, isDraftFormat } from './clip.ts'
 import { chatMain, COUNTED, overlay } from './model.ts'
 import type { AgentRow, CockpitView, NotifyResult, TalkResult } from './protocol.ts'
-import { agentTitle, countsText, derive, isHot, ownerOf } from './state.ts'
+import { countsText, derive, isHot, ownerName, ownerOf } from './state.ts'
 import { appendOp, emptyFiles, loadFiles, notifyMain, readNotified, signalPlan, splitLine, writeAtomic, writeNotified, type Files } from './store.ts'
 
 export { SIGNAL } from './store.ts'
@@ -262,7 +262,7 @@ export default function activate(api: OrcaWorkerApi): void {
         : { opened: false, how: `${name}の端末`, reason: `${o.how === 'main' ? '窓口' : `担当「${name}」`}の端末を Orca が前に出せませんでした。窓の「担当と話す」か、Orca のサイドバーから開いてください` }
     } else {
       // Orca にはチャットを前に出す手段が無い。パネルは前面のワークスペースにいるので、チャットはそのタブにある。
-      res = { opened: false, how: 'このワークスペース', tab: o.how === 'main' ? '窓口' : agentTitle(o.title, '担当') }
+      res = { opened: false, how: 'このワークスペース', tab: o.how === 'main' ? '窓口' : o.owner ? ownerName(st.cockpit, o.owner) : o.title }
     }
     // 開けないのに話し中の印を付けると、誰とも話していないのに話し中に見える。
     const now = overlay(st.cockpit, st.log).find((v) => v.card.id === card.id)

@@ -1,6 +1,7 @@
 // 見本のデータ（架空の案件・人・会社）。8 種類のカード・担当・顧客待ち・読めていない経路・Orca で止まった worker をそろえる。
 // 期限は now からの相対で作り、いつ撮っても「期限切れ・今日・明日・今週・期限なし」がそろうようにする。テストと demo.ts が使う。
 import type { Cockpit, UserLog } from '../src/model.ts'
+import { REVIEW_SAMPLE } from './drafts.ts'
 
 const H = 3_600_000
 const iso = (t: number) => new Date(t).toISOString()
@@ -191,6 +192,13 @@ export function sample(now = Date.now()): SampleWs[] {
         request: '担当と worker の寿命と、窓・チャット・右の欄の役割を 1 枚の図にしてほしい',
         look_for: ['担当と worker の寿命の分け方が図で読める', '窓・チャット・右の欄の役割が 1 枚に収まる'],
         evidence: ['1440 幅と 390 幅で撮って、はみ出しが無いことを確かめた'], href: 'https://claude.ai/code/artifact/example'
+      },
+      {
+        id: 'r9', rev: 1, kind: 'review', state: 'open', at: iso(now - 6 * H), due: iso(today(now, 17) + 3 * 24 * H), stream: 'h2', title: '送る前のコピーの書式（Slack・Teams・メール）',
+        purpose: '窓からコピーした本文が、貼った先で箇条書き・太字・リンクのまま読めるか確かめる',
+        request: '窓からコピーして、Slack・Teams・メールに貼って確かめられるようにしてほしい', fallback: '期限までに返事が無ければ、今の変換のまま使う',
+        look_for: ['Slack に貼って、箇条書き・太字・リンクが崩れない', 'Teams に貼って、改行と箇条書きがそのまま', 'メールに貼って、素の文で読める'],
+        evidence: ['3 つの書式でクリップボードに入る中身を試験で固定した'], draft: REVIEW_SAMPLE
       },
       {
         id: 'd30', rev: 1, kind: 'decide', state: 'open', at: iso(now - 7 * H), due: iso(now + 4 * 24 * H), stream: 'h1', title: '週次の振り返りを金曜 17:00 に固定するか',

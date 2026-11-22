@@ -6,7 +6,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
-import { DRAFTS } from '../fixtures/drafts.ts'
+import { DRAFTS, REVIEW_SAMPLE } from '../fixtures/drafts.ts'
+import { copyTarget } from './controller.ts'
 import { clipDraft } from './clip.ts'
 import { draftFormat, type DraftFormat } from './model.ts'
 
@@ -91,6 +92,20 @@ test('コピーの書式: 操縦席から入れた中身は、同じ本文を cl
     const theirs = await direct(f, DRAFTS[f].text)
     assert.deepEqual(ours.got, theirs.got, f)
   }
+})
+
+test('コピーの書式: 見てのカードの見本（追加 25）は、押した 3 つのボタンそれぞれの書式で同じ本文を入れる。メールは clip-draft が本文をそのまま素の文字列で入れる', { skip }, async () => {
+  const got: Record<string, Got> = {}
+  for (const f of ['slack', 'teams', 'mail'] as const) {
+    const d = copyTarget(REVIEW_SAMPLE, f)!
+    assert.equal(d.href, undefined, 'スレッドは開かない')
+    got[f] = (await capture((env) => clipDraft(d.text, draftFormat(d)!, { bin: BIN, pasteboard: PB, env }))).got
+  }
+  assert.deepEqual(got, {
+    slack: { name: PB, text: REVIEW_SAMPLE.text, html: null },
+    teams: { name: PB, text: REVIEW_SAMPLE.text, html: CHAT_HTML },
+    mail: { name: PB, text: REVIEW_SAMPLE.text, html: null }
+  })
 })
 
 test('コピーの書式: 期限が切れたら clip-draft が起こした swift ごと止め、あとからクリップボードに書かせない', { skip }, async () => {

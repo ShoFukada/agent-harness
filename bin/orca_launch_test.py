@@ -88,11 +88,22 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(start[start.index("--terminal") + 1], "term_x")
         self.assertEqual(start[start.index("--spec-file") + 1], self.spec)
         self.assertIn("--keep-open", start)
-        self.assertEqual(create[create.index("--title") + 1], "t（worker）")
+        self.assertEqual(create[create.index("--title") + 1], "作業｜t")
         (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
-        self.assertEqual(setw[setw.index("--display-name") + 1], "t")
+        self.assertEqual(setw[setw.index("--display-name") + 1], "作業｜t")
+        self.assertNotIn("サイドバーで切れる", r.stderr)
         self.assertEqual(setw[setw.index("--workspace-status") + 1], "in-progress")
         self.assertEqual(json.loads(r.stdout)["dispatchId"], "ctx_1")
+
+    def test_long_name_is_kept_and_warned(self):
+        # 頭の「作業｜」も含めて 20 字を超えたら、切らずに出して標準エラーに書く（R146）。
+        title = "あ" * 18
+        r = subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--title", title, "--spec-file", self.spec],
+                           capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
+        self.assertEqual(create[create.index("--title") + 1], "作業｜" + title)
+        self.assertIn("名前「作業｜%s」が 21 字で、サイドバーで切れる（20 字まで）" % title, r.stderr)
 
     def test_follows_the_seat_orca_has_selected(self):
         # account-failover が席を切り替えたあと、元の席に残った担当（CLAUDE_CONFIG_DIR は古い席）から立てても、新しい席で起動する。
@@ -174,11 +185,11 @@ class LaunchTest(unittest.TestCase):
         r = self.run_cockpit(root)
         self.assertEqual(r.returncode, 0, r.stderr)
         (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
-        self.assertEqual(setw[setw.index("--display-name") + 1], "窓の版 3")
+        self.assertEqual(setw[setw.index("--display-name") + 1], "作業｜窓の版 3")
         self.assertEqual(setw[setw.index("--comment") + 1], "操縦席の窓 › t65｜worker が作業中")
         self.assertEqual(setw[setw.index("--parent-worktree") + 1], "id:repo::/lead")
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
-        self.assertEqual(create[create.index("--title") + 1], "窓の版 3（worker）")
+        self.assertEqual(create[create.index("--title") + 1], "作業｜窓の版 3")
         with open(self.log + ".spec") as fh:
             spec = fh.read()
         self.assertTrue(spec.startswith("brief"))

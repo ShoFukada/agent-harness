@@ -72,7 +72,11 @@ export type DispatchFact = {
 }
 
 /** 担当（Orca のチャットか端末のエージェント）の今。orca agent list から取る。 */
-export type OwnerLive = { session: string; kind: 'chat' | 'terminal'; state: AgentRow['state']; title?: string; worktree?: string; updatedAt?: number }
+export type OwnerLive = {
+  session: string; kind: 'chat' | 'terminal'; state: AgentRow['state']; title?: string; worktree?: string; updatedAt?: number
+  /** 一緒に作る仕事の担当がターンを終えたときの、最後の返事の全文（orca agent show の lastAssistantMessage）。読めなければ無い。 */
+  last?: string
+}
 
 /** 1 つの案件の操縦席。 */
 export type CockpitView = {

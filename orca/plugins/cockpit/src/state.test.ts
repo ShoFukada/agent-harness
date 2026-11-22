@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { parseCockpit, requestCards, stageOf, type Card, type Cockpit } from './model.ts'
 import type { AgentRow, QuestionFact } from './protocol.ts'
-import { bucketOf, byUrgency, derive, lookupTerms, matchRulings, NAME_MAX, ORCA_STATUS, report, routeProblem, unreflectedReturns, type Row } from './state.ts'
+import { bucketOf, byUrgency, coworkSessions, derive, lastParagraph, lookupTerms, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
 import { chatHandles, liveChats } from '../window/orca-state.ts'
 import { orcaFacts } from '../window/state.ts'
@@ -101,7 +101,7 @@ test('hook が読む全体の 1 行と検査: 催促の日を過ぎた顧客待�
   const h = ws(2)
   for (const x of h.cockpit.cards) if (x.id !== 'r8') delete x.stream
   const hr = report(h.cockpit, h.log, [], undefined, 'skipped', NOW)
-  assert.deepEqual(hr.checks.orphan_cards, ['p9', 'd30', 'd28'])
+  assert.deepEqual(hr.checks.orphan_cards, ['p9', 'r9', 'd30', 'd28'])
   assert.equal(hr.checks.push_check, false)
 })
 
@@ -177,9 +177,9 @@ test('必須の欄が欠けたカードは要対応に出さず、出てから 3
   delete h.cockpit.cards.find((x) => x.id === 'p9')!.at
   const d = derive(h.cockpit, h.log, [], '/h', undefined, NOW, { firstSeen: { p9: at(45) } })
   assert.deepEqual(d.queue.map((r) => r.card.id), [])
-  assert.deepEqual(d.incomplete.map((g) => g.id).sort(), ['d28', 'd30', 'p9', 'r8'])
-  assert.deepEqual(d.gaps.map((g) => g.id).sort(), ['d30', 'p9', 'r8'])
-  assert.ok(d.gaps.find((g) => g.id === 'r8')!.missing.includes('確かめた結果'))
+  assert.deepEqual(d.incomplete.map((g) => g.id).sort(), ['d28', 'd30', 'p9', 'r8', 'r9'])
+  assert.deepEqual(d.gaps.map((g) => g.id).sort(), ['d30', 'p9', 'r8', 'r9'])
+  assert.ok(d.gaps.find((g) => g.id === 'r8')!.missing.includes('確認した結果'))
 })
 
 test('依頼の帳簿: 移し替えの前は全部古い行。古い行は書かれた state、新しい行は済の条件と証拠から 受付・進行中・確認待ち・済 を決める', () => {
@@ -246,7 +246,7 @@ test('タスクの今の Dispatch は Run の続きをたどった先（current�
   assert.deepEqual(r.checks.stale_tasks, ['t1'])
   assert.deepEqual(r.checks.loose_tasks, ['t8'])
   assert.deepEqual(r.checks.unknown_phase, ['t8（受入）'])
-  assert.deepEqual(r.checks.long_names, [`t8（${NAME_MAX + 1} 字）`])
+  assert.deepEqual(r.checks.long_names, [`t8（${NAME_MAX + 4} 字）`], 'worker の名前は「作業｜」も数える（R146）')
   assert.deepEqual(r.checks.no_form.sort(), ['s2', 's3', 's4'])
   // 続きを引けていない（current に無い）run_id だけの記録は、Orca に見つからない扱い。
   assert.equal(report(c, w.log, [], { workers: [], dispatches: {} }, 'ok', NOW).tasks.find((t) => t.id === 't1')!.from, 'missing')
@@ -512,7 +512,7 @@ test('工程は 5 段に寄せる。実データ（nix-darwin の帳簿、11/21 
   // 帳簿の tasks[].phase に出てくる名前の写し（帳簿そのものは書き換えない）。
   const real = ['実装', '確認', '設計', '作る', '調査', '見直し', '調べる', '決める', '確かめ', '要件', '実地確認', 'push', '2 周目（Neon）', '作成', 'switch 待ち', '見てもらう']
   assert.deepEqual(real.filter((p) => !stageOf(p)), [])
-  assert.deepEqual(real.map((p) => stageOf(p)), ['作る', '確かめる', '決める', '作る', '調べる', '確かめる', '調べる', '決める', '確かめる', '決める', '確かめる', '入れる', '作る', '作る', '入れる', '確かめる'])
+  assert.deepEqual(real.map((p) => stageOf(p)), ['作成', '確認', '決定', '作成', '調査', '確認', '調査', '決定', '確認', '決定', '確認', '反映', '作成', '作成', '反映', '確認'])
   const w = ws(0)
   w.cockpit.tasks.push({ id: 't9', stream: 's1', phase: '受入', title: 'あ', state: 'idle' }, ...real.map((p, i) => ({ id: `r${i}`, stream: 's1', phase: p, title: 'あ', state: 'idle' as const })))
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.unknown_phase, ['t9（受入）'])
@@ -534,4 +534,101 @@ test('答えの無い question は、窓口宛ては 5 分・担当宛ては 30 
   assert.deepEqual(asks([q({})], carded), [])
   const log = { ops: [{ op_id: 1, at: new Date(NOW).toISOString(), item_id: '#ask:m1', item_rev: NOW - 6 * 60_000, type: 'dismiss' as const }] }
   assert.deepEqual(asks([q({})], w.cockpit, log), [])
+})
+
+test('一緒に作る仕事は、カードの有無に関わらず要対応に「共同作業中」の 1 行で出す。担当がターンを終えたら同じ行を返事待ちにし、返事のあと作業に戻れば返事待ちを外す（R128・R145）', () => {
+  const w = ws(0)
+  w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  w.cockpit.cards = w.cockpit.cards.filter((x) => x.stream !== 's2')
+  const last = '下書きができました。\n\n| 番号 | 見出し |\n\n次の 3 点を教えてください。**表紙の題**はこのままでよいですか？'
+  const facts = (state: AgentRow['state'], more: Partial<{ last: string; workers: AgentRow[] }> = {}) =>
+    ({ workers: more.workers ?? [], owners: [{ session: 'sess-aws', kind: 'chat' as const, state, worktree: '/ws/aoba-aws', updatedAt: NOW - 60_000, ...(more.last && { last: more.last }) }] })
+  const row = (d: ReturnType<typeof derive>) => d.queue.filter((r) => r.card.id.startsWith('#cowork:'))
+  const job = (d: ReturnType<typeof derive>) => d.jobs.find((j) => j.id === 's2')!
+
+  const working = derive(w.cockpit, w.log, [], '/a', facts('working'), NOW)
+  assert.deepEqual(row(working).map((r) => [r.card.id, r.card.title, r.agent?.ask, r.agent?.chat, r.agent?.worktree]), [['#cowork:s2', '共同作業中（担当は作業中）', undefined, true, '/ws/aoba-aws']])
+  assert.equal(working.total, derive(w.cockpit, w.log, [], '/a', undefined, NOW).total, '件数（判断・送信前・確認・許可・停止）には数えない')
+
+  const asked = derive(w.cockpit, w.log, [], '/a', facts('done', { last }), NOW)
+  const r = row(asked)[0]!
+  assert.equal(r.card.title, '次の 3 点を教えてください。表紙の題はこのままでよいですか？', '題は返事の最後の段落')
+  assert.deepEqual([r.agent?.ask?.kind, r.card.last?.text, r.card.next], ['question', '下書きができました。\n\n| 番号 | 見出し |', undefined], '最後のやり取りには題にした段落より前だけを出す')
+  assert.deepEqual([job(asked).state, job(asked).label], ['mine', '返事待ち（あなた）'])
+  assert.equal(report(w.cockpit, w.log, [], facts('done', { last }), 'ok', NOW).jobs.find((j) => j.id === 's2')!.orca.status, ORCA_STATUS.mine)
+  // 本文を読めなかったときは、担当が待っていることだけを題にし、チャットで確かめるよう書く。
+  const unread = row(derive(w.cockpit, w.log, [], '/a', facts('done'), NOW))[0]!
+  assert.deepEqual([unread.card.title, unread.card.next], ['担当「AWS 構成案」が返事を待っている', 'チャットから返事の本文を読めませんでした。開いて確認してください'])
+
+  // 返事を送って担当が作業に戻ったら、返事待ちは消える（行は共同作業中として残る）。
+  const back = derive(w.cockpit, w.log, [], '/a', facts('working', { last }), NOW)
+  assert.deepEqual(row(back).map((x) => [x.card.title, x.agent?.ask]), [['共同作業中（担当は作業中）', undefined]])
+  assert.notEqual(job(back).label, '返事待ち（あなた）')
+
+  // 同じチャットの問いの停止と、仕事の話し中のカードはこの行に寄せる（2 行にしない）。
+  const stuck = derive(w.cockpit, w.log, [], '/a', facts('waiting', { workers: [agent({ terminalId: null, chat: true, session: 'sess-aws', state: 'waiting', stop: 'waiting', ask: { kind: 'question', text: 'A と B のどちらにしますか？' } })] }), NOW)
+  assert.deepEqual(stuck.queue.filter((x) => x.card.kind === 'stuck').map((x) => x.card.id), [])
+  assert.deepEqual(row(stuck).map((x) => [x.card.title, x.agent?.ask?.kind]), [['A と B のどちらにしますか？', 'question']])
+  const talk: Card = { id: 'k2', rev: 1, kind: 'talk', state: 'open', at: new Date(NOW - 600_000).toISOString(), stream: 's2', title: '入口の描き方を相談したい', purpose: 'x', fallback: 'x', due: new Date(NOW + 3_600_000).toISOString(), links: [{ label: 'x', href: 'https://example.com' }], last: { text: '入口はどう描きますか', by: '担当' } }
+  const c2 = { ...w.cockpit, cards: [...w.cockpit.cards, talk] }
+  assert.deepEqual(derive(c2, w.log, [], '/a', facts('working'), NOW).queue.filter((x) => x.card.stream === 's2' && x.card.kind === 'talk').map((x) => [x.card.id, x.card.title]), [['#cowork:s2', '共同作業中（担当は作業中）']])
+  assert.deepEqual(row(derive(c2, w.log, [], '/a', facts('blocked'), NOW)).map((x) => [x.card.title, x.card.last?.text]), [['入口はどう描きますか', undefined]], '話し中のカードの最後の発言を題にする（同じ文を詳細に重ねない）')
+  // 話し中のカードが 2 枚でも 1 行に寄せる。
+  const c3 = { ...c2, cards: [...c2.cards, { ...talk, id: 'k3', title: '別の話し中' }] }
+  assert.deepEqual(derive(c3, w.log, [], '/a', facts('blocked'), NOW).queue.filter((x) => x.card.stream === 's2').map((x) => x.card.id), ['#cowork:s2'])
+  // 協議中のほかの種類のカード（承認が要る）は残し、担当が作業中でなければ返事待ちにする。
+  const review: Card = { ...talk, id: 'r2', kind: 'review', title: '構成図の確認', request: 'x', href: 'https://example.com/r2', look_for: ['x'], evidence: ['x'] }
+  const log2 = { ops: [...w.log.ops, { op_id: 9, at: new Date(NOW - 60_000).toISOString(), item_id: 'r2', item_rev: 1, type: 'talk' as const }] }
+  const both = derive({ ...w.cockpit, cards: [...w.cockpit.cards, review] }, log2, [], '/a', facts('blocked'), NOW)
+  assert.deepEqual(both.queue.filter((x) => x.card.stream === 's2').map((x) => [x.card.id, !!x.agent?.ask]).sort(), [['#cowork:s2', true], ['r2', false]])
+  assert.deepEqual([job(both).label], ['返事待ち（あなた）・私待ち 1 件'], '返事待ちと件数を両方出す')
+  // 最後の段落が 2 行でも、2 行目の問いを落とさない。
+  assert.equal(row(derive(w.cockpit, w.log, [], '/a', facts('done', { last: '下書きです。\n\n表紙は直しました。\n題はこのままでよいですか？' }), NOW))[0]!.card.title, '表紙は直しました。 題はこのままでよいですか？')
+  // 利用枠で止まった担当は、止まった行を残し、ターンを終えていても返事待ちにしない。
+  const limited = derive(w.cockpit, w.log, [], '/a', facts('done', { last, workers: [agent({ terminalId: null, chat: true, session: 'sess-aws', state: 'done', stop: 'limit' })] }), NOW)
+  assert.deepEqual(limited.queue.filter((x) => x.card.kind === 'stuck').map((x) => x.card.id), ['#agent:sess-aws'])
+  assert.deepEqual(row(limited).map((x) => [x.card.title, x.agent?.ask]), [['共同作業中（担当は待機）', undefined]])
+  // 利用枠の停止を「対応済みにする」で隠しても、止まっているあいだは返事待ちにしない（Codex 2 巡目 1）。
+  const dlog = { ops: [...w.log.ops, { op_id: 20, at: new Date(NOW).toISOString(), item_id: '#agent:sess-aws', item_rev: NOW - 25 * 60_000, type: 'dismiss' as const }] }
+  const hidden = derive(w.cockpit, dlog, [], '/a', facts('done', { last, workers: [agent({ terminalId: null, chat: true, session: 'sess-aws', state: 'done', stop: 'limit' })] }), NOW)
+  assert.deepEqual(hidden.queue.filter((x) => x.card.kind === 'stuck').map((x) => x.card.id), [])
+  assert.equal(row(hidden)[0]!.agent?.ask, undefined)
+  // 報告のカードで担当と協議していて、担当が作業中でなければ返事待ち（Codex 2 巡目 2）。
+  const rep: Card = { ...talk, id: 'p2', kind: 'report', title: '構成図の報告', done: [{ what: 'x' }] }
+  const rlog = { ops: [...w.log.ops, { op_id: 21, at: new Date(NOW - 60_000).toISOString(), item_id: 'p2', item_rev: 1, type: 'talk' as const }] }
+  assert.equal(!!row(derive({ ...w.cockpit, cards: [...w.cockpit.cards, rep] }, rlog, [], '/a', facts('waiting'), NOW))[0]!.agent?.ask, true)
+  // 端末の担当は端末を開く。
+  const term = structuredClone(w.cockpit)
+  term.owners = [{ id: 'o1', title: 'AWS 構成案', stream: 's2', agent: 'claude', terminal: 'term_aws' }]
+  const t = row(derive(term, w.log, [], '/a', { workers: [agent({ terminalId: 'term_aws', state: 'done' })], owners: [] }, NOW))[0]!
+  assert.deepEqual([t.agent?.terminalId, t.agent?.chat, !!t.agent?.ask, t.card.next], ['term_aws', undefined, true, '端末から返事の本文を読めませんでした。開いて確認してください'])
+  // 担当宛てに届いた worker の question は、担当自身の問いとして取り込まない（Codex 2 巡目 3）。
+  const q: QuestionFact = { id: 'q1', at: NOW - 40 * 60_000, to: 'owner', text: 'A と B のどちらですか', line: 'A と B のどちらですか', stream: 's2', byOwner: false }
+  const qd = derive(term, w.log, [], '/a', { workers: [agent({ terminalId: 'term_aws', state: 'working' })], owners: [], questions: [q] }, NOW)
+  assert.deepEqual(qd.queue.filter((x) => x.card.id.startsWith('#ask:')).map((x) => x.card.id), ['#ask:q1'])
+  assert.equal(row(qd)[0]!.agent?.ask, undefined)
+
+  // 任せる・見張るの担当はターンを終えても出さない。担当の様子を読めない場所（パネル・hook）でも出さない。
+  w.cockpit.streams.find((x) => x.id === 's2')!.form = 'delegate'
+  assert.deepEqual(row(derive(w.cockpit, w.log, [], '/a', facts('done', { last }), NOW)), [])
+  w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  assert.deepEqual(row(derive(w.cockpit, w.log, [], '/a', { workers: [] }, NOW)), [])
+  assert.deepEqual(coworkSessions(w.cockpit), ['sess-aws'])
+  assert.equal(lastParagraph('a\n\n  \n\nb\nc\n'), 'b c')
+})
+
+test('Orca の名前（R146）: 仕事と担当は頭に形（一緒に｜・任せる｜・見張る｜）、worker は 作業｜。20 字の上限は頭の語も含めて数える', () => {
+  const w = ws(0)
+  const form = (id: string, f: 'cowork' | 'delegate' | 'watch') => (w.cockpit.streams.find((x) => x.id === id)!.form = f)
+  form('s1', 'delegate')
+  form('s2', 'cowork')
+  form('s3', 'watch')
+  const r = report(w.cockpit, w.log, [], undefined, 'skipped', NOW)
+  assert.deepEqual(Object.fromEntries(r.jobs.map((j) => [j.id, j.orca.display_name])), { s1: '任せる｜配車画面の改修', s2: '一緒に｜AWS 構成案', s3: '見張る｜外部 API の繋ぎ込み', s4: '定例と議事録' })
+  assert.deepEqual([ownerName(w.cockpit, w.cockpit.owners![0]!), ownerName({ streams: [] }, { title: '調査', stream: 'x' }), workerName('一覧の改修')], ['一緒に｜AWS 構成案', '調査（担当）', '作業｜一覧の改修'])
+  // 題は 17 字でも、頭の 4 字を足すと 21 字になって切れる。
+  w.cockpit.streams.push({ id: 's9', title: 'あ'.repeat(NAME_MAX - 3), form: 'cowork' })
+  w.cockpit.tasks.push({ id: 't9', stream: 's9', phase: '実装', title: 'x', state: 'run' })
+  assert.equal([...streamName(w.cockpit.streams.at(-1)!)].length, NAME_MAX + 1)
+  assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.long_names, [`s9（${NAME_MAX + 1} 字）`])
 })

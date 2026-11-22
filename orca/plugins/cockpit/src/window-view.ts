@@ -1,8 +1,8 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
-import { COUNTED, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
-import { STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
+import { actionVerb, COUNTED, COWORK_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
+import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, softHtml, stripHtml, toastsHtml,
+  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, sampleHtml, softHtml, stripHtml, toastsHtml,
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 import type { RulingHit } from './protocol.ts'
@@ -38,14 +38,17 @@ function closedGroups(b: Board): [string, VRow[]][] {
 export const doneFold = (c: Card) => `done:${c.stream || '-'}`
 export const doneOrder = (b: Board | undefined): string[] => (b ? closedGroups(b).flatMap(([, xs]) => xs.map(keyOf)) : [])
 
-/** 種類は語だけで示す（記号を並べない。R101）。 */
-const kindName = (c: Card) => (c.manual ? '手作業' : KIND_LABEL[c.kind])
+/** 種類は語だけで示す（記号を並べない。R101）。要対応の行は深田さんがすることの語（R115）、対応済みの行は種類の名前。 */
+const kindName = (c: Card) => (c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : KIND_LABEL[c.kind])
+const leadWord = (r: Row, closed: boolean) => (closed || r.status !== 'mine' ? kindName(r.card) : actionVerb(r.card, r.agent?.ask?.kind))
 const tag = (text: string, cls = '') => `<span class="tag${cls ? ` ${cls}` : ''}">${esc(text)}</span>`
 
 /** 行の札。協議中と修正待ち。相談は見出しで別に数えるので札を付けない（初見 12）。 */
 function tags(r: Row): string {
   return [
     r.talking && tag('協議中', 'talk'),
+    // 返事待ちは全体の仕事とタスクの状態と同じ語・同じ色にする（Neon）。
+    replyWait([r]) && tag(REPLY_LABEL, 'miss'),
     r.status === 'fixing' && (r.pending ? tag('修正依頼済み（受領待ち）', 'wait') : tag('修正待ち', 'wait'))
   ].filter(Boolean).join('')
 }
@@ -73,11 +76,11 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
   // 返した答えは 1 行で切り、全文は詳細で読む（長い別の回答で行が伸びないように）。
   const right = closed
     ? `${outcome(r.how) ? `<span class="how" title="${esc(r.how ?? '')}">${esc(outcome(r.how))}</span>` : ''}<span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
-    : r.agent?.ask ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
+    : r.agent?.ask && c.since ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
   // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。
   const sub = r.agent?.ask?.from ?? t?.task.title
-  return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
-    <span class="kd">${kindName(c)}</span>
+  return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
+    <span class="kd">${leadWord(r, closed)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
     <span class="du${closed ? ' cl' : ''}">${right}</span></button>`
 }
@@ -173,7 +176,7 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
       // 頼んだ直しの原文は「出した指示」に出す（二重にしない）。依頼の原文は成果物と見比べるので最初に見せる。
       const links = [c.href && linkBtn('成果物を開く', c.href), c.diff && linkBtn('差分を開く', c.diff)].filter(Boolean).join('')
       // 見る対象（成果物・差分）は押す順に、ふつうのボタンの大きさで先頭に置く（初見 6）。
-      return [links ? `<div class="links main">${links}</div>` : '', fld('確認事項', points(c.look_for)), fld('依頼の原文', clampQuote(c.request, ui, `cont:${keyOf(r)}`))].join('')
+      return [links ? `<div class="links main">${links}</div>` : '', fld('確認事項', points(c.look_for)), fld('依頼の原文', clampQuote(c.request, ui, `cont:${keyOf(r)}`)), sampleHtml(r)].join('')
     }
     case 'decide':
       return [fld('これは何か', rich(c.context?.what, c.repo)), optionsHtml(r, ui), compareParts(r, svg), fld('得られること', rich(c.context?.gain, c.repo)), fld('失うこと', rich(c.context?.cost, c.repo))].join('')
@@ -191,10 +194,10 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
       const full = a?.ask && !c.title.endsWith(a.ask.text.trim()) ? clampQuote(a.ask.text, ui, `ask:${keyOf(r)}`) : ''
       const pick = c.id.startsWith('#ask:') ? `${r.owner.how === 'main' ? '窓口' : '担当'}に伝える` : `${a?.chat ? 'チャット' : '端末'}で選ぶ`
       const opts = a?.ask?.options?.length ? fld(`選択肢（${pick}）`, `<ul class="rich">${a.ask.options.map((o) => `<li>${esc(o)}</li>`).join('')}</ul>`) : ''
-      const unread = !a?.ask && asking ? `<p class="mut">${a.chat ? 'チャット' : '端末の画面'}から問いの本文を読めませんでした。開いて確かめてください</p>` : ''
+      const unread = !a?.ask && asking ? `<p class="mut">${a.chat ? 'チャット' : '端末の画面'}から問いの本文を読めませんでした。開いて確認してください</p>` : ''
       return [fld(a?.ask?.kind === 'permit' ? '許可を求めていること' : '聞かれていること', full || unread), opts,
         a?.ask ? '' : fld('停止の理由', c.reason ? `<div class="quote code">${esc(c.reason)}</div>` : ''), c.since ? fld(a?.ask ? '聞いた日時' : '停止日時', esc(`${fmtDate(c.since)}${a?.ask ? `（${ago(c.since, now)}前）` : ''}`)) : '',
-        fld(a?.ask ? '答え方' : '直し方', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
+        fld(a?.ask ? '答え方' : '修正方法', esc(c.unblock ?? (c.answerable ? '答えれば進む' : ''))), optionsHtml(r, ui)].join('')
     }
     case 'consult':
       return [fld('論点', note(c.issue)), fld('担当の今の考え', rich(c.stance, c.repo)), fld('分かっていること', list(c.known)), fld('決めかねていること', list(c.undecided))].join('')
@@ -218,7 +221,7 @@ function moreView(r: VRow, svg: Svg): string {
   const parts = [
     fld('なぜ今', c.why ? rich(c.why, c.repo) : ''),
     ...ctxKeys.map((k) => fld(CTX[k]!, rich(c.context?.[k], c.repo))),
-    c.kind === 'review' && c.evidence?.length ? fld('確かめた結果', `<ul class="rich">${c.evidence.map((x) => `<li>${mono(esc(x))}</li>`).join('')}</ul>`) : '',
+    c.kind === 'review' && c.evidence?.length ? fld('確認した結果', `<ul class="rich">${c.evidence.map((x) => `<li>${mono(esc(x))}</li>`).join('')}</ul>`) : '',
     fld('返事が無いとき', note(c.fallback)),
     ...backgroundParts({ ...r, card: { ...c, ...(c.kind === 'decide' ? { compare: undefined, figure: undefined } : {}), ...(c.kind === 'send' ? { quote: undefined } : {}) } }, svg, r.v?.figures ?? {})
   ].filter(Boolean)
@@ -273,7 +276,7 @@ function askWaitHtml(w: AskWait | undefined, now: number, id?: string, inThread 
   if (w.error) return `<div class="askst bad" role="alert"><b>窓口の写しを立てられませんでした</b><span>${esc(w.error)}</span><button class="btn quiet" type="button" data-ask="dismiss" data-scope="${esc(id ?? '')}">閉じる</button></div>`
   const sec = Math.max(0, Math.round((now - w.at) / 1000))
   if (now - w.at > ASK_STALE_MS && w.ask)
-    return `<div class="askst" role="status"><b>3 分たっても答えが届いていません</b><span>写しの会話で止まっていないかを確かめてください</span><button class="btn" type="button" data-ask="tab" data-id="${esc(w.ask)}">写しの会話を開く</button></div>`
+    return `<div class="askst" role="status"><b>3 分たっても答えが届いていません</b><span>写しの会話で止まっていないかを確認してください</span><button class="btn" type="button" data-ask="tab" data-id="${esc(w.ask)}">写しの会話を開く</button></div>`
   const what = w.ask ? `答えを待っています（${sec} 秒）` : `窓口の写しを立てています（${sec} 秒）`
   // 1 問目は 10 秒前後（担当の測定 7.6 秒）。30 秒を超えたら、開いて確かめる道を出す（初見 任意 1）。
   const slow = w.ask && now - w.at > 30_000
@@ -309,7 +312,7 @@ function askDecidedHtml(b: Board, a: AskThread): { html: string; n?: number } {
   if (!o) return { html: '' }
   // 窓に分かるのは返しの記録があるかだけ（知らせが届いたかは分からない。Codex 軽微 3）。
   const got = a.returns.some((r) => String(r.op) === String(o.op_id))
-  return { html: `<p class="askdone"><b>${o.answer?.at ? `答え ${esc(o.answer.at)} を` : ''}窓口に返すよう頼みました</b><span class="mut">${esc(fmtDate(o.at))}</span>${got ? tag('写しが返しました') : tag('写しからの返し待ち', 'wait')}</p>`, n: o.answer?.n }
+  return { html: `<p class="askdone"><b>${o.answer?.at ? `答え ${esc(o.answer.at)} を` : ''}窓口に返すよう依頼しました</b><span class="mut">${esc(fmtDate(o.at))}</span>${got ? tag('写しが返しました') : tag('写しからの返し待ち', 'wait')}</p>`, n: o.answer?.n }
 }
 
 function askThreadHtml(b: Board, a: AskThread, ui: Ui, now: number): string {
@@ -421,7 +424,16 @@ const ridHtml = (id: string) => `<p class="rid">番号<code>${esc(id)}</code></p
 const tasksOf = (b: Board, sid: string) => [...b.d.tasks.values()].filter((t) => t.task.stream === sid)
 const TSTATE: Record<TaskState, string> = { ok: '完了', run: '作業中', wait: '待機', stop: '停止', idle: '未着手' }
 /**
- * 工程の進み（前の窓の「工程 n/5」の形）。済んでいないタスクのうちいちばん前の段を今の段にし、それより前を済んだ段にする。
+ * 5 つの工程の語を並べ、今の段を太字にする（分数は何の段か読めない。R126）。済んだ段は薄く、まだの段は済んだ段より濃く（色は足さない。R91）。
+ * short は一覧の行の幅が足りないときに出す、今の段の語だけの形（style.ts の .stg-now）。語だけだと仕事の名前の続きに読めるので「工程」を添える（初見）。
+ */
+export function stagesHtml(at: number, short = false): string {
+  const words = STAGES.map((s, i) => (i < at ? `<span class="sd">${s}</span>` : i === at ? `<b class="sc">${s}</b>` : `<span class="sn">${s}</span>`))
+  return `<span class="stg"><span class="stg-all">${words.join('<span class="sep">・</span>')}</span>${short ? `<span class="stg-now">工程 <b>${STAGES[at] ?? ''}</b></span>` : ''}</span>`
+}
+
+/**
+ * 工程の進み。済んでいないタスクのうちいちばん前の段を今の段にし、それより前を済んだ段にする。
  * 段に寄せられない工程名の未完了タスクがあれば、段も完了の印も決めない（推測で入れない・先の段まで済んだように見せない）。
  * 「全工程 完了」は仕事そのものが済のときだけ。タスクが全部済でもカードが残る仕事は確認待ちと出す。見張る仕事は段を持たない。
  */
@@ -431,10 +443,9 @@ function phaseBar(ts: TaskView[], form?: StreamForm, job?: JobState): string {
   const live = ts.filter((t) => t.state !== 'ok')
   const unsorted = live.some((t) => !stageOf(t.task.phase))
   const at = !live.length ? STAGES.length : unsorted ? -1 : Math.min(...live.map((t) => STAGES.indexOf(stageOf(t.task.phase)!)))
-  const name = live.length ? (unsorted ? '工程 未分類あり' : `工程 <span class="num">${at + 1}/${STAGES.length}</span> ${STAGES[at]}`)
+  const name = live.length ? (unsorted ? '工程の外あり' : stagesHtml(at, true))
     : job === 'done' ? '全工程 完了' : job === 'mine' ? 'タスク完了・確認待ち' : job === 'customer' ? 'タスク完了・顧客待ち' : 'タスク完了'
-  // 5 つの印は並べない（語だけで読める。R101）。
-  return `<span class="pbar" title="${STAGES.join(' › ')}">${name}</span>`
+  return `<span class="pbar">${name}</span>`
 }
 
 const WHY: Record<TaskView['why'], string> = { ok: '済', record: '', working: '作業中', intake: '完了・取り込み待ち', stopped: '停止', missing: 'Orca に無し' }
@@ -469,13 +480,17 @@ export function taskOrder(b: Board | undefined): string[] {
  */
 const stateOf = (t: TaskView, rows: Row[]): TaskState => (t.state !== 'ok' && rows.some((r) => r.status === 'mine' && r.card.kind === 'stuck') ? 'stop' : t.state)
 
+/** 一緒に作る仕事で担当が深田さんの返事を待っているタスク（R128）。状態は「返事待ち（あなた）」と出す。 */
+const replyWait = (rows: Row[]) => rows.some((r) => r.card.id.startsWith(COWORK_ID) && !!r.agent?.ask)
+
 function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined): string {
   const st = stateOf(t, todo.get(t.task.id) ?? [])
+  const reply = st !== 'ok' && replyWait(todo.get(t.task.id) ?? [])
   const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r.card)}を開く</button>`).join('')
   const sub = t.task.waiting_on ? `待ち: ${t.task.waiting_on}` : t.task.next ? `次: ${t.task.next}` : ''
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
-  return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${st}">${TSTATE[st]}</span>
+  return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${reply ? 'stop' : st}">${reply ? REPLY_LABEL : TSTATE[st]}</span>
     <span class="tn"><span>${esc(t.task.title)}</span>${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
     <span class="wk">${chips}</span></div>`
 }
@@ -491,7 +506,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
   // 要対応に停止で出ている worker は作業中に数えない（Neon 初見 2 巡目）。
   const halted = ts.filter((t) => t.why === 'working' && stateOf(t, todo.get(t.task.id) ?? []) === 'stop').length
   const working = ts.filter((t) => t.why === 'working').length - halted
-  const label = j.state === 'mine' ? `要対応 ${j.mine} 件` : j.state === 'customer' ? j.label : PILL[j.state]
+  const label = j.state === 'mine' ? [j.reply && REPLY_LABEL, j.mine && `要対応 ${j.mine} 件`].filter(Boolean).join('・') : j.state === 'customer' ? j.label : PILL[j.state]
   const groups = stageGroups(ts)
   // 選べるタスクが無い仕事は右に詳細を出せないので、協議のボタンを箱の中に置く。
   const talk = groups.length ? '' : `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(j.id)}">${j.owner ? '担当と協議' : '窓口と協議'}</button></div>`
@@ -502,10 +517,10 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
   // 一覧の 1 行。状態は語 1 つ（色は要対応と停止だけ）、次にやることを工程より先に読ませる（初見 4・5）。協議は右の詳細から。
   const who = [j.owner && j.owner.title !== j.title && `担当: ${esc(j.owner.title)}`, working && `worker ${working} 件作業中`, halted && `worker ${halted} 件停止`].filter(Boolean).join('・')
   return `<div class="st f-${s?.form ?? 'none'}"><div class="sh">
-    <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="nm">${esc(j.title)}</span><span class="pst ${j.state}">${esc(label)}</span></button>
+    <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="nm">${esc(j.title)}</span><span class="pst ${j.state}${j.reply ? ' reply' : ''}">${esc(label)}</span></button>
     <span class="right"><span class="prog">${phaseBar(ts, s?.form, j.state)}</span></span>
     ${j.next && !open ? `<span class="nxt">次: ${mono(note(j.next))}</span>` : ''}${who ? `<span class="meta">${who}</span>` : ''}</div>
-    ${open ? `<div class="inner">${inner || '<span class="mut">なし</span>'}</div>` : ''}</div>`
+    ${open ? `<div class="inner${ts.some((t) => replyWait(todo.get(t.task.id) ?? [])) ? ' wide' : ''}">${inner || '<span class="mut">なし</span>'}</div>` : ''}</div>`
 }
 
 /** 出した指示（新しい順）。jump はどのカードへの指示かを頭に出すとき（タスクの詳細）の、カードを開けるか（開けるならその key）。 */
@@ -542,6 +557,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   }
   // 状態は一覧の行と同じ根拠（要対応の行）で決める。
   const shown = stateOf(t, b.d.queue.filter((r) => r.card.tasks?.includes(task.id)))
+  const reply = shown !== 'ok' && replyWait(b.d.queue.filter((r) => r.card.tasks?.includes(task.id)))
   const reqs = b.d.requests.filter((r) => r.req.tasks?.includes(task.id))
   // 済の条件はチェックの形にする（「未」の 1 字で示さない。初見 13）。読み上げには語を渡す。
   const conds = reqs.flatMap((r) => (r.req.done_when ?? []).map((w, i) => `<li class="${r.covered[i] ? 'ok' : ''}"><span class="cb" role="img" aria-label="${r.covered[i] ? '済' : '未'}"></span>${esc(w)}</li>`))
@@ -562,7 +578,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
     fld('何のため', note(task.goal)),
     conds.length ? fld('済の条件', `<ol class="dw">${conds.join('')}</ol>`) : '',
     fld(task.waiting_on ? '待っているもの' : '次にやること', now ? mono(note(now)) : ''),
-    fld('頼んでいること', asking.map(cardLine).join('')),
+    fld('依頼していること', asking.map(cardLine).join('')),
     fld('依頼の原文', origin)
   ].join('')
   const second = [
@@ -574,7 +590,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const talk = task.stream ? `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(task.stream)}">${owner ? '担当と協議' : '窓口と協議'}</button></div>` : ''
   return `<div class="wdet">
     <div class="dh"><div class="crumbs">${[c.workspace.name, s?.title ?? '仕事の割り当てなし'].map((x) => `<span>${esc(x)}</span>`).join('<i>›</i>')}</div>
-      <div class="kl"><span class="tst s-${shown}">${TSTATE[shown]}</span><span class="mut">${st ? `工程 <span class="num">${STAGES.indexOf(st) + 1}/${STAGES.length}</span> ${esc(st)}` : esc(`工程の外（${task.phase}）`)}</span></div>
+      <div class="kl"><span class="tst s-${reply ? 'stop' : shown}">${reply ? REPLY_LABEL : TSTATE[shown]}</span><span class="mut">${st ? `工程 ${stagesHtml(STAGES.indexOf(st))}` : esc(`工程の外（${task.phase}）`)}</span></div>
       <h2>${esc(task.title)}</h2></div>
     ${first ? `<div class="first facts">${first}</div>` : ''}${sent}${second ? `<div class="first facts">${second}</div>` : ''}
     ${askHtml(b, { kind: 'task', id: task.id }, ui, nowMs)}

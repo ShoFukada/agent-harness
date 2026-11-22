@@ -1,5 +1,5 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
-import { draftFormat, OTHER, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftFormat, type OpType } from './model.ts'
+import { DRAFT_FORMATS, draftFormat, FORMAT_LABEL, OTHER, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftFormat, type OpType } from './model.ts'
 import { morph } from './morph.ts'
 import type { AskDecideResult, AskInput, AskResult, ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, RulingHit, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
@@ -29,8 +29,6 @@ export type Transport = {
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
 
 const THEME_KEY = 'cockpit.theme'
-
-const FORMAT_LABEL: Record<DraftFormat, string> = { slack: 'Slack', teams: 'Teams', mail: 'メール' }
 
 /**
  * 本文をコピーしたあとの知らせ。宛先の書式で入れたときはその書式とメールの件名を添える。スレッドを開けたら、今あるボタンの名前で次の操作を案内する。
@@ -63,15 +61,18 @@ export async function copyDraft(d: Draft | undefined, t: Pick<Transport, 'openUr
     say(plainError ? `本文をコピーできませんでした: ${plainError.message}。もう一度押してください` : copyMessage(await opening))
     return false
   }
-  say(`本文を${FORMAT_LABEL[format]}の書式に直しています`)
+  say(`本文を${FORMAT_LABEL[format]}の書式に変換しています`)
   const clip = await t.clip(d.text, format).catch((e: Error): ClipResult => ({ copied: false, reason: e.message }))
   if (!clip.copied) {
-    say(`本文を${FORMAT_LABEL[format]}の書式に直せませんでした${clip.reason ? `: ${clip.reason}` : ''}。クリップボードの中身を確かめられないので、もう一度押して素の文字列でコピーしてください`)
+    say(`本文を${FORMAT_LABEL[format]}の書式に変換できませんでした${clip.reason ? `: ${clip.reason}` : ''}。クリップボードの中身を確認できないので、もう一度押して素の文字列でコピーしてください`)
     return true
   }
   say(copyMessage(await opening, { ...clip, format }))
   return false
 }
+
+/** コピーする文面。見ての見本（追加 25）は押した宛先の書式で入れ、スレッドは開かない。送る前のコピーは draft のまま。 */
+export const copyTarget = (d: Draft | undefined, format?: DraftFormat): Draft | undefined => (format && d ? { ...d, href: undefined, format } : d)
 
 /** 帯の印（Orca で止まった worker）を開いた結果を、担当と話すと同じ知らせにする。 */
 const focusResult = (x: FocusResult, title: string): TalkResult =>
@@ -223,12 +224,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   let copying = false
   /** clip-draft が失敗したカード。次に押されたら素の文字列だけを入れ直す。 */
   const plainNext = new Set<string>()
-  async function copy(r: VRow): Promise<void> {
+  async function copy(r: VRow, format?: DraftFormat): Promise<void> {
     if (copying) return toast('前のコピーが終わるまで待ってから押してください')
     copying = true
-    const k = keyOf(r)
+    const k = format ? `${keyOf(r)}:${format}` : keyOf(r)
     try {
-      const retry = await copyDraft(r.card.draft, t, (text) => navigator.clipboard.writeText(text), toast, plainNext.has(k))
+      const retry = await copyDraft(copyTarget(r.card.draft, format), t, (text) => navigator.clipboard.writeText(text), toast, plainNext.has(k))
       if (retry) plainNext.add(k)
       else plainNext.delete(k)
     } finally {
@@ -240,8 +241,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const k = keyOf(r)
     const other = (ui.other[k] ?? '').trim()
     // 別の答えを開いている間は、その文だけで決める（空のままおすすめが決まらないように）。
-    // 見ての「直してほしいこと」は片付けずに、本文つきの talk として渡す（カードは直し待ちになり、担当が書き換えると私の番に戻る）。
-    if (ui.otherOpen[k] && r.card.kind === 'review') return other ? act('talk', r, { text: other }, '修正を依頼しました') : undefined
+    // 「直しを伝える」は片付けずに、本文つきの talk として渡す（カードは直し待ちになり、担当が書き換えると私の番に戻る。R115）。停止の別の回答だけは答えとして決める。
+    if (ui.otherOpen[k] && r.card.kind !== 'stuck') return other ? act('talk', r, { text: other }, '直しを伝えました') : undefined
     if (ui.otherOpen[k]) return other ? act('decide', r, { option_id: OTHER, text: other }, `別の答えで決めました`) : undefined
     const id = chosenOption(r, ui)
     const o = r.card.options?.find((x) => x.id === id)
@@ -286,6 +287,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       case 'decide': return void decide(r)
       case 'talk': return void talk(r)
       case 'copy': return void copy(r)
+      case 'copyas': return void (DRAFT_FORMATS.includes(el.dataset.format as DraftFormat) && copy(r, el.dataset.format as DraftFormat))
       case 'copycmd': return void navigator.clipboard.writeText(r.card.manual?.command ?? '').then(() => toast('コマンドをコピーしました'), fail)
       case 'focus': return void t.focusAgent(r.agent?.terminalId ?? null, r.agent?.worktree).then((x) => toast(talkMessage(focusResult(x, r.owner.title), false)), fail)
       case 'url': return void openTarget(r.root, el)
@@ -296,7 +298,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
         if (ui.otherOpen[k]) app.querySelector<HTMLTextAreaElement>(`textarea[data-other="${CSS_ESC(k)}"]`)?.focus()
         return
       }
-      case 'revert': return void act('revert', r, { target: Number(el.dataset.target) }, '戻すよう頼みました')
+      case 'revert': return void act('revert', r, { target: Number(el.dataset.target) }, '戻すよう依頼しました')
       case 'dismiss': return void act('dismiss', r, {}, '対応済みとして記録しました')
       case 'accept': case 'sent': case 'skip': case 'delegate': case 'ack':
         return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許可しました' : r.card.manual && name === 'sent' ? '対応済みとして記録しました' : LABEL[name]!)
@@ -465,7 +467,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       case 'decide':
         if (root && d.id && t.askDecide)
           void t.askDecide(root, d.id, { at: d.at ?? '', head: d.head ?? '', n: Number(d.n) }).then(
-            (x) => toast(x.again ? 'この答えはもう窓口に返すよう頼んでいます' : x.sent ? '窓口に返すよう頼みました' : '記録しました'),
+            (x) => toast(x.again ? 'この答えはもう窓口に返すよう依頼しています' : x.sent ? '窓口に返すよう依頼しました' : '記録しました'),
             fail
           )
         return

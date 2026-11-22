@@ -1,5 +1,5 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, dismissable, permitEffect, permitTarget, type Card, type CardKind, type Repo } from './model.ts'
+import { actionVerb, chatMain, CONTEXT_FIELDS, COUNTED, COWORK_ID, dismissable, DRAFT_FORMATS, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -262,7 +262,8 @@ export function otherHtml(r: Row, ui: Ui): string {
   const k = keyOf(r)
   if (!ui.otherOpen[k]) return ''
   const text = ui.other[k] ?? ''
-  const label = r.card.kind === 'review' ? '修正点' : '別の回答'
+  // 停止の「別の回答」だけは答えとして決める。ほかの種類は担当への直し（本文つきの協議。R115 の「直しを伝える」）。
+  const label = r.card.kind === 'stuck' ? '別の回答' : '担当に伝える内容'
   return `<div class="other fld"><label class="lb" for="other-${esc(k)}">${label}</label>
     <textarea id="other-${esc(k)}" data-other="${esc(k)}" maxlength="${TEXT_MAX + 200}">${esc(text)}</textarea>
     <span class="cnt">あと ${TEXT_MAX - text.length} 字</span></div>`
@@ -316,7 +317,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
     case 'inbox':
       if (c.from) parts.push(fld('届いた連絡', `<span class="sp">${sp([esc(c.from.who), c.from.via && esc(c.from.via), c.from.at && esc(fmtDate(c.from.at))])}</span>`))
       parts.push(fld('聞かれていること', esc(c.asked)), fld('振り分け', esc(c.routed)))
-      if (c.reply) parts.push(fld('返事', c.reply === 'needed' ? '要る（担当が下書きを作る）' : '要らない'))
+      if (c.reply) parts.push(fld('返事', c.reply === 'needed' ? '要る（担当が下書きを作成する）' : '要らない'))
       break
     case 'send':
       if (c.quote) parts.push(fld('相手の発言', `<div class="quote">${esc(c.quote)}</div>`))
@@ -335,8 +336,9 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
     case 'review':
       if (c.look_for?.length) parts.push(fld('確認事項', `<ul class="rich">${c.look_for.map((x) => `<li>${note(x)}</li>`).join('')}</ul>`))
       if (c.request) parts.push(fld('依頼の原文', `<div class="quote">${esc(c.request)}</div>`))
-      if (c.evidence?.length) parts.push(fld('確かめた結果', `<ul class="rich">${c.evidence.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
-      if (r.fix) parts.push(fld('頼んだ直し', `<div class="quote">${esc(r.fix)}</div>`))
+      if (c.evidence?.length) parts.push(fld('確認した結果', `<ul class="rich">${c.evidence.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`))
+      parts.push(sampleHtml(r))
+      if (r.fix) parts.push(fld('依頼した修正', `<div class="quote">${esc(r.fix)}</div>`))
       break
     case 'permit':
       if (c.manual) {
@@ -381,6 +383,18 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
   return parts.filter(Boolean).join('')
 }
 
+/**
+ * 見てのカードの、宛先ごとの書式でコピーする見本（追加 25）。貼って崩れないかを深田さんが確かめるためのもので、
+ * 変換は送る前のコピーと同じ clip-draft を使う（controller.ts の copyas）。
+ */
+export function sampleHtml(r: Row): string {
+  const d = r.card.draft
+  if (r.card.kind !== 'review' || !d) return ''
+  const k = esc(keyOf(r))
+  const btns = DRAFT_FORMATS.map((f) => `<button class="btn" type="button" data-act="copyas" data-format="${f}" data-key="${k}">${FORMAT_LABEL[f]}の書式でコピー</button>`).join('')
+  return `<div class="fld"><span class="lb">コピーの見本（元の文）</span><div class="msg-to"><span class="sp">${sp([`宛先 <b>${esc(d.to)}</b>`, d.via && esc(d.via)])}</span></div><div class="msg">${esc(d.text)}</div><div class="links">${btns}</div></div>`
+}
+
 /** 送る前の「送った」のボタンの名前（コピーのあとの知らせもこれを案内する）。 */
 export const SENT_LABEL = '送信済みにする'
 
@@ -394,23 +408,25 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   const picked = chosenOption(r, ui)
   const otherOpen = ui.otherOpen[keyOf(r)]
   const otherText = otherOpen && (ui.other[keyOf(r)] ?? '').trim()
-  const decideLabel = otherOpen ? (c.kind === 'review' ? 'この修正を依頼' : '別の回答で決定') : !picked ? '選択肢を選択' : ui.picked[keyOf(r)] ? 'この案で決定' : '推奨案で決定'
+  const decideLabel = otherOpen ? (c.kind === 'stuck' ? '別の回答で決定' : '伝える') : !picked ? '選択肢を選択' : ui.picked[keyOf(r)] ? 'この案で決定' : '推奨案で決定'
   const ready = otherOpen ? otherText : picked
   const decideBtn = c.options?.length || otherOpen ? b('decide', decideLabel, 'pri', ready ? '' : 'disabled') : ''
   const other = b('other', otherOpen ? '別の回答を閉じる' : '別の回答', 'quiet')
+  // 「直しを伝える」（R115）: 書いた文を担当に届け（直し待ちになる）、担当と話す画面も開ける。欄を開いているあいだは、伝える・話す・やめるだけを出す。
+  const fix = otherOpen ? [decideBtn, talk('担当と話す'), b('other', 'やめる', 'quiet')] : [b('other', '直しを伝える')]
   let btns: string[]
   // Orca から作った詰まり: 開いて直し、直したら「済ませた」で隠す（同じ失敗のあいだ。次に止まればまた出る）。
   const dismiss = dismissable(c) ? [b('dismiss', '対応済みにする', '', 'title="同じ停止のあいだは隠す。次に止まったときはまた出る"')] : []
   // orchestration の question の行は、聞かれた側（窓口か担当）を開く。
-  const whose = c.id.startsWith('#ask:') ? (r.owner.how === 'main' ? '窓口の' : '担当の') : ''
+  const whose = c.id.startsWith('#ask:') || c.id.startsWith(COWORK_ID) ? (r.owner.how === 'main' ? '窓口の' : '担当の') : ''
   if (r.agent) btns = [b('focus', `${whose}${r.agent.chat ? 'チャット' : '端末'}を開く`, 'pri'), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返信不要'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
-    case 'send': btns = [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), talk('担当と修正を協議'), b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
-    case 'decide': btns = [decideBtn, talk(), other]; break
-    case 'review': btns = [b('accept', '承認する', 'pri'), b('other', otherOpen ? '記入をやめる' : '修正点を記入'), ...(otherOpen ? [decideBtn] : []), talk('担当と修正を協議'), ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
-    case 'permit': btns = c.manual ? [b('sent', '対応済みにする', 'pri'), talk()]
-      : c.options?.length ? [decideBtn, talk(), other] : [b('accept', '許可する', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}一任する`), b('skip', '却下', 'quiet'), talk()]; break
+    case 'send': btns = otherOpen ? fix : [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), ...fix, b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
+    case 'decide': btns = otherOpen ? fix : [decideBtn, ...fix]; break
+    case 'review': btns = otherOpen ? fix : [b('accept', '承認', 'pri'), ...fix, ...(c.href && !win ? [b('url', '開く', 'quiet', isWebUrl(c.href) ? `data-url="${esc(c.href)}"` : `data-file="${esc(c.href)}"`)] : [])]; break
+    case 'permit': btns = otherOpen ? fix : c.manual ? [b('sent', '対応済みにする', 'pri'), ...fix]
+      : c.options?.length ? [decideBtn, ...fix] : [b('accept', '許可', 'pri'), b('delegate', `${c.scope ? `この案件の ${c.scope} は` : 'この案件では'}一任する`), ...fix, b('skip', '却下', 'quiet')]; break
     case 'stuck': btns = [...(c.options?.length ? [decideBtn] : []), talk(c.options?.length ? '担当と協議' : '担当を開く'), ...dismiss, ...(dismiss.length ? [] : [other])]; break
     case 'consult': btns = [talk()]; break
     case 'talk': btns = [talk('協議を続ける')]; break
@@ -429,7 +445,7 @@ export function stripHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => st
   const open = ui.sel === k
   const fig = r.v?.figures ?? {}
   const meta = [
-    `<span class="kind">${KIND_LABEL[c.kind]}</span>`,
+    `<span class="kind">${r.status === 'mine' ? actionVerb(c, r.agent?.ask?.kind) : KIND_LABEL[c.kind]}</span>`,
     showWs ? `<span class="ws">${esc(r.ws)}</span>` : '',
     r.stream && !c.title.includes(r.stream.title) ? `<span class="jobname">${esc(r.stream.title)}</span>` : '',
     r.status === 'fixing' ? `<span>${r.pending ? '修正依頼済み（受領待ち）' : '修正待ち'}</span>` : r.talking ? '<span>協議中</span>' : ''
@@ -555,7 +571,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const focusBoard = m.boards.find((b) => b.root === (ui.filter ?? m.focused)) ?? (m.panel ? m.boards[0] : undefined)
   const side = [
     focusBoard ? jobsHtml(focusBoard, now, ui.filter ? '案件の今' : m.panel ? '案件の今' : 'Orca で表示中') : '',
-    miniList('fixing', '直し待ち', all('fixing'), ui, now, svg, showWs, (r) => `<span class="r${r.pending ? ' pend' : ''}">${r.pending ? '受領待ち' : '直し待ち'}</span>`, true),
+    miniList('fixing', '修正待ち', all('fixing'), ui, now, svg, showWs, (r) => `<span class="r${r.pending ? ' pend' : ''}">${r.pending ? '受領待ち' : '修正待ち'}</span>`, true),
     miniList('waiting', '顧客待ち', all('waiting'), ui, now, svg, showWs, (r) => {
       const a = r.card.awaiting
       const late = a?.remind_at && Date.parse(a.remind_at) < now
@@ -566,7 +582,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   ].join('')
   const toast = toastsHtml(ui, now)
   const empty = !m.boards.length && !m.unseen.length
-    ? `<div class="calm${m.panel ? '' : ' warn'}"><b>${m.panel ? 'この案件には操縦席がありません' : '操縦席のある案件がありません'}</b><p>メインに「操縦席を作って」と頼むと、ここに私の番が並びます。</p></div>`
+    ? `<div class="calm${m.panel ? '' : ' warn'}"><b>${m.panel ? 'この案件には操縦席がありません' : '操縦席のある案件がありません'}</b><p>メインに「操縦席を作って」と依頼すると、ここに私の番が並びます。</p></div>`
     : queueHtml(queue, m, ui, now, svg, [
         ...shown.flatMap((b) => (b.v.cockpit?.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x)),
         ...(ui.filter ? [] : m.unseen.map((u) => `${u.name}: ${u.why ?? '操縦席がない'}`))

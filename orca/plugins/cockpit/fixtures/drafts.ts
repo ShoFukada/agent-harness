@@ -29,3 +29,6 @@ export const DRAFTS: Record<'slack' | 'teams' | 'mail', Draft> = {
 `
   }
 }
+
+/** 見てのカードに持たせる、宛先ごとの書式で貼って確かめる見本（追加 25）。1 つの本文を 3 つの書式で写す。 */
+export const REVIEW_SAMPLE: Draft = { to: '見本（Slack・Teams・メールに貼って確かめる）', text: chat }

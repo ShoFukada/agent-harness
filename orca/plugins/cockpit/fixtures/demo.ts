@@ -1,6 +1,6 @@
 // 見本のデータ（sample.ts）で窓を手元に立てる。Orca には繋がず、決まった応答を返す偽の Orca を使う。
 // 使い方: COCKPIT_PORT=47299 node --disable-warning=ExperimentalWarning fixtures/demo.ts [置き場所]
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { askTitle, createServer, type AskCmd, type Orca, type PsRow } from '../window/server.ts'
@@ -151,6 +151,14 @@ if (import.meta.main) {
   mkdirSync(dir, { recursive: true })
   const { roots, orca, calls } = writeSample(base)
   writeAskSample(roots.aoba!)
+  // 一緒に作る仕事の見本（R145）: AWS 構成案を一緒に作る仕事にし、担当がターンを終えて深田さんの返事を待っている形にする。
+  // 試験（writeSample を使う）には入れない。止まった問いの行の数を変えないため。
+  const file = path.join(roots.aoba!, '.orca', 'cockpit.json')
+  const aoba = JSON.parse(readFileSync(file, 'utf8')) as { streams: { id: string; form?: string }[] }
+  for (const [id, form] of [['s1', 'delegate'], ['s2', 'cowork']]) aoba.streams.find((x) => x.id === id)!.form = form
+  writeFileSync(file, JSON.stringify(aoba, null, 2))
+  orca.agents = async () => [{ session: 'sess-aws', kind: 'chat', state: 'done', title: '一緒に｜AWS 構成案', worktree: path.join(base, 'aoba-aws'), updatedAt: Date.now() - 4 * 60_000 }]
+  orca.chatLast = async () => '構成案の下書きを Drive に置きました。本番の経路は図に、運用の説明は本文に分けています。\n\n定例では、費用の見積もりを先に説明しますか、それとも構成図から説明しますか？'
   orca.tabs = async (root) => (root === roots.aoba ? ['ask1', 'ask2'].map((id) => ({ title: askTitle('青葉物流 配車アプリ', id), handles: [`term_${id}`] })) : [])
   writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: roots.aoba, at: new Date().toISOString() }))
   const s = createServer({ port: Number(process.env.COCKPIT_PORT ?? 47299), dir, orca, ask: demoAsk() })

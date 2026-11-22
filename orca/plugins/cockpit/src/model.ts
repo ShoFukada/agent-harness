@@ -18,6 +18,16 @@ export const ASKING: CardKind[] = [...COUNTED, 'consult']
 export const KIND_LABEL: Record<CardKind, string> = {
   inbox: '受信', send: '送信前', decide: '判断', review: '確認', permit: '許可', stuck: '停止', consult: '相談', talk: '協議中', report: '報告'
 }
+/** 要対応の行の先頭に出す、深田さんがすること（R115）。種類の名前ではなく動作の語にする。 */
+export function actionVerb(c: Pick<Card, 'kind' | 'manual'> & { id?: string }, ask?: 'question' | 'permit'): string {
+  if (c.kind === 'stuck') return ask === 'question' ? '答える' : ask === 'permit' ? '許可' : '再開'
+  if (c.id?.startsWith(COWORK_ID)) return ask === 'question' ? '答える' : '確認'
+  if (c.kind === 'permit' && c.manual) return '対応'
+  return ACTION_VERB[c.kind]
+}
+const ACTION_VERB: Record<CardKind, string> = {
+  inbox: '返信', send: '送る', decide: '決める', review: '承認', permit: '許可', stuck: '再開', consult: '相談', talk: '協議', report: '見る'
+}
 
 export type Milestone = { date: string; label: string }
 export type Repo = string | Record<string, string>
@@ -87,6 +97,7 @@ export const CONTEXT_FIELDS: [keyof DecisionContext, string][] = [
 /** 送る文面を貼る先の書式。clip-draft の --to と同じ名前。 */
 export type DraftFormat = 'slack' | 'teams' | 'mail'
 export const DRAFT_FORMATS: DraftFormat[] = ['slack', 'teams', 'mail']
+export const FORMAT_LABEL: Record<DraftFormat, string> = { slack: 'Slack', teams: 'Teams', mail: 'メール' }
 export type Draft = { to: string; via?: string; text: string; href?: string; format?: DraftFormat }
 
 /** 元のスレッドのホスト（そのサブドメインも）→ 書式。部分一致にすると mailchimp.com のような別のサービスをメールと取り違える。 */
@@ -141,7 +152,10 @@ export type Card = {
   /** inbox: 返事が要るか。 */
   reply?: 'needed' | 'none'
 
-  /** send（と、送る文面のある decide）: 宛先と本文。href は元のスレッド。 */
+  /**
+   * send（と、送る文面のある decide）: 宛先と本文。href は元のスレッド。
+   * review: 宛先ごとの書式でコピーして貼って確かめる見本（追加 25）。format と href は見ない（押したボタンの書式で入れ、スレッドは開かない）。
+   */
   draft?: Draft
 
   /** decide: なぜ今決めるか。 */
@@ -352,6 +366,8 @@ export type Cockpit = {
  */
 export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide'
 export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide']
+/** 一緒に作る仕事の行の id の頭（R145）。帳簿のカードではなく、担当のチャットの Orca の様子から作る（state.ts の coworkRows）。 */
+export const COWORK_ID = '#cowork:'
 /** Orca から作った詰まりの行の id（帳簿に無い）。 */
 export const isSynthetic = (id: string) => id.startsWith('#agent:') || id.startsWith('#dispatch:') || id.startsWith('#ask:')
 /** 「済ませた」で隠せる詰まり。版（止まった時刻）が取れないもの（0）は、次の停止と見分けられないので隠させない。 */
@@ -382,15 +398,16 @@ export function parseHandoff(text: string): Handoff | undefined {
 export const OTHER = 'other'
 export const TEXT_MAX = 4000
 export const UNDO_GRACE_MS = 10_000
-/** 工程の段。どの仕事も同じ 5 段で並べる（R82）。帳簿の phase は自由な名前のまま、読むときに段へ寄せる。 */
-export const STAGES = ['調べる', '決める', '作る', '確かめる', '入れる'] as const
+/** 工程の段。どの仕事も同じ 5 段で並べる（R82）。名前は業務の漢語（R135）。帳簿の phase は自由な名前のまま、読むときに段へ寄せる。 */
+export const STAGES = ['調査', '決定', '作成', '確認', '反映'] as const
 export type Stage = (typeof STAGES)[number]
+/** 読み替えの元。帳簿は前の和語の名前（調べる・決める・作る・確かめる・入れる）で書かれていることがあるので、書き換えなくても同じ段に寄せる。 */
 const STAGE_NAMES: Record<Stage, string[]> = {
-  調べる: ['調べる', '調査'],
-  決める: ['要件', '設計', '決める'],
-  作る: ['作る', '作成', '実装', '2 周目（Neon）'],
-  確かめる: ['確かめ', '確かめる', '確認', '実地確認', '見てもらう', '見直し'],
-  入れる: ['入れる', 'push', 'switch 待ち']
+  調査: ['調査', '調べる'],
+  決定: ['決定', '決める', '要件', '設計'],
+  作成: ['作成', '作る', '実装', '2 周目（Neon）'],
+  確認: ['確認', '確かめる', '確かめ', '実地確認', '見てもらう', '見直し'],
+  反映: ['反映', '入れる', 'push', 'switch 待ち']
 }
 /** 帳簿の phase の段。対応に無い名前は undefined（推測でどこかの段に入れない）。 */
 export const stageOf = (phase: string): Stage | undefined => STAGES.find((s) => STAGE_NAMES[s].includes(phase))
@@ -797,8 +814,8 @@ const KIND_NEEDS: Partial<Record<CardKind, Need[]>> = {
     ['options.recommended', 'おすすめ 1 つ', (c) => c.options?.filter((o) => o.recommended).length === 1]
   ],
   review: [
-    ['href', '成果物', (c) => has(c.href)], ['look_for', '見てほしい点', (c) => has(c.look_for)],
-    ['request', '依頼の原文', (c) => has(c.request)], ['evidence', '確かめた結果', (c) => has(c.evidence)]
+    ['href|draft.text', '成果物', (c) => has(c.href) || has(c.draft?.text)], ['look_for', '見てほしい点', (c) => has(c.look_for)],
+    ['request', '依頼の原文', (c) => has(c.request)], ['evidence', '確認した結果', (c) => has(c.evidence)]
   ],
   permit: [
     ['effect|context.gain', '何が変わるか', (c) => has(permitEffect(c))],
@@ -814,7 +831,7 @@ const MANUAL_NEEDS: Need[] = [
   ['purpose', '何のため', (c) => has(c.purpose)],
   ['manual.where', 'どこで', (c) => has(c.manual?.where)],
   ['manual.command|steps', 'コマンドか手順', (c) => has(c.manual?.command) || has(c.manual?.steps)],
-  ['manual.check', '済ませたあと窓口が確かめること', (c) => has(c.manual?.check)]
+  ['manual.check', '済ませたあと窓口が確認すること', (c) => has(c.manual?.check)]
 ]
 
 /**

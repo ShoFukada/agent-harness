@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit } from './model.ts'
+import { actionVerb, parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
 import { boardsOf, linkKind, newUi, preface, render, rich, talkMessage, tighten, type Model, type Ui } from './view.ts'
 
@@ -19,7 +19,7 @@ const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 
 test('上の帯: 私の番の合計だけを出し、種類ごとの件数の帯は出さない（種類は票の語、急ぎは期限の見出しで読む。R82・R91）', () => {
   const t = text(html())
-  assert.match(t, /9 全案件の私の番/)
+  assert.match(t, /10 全案件の私の番/)
   assert.doesNotMatch(t, /許可 2 判断 3/)
   assert.doesNotMatch(html(), /class="kinds"/)
   // 狭い幅で合計を兼ねる「私の番 n」の切り替えは、上の帯の中に 1 段で置く。
@@ -71,7 +71,7 @@ test('決める: 何のため → これは何か → なぜ今 → 選択肢 �
   assert.match(html(model(), { ...newUi(), sel: '/ws/konan#k9' }), /data-act="decide"[^>]*disabled>選択肢を選択/)
   // 別の答えを開いたら、文が空のうちはおすすめでも決められない。
   const other = { ...newUi(), sel: '/ws/aoba#d21', otherOpen: { '/ws/aoba#d21': true }, other: { '/ws/aoba#d21': '  ' } }
-  assert.match(html(model(), other), /data-act="decide"[^>]*disabled>別の回答で決定/)
+  assert.match(html(model(), other), /data-act="decide"[^>]*disabled>伝える/, '判断の「直しを伝える」も、本文が空のうちは伝えられない（R115）')
 })
 
 test('今日の見出しの日付は手元の時計で決める（日本時間の朝 9 時前でも前日にならない）', () => {
@@ -107,23 +107,23 @@ test('担当と話すの知らせは、次に押す場所を名前で言う', ()
     '開けませんでした: 担当「窓の版 3」のチャットの居場所の worktree（gone）が Orca にありません。片付けられたようです')
 })
 
-test('見て: 「直してほしいことを書く」で書く欄を開き、本文が空のうちは頼めない。頼んだら直し待ちになり、頼んだ文を出す', () => {
+test('見て: 「直しを伝える」で書く欄を開き、本文が空のうちは伝えられない。欄では伝える・担当と話す・やめるだけ。伝えたら直し待ちになり、伝えた文を出す（R115）', () => {
   const k = '/ws/aoba#r5'
   const acts = (ui: Ui, vs = views()) => {
     const h = html(model({}, vs), ui)
     return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
   }
   const open = { ...newUi(), sel: k, otherOpen: { [k]: true }, other: { [k]: ' ' } }
-  assert.deepEqual(acts(open), ['accept:承認する', 'other:記入をやめる', 'decide:この修正を依頼', 'talk:担当と修正を協議', 'url:開く'])
-  assert.match(html(model(), open), /data-act="decide"[^>]*disabled>この修正を依頼/)
-  assert.match(html(model(), open), /<label class="lb" for="other-[^"]+">修正点<\/label>/)
+  assert.deepEqual(acts(open), ['decide:伝える', 'talk:担当と話す', 'other:やめる'])
+  assert.match(html(model(), open), /data-act="decide"[^>]*disabled>伝える/)
+  assert.match(html(model(), open), /<label class="lb" for="other-[^"]+">担当に伝える内容<\/label>/)
   const vs = views()
   vs[0]!.log.ops.push({ op_id: 9, at: new Date(NOW).toISOString(), item_id: 'r5', item_rev: 1, type: 'talk', text: '凡例を上に寄せてほしい' })
   const m = model({}, vs)
   assert.ok(!m.boards[0]!.d.queue.some((r) => r.card.id === 'r5'), '件数から外れる')
   const h = html(m, { ...newUi(), sel: k })
   assert.match(h, /<span>修正依頼済み（受領待ち）<\/span>/)
-  assert.match(text(h), /頼んだ直し 凡例を上に寄せてほしい/)
+  assert.match(text(h), /依頼した修正 凡例を上に寄せてほしい/)
 })
 
 test('カードの欄の形が違っても全体の描画を止めず、その欄を外してカードを名指しする', () => {
@@ -153,21 +153,22 @@ test('詰まりの題に仕事の名前があれば、上の行に同じ名前�
   assert.ok(!strip.slice(0, strip.indexOf('</article>')).includes('class="jobname"'))
 })
 
-test('種類ごとの返答: 送る前はコピーしてスレッドを開く・送った・担当と修正を協議（語が切れて見えないように。初見 2 巡目 4）・送らない、見ては これでよい・直してほしい、許すは 許す・任せる・止める', () => {
+test('種類ごとの返答（R115）: 承認に当たるボタンと「直しを伝える」の 2 つに、種類に固有のもの（コピー・送信済み・一任・却下・送信しない）だけを足す', () => {
   const acts = (sel: string) => {
     const h = html(model(), { ...newUi(), sel })
     return [...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`)
   }
-  assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送信済みにする', 'talk:担当と修正を協議', 'skip:送信しない'])
-  assert.deepEqual(acts('/ws/aoba#r5'), ['accept:承認する', 'other:修正点を記入', 'talk:担当と修正を協議', 'url:開く'])
-  assert.deepEqual(acts('/ws/konan#p7'), ['accept:許可する', 'delegate:この案件の 本番 は一任する', 'skip:却下', 'talk:担当と協議'])
+  assert.deepEqual(acts('/ws/aoba#d22'), ['copy:コピーしてスレッドを開く', 'sent:送信済みにする', 'other:直しを伝える', 'skip:送信しない'])
+  assert.deepEqual(acts('/ws/aoba#r5'), ['accept:承認', 'other:直しを伝える', 'url:開く'])
+  assert.deepEqual(acts('/ws/aoba#d21'), ['decide:推奨案で決定', 'other:直しを伝える'])
+  assert.deepEqual(acts('/ws/konan#p7'), ['accept:許可', 'delegate:この案件の 本番 は一任する', 'other:直しを伝える', 'skip:却下'])
   assert.deepEqual(acts('/ws/aoba#i3'), ['talk:担当と協議', 'skip:返信不要', 'url:元の連絡を開く'])
   // 手作業を頼む許す（manual）は、どこで・打つコマンド・手順を先に出し、「済ませた」を主にする（2026-11-21 に switch を頼むカードで、コマンドが無く、打ったあと押すボタンも無かった）。
   const vs = views()
   const p7 = vs[1]!.cockpit!.cards.find((c) => c.id === 'p7')!
   p7.manual = { where: 'ターミナル', command: 'sudo darwin-rebuild switch --flake ~/.config/nix-darwin', steps: ['パスワードを入れる', '終わったら「済ませた」を押す'], check: '窓口が launchctl list で確かめる' }
   const h = html(model({}, vs), { ...newUi(), sel: '/ws/konan#p7' })
-  assert.deepEqual([...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`), ['copycmd:コピー', 'sent:対応済みにする', 'talk:担当と協議'])
+  assert.deepEqual([...h.slice(h.indexOf('class="queue"')).matchAll(/data-act="([a-z]+)"[^>]*>([^<]+)</g)].map((m) => `${m[1]}:${m[2]}`), ['copycmd:コピー', 'sent:対応済みにする', 'other:直しを伝える'])
   const t = text(h.slice(h.indexOf('data-strip="/ws/konan#p7"')))
   const order = ['どこで ターミナル', '打つコマンド sudo darwin-rebuild switch --flake ~/.config/nix-darwin', '手順 パスワードを入れる', '済ませたあと 窓口が launchctl list で確かめる'].map((x) => t.indexOf(x))
   assert.ok(order.every((n) => n >= 0) && [...order].sort((a, b) => a - b).join() === order.join(), t)
@@ -187,7 +188,7 @@ test('右の列: 直し待ち・顧客待ち（催促の日を過ぎたら朱）
   vs[0]!.log.ops.push({ op_id: 3, at: new Date(NOW).toISOString(), item_id: 'd21', item_rev: 1, type: 'talk', text: '図を描き足して' })
   const h = html(model({}, vs))
   const t = text(h)
-  assert.match(t, /直し待ち 1/)
+  assert.match(t, /修正待ち 1/)
   assert.match(t, /顧客待ち 1/)
   assert.match(h, /class="r sp hot"><span class="pt">森さん<\/span><span class="pt">.* から<\/span><span class="pt">催促の日を過ぎた<\/span>/)
   assert.ok(!/class="r[^"]*">[^<]*・/.test(h), '補足を「・」で繋がない')
@@ -281,4 +282,14 @@ test('パネルの詳細（判断材料・出典）は開閉を覚え、描き�
   const closed = html(model(), { ...newUi(), sel: k })
   assert.match(closed, /<details class="more" data-fold="more:\/ws\/aoba#d21"><summary>詳細（判断材料・出典）<\/summary><div><dl class="ctx">/)
   assert.match(html(model(), { ...newUi(), sel: k, open: { [`more:${k}`]: true } }), /data-fold="more:\/ws\/aoba#d21" open>/)
+})
+
+test('要対応の行の先頭は深田さんがすることの語（R115）。対応済みの行は種類の名前のまま', () => {
+  const verb = (kind: string, extra: Record<string, unknown> = {}, ask?: 'question' | 'permit') => actionVerb({ kind, ...extra } as never, ask)
+  assert.deepEqual(['decide', 'review', 'send', 'permit', 'inbox', 'consult', 'talk', 'report'].map((k) => verb(k)), ['決める', '承認', '送る', '許可', '返信', '相談', '協議', '見る'])
+  assert.equal(verb('permit', { manual: { check: 'x' } }), '対応')
+  assert.deepEqual([verb('stuck', {}, 'question'), verb('stuck', {}, 'permit'), verb('stuck')], ['答える', '許可', '再開'])
+  const h = html(model(), newUi())
+  assert.match(h, /aria-label="確認: 配車画面の一覧（並べ替えと絞り込み）">\n      <span class="meta"><span class="kind">承認<\/span>/)
+  assert.match(h, /<span class="kind">送る<\/span>/)
 })

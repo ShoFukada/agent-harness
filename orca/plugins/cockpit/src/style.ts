@@ -160,6 +160,7 @@ body { margin:0; }
 .ck table.cmp th, .ck table.cmp td { border:1px solid var(--rule); padding:4px 8px; text-align:left; vertical-align:top; }
 .ck .tblwrap { overflow-x:auto; }
 .ck .links { display:flex; flex-wrap:wrap; gap:6px; }
+.ck .msg + .links { margin-top:8px; }
 .ck .lk { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--ink3); background:var(--surface); border-radius:6px; padding:1px 8px; font-size:var(--fs-s); color:var(--ink); max-width:100%; }
 .ck .lk i { font-style:normal; font-size:var(--fs-xs); font-weight:700; color:var(--ink3); }
 .ck .lk span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -331,7 +332,7 @@ body { margin:0; }
 .ck.win .cardrow:hover { background:var(--sunk); }
 .ck.win .cardrow[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .cardrow.cl .ti, .ck.win .cardrow.cl .kd { color:var(--ink2); font-weight:400; }
-.ck.win .cardrow.k-stuck:not(.cl) .kd { color:var(--hot); }
+.ck.win .cardrow.k-stuck:not(.cl) .kd, .ck.win .cardrow.reply:not(.cl) .kd { color:var(--hot); }
 .ck.win .kd { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--kc); white-space:nowrap; }
 .ck.win .cardrow .kd { display:grid; grid-template-columns:auto 1fr; }
 .ck.win .cardrow .kd small { grid-column:1 / -1; font-weight:400; color:var(--ink3); }
@@ -446,10 +447,20 @@ body { margin:0; }
 /* 状態は語 1 つ。色は要対応と停止だけ（初見 4・11）。 */
 .ck.win .pst { flex:none; font-size:var(--fs-xs); font-weight:400; color:var(--ink3); white-space:nowrap; }
 .ck.win .pst.mine { color:var(--focus); font-weight:700; }
-.ck.win .pst.stopped { color:var(--hot); font-weight:700; }
+.ck.win .pst.stopped, .ck.win .pst.reply { color:var(--hot); font-weight:700; }
 /* 工程の進み（工程 n/5 と段の名前）。上下の箱で位置がそろうよう幅を決める。 */
-.ck.win .pbar { display:inline-block; min-width:9.5em; text-align:right; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
-.ck.win .pbar .num { margin:0 .3em; }
+.ck.win .pbar { display:inline-block; text-align:right; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
+/* 工程の 5 語（R126）。済んだ段は薄く、今の段は太字、まだの段は済んだ段より濃い（色は足さない。R91）。 */
+.ck .stg .sd { color:var(--ink3); }
+.ck .stg .sn { color:var(--ink2); }
+.ck .stg .sc { color:var(--ink); font-weight:700; }
+.ck .stg .sep { color:var(--ink3); }
+.ck .stg .stg-now { display:none; color:var(--ink2); } .ck .stg .stg-now b { color:var(--ink); font-weight:700; }
+/* 一覧の行（仕事の見出しと全体の仕事の行）は、窓が狭いと今の段の語だけにする。詳細はいつも 5 語。 */
+@media (max-width: 1100px) {
+  .ck.win .pbar .stg-all { display:none; }
+  .ck.win .pbar .stg-now { display:inline; }
+}
 .ck.win .prog { display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:1px 9px; white-space:nowrap; }
 .ck.win .pill.mine { background:var(--mine); color:var(--surface); }
@@ -468,6 +479,8 @@ body { margin:0; }
 .ck.win .task .wk { padding-top:3px; }
 .ck.win .tst { font-size:var(--fs-xs); color:var(--ink2); padding-top:2px; white-space:nowrap; }
 .ck.win .tst.s-run { color:var(--ink); font-weight:600; } .ck.win .tst.s-stop { color:var(--hot); font-weight:600; }
+/* 「返事待ち（あなた）」のタスクがある箱だけ、状態の欄を広げて 1 行に収める（箱の中の行の左端はそろえる。Neon）。 */
+.ck.win .inner.wide .tsel { grid-template-columns:8.5em minmax(0,1fr); }
 .ck.win .task .tn { display:grid; min-width:0; }
 .ck.win .cardrow .kd small, .ck.win .task .id { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }

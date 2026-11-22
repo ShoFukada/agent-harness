@@ -1,8 +1,8 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
-  type AskMark, type AskThread, type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
+  COUNTED, COWORK_ID, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
+  type AskMark, type AskThread, type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type StreamForm, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
 
@@ -14,10 +14,10 @@ const STOP_UNBLOCK: Record<StopReason, [boolean, string]> = {
   blocked: [true, '端末で許可すれば進む'],
   waiting: [true, '質問に答えれば進む'],
   auth: [true, 'ログインし直せば進む'],
-  dead: [false, 'プロセスが落ちた。担当が立て直す'],
+  dead: [false, 'プロセスが落ちた。担当が再起動する'],
   limit: [false, '利用枠が戻るまで止まる'],
-  error: [false, '担当が見直す'],
-  interrupted: [false, '担当が見直す']
+  error: [false, '担当が再確認する'],
+  interrupted: [false, '担当が再確認する']
 }
 
 const WEEK = '日月火水木金土'
@@ -126,6 +126,8 @@ export type TaskView = TaskShown & { task: Task; settledAt?: number }
 /** 案件の今の 1 行（仕事ごと）。 */
 export type JobState = 'mine' | 'stopped' | 'working' | 'customer' | 'idle' | 'done'
 export const JOB_LABEL: Record<JobState, string> = { mine: '私待ち', stopped: '止まっている', working: '作業中', customer: '顧客待ち', idle: '未着手', done: '済' }
+/** 一緒に作る仕事で担当が深田さんの返事を待っているときの、仕事とタスクの状態の語（R128）。 */
+export const REPLY_LABEL = '返事待ち（あなた）'
 /**
  * Orca のサイドバーの作業場所の状態。窓の「案件の今」と同じ判定から決め、窓口が orca worktree set でそろえる
  * （窓とサイドバーで同じ仕事が違う状態に見えないように）。私待ちは in-review にし、未読の印も付ける。
@@ -135,9 +137,23 @@ export const ORCA_STATUS: Record<JobState, OrcaStatus> = { mine: 'in-review', st
 /** サイドバーは 20 文字ほどで切れる。仕事の名前はこれ以内にし、何の仕事かを先頭に置く。 */
 export const NAME_MAX = 20
 /** 端末とチャットの題。窓口は「窓口（<案件の役割>）」。 */
-export const agentTitle = (name: string, role: 'worker' | '担当') => `${name}（${role}）`
+/**
+ * Orca のタブと worktree の名前の頭（R146）。仕事の形を付けて成果物の名前を続ける。見張るは R146 に無いので、ほかと同じ形で「見張る」を頭にする。
+ * 形の無い仕事の担当は、今までどおり「<題>（担当）」。worker は「作業｜<題>」（bin/orca-launch が付ける）。
+ */
+export const NAME_HEAD: Record<StreamForm, string> = { cowork: '一緒に', delegate: '任せる', watch: '見張る' }
+export const WORKER_HEAD = '作業'
+const headed = (head: string, title: string) => `${head}｜${title}`
+/** 仕事（worktree の表示名）の名前。形の無い仕事は題のまま。 */
+export const streamName = (s: Pick<Stream, 'title' | 'form'>) => (s.form ? headed(NAME_HEAD[s.form], s.title) : s.title)
+/** 担当のタブの名前。 */
+export const ownerName = (c: Pick<Cockpit, 'streams'>, o: Pick<Owner, 'title' | 'stream'>) => {
+  const form = c.streams.find((s) => s.id === o.stream)?.form
+  return form ? headed(NAME_HEAD[form], o.title) : `${o.title}（担当）`
+}
+export const workerName = (title: string) => headed(WORKER_HEAD, title)
 
-export type JobView = { id: string; title: string; state: JobState; label: string; next?: string; mine: number; owner?: OwnerRef; since?: string }
+export type JobView = { id: string; title: string; state: JobState; label: string; next?: string; mine: number; owner?: OwnerRef; since?: string; reply?: boolean }
 
 export type Counts = Record<CardKind, number>
 /** 帳簿の不備（必須の欄が欠けたカード・欄の欠けた依頼・仕分けていない発言）。since は数え始めた時刻。 */
@@ -223,8 +239,8 @@ export function stopUnblock(stop: StopReason, a: Pick<AgentRow, 'chat' | 'reset'
   const open = a.chat ? 'チャットを開いて「続ける」を押す' : '端末を開いて「続けて」と送る'
   if ((stop === 'blocked' || stop === 'waiting') && a.ask) return [true, `${a.chat ? 'チャット' : '端末'}を開いて、${a.ask.kind === 'permit' ? '許可するかを選ぶ' : '選択肢を選ぶか答えを書く'}`]
   if (stop === 'limit') return [false, `${a.reset ? `${a.reset} 以降` : '利用枠が戻ってから'}（アカウントを切り替えたなら今）、${open}`]
-  if (stop === 'auth') return [true, `ログインし直してから、${open}`]
-  if (stop === 'error' || stop === 'interrupted') return [false, a.chat ? 'チャットを開いて最後の発言を確かめ、「続ける」を押す' : '端末を開いて最後の出力を確かめ、続きを頼む']
+  if (stop === 'auth') return [true, `再ログインしてから、${open}`]
+  if (stop === 'error' || stop === 'interrupted') return [false, a.chat ? 'チャットを開いて最後の発言を確認し、「続ける」を押す' : '端末を開いて最後の出力を確認し、続きを依頼する']
   return STOP_UNBLOCK[stop]
 }
 
@@ -254,6 +270,74 @@ function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, writt
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: { title: name, how: a.chat ? 'chat' as const : 'terminal' as const, state: a.state, terminal: a.terminalId ?? undefined, session: a.session }, stream: c.streams.find((s) => s.id === task?.stream), agent: ask ? { ...a, ask } : a }
     })
 }
+
+/** 一緒に作る仕事の、済んでいない担当。 */
+const coworkOwners = (c: Cockpit) => (c.owners ?? []).filter((o) => o.state !== 'done' && c.streams.some((s) => s.id === o.stream && s.form === 'cowork'))
+
+/**
+ * 一緒に作る仕事の担当のチャットのセッション（窓の常駐のプロセスが最後の返事を読みに行く先）。
+ * 行を作る側（coworkRows）と同じく ownerOf で引く（帳簿に session が無く、Dispatch から引く担当もいる）。
+ */
+export const coworkSessions = (c: Cockpit | undefined, facts?: OrcaFacts) =>
+  c ? coworkOwners(c).map((o) => ownerOf(c, { owner: o.id, stream: o.stream }, facts).session).filter((x): x is string => !!x) : []
+
+/** 返事の最後の段落（担当が深田さんに返した問いの本文）。空行で区切った最後のまとまりを、改行を空白にして 1 行にする。 */
+export const lastParagraph = (text: string | undefined) =>
+  (text ?? '').split(/\n\s*\n/).map((p) => p.replace(/\*\*/g, '').replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean).at(-1)
+
+/**
+ * 一緒に作る仕事（cowork）を、カードの有無に関わらず要対応に 1 行で出す（R128・R145）。開くボタンは担当のチャットか端末を前に出す（詰まりの行と同じ経路）。
+ * 深田さんの返事待ちは同じ行で示す: 担当がターンを終えて開いたまま（orca agent list の state が done）、担当の問いの詰まり（AskUserQuestion・許可の確認）、
+ * または仕事の話し中のカード・協議中のカード（担当が作業に戻っていないもの）。問いの詰まりと話し中のカード（kind talk）はこの行に寄せて 2 行にしない。
+ * 協議中のほかの種類のカードは承認などの返答が要るので残す。利用枠・ログイン切れ・エラーで止まった担当は、その詰まりの行を残し、返事待ちにしない。
+ * 任せる・見張るの担当は出さない（担当は窓口に status や worker_done を返してターンを終えるので、ターンの終わりが深田さんの番ではない）。
+ * 担当の様子を読めない場所（パネル・hook の state）では作らない。absorbed はこの行に寄せた行。
+ */
+function coworkRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, queue: Row[], all: Row[]): { rows: Row[]; absorbed: Set<Row> } {
+  const absorbed = new Set<Row>()
+  if (!facts?.owners) return { rows: [], absorbed }
+  const rows = coworkOwners(c).flatMap((o): Row[] => {
+    const s = c.streams.find((x) => x.id === o.stream)!
+    if (queue.some((r) => r.card.id === `${COWORK_ID}${s.id}`)) return []
+    const owner = ownerOf(c, { owner: o.id, stream: s.id }, facts)
+    const live = owner.session ? facts.owners!.find((x) => x.session === owner.session) : undefined
+    const state = owner.how === 'terminal' ? owner.state : live?.state
+    const self = (a: Pick<AgentRow, 'session' | 'terminalId'>) => (!!owner.session && a.session === owner.session) || (!!owner.terminal && a.terminalId === owner.terminal)
+    // 担当自身の停止（Orca の端末・チャットから作った行）だけを見る。担当宛てに届いた worker の question の行は、宛先の handle を持つが担当の問いではない。
+    const asked = queue.find((r) => r.card.id.startsWith('#agent:') && !!r.agent?.ask && self(r.agent))
+    // 「対応済みにする」で隠した停止も、止まっているあいだは返事待ちにしない。
+    const failed = facts.workers.some((a) => !!a.stop && !a.ask && self(a))
+    const talks = queue.filter((r) => r.card.stream === s.id && r.card.kind === 'talk')
+    const talking = all.some((r) => r.card.stream === s.id && r.status === 'mine' && !!r.talking)
+    for (const r of [asked, ...talks]) if (r) absorbed.add(r)
+    const waiting = !failed && (state === 'done' || !!asked || ((talks.length > 0 || talking) && state !== 'working'))
+    const text = asked?.agent?.ask?.text ?? (state === 'done' ? live?.last : undefined) ?? talks.find((r) => r.card.last?.text)?.card.last?.text
+    const question = lastParagraph(text)
+    // 詳細の「最後のやり取り」には、題にした最後の段落より前だけを出す（同じ文を 2 度出さない。Neon）。題で切れた長い問いは全文を残す。
+    const paras = (text ?? '').split(/\n\s*\n/).filter((p) => p.trim())
+    const context = question && question.length <= 120 ? paras.slice(0, -1).join('\n\n') : text
+    const at = asked?.card.since ?? (live?.updatedAt ? new Date(live.updatedAt).toISOString() : undefined)
+    const card: Card = {
+      id: `${COWORK_ID}${s.id}`, rev: live?.updatedAt ?? 0, kind: 'talk', state: 'open', stream: s.id,
+      ...(waiting && at && { since: at }),
+      title: !waiting ? `共同作業中（担当は${state === 'working' ? '作業中' : state ? (OWNER_WORD[state] ?? '入力待ち') : '状態不明'}）`
+        : question ? askLine(question) : talks[0]?.card.title ?? `担当「${owner.title}」が返事を待っている`,
+      tasks: [...new Set(c.tasks.filter((t) => t.stream === s.id && t.state !== 'ok').map((t) => t.id))],
+      ...(context && { last: { text: context, by: '担当', ...(at && { at }) } }),
+      // 返事の本文が読めたときは、開くボタンで足りるので「次」を書かない（Neon）。
+      next: !waiting ? (failed ? '担当が止まっている。止まった行の直し方を確認する' : '担当が作業中。開くと途中の様子を確認できる')
+        : text || talks.length ? undefined : `${owner.how === 'terminal' ? '端末' : 'チャット'}から返事の本文を読めませんでした。開いて確認してください`
+    }
+    const agent: AgentRow = asked?.agent ?? {
+      terminalId: owner.how === 'terminal' ? owner.terminal ?? null : null, title: owner.title, agent: null, state: state ?? 'working', since: live?.updatedAt ?? 0,
+      worktree: live?.worktree, ...(owner.how !== 'terminal' && { chat: true }), session: owner.session,
+      ...(waiting && { ask: { kind: 'question' as const, text: text ?? card.title, from: `担当（${owner.title}）があなたの返事を待っている` } })
+    }
+    return [{ card, status: 'mine', pending: false, root, ws: c.workspace.name, owner, stream: s, agent }]
+  })
+  return { rows, absorbed }
+}
+const OWNER_WORD: Partial<Record<AgentRow['state'], string>> = { blocked: '許可待ち', waiting: '入力待ち', done: '待機' }
 
 /** 問いの 1 行目を、一覧の行に収まる長さにする（全文は詳細に出す）。 */
 export const askLine = (text: string) => {
@@ -307,7 +391,7 @@ function dispatchStuck(c: Cockpit, root: string, tasks: Map<string, TaskView>, w
       && !(t.settledAt && dismissed.has(`#dispatch:${t.task.id}@${t.settledAt}`)))
     .map((t) => {
       const stop = (t.stop ?? 'dead') as StopReason
-      const [answerable, unblock] = t.why === 'missing' ? [false, '窓口が立て直すか、記録を直す'] as const : STOP_UNBLOCK[stop]
+      const [answerable, unblock] = t.why === 'missing' ? [false, '窓口が再起動するか、記録を修正する'] as const : STOP_UNBLOCK[stop]
       const reason = t.why === 'missing' ? 'Orca に見つからない' : STOP_LABEL[stop]
       const name = c.streams.find((s) => s.id === t.task.stream)?.title ?? t.task.title
       const card: Card = {
@@ -344,7 +428,9 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   // 同じ停止を端末の行と Dispatch の行で二重に出さない判定は、「済ませた」を当てる前の行で行う（済ませた端末の行の代わりに Dispatch の行が出ないように）。
   const fromAgents = stuckRows(c, root, facts, written)
   const fromDispatch = dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])), dismissed)
-  const queue = [...mine, ...[...fromAgents, ...questionRows(c, root, facts, now)].filter((r) => !dismissed.has(`${r.card.id}@${r.card.rev}`)), ...fromDispatch].sort(byUrgency)
+  const found = [...mine, ...[...fromAgents, ...questionRows(c, root, facts, now)].filter((r) => !dismissed.has(`${r.card.id}@${r.card.rev}`)), ...fromDispatch]
+  const cowork = coworkRows(c, root, facts, found, rows)
+  const queue = [...found.filter((r) => !cowork.absorbed.has(r)), ...cowork.rows].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
   for (const r of queue) counts[r.card.kind]++
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
@@ -431,21 +517,23 @@ function jobViews(c: Cockpit, tasks: Map<string, TaskView>, queue: Row[], rows: 
     .map((s): JobView => {
       const ts = [...tasks.values()].filter((t) => t.task.stream === s.id)
       const mine = queue.filter((r) => r.card.stream === s.id && COUNTED.includes(r.card.kind)).length
+      // 一緒に作る仕事で担当が返事を待っていれば、件数に数えるカードが無くても私の番にする（R128）。
+      const reply = queue.some((r) => r.card.id === `${COWORK_ID}${s.id}` && !!r.agent?.ask)
       const waiting = rows.find((r) => r.status === 'waiting' && r.card.stream === s.id)
       const live = ts.filter((t) => t.state !== 'ok')
       const worst: TaskState | undefined = worstState(live.map((t) => t.state))
       const ext = live.find((t) => t.state === 'wait' && t.task.waiting_on?.trim())
-      const state: JobState = mine ? 'mine'
+      const state: JobState = mine || reply ? 'mine'
         : worst === 'stop' ? 'stopped'
         : worst === 'run' ? 'working'
         : waiting || ext ? 'customer'
         : worst === 'idle' || worst === 'wait' ? 'idle'
         : 'done'
       const who = waiting?.card.awaiting?.who ?? ext?.task.waiting_on
-      const label = state === 'customer' && who ? `${who}の返事待ち` : state === 'mine' ? `私待ち ${mine} 件` : JOB_LABEL[state]
+      const label = state === 'customer' && who ? `${who}の返事待ち` : state === 'mine' ? [reply && REPLY_LABEL, mine && `私待ち ${mine} 件`].filter(Boolean).join('・') : JOB_LABEL[state]
       const nextTask = live.find((t) => t.state === worst) ?? live[0]
       return {
-        id: s.id, title: s.title, state, label, mine,
+        id: s.id, title: s.title, state, label, mine, ...(reply && { reply }),
         next: state === 'done' ? undefined : nextTask?.task.next?.trim() || nextTask?.task.title,
         owner: c.owners?.some((o) => o.stream === s.id && o.state !== 'done') ? ownerOf(c, { stream: s.id }, facts) : undefined,
         since: waiting?.card.awaiting?.since ?? ext?.task.waiting_since
@@ -721,7 +809,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
     talking: d.talking.map((r) => ({ id: r.card.id, since: r.talking!.since, with: r.talking!.terminal ? 'カードの相談' : r.owner.title })),
     fixing: d.fixing.map((r) => r.card.id),
     waiting: d.waiting.map((r) => ({ id: r.card.id, who: r.card.awaiting?.who ?? '', what: r.card.awaiting?.what ?? r.card.title, since: r.card.awaiting?.since ?? '', remind_at: r.card.awaiting?.remind_at })),
-    jobs: d.jobs.map((j) => ({ id: j.id, title: j.title, state: j.state, label: j.label, next: j.next, orca: { display_name: j.title, status: ORCA_STATUS[j.state], unread: j.state === 'mine' } })),
+    jobs: d.jobs.map((j) => ({ id: j.id, title: j.title, state: j.state, label: j.label, next: j.next, orca: { display_name: streamName({ title: j.title, form: c.streams.find((s) => s.id === j.id)?.form }), status: ORCA_STATUS[j.state], unread: j.state === 'mine' } })),
     tasks: tasks.map((t) => ({ id: t.task.id, title: t.task.title, state: t.state, from: t.why, dispatch: currentDispatch(t.task, facts) ?? null })),
     requests: d.requests.map((r) => ({ id: r.req.id, title: r.req.title, state: r.state, legacy: r.legacy })),
     workers: (facts?.workers ?? []).map((w) => ({ task: w.task, job: w.job, state: w.state, stop: w.stop })),
@@ -738,8 +826,12 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       push_check: !tasks.some((t) => t.state === 'run') && !pushOpen,
       plugin: plugin ?? null,
       routes: (c.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x),
-      long_names: [...c.streams.filter((x) => !d.jobs.find((j) => j.id === x.id && j.state === 'done')), ...(c.owners ?? []).filter((o) => o.state !== 'done'), ...live]
-        .filter((x) => [...x.title].length > NAME_MAX).map((x) => `${x.id}（${[...x.title].length} 字）`),
+      // 頭の語（一緒に｜・任せる｜・作業｜ など。R146）も含めて数える。サイドバーに出るのはその名前のため。
+      long_names: [
+        ...c.streams.filter((x) => !d.jobs.find((j) => j.id === x.id && j.state === 'done')).map((x) => [x.id, streamName(x)] as const),
+        ...(c.owners ?? []).filter((o) => o.state !== 'done').map((o) => [o.id, ownerName(c, o)] as const),
+        ...live.map((t) => [t.id, workerName(t.title)] as const)
+      ].filter(([, name]) => [...name].length > NAME_MAX).map(([id, name]) => `${id}（${[...name].length} 字）`),
       incomplete_cards: d.incomplete.map((g) => ({ id: g.id, missing: missingFields(c.cards.find((x) => x.id === g.id)!).map((m) => m.key) })),
       incomplete_requests: d.requests.filter((r) => r.missing.length).map((r) => ({ id: r.req.id, missing: r.missing })),
       unsorted: d.unsorted.map((g) => g.id),

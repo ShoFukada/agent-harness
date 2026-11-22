@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { answerParts, parseCockpit, type DraftFormat } from './model.ts'
+import { answerParts, parseCockpit, STAGES, stageOf, type DraftFormat } from './model.ts'
 import type { ClipResult, CockpitView } from './protocol.ts'
-import { copyDraft, copyMessage } from './controller.ts'
+import { copyDraft, copyMessage, copyTarget } from './controller.ts'
 import { boardsOf, dropRulings, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
 import { CSS } from './style.ts'
-import { renderWindow, taskOrder, todoOrder } from './window-view.ts'
+import { renderWindow, stagesHtml, taskOrder, todoOrder } from './window-view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
@@ -77,7 +77,7 @@ test('全体: タスクを押すと右に詳細（工程・状態・goal・next�
   const t = text(side)
   assert.match(h, /class="task"><button type="button" class="tsel" data-task="t1" aria-current="true"/)
   assert.match(h, /data-toggle="s:s1" aria-expanded="true"/)
-  for (const x of ['作業中 工程 3/5 作る', '何のため 配車の一覧で探す手間を減らす', '済の条件 並べ替えができる 絞り込みができる', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
+  for (const x of ['作業中 工程 調査 ・ 決定 ・ 作成 ・ 確認 ・ 反映', '何のため 配車の一覧で探す手間を減らす', '済の条件 並べ替えができる 絞り込みができる', '次にやること レビューの指摘を直して stg に出す', '済んだこと 並べ替えを入れた', '一覧の改修（worker）', '今: テストを直している', '一覧で探しにくい'])
     assert.ok(t.includes(x), x)
   assert.match(side, /data-jump="\/ws\/aoba#r5"/)
   assert.match(side, /<span class="cb" role="img" aria-label="未"><\/span>並べ替えができる/)
@@ -162,7 +162,7 @@ test('欄の形の違いの知らせは 1 行に畳み、読めない・繋が�
   assert.match(panel, /<summary>帳簿の形式不備 1 件<\/summary>/)
   assert.doesNotMatch(panel, /<div>[^<]*evidence の形が違う/)
   // 仕事の見出しには工程 n/5（5 段で固定）と今の段の名前を出し、凡例の帯は出さない（R82）。
-  assert.match(h, /工程 <span class="num">2\/5<\/span> 決める/)
+  assert.match(h, /<span class="stg"><span class="stg-all"><span class="sd">調査<\/span><span class="sep">・<\/span><b class="sc">決定<\/b><span class="sep">・<\/span><span class="sn">作成<\/span>/)
   assert.doesNotMatch(h, /class="keyline"/)
 })
 
@@ -179,12 +179,12 @@ test('Codex v3 1: 送る文面と手作業の場所・手順は表示でも空�
   assert.match(manual, /開けた2件を確かめる/)
 })
 
-test('Codex v3 2: 段に寄せられない工程名の未完了タスクがあれば、段番号も完了の印も出さず「工程 未分類あり」', () => {
+test('Codex v3 2: 段に寄せられない工程名の未完了タスクがあれば、今の段も済んだ段も出さず「工程の外あり」', () => {
   const h = page(aoba((v) => {
     v.cockpit!.tasks.push({ id: 't9', stream: 's1', phase: '受入', title: '受け入れ', state: 'run' }, { id: 't10', stream: 's1', phase: 'push', title: '出す', state: 'idle' })
   }))
   const head = h.slice(h.indexOf('<b>配車画面の改修</b>'), h.indexOf('</div>', h.indexOf('<b>配車画面の改修</b>')))
-  assert.match(head, /工程 未分類あり/)
+  assert.match(head, /工程の外あり/)
   assert.doesNotMatch(head, /pp on|pp cur|5\/5/)
 })
 
@@ -235,7 +235,7 @@ test('追加 20: コピーは素の文字列とスレッドを押したその場
   // clip-draft はクリップボードを空にしてから書くので、失敗したら中身を確かめられない。押し直しは素の文字列だけを入れ、スレッドは開き直さない。
   const failed = await run({ to: 'a', via: 'Slack', text: 't', href: 'https://acme.slack.com/x' }, { clip: new Error('swift が無い') })
   assert.equal(failed.ret, true)
-  assert.equal(failed.said.at(-1), '本文をSlackの書式に直せませんでした: swift が無い。クリップボードの中身を確かめられないので、もう一度押して素の文字列でコピーしてください')
+  assert.equal(failed.said.at(-1), '本文をSlackの書式に変換できませんでした: swift が無い。クリップボードの中身を確認できないので、もう一度押して素の文字列でコピーしてください')
   const again = await run({ to: 'a', via: 'Slack', text: 't', href: 'https://acme.slack.com/x' }, { plainOnly: true })
   assert.deepEqual([again.ret, again.log, again.said], [false, ['write t'], ['本文を素の文字列でコピーしました']])
   const refused = await run({ to: 'a', via: 'LINE', text: 't' }, { write: new Error('Document is not focused') })
@@ -509,13 +509,13 @@ test('返しの札と「これで決める」: 帳簿の asks[] で反映済み�
   })
   const t = text(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }))
   assert.match(t, /窓口に返したこと 決まったことなし 窓口の反映待ち 図は描き足さない 窓口が保留 入口は 1 つ 窓口が反映済み 担当へ未通知/)
-  assert.match(t, /答え 09:11 を窓口に返すよう頼みました 11\/21\(土\) 09:12 写しが返しました/)
+  assert.match(t, /答え 09:11 を窓口に返すよう依頼しました 11\/21\(土\) 09:12 写しが返しました/)
   assert.doesNotMatch(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }), /data-ask="decide"/, '同じ答えでもう決めたら、ボタンを出さない')
   m.boards[0]!.v.log.ops.pop()
   assert.match(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }), /data-ask="decide" data-id="ask1" data-at="09:11" data-head="1 つにする" data-n="1"/)
   // 押したが返しがまだ無ければ、返し待ちとだけ出す（知らせが届いたかは窓に分からない）。
   m.boards[0]!.v.log.ops.push({ op_id: 10, at: '2026-11-21T09:13:00+09:00', item_id: '#ask:ask1', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
-  assert.match(text(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } })), /答え 09:11 を窓口に返すよう頼みました 11\/21\(土\) 09:13 写しからの返し待ち/)
+  assert.match(text(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } })), /答え 09:11 を窓口に返すよう依頼しました 11\/21\(土\) 09:13 写しからの返し待ち/)
 })
 
 test('質問の欄は案件ごと: 別の案件の下書き・当たり・待ちを出さない（Codex 重大 2）', () => {
@@ -555,8 +555,8 @@ test('続きの答えを待つあいだ: 前の答えで決めさせず、続け
     v.log.ops.push({ op_id: 9, at: '2026-11-21T09:12:00+09:00', item_id: '#ask:ask1', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
   }), { tab: 'whole', askMine: mine })
   const fold = decided.slice(decided.indexOf('data-fold="asko:'), decided.indexOf('</details>', decided.indexOf('data-fold="asko:')))
-  assert.match(fold, /答え 09:11 を窓口に返すよう頼みました/)
-  assert.equal((decided.match(/窓口に返すよう頼みました/g) ?? []).length, 1)
+  assert.match(fold, /答え 09:11 を窓口に返すよう依頼しました/)
+  assert.equal((decided.match(/窓口に返すよう依頼しました/g) ?? []).length, 1)
   assert.doesNotMatch(h, /data-ask="more"/, '開き直した窓でも、控えの最後の質問に答えが無ければ続けて聞かせない（Codex 2 回目 中 1）')
   assert.match(text(h), /まだ答えが届いていません/)
   assert.equal((h.match(/<li class="askt">/g) ?? []).length, 1, '節も返しも無い ask2 は出さない')
@@ -564,4 +564,57 @@ test('続きの答えを待つあいだ: 前の答えで決めさせず、続け
   const w = page(m, { tab: 'whole', askMine: mine, askWait: { '/ws/aoba#id:ask1': { root: '/ws/aoba', at: NOW, q: '図は？', ask: 'ask1', answers: 1 }, '/ws/aoba#whole': { root: '/ws/aoba', at: NOW, q: '別の質問', ask: 'ask2', answers: 0 } } })
   assert.doesNotMatch(w, /data-ask="more"/)
   assert.equal((w.match(/<li class="askt">/g) ?? []).length, 2)
+})
+
+test('工程は 5 つの語を並べて今の段を太字にする（R126・R135）。前の和語の名前の帳簿もそのまま同じ段に寄せ、5 つの外は名指しする', () => {
+  assert.deepEqual([...STAGES], ['調査', '決定', '作成', '確認', '反映'])
+  for (const [old, now] of [['調べる', '調査'], ['決める', '決定'], ['要件', '決定'], ['作る', '作成'], ['実装', '作成'], ['確かめる', '確認'], ['見てもらう', '確認'], ['入れる', '反映'], ['push', '反映']] as const) assert.equal(stageOf(old), now)
+  assert.equal(stageOf('調整'), undefined)
+  const h = stagesHtml(2, true)
+  assert.match(h, /<span class="sd">調査<\/span>.*<span class="sd">決定<\/span>.*<b class="sc">作成<\/b>.*<span class="sn">確認<\/span>.*<span class="sn">反映<\/span>/)
+  assert.match(h, /<span class="stg-now">工程 <b>作成<\/b><\/span>/, '一覧の行の狭い形は今の段の語だけ（「工程」を添える）')
+  assert.doesNotMatch(stagesHtml(2), /stg-now/, '詳細はいつも 5 語')
+  assert.match(CSS, /\.ck \.stg \.sd \{ color:var\(--ink3\); \}/)
+  assert.match(CSS, /\.ck \.stg \.sn \{ color:var\(--ink2\); \}/)
+  assert.match(CSS, /@media \(max-width: 1100px\) \{\n  \.ck\.win \.pbar \.stg-all \{ display:none; \}/)
+  const t = text(page(aoba((v) => { v.cockpit!.tasks.find((x) => x.id === 't1')!.phase = '調整' }), { tab: 'whole', task: 't1' }))
+  assert.match(t, /工程の外（調整）/)
+})
+
+test('追加 25: 見てのカードに見本（draft）があれば、窓とパネルの詳細に宛先ごとの書式でコピーする 3 つのボタンを出す。押すと素の文字列を入れてからその書式で上書きし、スレッドは開かない', async () => {
+  const w = sample(NOW)[2]!
+  const v: CockpitView = { state: 'ok', root: '/ws/harness', cockpit: parseCockpit(JSON.stringify(w.cockpit)), log: structuredClone(w.log), archive: [], figures: {}, errors: [], workers: [], notifiedOp: 0 }
+  const m: Model = { boards: boardsOf([v], NOW), focused: '/ws/harness', unseen: [], errors: [] }
+  const copies = (h: string) => [...h.matchAll(/data-act="copyas" data-format="(\w+)" data-key="\/ws\/harness#r9">([^<]+)</g)].map((x) => `${x[1]}:${x[2]}`)
+  const want = ['slack:Slackの書式でコピー', 'teams:Teamsの書式でコピー', 'mail:メールの書式でコピー']
+  assert.deepEqual(copies(page(m, { sel: '/ws/harness#r9' })), want)
+  assert.deepEqual(copies(render(m, { ...newUi(), sel: '/ws/harness#r9' }, NOW, (x) => x)), want)
+  assert.deepEqual(copies(page(m, { sel: '/ws/harness#r8' })), [], '見本の無い見ては出さない')
+  for (const f of ['slack', 'teams', 'mail'] as const) {
+    const log: string[] = []
+    const d = copyTarget({ ...v.cockpit!.cards.find((x) => x.id === 'r9')!.draft!, href: 'https://example.slack.com/x' }, f)
+    await copyDraft(d, { openUrl: async (u) => (log.push(`open ${u}`), { opened: true }), clip: async (_t, g) => (log.push(`clip ${g}`), { copied: true }) }, async () => void log.push('write'), () => {})
+    assert.deepEqual(log, ['write', `clip ${f}`])
+  }
+})
+
+test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ちなら先頭が「答える」で札が付き、開くボタンは担当のチャット。全体の仕事とタスクの状態も「返事待ち（あなた）」', () => {
+  const m = (state: 'working' | 'done') => aoba((v) => {
+    v.cockpit!.streams.find((x) => x.id === 's2')!.form = 'cowork'
+    v.cockpit!.cards = v.cockpit!.cards.filter((x) => x.stream !== 's2')
+    v.owners = [{ session: 'sess-aws', kind: 'chat', state, worktree: '/ws/aoba-aws', updatedAt: NOW - 60_000, last: '構成案の下書きです。\n\n入口は社内向けにも描きますか？' }]
+  })
+  const asked = page(m('done'), { sel: '/ws/aoba##cowork:s2' })
+  const rowOf = (h: string) => h.match(/<[^>]*data-sel="\/ws\/aoba##cowork:s2"[\s\S]*?<\/button>/)?.[0] ?? ''
+  assert.match(rowOf(asked), /<span class="kd">答える<\/span>/)
+  assert.match(text(rowOf(asked)), /入口は社内向けにも描きますか？/)
+  assert.match(rowOf(asked), /class="tag miss">返事待ち（あなた）</)
+  assert.match(asked, /data-act="focus"[^>]*>担当のチャットを開く</)
+  const whole = text(page(m('done'), { tab: 'whole', open: { 's:s2': true } }))
+  assert.match(whole, /AWS 構成案 返事待ち（あなた）/)
+  assert.match(whole, /返事待ち（あなた） 構成案の図と本文/)
+  const calm = page(m('working'), { sel: '/ws/aoba##cowork:s2' })
+  assert.match(rowOf(calm), /<span class="kd">確認<\/span>/)
+  assert.match(text(rowOf(calm)), /共同作業中（担当は作業中）/)
+  assert.doesNotMatch(rowOf(calm), /返事待ち/)
 })

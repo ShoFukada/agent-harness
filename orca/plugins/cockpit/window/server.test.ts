@@ -66,7 +66,7 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; tailnetHosts?: string[] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; tailnetHosts?: string[] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
@@ -74,6 +74,7 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
   const fake = fakeOrca(rows, plugins, owners, shows, showDelay, more.terms)
   if (more.tabs) fake.orca.tabs = more.tabs
   if (more.chatOpen) fake.orca.chatOpen = more.chatOpen
+  if (more.chatLast) fake.orca.chatLast = more.chatLast
   const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts })
   servers.push(s)
   const port = await s.listen()
@@ -376,6 +377,19 @@ test('担当と協議: consult がチャットで相談を立てたら（handle 
   assert.deepEqual(talkOps(a), [['d22', 'talk', 'orca_session_id:c22']])
   const w = await ev.until((v) => !!board(v, a)?.terminals?.includes('orca_session_id:c22'))
   assert.equal(board(w, a)?.terminals?.includes('term_main'), true, '端末の handle は今どおり')
+})
+
+test('一緒に作る仕事の担当がターンを終えたら、最後の返事を読んで担当の様子に載せる。ほかの担当と作業中の担当は読まない（追加 27）', async () => {
+  const sample0 = JSON.parse(cockpit('案件A')) as { streams: { id: string; form?: string }[] }
+  sample0.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(sample0) })
+  const rows: PsRow[] = [{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main')] }]
+  const asked: string[] = []
+  const owners: OwnerLive[] = [{ session: 'sess-aws', kind: 'chat', state: 'done', updatedAt: 5 }, { session: 'sess-other', kind: 'chat', state: 'done', updatedAt: 5 }]
+  const { s, port } = await start(rows, a, undefined, owners, undefined, undefined, { chatLast: async (h) => (asked.push(h), '下書きです。\n\n入口も描きますか？') })
+  const w = await listen(port, s.token).until((v) => !!board(v, a)?.owners?.some((o) => o.last))
+  assert.deepEqual(board(w, a)?.owners?.map((o) => [o.session, o.last]), [['sess-aws', '下書きです。\n\n入口も描きますか？'], ['sess-other', undefined]])
+  assert.deepEqual([...new Set(asked)], ['orca_session_id:sess-aws'])
 })
 
 test('担当と協議: 最初の連打でも記録は 1 つ。相談に回すときも、consult が失敗して窓口に回すときも（Codex 2 回目 中 1・2）', async () => {

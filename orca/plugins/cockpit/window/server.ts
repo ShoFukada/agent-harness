@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { ASK_ID, askItem, chatMain, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import type { Ask, AskDecideResult, AskResult, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
-import { agentTitle, matchRulings, ownerOf } from '../src/state.ts'
+import { coworkSessions, matchRulings, ownerName, ownerOf } from '../src/state.ts'
 import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
@@ -57,6 +57,8 @@ export type Orca = {
   tabs?(root: string): Promise<{ title: string; handles: string[] }[]>
   /** チャットが Orca に開いているか（orca agent show の result.places が空でない）。無い session は false、読めなければ投げる。 */
   chatOpen?(handle: string): Promise<boolean>
+  /** チャットの最後の返事の全文（orca agent show の lastAssistantMessage）。無ければ null、読めなければ投げる。 */
+  chatLast?(handle: string): Promise<string | null>
   /** 端末の今の画面の行（terminal read --screen）。AskUserQuestion の問いは画面にしか無い。 */
   screen?(terminal: string): Promise<string[]>
   send(terminal: string, text: string): Promise<void>
@@ -132,6 +134,7 @@ export function orcaCli(bin = 'orca'): Orca {
       const r = await run(['terminal', 'list', '--worktree', `path:${root}`, '--include-visual-layouts'])
       return tabsOf(r.visualLayouts, root)
     },
+    chatLast: async (handle) => ((await run(['agent', 'show', handle])).places as { lastAssistantMessage?: string | null }[] | undefined)?.[0]?.lastAssistantMessage ?? null,
     chatOpen: (handle) =>
       run(['agent', 'show', handle]).then(
         (r) => Array.isArray(r.places) && r.places.length > 0,
@@ -453,6 +456,27 @@ export function createServer(opts: Options) {
     broadcast()
   }
 
+  /**
+   * 一緒に作る仕事の担当がターンを終えたときの最後の返事（R128）。同じターン（session と updatedAt）は問い合わせ直さない（本文の無い返事も空として覚える）。
+   * 読めなかった回は覚えず、次の読み直しで聞き直す。担当は Dispatch から引くこともあるので、Dispatch を読んだあとに呼ぶ。
+   */
+  let lasts = new Map<string, string>()
+  async function withLast(ags: OwnerLive[]): Promise<OwnerLive[]> {
+    if (!orca.chatLast) return ags
+    const cowork = new Set([...wss.values()].flatMap((ws) => coworkSessions(ws.files.cockpit, { workers: workersOf(ws.root, ws.files), dispatches: facts.get(ws.root), current: currents.get(ws.root) })))
+    const next = new Map<string, string>()
+    const out = await Promise.all(ags.map(async (a) => {
+      if (a.state !== 'done' || !cowork.has(a.session)) return a
+      const k = `${a.session}@${a.updatedAt}`
+      const last = lasts.get(k) ?? (await orca.chatLast!(`${CHAT_HANDLE}${a.session}`).then((x) => x ?? '', () => undefined))
+      if (last === undefined) return a
+      next.set(k, last)
+      return last ? { ...a, last } : a
+    }))
+    lasts = next
+    return out
+  }
+
   function refreshOrca(): Promise<void> {
     return (refreshing ??= (async () => {
       try {
@@ -497,6 +521,7 @@ export function createServer(opts: Options) {
           }
         }
       if (ended.size) questions = questions.filter((q) => !ended.has(q.id))
+      if (!orcaError && !ownersStale) owners = await withLast(owners)
       broadcast()
     })().finally(() => {
       refreshing = undefined
@@ -650,16 +675,16 @@ export function createServer(opts: Options) {
     const who = `担当「${o.title}」`
     if (o.how === 'terminal') {
       if (liveTerminal(o.terminal)) return { terminal: o.terminal, how: `${o.title}の端末` }
-      return { how: `${o.title}の端末`, reason: `${who}の端末（${o.terminal}）が Orca にありません。閉じたか、開き直して handle が変わりました。窓口に操縦席の担当の記録を直すよう頼んでください` }
+      return { how: `${o.title}の端末`, reason: `${who}の端末（${o.terminal}）が Orca にありません。閉じたか、開き直して handle が変わりました。窓口に操縦席の担当の記録を修正するよう依頼してください` }
     }
     if (!o.session)
-      return { how: `${o.title}のチャット`, reason: `${who}のチャットが分かりません。操縦席の担当の記録に session が無く、記録の Dispatch からも引けません。窓口に担当の記録を直すよう頼んでください` }
+      return { how: `${o.title}のチャット`, reason: `${who}のチャットが分かりません。操縦席の担当の記録に session が無く、記録の Dispatch からも引けません。窓口に担当の記録を修正するよう依頼してください` }
     const chat = owners.find((x) => x.session === o.session)
     if (!chat)
       return { how: `${o.title}のチャット`, reason: ownersStale ? 'Orca からチャットの一覧を読めません。少し待ってもう一度押してください' : `${who}のチャットが Orca にありません。閉じられたようです` }
     if (!chat.worktree || !rowOf(chat.worktree))
       return { how: `${o.title}のチャット`, reason: `${who}のチャットの居場所の worktree${chat.worktree ? `（${path.basename(chat.worktree)}）` : ' '}が Orca にありません。片付けられたようです` }
-    return { worktree: chat.worktree, how: wsName(chat.worktree), tab: chat.title ?? agentTitle(o.title, '担当') }
+    return { worktree: chat.worktree, how: wsName(chat.worktree), tab: chat.title ?? (o.owner ? ownerName(c, o.owner) : o.title) }
   }
 
   /**
@@ -716,7 +741,7 @@ export function createServer(opts: Options) {
       const card: Card | undefined = typeof b.stream === 'string'
         ? (c?.streams.some((x) => x.id === b.stream) ? { id: '', rev: 0, kind: 'consult', state: 'open', title: '', stream: b.stream } : undefined)
         : c?.cards.find((x) => x.id === b.item_id)
-      if (!c || !card) throw new HttpError(409, typeof b.stream === 'string' ? '仕事が見つかりません。読み直してからもう一度押してください' : 'カードが見つかりません。読み直してからもう一度押してください')
+      if (!c || !card) throw new HttpError(409, typeof b.stream === 'string' ? '仕事が見つかりません。再読み込みしてからもう一度押してください' : 'カードが見つかりません。再読み込みしてからもう一度押してください')
       // 読み直しの途中（lastRefresh は Dispatch を読む前に進む）なら終わりを待つ。チャットの担当は Dispatch から引くため。
       if (refreshing || Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
       // 担当のいない帳簿のカードは、カードの相談のタブを立てる（2 回目は consult が同じタブを前に出す）。
@@ -766,11 +791,11 @@ export function createServer(opts: Options) {
       const bad = textError(question)
       if (bad) throw new HttpError(400, bad)
       const cont = str(b.ask)
-      if (cont !== undefined && !(ASK_ID.test(cont) && ws.files.asks.some((a) => a.id === cont))) throw new HttpError(409, `質問 ${cont} が見つかりません。読み直してからもう一度押してください`)
+      if (cont !== undefined && !(ASK_ID.test(cont) && ws.files.asks.some((a) => a.id === cont))) throw new HttpError(409, `質問 ${cont} が見つかりません。再読み込みしてからもう一度押してください`)
       const card = cont ? undefined : str(b.card)
       const task = cont ? undefined : str(b.task)
-      if (card && !c.cards.some((x) => x.id === card)) throw new HttpError(409, 'カードが見つかりません。読み直してからもう一度押してください')
-      if (task && !c.tasks.some((x) => x.id === task)) throw new HttpError(409, 'タスクが見つかりません。読み直してからもう一度押してください')
+      if (card && !c.cards.some((x) => x.id === card)) throw new HttpError(409, 'カードが見つかりません。再読み込みしてからもう一度押してください')
+      if (task && !c.tasks.some((x) => x.id === task)) throw new HttpError(409, 'タスクが見つかりません。再読み込みしてからもう一度押してください')
       if (!opts.ask) return { opened: false, reason: '質問の道具（consult --ask）が渡されていません' }
       const run = (asking.get(ws.root) ?? Promise.resolve()).then(async (): Promise<AskResult> => {
         // 新しい質問は id を予約し、consult が控えの頭を書くまでほかのプロセスにも採らせない。
@@ -804,7 +829,7 @@ export function createServer(opts: Options) {
       const ws = knownWs(b.root)
       const id = str(b.ask)
       const a = ws.files.asks.find((x) => x.id === id)
-      if (!id || !a) throw new HttpError(409, '質問が見つかりません。読み直してからもう一度押してください')
+      if (!id || !a) throw new HttpError(409, '質問が見つかりません。再読み込みしてからもう一度押してください')
       const ans = b.answer as { at?: unknown; head?: unknown; n?: unknown } | undefined
       const answer = { at: str(ans?.at) ?? '', head: str(ans?.head) ?? '', n: typeof ans?.n === 'number' ? ans.n : 0 }
       const { log, added } = await appendOpOnce(ws.root, ws.files.cockpit, { root: ws.root, item_id: askItem(id), item_rev: 0, type: 'ask_decide', answer })
@@ -830,7 +855,7 @@ export function createServer(opts: Options) {
     async asktab(b): Promise<OpenResult> {
       const ws = knownWs(b.root)
       const id = str(b.ask)
-      if (!id || !ws.files.asks.some((x) => x.id === id)) throw new HttpError(409, '質問が見つかりません。読み直してからもう一度押してください')
+      if (!id || !ws.files.asks.some((x) => x.id === id)) throw new HttpError(409, '質問が見つかりません。再読み込みしてからもう一度押してください')
       const tab = await askTab(ws, id)
       if ('reason' in tab) return { opened: false, reason: tab.reason }
       await orca.switchTerminal(tab.handle)
