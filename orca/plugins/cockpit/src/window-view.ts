@@ -799,7 +799,8 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const sw = t || w
     ? `<div class="wsw" role="group" aria-label="右の欄に出すもの">${[['detail', label], ['ask', `案件への質問${n ? `<span class="n">${n}</span>` : ''}`]].map(([k, l]) => `<button type="button" data-wside="${k}" aria-pressed="${side === k}">${l}</button>`).join('')}</div>`
     : ''
-  const ask = `<div class="wdet"><div class="dh"><div class="crumbs"><span>${esc(c.workspace.name)}</span></div><h2>案件への質問</h2></div>${askHtml(b, { kind: 'whole' }, ui, now)}</div>`
+  // 切り替えのボタンが「案件への質問」と言っているときは、同じ見出しを重ねない（Neon 36）。
+  const ask = `<div class="wdet">${sw ? '' : `<div class="dh"><div class="crumbs"><span>${esc(c.workspace.name)}</span></div><h2>案件への質問</h2></div>`}${askHtml(b, { kind: 'whole' }, ui, now)}</div>`
   return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${side === 'ask' ? '案件への質問' : label}">${sw}${side === 'ask' ? ask : w ? watchDetail(w, now) : taskDetail(b, t!, ui, now)}</aside>`
 }
 

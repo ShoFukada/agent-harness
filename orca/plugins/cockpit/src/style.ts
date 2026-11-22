@@ -451,7 +451,7 @@ body { margin:0; }
 .ck.win .askt { display:grid; gap:8px; padding:12px 0; border-top:1px solid var(--rule2); }
 .ck.win .aq, .ck.win .aa { display:grid; gap:2px; }
 .ck.win .aq > .mut, .ck.win .aa > .mut { font-size:var(--fs-xs); }
-.ck.win .aq .verb { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; }
+.ck.win .aq .verb { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; text-wrap:pretty; word-break:auto-phrase; }
 .ck.win .aa .rich p { margin:0 0 4px; }
 .ck.win .aa .rich ul { margin:0 0 4px; padding-left:1.4em; }
 /* 答え・見張る仕事の出力の Markdown（R167）。字の段は今の体系の中で選ぶ（見出しは本文と同じ大きさで太さだけ変える）。 */
@@ -464,7 +464,9 @@ body { margin:0; }
 .ck .md hr { border:0; border-top:1px solid var(--rule2); margin:8px 0; }
 .ck .md .mdtbl { overflow-x:auto; margin:4px 0 8px; }
 .ck .md table { border-collapse:collapse; font-size:var(--fs-s); min-width:100%; }
-.ck .md th, .ck .md td { border:1px solid var(--rule); padding:4px 8px; text-align:left; vertical-align:top; }
+.ck .md th, .ck .md td { border:1px solid var(--rule); padding:4px 8px; text-align:left; vertical-align:top; text-wrap:pretty; word-break:auto-phrase; }
+/* 狭い右の欄で列が細くなり 1〜2 字だけ次の行に落ちないよう、文節で折り返し（auto-phrase は lang=ja の文節）、列に幅の下限を置く。足りなければ表だけが横に動く（Neon 36）。 */
+.ck .md td { min-width:7em; }
 .ck .md th { background:var(--sunk); font-weight:600; white-space:nowrap; }
 .ck .md .mdpre { margin:4px 0 8px; padding:8px 10px; background:var(--sunk); border:1px solid var(--rule2); border-radius:6px; overflow-x:auto; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); line-height:1.55; white-space:pre; }
 /* 全体の右の欄の切り替え（タスクの詳細｜案件への質問。R166） */

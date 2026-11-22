@@ -592,6 +592,9 @@ test('質問: 全体の右の欄・カードの詳細・タスクの詳細に 4 
   assert.doesNotMatch(text(detail), /全体の質問|カードの質問/)
   const whole = page(m, { tab: 'whole', task: 't1', wholeSide: 'ask', askMine: { '/ws/aoba#ask1': true } })
   assert.match(whole, /<aside class="wside" aria-label="案件への質問"><div class="wsw"[^>]*>.*data-wside="ask" aria-pressed="true"/)
+  // 切り替えが「案件への質問」と言っているときは見出しを重ねない。タスクを選んでいなければ（切り替えが無ければ）見出しを出す（Neon 36）。
+  assert.doesNotMatch(whole, /<h2>案件への質問<\/h2>/)
+  assert.match(page(m, { tab: 'whole', wholeSide: 'ask' }), /<h2>案件への質問<\/h2>/)
   assert.match(whole, /<textarea id="ask-whole" data-askdraft="\/ws\/aoba#whole" rows="4"/)
   assert.match(text(whole), /全体の質問/)
   assert.doesNotMatch(text(whole), /タスクの質問|カードの質問/)
