@@ -397,3 +397,32 @@ test('cockpit-write（R161・R162）: 書く前に CLI で検査する。旧 m1 
   assert.deepEqual((await write(root, { cards: [{ ...m1, from_returns: ['m1-1'] }] }, true, none)).errors, [], '返しの反映は CLI が無くても書ける')
   assert.deepEqual((await write(root, { applied_ops: [] }, true, none)).errors, [])
 })
+
+test('見張る仕事の watch と確認日の欄（追加 31）: 書ける欄にし、形が違えば断る。watch は見張る仕事だけで、その仕事には要る', () => {
+  const c = aoba()
+  const watch = { automation: 'auto-1', targets: ['管理表', 'Slack #dev'], to: '窓口' }
+  const stream = (over: object) => ({ id: 'v1', title: '見回り', form: 'watch', ...over })
+  assert.deepEqual(applyChange(c, { streams: [stream({ watch })] }).errors, [])
+  assert.match(applyChange(c, { streams: [stream({})] }).errors.join('\n'), /仕事 v1: 見張る仕事は watch を/)
+  assert.match(applyChange(c, { streams: [stream({ watch: { ...watch, targets: [] } })] }).errors.join('\n'), /仕事 v1: 見張る仕事は watch を/)
+  assert.match(applyChange(c, { streams: [stream({ form: 'delegate', watch })] }).errors.join('\n'), /仕事 v1: watch は見張る仕事（form: watch）だけに書く/)
+  assert.match(applyChange(c, { streams: [stream({ watch: { ...watch, every: '30m' } })] }).errors.join('\n'), /仕事 v1: 書けない欄 watch\.every/)
+  const task = { ...structuredClone(c.tasks[1]!) }
+  assert.deepEqual(applyChange(c, { tasks: [{ ...task, check_on: '2026-11-24' }] }).errors, [])
+  for (const bad of ['2026/11/24', '2026-02-30', '2026-13-01', '2026-11-00', '11-24'])
+    assert.match(applyChange(c, { tasks: [{ ...task, check_on: bad }] }).errors.join('\n'), /check_on の形が違う|check_on は YYYY-MM-DD/)
+  // 読み込みは、見張る仕事でない watch と形の違う watch を外して名指しする。
+  const problems: string[] = []
+  const raw = {
+    ...c,
+    streams: [...c.streams, stream({ form: 'cowork', watch }), { ...stream({ watch: { automation: '' } }), id: 'v2' }, { ...stream({ watch: { ...watch, every: '30m' } }), id: 'v3' }],
+    tasks: [...c.tasks, { ...task, id: 'k13', check_on: '2026-13-01' }]
+  }
+  // 月 13 の確認日で読み込みが止まらない（Codex 1）。読み書きで余分な欄の扱いをそろえる（Codex 任意）。
+  const read = parseCockpit(JSON.stringify(raw), problems)
+  assert.deepEqual(read.streams.filter((s) => s.watch).length, 0)
+  assert.match(problems.join('\n'), /仕事 v3 の watch の形が違う/)
+  assert.match(problems.join('\n'), /k13/)
+  assert.match(problems.join('\n'), /仕事 v1 の watch は見張る仕事（form: watch）だけが持つ/)
+  assert.match(problems.join('\n'), /仕事 v2 の watch の形が違う/)
+})

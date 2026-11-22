@@ -43,6 +43,8 @@ export type Ui = {
   doneSel?: string
   /** 窓の全体で右に詳細を出しているタスクの id。 */
   task?: string
+  /** 窓の全体で右に詳細を出している見張る仕事（root#仕事の id）。タスクの詳細と入れ替わりに出す。 */
+  watch?: string
   theme: Theme
   dark: boolean
   /** 窓からの質問の書きかけ（欄の鍵 → 文）。欄の鍵は <root>#whole・<root>#card:<id>・<root>#task:<id>（新しい質問）と <root>#id:<質問 id>（続き）。 */

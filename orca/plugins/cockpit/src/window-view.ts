@@ -1,11 +1,11 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
 import { actionVerb, COUNTED, COWORK_ID, IDLE_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
-import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
+import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, tokyoDay, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, stripHtml, toastsHtml, rowIdHtml,
+  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, sp, stripHtml, toastsHtml, rowIdHtml,
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
-import type { RulingHit } from './protocol.ts'
+import type { AutomationFact, RulingHit } from './protocol.ts'
 
 type Svg = (raw: string) => string
 export type Tab = NonNullable<Ui['tab']>
@@ -53,8 +53,9 @@ export const doneFold = (c: Card) => `done:${c.stream || '-'}`
 export const doneOrder = (b: Board | undefined): string[] => (b ? closedGroups(b).flatMap(([, xs]) => xs.map(keyOf)) : [])
 
 /** 種類は語だけで示す（記号を並べない。R101）。要対応の行は深田さんがすることの語（R115）、対応済みの行は種類の名前。 */
-const kindName = (c: Card) => (c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : c.id.startsWith(IDLE_ID) ? '放置' : KIND_LABEL[c.kind])
-const leadWord = (r: Row, closed: boolean) => (closed || r.status !== 'mine' ? kindName(r.card) : actionVerb(r.card, r.agent?.ask?.kind))
+const kindName = ({ card: c, idle }: { card: Card; idle?: { check?: string } }) =>
+  c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : c.id.startsWith(IDLE_ID) ? (idle?.check ? '確認日' : '放置') : KIND_LABEL[c.kind]
+const leadWord = (r: Row, closed: boolean) => (closed || r.status !== 'mine' ? kindName(r) : actionVerb(r.card, r.agent?.ask?.kind))
 const tag = (text: string, cls = '') => `<span class="tag${cls ? ` ${cls}` : ''}">${esc(text)}</span>`
 
 /** 行の札。協議中と修正待ち。相談は見出しで別に数えるので札を付けない（初見 12）。 */
@@ -93,7 +94,7 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
     : r.agent?.ask && c.since ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
   // 番号はどの行でも右の列の 2 段目に置く（時刻の無い行で、時刻の位置に番号だけが来ないように。Neon・初見の目）。
   // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。動いていないタスクは、題にタスク名があるので止まっている手がかり。
-  const sub = r.agent?.ask?.from ?? r.idle?.worker ?? t?.task.title
+  const sub = r.agent?.ask?.from ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.waiting_on && `待ち ${t.task.waiting_on}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
@@ -101,7 +102,7 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
 }
 
 const FORM_ORDER = FORMS
-const FORM_DESC: Record<StreamForm, string> = { cowork: '話しながら進めているもの', delegate: '任せている作業の進み具合', watch: '届いたもの' }
+const FORM_DESC: Record<StreamForm, string> = { cowork: '話しながら進めているもの', delegate: '任せている作業の進み具合', watch: '見回りと届いたもの' }
 const formChip = (f: StreamForm | undefined) => (f ? `<span class="fm f-${f}">${esc(FORM_LABEL[f])}</span>` : '')
 
 /** 仕事の見出し。件数はタブの要対応と同じ数え方（相談・報告は別に書く）にし、進み具合は右にそろえる。 */
@@ -216,10 +217,15 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
       if (r.idle) {
         const st = r.v?.cockpit?.tasks.find((t) => t.id === r.idle!.task)?.state
         return [
-          fld('最後の動き', esc(`${fmtDate(r.idle.since)}（${r.idle.from}）。${st ? `${TSTATE[st]}のまま` : ''}${r.idle.line}時間を超えたので出しています`)),
+          r.idle.check
+            ? fld('確認日', esc(`${fmtDate(r.idle.check)}。この日になってもタスクが進んでいないので出しています`))
+            : fld('最後の動き', esc(`${fmtDate(r.idle.since)}（${r.idle.from}）。${st ? `${TSTATE[st]}のまま` : ''}${r.idle.line}時間を超えたので出しています`)),
           fld('worker・担当', esc(r.idle.worker)),
+          r.idle.check ? fld('待っているもの', esc(r.v?.cockpit?.tasks.find((t) => t.id === r.idle!.task)?.waiting_on)) : '',
           fld('次にやること', esc(c.next)),
-          fld('対応のしかた', esc(`「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で止まっている理由を聞き、続けるか止めるかを伝えます。帳簿のタスクが動けば、この行は消えます。`))
+          fld('対応のしかた', esc(r.idle.check
+            ? `「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で、確認日に確かめること（返事が来たか・進めてよいか）を伝えます。タスクが動けば（確認日を先に延ばすことも含む）、この行は消えます。`
+            : `「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で止まっている理由を聞き、続けるか止めるかを伝えます。タスクが動けば、この行は消えます。`))
         ].join('')
       }
       return [c.last ? fld('最後のやり取り', `<div class="quote">${esc(c.last.text)}</div>`) : '', fld('次', esc(c.next))].join('')
@@ -419,7 +425,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
     <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}${nextBtn}</div>
-      <div class="kl"><span class="kd">${kindName(c)}</span>${dueHtml(c.due, now)}</div>
+      <div class="kl"><span class="kd">${kindName(r)}</span>${dueHtml(c.due, now)}</div>
       <h2>${esc(c.title)}</h2><div>${r.agent?.ask?.from ? `<span class="owner">${esc(r.agent.ask.from)}</span>` : ownerHtml(r.owner, r.agent ? false : b.v.owners, s?.title)}</div></div>
     ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${result}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
@@ -498,21 +504,27 @@ const stateOf = (t: TaskView, rows: Row[]): TaskState => (t.state !== 'ok' && ro
 /** 一緒に作る仕事で担当が深田さんの返事を待っているタスク（R128）。状態は「返事待ち（あなた）」と出す。 */
 const replyWait = (rows: Row[]) => rows.some((r) => r.card.id.startsWith(COWORK_ID) && !!r.agent?.ask)
 
-function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined): string {
+function checkOnHtml(t: TaskView, now: number): string {
+  const day = t.task.check_on
+  if (!day || t.state === 'ok') return ''
+  return tokyoDay(now) >= day ? `<b class="chk">確認日 ${esc(fmtDate(day))}</b>` : `<span class="chk">確認日 ${esc(fmtDate(day))}</span>`
+}
+
+function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined, now: number): string {
   const st = stateOf(t, todo.get(t.task.id) ?? [])
   const reply = st !== 'ok' && replyWait(todo.get(t.task.id) ?? [])
-  const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r.card)}を開く</button>`).join('')
+  const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r)}を開く</button>`).join('')
   const sub = t.task.waiting_on ? `待ち: ${t.task.waiting_on}` : t.task.next ? `次: ${t.task.next}` : ''
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
   return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${reply ? 'stop' : st}">${reply ? REPLY_LABEL : TSTATE[st]}</span>
-    <span class="tn"><span>${esc(t.task.title)}</span>${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
+    <span class="tn"><span>${esc(t.task.title)}${checkOnHtml(t, now)}</span>${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
     <span class="wk">${chips}</span></div>`
 }
 
 const PILL: Record<JobState, string> = { mine: '要対応', stopped: '停止中', working: '作業中', customer: '顧客待ち', idle: '未着手', done: '完了' }
 
-function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): string {
+function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now: number): string {
   const s = b.v.cockpit!.streams.find((x) => x.id === j.id)
   const ts = tasksOf(b, j.id)
   const done = ts.filter((t) => t.state === 'ok').length
@@ -526,7 +538,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>): str
   // 選べるタスクが無い仕事は右に詳細を出せないので、協議のボタンを箱の中に置く。
   const talk = groups.length ? '' : `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(j.id)}">${j.owner ? '担当と協議' : '窓口と協議'}</button></div>`
   const inner = open
-    ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task)).join('')}`).join('')
+    ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task, now)).join('')}`).join('')
       + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '') + talk
     : ''
   // 一覧の 1 行。状態は語 1 つ（色は要対応と停止だけ）、次にやることを工程より先に読ませる（初見 4・5）。協議は右の詳細から。
@@ -567,7 +579,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
     const k = keyOf(v)
     const state = v.card.kind === 'consult' ? '相談' : v.card.kind === 'report' ? '報告' : CARD_STATE[v.status]
     // 停止は一覧の行と同じく危険の色にする（Neon 追加 23）。
-    const inner = `<span class="kd${v.card.kind === 'stuck' ? ' hotc' : ''}">${kindName(v.card)}</span><span class="ti">${esc(v.card.title)}</span><span class="${v.status === 'waiting' ? 'mut' : 'now'}">${esc(state)}</span>`
+    const inner = `<span class="kd${v.card.kind === 'stuck' ? ' hotc' : ''}">${kindName(v)}</span><span class="ti">${esc(v.card.title)}</span><span class="${v.status === 'waiting' ? 'mut' : 'now'}">${esc(state)}</span>`
     return listed.has(k) ? `<button type="button" class="lc" data-jump="${esc(k)}">${inner}</button>` : `<div class="lc">${inner}</div>`
   }
   // 状態は一覧の行と同じ根拠（要対応の行）で決める。
@@ -605,7 +617,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const talk = task.stream ? `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(task.stream)}">${owner ? '担当と協議' : '窓口と協議'}</button></div>` : ''
   return `<div class="wdet">
     <div class="dh"><div class="crumbs">${[c.workspace.name, s?.title ?? '仕事の割り当てなし'].map((x) => `<span>${esc(x)}</span>`).join('<i>›</i>')}</div>
-      <div class="kl"><span class="tst s-${reply ? 'stop' : shown}">${reply ? REPLY_LABEL : TSTATE[shown]}</span><span class="mut">${st ? `工程 ${stagesHtml(STAGES.indexOf(st))}` : esc(`工程の外（${task.phase}）`)}</span></div>
+      <div class="kl"><span class="tst s-${reply ? 'stop' : shown}">${reply ? REPLY_LABEL : TSTATE[shown]}</span><span class="mut">${st ? `工程 ${stagesHtml(STAGES.indexOf(st))}` : esc(`工程の外（${task.phase}）`)}</span>${checkOnHtml(t, nowMs)}</div>
       <h2>${esc(task.title)}</h2></div>
     ${first ? `<div class="first facts">${first}</div>` : ''}${sent}${second ? `<div class="first facts">${second}</div>` : ''}
     ${askHtml(b, { kind: 'task', id: task.id }, ui, nowMs)}
@@ -620,7 +632,113 @@ function noTaskRequests(b: Board, ui: Ui): string {
   return `<details class="ntr" data-fold="notask"${ui.open.notask ? ' open' : ''}><summary>タスクの無い依頼 ${xs.length} 件</summary><ul>${xs.map((r) => `<li><span class="code">${esc(r.req.id)}</span>${esc(r.req.title)}<span class="rst">${esc(r.state)}</span></li>`).join('')}</ul></details>`
 }
 
-function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
+const DOW = '日月火水木金土'
+const RR_DAY: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 }
+/** cron の 1 欄を数の並びにする。* は undefined、読めなければ null。 */
+function cronField(f: string, lo: number, hi: number): number[] | null | undefined {
+  if (f === '*') return undefined
+  const out = new Set<number>()
+  for (const p of f.split(',')) {
+    const m = /^(\*|\d+)(?:-(\d+))?(?:\/(\d+))?$/.exec(p)
+    if (!m) return null
+    const a = m[1] === '*' ? lo : Number(m[1])
+    const z = m[2] ? Number(m[2]) : m[1] === '*' || m[3] ? hi : a
+    for (let i = a; i <= z; i += m[3] ? Number(m[3]) : 1) out.add(i)
+  }
+  return [...out].sort((x, y) => x - y)
+}
+const dayWord = (ds: number[] | undefined) => (!ds || new Set(ds).size === 7 ? '毎日' : ds.join() === '1,2,3,4,5' ? '平日' : ds.map((d) => DOW[d]).join('・'))
+const span = (hs: number[]) => (hs.length > 1 && hs.every((h, i) => !i || h === hs[i - 1]! + 1) ? `${hs[0]}〜${hs.at(-1)} 時` : undefined)
+const at = (h: number, m: number) => `${h}:${String(m).padStart(2, '0')}`
+/**
+ * 見張る仕事の頻度を語にする（R152 の表）。Orca の rrule は cron の 5 欄（「0,30 9-19 * * *」）か RRULE（「FREQ=WEEKLY;BYDAY=MO,…;BYHOUR=8」）。
+ * 読めない形はそのまま返す。
+ */
+export function rruleText(rule: string): string {
+  const cron = rule.trim().split(/\s+/)
+  if (cron.length === 5) {
+    const [mi, ho, dom, mon, dw] = cron as [string, string, string, string, string]
+    const ms = cronField(mi, 0, 59)
+    const hs = cronField(ho, 0, 23)
+    const ds = cronField(dw, 0, 7)
+    if (dom !== '*' || mon !== '*' || ms === null || hs === null || ds === null || !ms) return rule
+    const days = dayWord(ds && [...new Set(ds.map((d) => d % 7))].sort())
+    const step = ms.length > 1 && ms.every((m, i) => !i || m - ms[i - 1]! === ms[1]! - ms[0]!) && (ms[1]! - ms[0]!) * ms.length === 60 ? ms[1]! - ms[0]! : undefined
+    if (step) return `${days} ${!hs ? '' : span(hs) ?? `${hs.join('・')} 時`}${hs ? ' ' : ''}${step} 分おき`
+    if (ms.length !== 1) return rule
+    if (!hs) return `${days} 毎時 ${ms[0]} 分`
+    if (hs.length === 1) return `${days} ${at(hs[0]!, ms[0]!)}`
+    return span(hs) ? `${days} ${span(hs)}の毎時 ${ms[0]} 分` : `${days} ${hs.map((h) => at(h, ms[0]!)).join('・')}`
+  }
+  const kv = Object.fromEntries(rule.replace(/^RRULE:/, '').split(';').map((x) => x.split('=') as [string, string]))
+  // 解釈していない制約（BYMONTH・COUNT など）が付くものは、実際より頻繁に読めないよう原文を返す（Codex 5）。
+  if (Object.keys(kv).some((k) => !['FREQ', 'INTERVAL', 'BYDAY', 'BYHOUR', 'BYMINUTE', 'WKST'].includes(k))) return rule
+  const n = Number(kv.INTERVAL ?? 1)
+  if (kv.FREQ === 'MINUTELY' && !kv.BYDAY && !kv.BYHOUR && !kv.BYMINUTE) return `${n} 分おき`
+  if (kv.FREQ === 'HOURLY' && !kv.BYDAY && !kv.BYHOUR && !kv.BYMINUTE) return n === 1 ? '毎時' : `${n} 時間おき`
+  // 曜日の無い毎週は開始日の曜日に動く。開始日はここでは分からないので「毎週」までにする。
+  if (kv.FREQ === 'WEEKLY' && !kv.BYDAY) kv.BYDAY = ''
+  if ((kv.FREQ === 'DAILY' || kv.FREQ === 'WEEKLY') && n === 1 && kv.BYHOUR) {
+    const ds = kv.BYDAY ? kv.BYDAY.split(',').map((d) => RR_DAY[d]) : undefined
+    if (ds?.some((d) => d === undefined)) return rule
+    const hs = kv.BYHOUR.split(',').map(Number)
+    const m = Number(kv.BYMINUTE ?? 0)
+    if (hs.some(Number.isNaN) || Number.isNaN(m)) return rule
+    return `${kv.BYDAY === '' ? '毎週' : dayWord(ds?.length ? (ds as number[]).sort() : undefined)} ${hs.map((h) => at(h, m)).join('・')}`
+  }
+  return rule
+}
+
+const RUN_STATUS: Record<string, string> = { completed: '完了', failed: '失敗', running: '実行中', queued: '待機', pending: '待機', skipped: '見送り', cancelled: '取り消し' }
+const headLine = (text: string | undefined) =>
+  (text ?? '').split('\n').filter((x) => !/^\s*#/.test(x)).map((x) => x.replace(/^[>*\-\s]+/, '').replace(/\*\*/g, '').trim()).find(Boolean) ?? ''
+function lastRunText(a: AutomationFact | undefined, now: number, withHead = true): string {
+  if (!a) return 'Orca から読めていない'
+  if (!a.name) return 'Orca に設定が無く、動いていない'
+  if (!a.last) return a.lastUnread ? '前回の結果を読めていない（少し待つと読み直します）' : 'まだ実行していない'
+  const head = withHead ? headLine(a.last.status === 'failed' ? a.last.error ?? a.last.content : a.last.content) : ''
+  return `${nearDate(new Date(a.last.at).toISOString(), now)} ${RUN_STATUS[a.last.status] ?? a.last.status}${head ? `。${head}` : ''}`
+}
+
+type WatchRow = { b: Board; s: { id: string; title: string; watch: { automation: string; targets: string[]; to: string } }; a: AutomationFact | undefined; key: string }
+function watchRows(boards: Board[]): WatchRow[] {
+  return boards.flatMap((b) => (b.v.cockpit?.streams ?? []).flatMap((s) =>
+    s.form === 'watch' && s.watch
+      ? [{ b, s: { ...s, watch: s.watch }, a: b.v.automations?.find((x) => x.id === s.watch!.automation), key: `${b.root}#${s.id}` }]
+      : []))
+}
+/** ハーネスの操縦席（R152: nix-darwin の案件一覧は各操縦席の見張る仕事を集めた表示）。 */
+const isHarness = (b: Board) => /\/nix-darwin\/?$/.test(b.root)
+
+function watchTable(rows: WatchRow[], ui: Ui, now: number, all: boolean): string {
+  if (!rows.length) return ''
+  // 右に詳細の列がある幅では 6 列の表が収まらないので、線で区切った 3 行の行にする（1 行目 Bot と頻度、2 行目 受け持つ案件・対象・送り先、3 行目 前回の結果）。
+  const row = (r: WatchRow) => `<li class="wrow${ui.watch === r.key ? ' cur' : ''}" data-watch="${esc(r.key)}">
+      <span class="wl1"><button type="button" class="wbot" data-watch="${esc(r.key)}"${ui.watch === r.key ? ' aria-current="true"' : ''}>${esc(r.a?.name ?? r.s.title)}</button><span class="mut">${r.a?.rrule ? esc(rruleText(r.a.rrule)) : ''}${r.a?.enabled === false ? '（止めている）' : ''}</span></span>
+      <span class="wl2 mut sp">${sp([all && esc(r.b.v.cockpit!.workspace.name), `対象 ${esc(r.s.watch.targets.join('・'))}`, `送り先 ${esc(r.s.watch.to)}`])}</span>
+      <span class="wl3${!r.a?.name || r.a.last?.status === 'failed' ? ' hotc' : ''}">${r.a?.last ? '前回の結果 ' : ''}${esc(lastRunText(r.a, now))}</span></li>`
+  return `<div class="subh">見張る仕事 ${rows.length} 件</div><ul class="wrows" role="list">${rows.map(row).join('')}</ul>`
+}
+
+function watchDetail(r: WatchRow, now: number): string {
+  const a = r.a
+  const out = a?.last?.content ?? (a?.last?.status === 'failed' ? a.last.error : undefined)
+  return `<div class="wdet">
+    <div class="dh"><div class="crumbs">${[r.b.v.cockpit!.workspace.name, r.s.title].map((x) => `<span>${esc(x)}</span>`).join('<i>›</i>')}</div>
+      <div class="kl"><span class="kd">見張る仕事</span></div><h2>${esc(a?.name ?? r.s.title)}</h2></div>
+    <div class="first facts">${[
+      !a ? fld('Bot', esc('Orca から読めていません。少し待つと読み直します')) : !a.name ? fld('Bot', `<span class="hotc">${esc(`Orca にこの Bot の設定が無く、動いていません（設定の id ${r.s.watch.automation}）。窓口に見張る仕事の設定を直すよう伝えてください`)}</span>`) : '',
+      fld('対象', esc(r.s.watch.targets.join('・'))),
+      fld('頻度', a?.rrule ? esc(`${rruleText(a.rrule)}${a.enabled === false ? '（止めている）' : ''}`) : ''),
+      fld('送り先', esc(r.s.watch.to)),
+      fld('次回', a?.nextRunAt && a.enabled !== false ? esc(nearDate(new Date(a.nextRunAt).toISOString(), now)) : ''),
+      fld('前回の結果', a?.name ? esc(lastRunText(a, now, false)) : ''),
+      fld('出力', out ? rich(out, undefined, true) : '')
+    ].join('')}</div>
+    ${a?.last?.chat ? `<div class="dbtn"><div class="acts"><button class="btn" type="button" data-term="${esc(a.last.chat)}">この実行のチャットを開く</button></div></div>` : ''}</div>`
+}
+
+function viewWhole(b: Board, ui: Ui, now: number, svg: Svg, boards: Board[] = [b]): string {
   const c = b.v.cockpit!
   const todo = new Map<string, VRow[]>()
   for (const [, xs] of todoGroups(b)) for (const r of xs) for (const t of r.card.tasks ?? []) todo.set(t, [...(todo.get(t) ?? []), r])
@@ -634,26 +752,29 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   })
   const sec = (f: StreamForm, extra = '') => {
     const xs = live.filter((j) => form(j) === f)
-    return `<section class="fsec"><h3>${formChip(f)}<span class="mut">${esc(FORM_DESC[f])}</span>${xs.length ? `<span class="mut">${xs.length} 件</span>` : ''}</h3>${xs.map((j) => streamBox(b, j, ui, todo)).join('')}${extra}</section>`
+    return `<section class="fsec"><h3>${formChip(f)}<span class="mut">${esc(FORM_DESC[f])}</span>${xs.length ? `<span class="mut">${xs.length} 件</span>` : ''}</h3>${xs.map((j) => streamBox(b, j, ui, todo, now)).join('')}${extra}</section>`
   }
+  // 受け持つ案件の列は、全案件を集めるハーネスの窓だけに出す（案件の窓では全行が同じ案件になる）。
+  const watches = watchRows(isHarness(b) ? boards : [b])
   // 中身の無い欄は出さない（初見 12）。
-  const watchExtra = `<div class="watch">${routes.length ? `<div class="subh">見張っている経路</div><ul class="rows" role="list">${routes.join('')}</ul>` : ''}
+  const watchExtra = `<div class="watch">${watchTable(watches, ui, now, isHarness(b))}${routes.length ? `<div class="subh">見張っている経路</div><ul class="rows" role="list">${routes.join('')}</ul>` : ''}
     ${inbox.length ? `<div class="subh">届いた連絡 ${inbox.length} 件</div><div class="strips">${inbox.map((r) => stripHtml(r, ui, now, svg, false)).join('')}</div>` : ''}</div>`
   const noForm = live.filter((j) => !form(j))
   const loose = looseTasks(b)
   // 進行中の仕事のある置き場所を先に、空の置き場所は最後に 1 行でまとめる（見張るは経路と届いた連絡があれば空にしない）。
-  const filled = (f: StreamForm) => live.some((j) => form(j) === f) || (f === 'watch' && (routes.length > 0 || inbox.length > 0))
+  const filled = (f: StreamForm) => live.some((j) => form(j) === f) || (f === 'watch' && (routes.length > 0 || inbox.length > 0 || watches.length > 0))
   const ms = upcomingMilestones(c.workspace.milestones, now)[0]
   const main = askHtml(b, { kind: 'whole' }, ui, now) + (ms ? `<p class="mut">次の節目: ${esc(ms.label)}（${esc(fmtDate(ms.date))}）</p>` : '')
     // 仕事の一覧を先に、見張る（経路と届いた連絡）は最後に置く。空の置き場所は出さない。
     + FORM_ORDER.filter((f) => f !== 'watch' && filled(f)).map((f) => sec(f)).join('')
-    + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo)).join('')}</section>` : '')
-    + (loose.length ? `<section class="fsec"><h3><span>仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(t, todo, ui.task)).join('')}</div></div></section>` : '')
+    + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo, now)).join('')}</section>` : '')
+    + (loose.length ? `<section class="fsec"><h3><span>仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(t, todo, ui.task, now)).join('')}</div></div></section>` : '')
     + (filled('watch') ? sec('watch', watchExtra) : '')
     + noTaskRequests(b, ui)
-    + (done.length ? `<button type="button" class="wmore" data-toggle="done" aria-expanded="${!!ui.open.done}">${ui.open.done ? '完了した仕事を閉じる' : `完了した仕事 ${done.length} 件を表示`}</button>${ui.open.done ? done.map((j) => streamBox(b, j, ui, todo)).join('') : ''}` : '')
+    + (done.length ? `<button type="button" class="wmore" data-toggle="done" aria-expanded="${!!ui.open.done}">${ui.open.done ? '完了した仕事を閉じる' : `完了した仕事 ${done.length} 件を表示`}</button>${ui.open.done ? done.map((j) => streamBox(b, j, ui, todo, now)).join('') : ''}` : '')
   const t = b.d.tasks.get(ui.task ?? '')
-  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="タスクの詳細">${t ? taskDetail(b, t, ui, now) : ''}</aside>`
+  const w = watches.find((x) => x.key === ui.watch)
+  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${w ? '見張る仕事の詳細' : 'タスクの詳細'}">${w ? watchDetail(w, now) : t ? taskDetail(b, t, ui, now) : ''}</aside>`
 }
 
 function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {
@@ -687,7 +808,7 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
     `<button type="button" role="tab" data-tab="${k}" aria-selected="${tab === k}">${label}${n === undefined ? '' : `<span class="n${n && !quiet ? '' : ' z'}">${n}</span>`}</button>`
   const stuck = b.d.counts.stuck
   const total = COUNTED.reduce((n, k) => n + b.d.counts[k], 0)
-  const body = tab === 'todo' ? viewTodo(b, ui, now, svg) : tab === 'whole' ? viewWhole(b, ui, now, svg) : viewDone(b, ui, now, svg)
+  const body = tab === 'todo' ? viewTodo(b, ui, now, svg) : tab === 'whole' ? viewWhole(b, ui, now, svg, m.boards) : viewDone(b, ui, now, svg)
   const open = ui.sideOpen !== false
   const front = m.boards.find((x) => x.root === m.focused)
   const orcaBtns = `<span class="orcab"><button class="btn quiet" type="button" data-orca="open">Orca で開く</button><button class="btn quiet" type="button" data-orca="sync"${!front || front.root === b.root ? ' disabled' : ''}>Orca に合わせる</button></span>`

@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit, requestCards, stageOf, taskSig, type Card, type Cockpit, type TaskSeen } from './model.ts'
+import { parseCockpit, requestCards, stageOf, taskSig, type Card, type Cockpit, type Ruling, type TaskSeen } from './model.ts'
 import type { AgentRow, OwnerLive, QuestionFact } from './protocol.ts'
-import { bucketOf, byUrgency, coworkSessions, derive, lastParagraph, lookupTerms, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, type Row } from './state.ts'
+import { bucketOf, byUrgency, coworkSessions, derive, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
 import { chatHandles, liveChats } from '../window/orca-state.ts'
 import { orcaFacts } from '../window/state.ts'
@@ -652,7 +652,7 @@ test('Orca の名前（R146）: 仕事と担当は頭に形（一緒に｜・任
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.long_names, [`s9（${NAME_MAX + 1} 字）`])
 })
 
-test('案件の名前の形（R165）: 全角の｜でちょうど 2 つに分かれ、両方が空でない名前だけを通し、外れた名前を checks.workspace_name に名指しする', () => {
+test('案件の名前の形（R165・R181）: 全角の｜でちょうど 2 つに分かれ、両方が空でない名前だけを通し、外れた名前と窓口に流す 1 文を checks.workspace_name に出す。形の言い方は state.ts の 1 か所', () => {
   assert.deepEqual(
     ['青葉物流｜配車アプリ', ' 社内 ｜ ハーネス ', 'dev-standards', '社内|ハーネス', '社内｜', '｜ハーネス', '社内｜ ', 'A｜B｜C', ''].map(workspaceNameOk),
     [true, true, false, false, false, false, false, false, false]
@@ -661,10 +661,83 @@ test('案件の名前の形（R165）: 全角の｜でちょうど 2 つに分�
   w.cockpit.workspace.name = '青葉物流｜配車アプリ'
   assert.equal(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, null)
   w.cockpit.workspace.name = 'dev-standards'
-  assert.equal(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, 'dev-standards')
+  assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, {
+    name: 'dev-standards', message: '案件の名前「dev-standards」が「<顧客>｜<案件>」（社内は「社内｜<案件>」）の形になっていない。cockpit.json の workspace.name を直す（R165）'
+  })
   // 名前の欄が無くても検査で落ちず、無いことを名指しする（Codex 4）。
   delete (w.cockpit.workspace as { name?: string }).name
-  assert.equal(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, '（名前が無い）')
+  const none = report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name!
+  assert.equal(none.name, '')
+  assert.ok(none.message.includes(WORKSPACE_NAME_FORM))
+  // 形の言い方の写しを置かない（R181）。state.ts で形を書くのは WORKSPACE_NAME_FORM の 1 か所だけ。
+  const src = readFileSync(new URL('./state.ts', import.meta.url), 'utf8')
+  assert.equal(src.split('<顧客>').length - 1, 1)
+})
+
+test('push の一任（R95・R173）: 有効な permission（scope push・allow true）があれば push の許すを出させず、窓口が自分で push する印を出す。置き換えられた一任は数えない', () => {
+  const w = ws(2)
+  for (const t of w.cockpit.tasks) t.state = 'ok'
+  w.cockpit.cards = w.cockpit.cards.filter((x) => !(x.kind === 'permit' && x.scope === 'push'))
+  const checks = (rulings: Ruling[]) => report(w.cockpit, w.log, [], undefined, 'skipped', NOW, undefined, { rulings }).checks
+  assert.deepEqual([checks([]).push_check, checks([]).push_delegated], [true, false])
+  const given: Ruling = { id: 'R9', kind: 'permission', scope: 'push', allow: true, text: 'この案件の push は窓口に任せる' }
+  assert.deepEqual([checks([given]).push_check, checks([given]).push_delegated], [false, true])
+  // 撤回（supersedes）された一任・禁止・別の単位は一任に数えない。
+  assert.equal(checks([given, { id: 'R10', kind: 'revoke', supersedes: ['R9'] }]).push_check, true)
+  assert.equal(checks([{ ...given, allow: false }]).push_check, true)
+  assert.equal(checks([{ ...given, scope: '本番' }]).push_check, true)
+  // push_delegated は push_check と同じ時機の印（hook が「今 push する」と読む）。作業中のタスクがあるあいだは、一任があっても出さない。
+  w.cockpit.tasks[0]!.state = 'run'
+  assert.deepEqual([checks([given]).push_check, checks([given]).push_delegated], [false, false])
+  // 判断の記録の行から scope と allow を読む。
+  assert.deepEqual(parseRulings('{"id":"R9","kind":"permission","scope":"push","allow":true}\n').map((r) => [r.scope, r.allow]), [['push', true]])
+})
+
+test('確認日（R142・R171）: 日付が来た済んでいないタスクは、その日の 0:00 より後に動いていなければ待つ相手があっても 1 行出す。日付の前と、動いたあとは出さない', () => {
+  const w = ws(0)
+  const s = w.cockpit.streams[0]!.id
+  w.cockpit.owners = []
+  const today = tokyoDay(NOW)
+  w.cockpit.tasks = [
+    { id: 'k1', stream: s, phase: '確認', title: '先方の返事を確かめる', state: 'wait', waiting_on: '森さん', check_on: today },
+    { id: 'k2', stream: s, phase: '確認', title: '来週見直す', state: 'wait', check_on: '2026-11-30' },
+    { id: 'k3', stream: s, phase: '確認', title: '済んだもの', state: 'ok', check_on: today }
+  ]
+  const start = tokyoStart(today)
+  const seen = (at: number): TaskSeen => Object.fromEntries(w.cockpit.tasks.map((t) => [t.id, { sig: taskSig(t), at: new Date(at).toISOString() }]))
+  const facts = { workers: [], terminals: [] as string[] }
+  const d = derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start - 3_600_000) })
+  assert.deepEqual(d.idle.map((x) => [x.task, x.check, x.since]), [['k1', today, new Date(start).toISOString()]])
+  assert.equal(d.queue.find((r) => r.card.id === '#idle:k1')!.card.title, '「先方の返事を確かめる」の確認日が来た')
+  // その日に窓口がタスクを動かしたら出さない。0:00 ちょうどの動きは「0:00 より後」ではないので出す（Codex 2）。
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start + 60_000) }).idle, [])
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start) }).idle.map((x) => x.task), ['k1'])
+  // 手元の時計が UTC でも、東京の 0:01 には確認日が来ている（Codex 2）。
+  const tz = process.env.TZ
+  try {
+    process.env.TZ = 'UTC'
+    const at = start + 60_000
+    assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, at, { taskSeen: seen(start - 3_600_000) }).idle.map((x) => x.task), ['k1'])
+  } finally {
+    if (tz === undefined) delete process.env.TZ
+    else process.env.TZ = tz
+  }
+  // hook は task@since で 1 回だけ流す。同じ日のあいだは since が変わらない。
+  const r = (now: number) => report(w.cockpit, w.log, [], facts, 'ok', now, undefined, { taskSeen: seen(start - 3_600_000) }).checks.idle_tasks.map((x) => `${x.task}@${x.since}`)
+  assert.deepEqual(r(NOW), r(NOW + 3_600_000))
+})
+
+test('見張る仕事の検査（R152）: watch の無い見張る仕事と、Orca に無い automation を名指しする。Orca を読めなければ有無は言わない', () => {
+  const w = ws(0)
+  w.cockpit.streams.push(
+    { id: 'v1', title: '見回り', form: 'watch', watch: { automation: 'auto-1', targets: ['管理表'], to: '窓口' } },
+    { id: 'v2', title: '書きかけ', form: 'watch' },
+    { id: 'v3', title: '消えた Bot', form: 'watch', watch: { automation: 'auto-gone', targets: ['Slack'], to: '窓口' } }
+  )
+  const checks = (automations?: { id: string; name: string }[]) => report(w.cockpit, w.log, [], { workers: [], automations }, 'ok', NOW).checks
+  assert.deepEqual(checks([{ id: 'auto-1', name: '見回り' }]).watch_missing, ['v2'])
+  assert.deepEqual(checks([{ id: 'auto-1', name: '見回り' }]).watch_unknown, ['v3（auto-gone）'])
+  assert.deepEqual(checks(undefined).watch_unknown, [])
 })
 
 test('放置の検出（R170）: worker も担当も動いていない作業中は 2 時間、未着手・待機は 24 時間で 1 行。待つ相手・確認日の前は拾わず、checks は動くたびに起点が変わる', async () => {

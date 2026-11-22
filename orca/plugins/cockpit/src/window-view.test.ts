@@ -6,7 +6,7 @@ import type { ClipResult, CockpitView } from './protocol.ts'
 import { copyDraft, copyMessage, copyTarget } from './controller.ts'
 import { boardsOf, dropRulings, newUi, render, rowId, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
 import { CSS } from './style.ts'
-import { renderWindow, stagesHtml, taskOrder, todoOrder } from './window-view.ts'
+import { renderWindow, rruleText, stagesHtml, taskOrder, todoOrder } from './window-view.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const text = (h: string) => h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
@@ -51,7 +51,7 @@ test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中�
     v.cockpit!.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '配車画面を直す', tasks: ['t1'], legacy: true }]
   })
   const t = text(page(m, { tab: 'whole' }))
-  const order = ['一緒に作る 話しながら', '任せる 任せている', '進行中の仕事 1 件', '見張る 届いたもの'].map((x) => t.indexOf(x))
+  const order = ['一緒に作る 話しながら', '任せる 任せている', '進行中の仕事 1 件', '見張る 見回りと届いたもの'].map((x) => t.indexOf(x))
   assert.ok(order.every((n) => n >= 0), t)
   assert.deepEqual([...order].sort((a, b) => a - b), order)
   assert.match(t, /届いた連絡 1 件/)
@@ -694,4 +694,71 @@ test('放置の行（追加 35）: 要対応に「確認」の 1 行で何時間
   assert.match(det, /対応のしかた 「担当と話す」で止まっている理由を聞き/)
   assert.match(h, /data-tab="whole" data-task="k9">タスクの詳細を開く/)
   assert.match(h, /data-sel="\/ws\/aoba##idle:k9"[\s\S]*?<span class="cid">番号<span class="cv">k9<\/span>/, '放置の行の番号はタスクの id')
+})
+
+test('見張る仕事の頻度（R152）: cron の 5 欄と RRULE の主な形を語にし、読めない形はそのまま出す', () => {
+  assert.equal(rruleText('0,30 9-19 * * *'), '毎日 9〜19 時 30 分おき')
+  assert.equal(rruleText('*/15 * * * *'), '毎日 15 分おき')
+  assert.equal(rruleText('0 8 * * 1-5'), '平日 8:00')
+  assert.equal(rruleText('5 9-18 * * 1,3'), '月・水 9〜18 時の毎時 5 分')
+  assert.equal(rruleText('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=8;BYMINUTE=0'), '平日 8:00')
+  assert.equal(rruleText('FREQ=DAILY;BYHOUR=9,17;BYMINUTE=30'), '毎日 9:30・17:30')
+  assert.equal(rruleText('FREQ=HOURLY;INTERVAL=2'), '2 時間おき')
+  assert.equal(rruleText('0 9 1 * *'), '0 9 1 * *')
+  assert.equal(rruleText('FREQ=MONTHLY;BYMONTHDAY=1'), 'FREQ=MONTHLY;BYMONTHDAY=1')
+  // 曜日の無い毎週は「毎日」にしない。解釈していない制約が付くものは原文（Codex 5）。
+  assert.equal(rruleText('FREQ=WEEKLY;BYHOUR=8'), '毎週 8:00')
+  assert.equal(rruleText('FREQ=DAILY;BYHOUR=8;BYMONTH=1'), 'FREQ=DAILY;BYHOUR=8;BYMONTH=1')
+  assert.equal(rruleText('FREQ=HOURLY;BYMINUTE=15'), 'FREQ=HOURLY;BYMINUTE=15')
+})
+
+test('見張る仕事の表（R152）: 全体のタブに Bot・受け持つ案件・対象・頻度・送り先・前回の結果を並べ、押すと右に出力の全文と実行のチャットを開くボタン。Orca に無い Bot は名指しする', () => {
+  const watch = (id: string, automation: string) => ({ id, title: `見回り ${id}`, form: 'watch' as const, watch: { automation, targets: ['管理表', 'Slack #dev'], to: '青葉の窓口' } })
+  const m = aoba((v) => {
+    v.cockpit!.streams.push(watch('v1', 'auto-1'), watch('v2', 'auto-gone'))
+    v.automations = [
+      { id: 'auto-1', name: '管理表・Slack 見回り', rrule: '0,30 9-19 * * *', enabled: true, nextRunAt: NOW + 20 * 60_000, last: { status: 'completed', at: NOW - 30 * 60_000, content: '## 結果\n新着は 2 件です。返事が要るものはありません。\n\n- **管理表**: No.12', chat: 'orca_session_id:sess-bot' } },
+      { id: 'auto-gone' }
+    ]
+  })
+  const h = page(m, { tab: 'whole' })
+  const t = text(h)
+  assert.match(t, /見張る仕事 2 件/)
+  assert.match(t, /管理表・Slack 見回り 毎日 9〜19 時 30 分おき 対象 管理表・Slack #dev 送り先 青葉の窓口 前回の結果 09:30 完了。新着は 2 件です。返事が要るものはありません。/)
+  assert.doesNotMatch(t, /青葉物流 配車アプリ 対象/, '案件の窓では受け持つ案件を出さない')
+  assert.match(t, /見回り v2 対象 管理表・Slack #dev 送り先 青葉の窓口 Orca に設定が無く、動いていない/)
+  const d = page(m, { tab: 'whole', watch: '/ws/aoba#v1' })
+  assert.match(d, /aria-label="見張る仕事の詳細"/)
+  assert.match(text(d), /出力 .*新着は 2 件です。返事が要るものはありません。/)
+  assert.match(d, /data-term="orca_session_id:sess-bot">この実行のチャットを開く/)
+  assert.match(text(page(m, { tab: 'whole', watch: '/ws/aoba#v2' })), /Orca にこの Bot の設定が無く、動いていません（設定の id auto-gone）/)
+  // Orca を読めていなければ、読めていないと出す（無いとは言わない）。
+  assert.match(text(page(aoba((v) => void v.cockpit!.streams.push(watch('v1', 'auto-1'))), { tab: 'whole' })), /Orca から読めていない/)
+})
+
+test('見張る仕事の表: ハーネス（nix-darwin）の窓は全案件の見張る仕事を集め、ほかの案件の窓はその案件の分だけ', () => {
+  const w = sample(NOW)
+  const view = (root: string, i: number, sid: string): CockpitView => {
+    const c = parseCockpit(JSON.stringify(w[i]!.cockpit))
+    c.streams.push({ id: sid, title: `見回り ${sid}`, form: 'watch', watch: { automation: `auto-${sid}`, targets: ['対象'], to: '窓口' } })
+    return { state: 'ok', root, cockpit: c, log: structuredClone(w[i]!.log), archive: [], figures: {}, errors: [], workers: [], notifiedOp: 0, automations: [{ id: `auto-${sid}`, name: `Bot ${sid}` }] }
+  }
+  const m: Model = { boards: boardsOf([view('/ws/aoba', 0, 'va'), view('/Users/x/.config/nix-darwin', 2, 'vh')], NOW), focused: '/ws/aoba', unseen: [], errors: [] }
+  const shown = (filter: string) => text(renderWindow(m, { ...newUi(), tab: 'whole', filter }, NOW, (s) => s))
+  assert.match(shown('/Users/x/.config/nix-darwin'), /見張る仕事 2 件 Bot va 青葉物流 配車アプリ 対象 対象 .*Bot vh /)
+  assert.match(shown('/ws/aoba'), /見張る仕事 1 件/)
+  assert.doesNotMatch(shown('/ws/aoba'), /Bot vh/)
+})
+
+test('確認日の印（R142）: 済んでいないタスクに「確認日 11/24(火)」を一覧と詳細に出し、日付が来たら太くする。済んだタスクには出さない', () => {
+  const m = aoba((v) => {
+    v.cockpit!.tasks.find((t) => t.id === 't2')!.check_on = '2026-11-24'
+    v.cockpit!.tasks.find((t) => t.id === 't3')!.check_on = '2026-11-21'
+    v.cockpit!.tasks.find((t) => t.id === 't4')!.check_on = '2026-11-21'
+  })
+  const h = page(m, { tab: 'whole', open: { 's:s2': true, 's:s3': true, 's:s4': true } })
+  assert.match(h, /<span class="chk">確認日 11\/24\(火\)<\/span>/)
+  assert.match(h, /<b class="chk">確認日 11\/21\(土\)<\/b>/)
+  assert.equal((h.match(/class="chk"/g) ?? []).length, 2, '済んだ t4 には出さない')
+  assert.match(page(m, { tab: 'whole', task: 't2' }), /<div class="kl">.*<span class="chk">確認日 11\/24\(火\)<\/span><\/div>/s)
 })

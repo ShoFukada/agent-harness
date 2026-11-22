@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { askTitle, createServer, type AskCmd, type Orca, type PsRow } from '../window/server.ts'
 import type { InboxMessage } from '../window/orca-state.ts'
+import { taskSig, type Task } from '../src/model.ts'
 import { sample, UNSEEN } from './sample.ts'
 
 /**
@@ -57,6 +58,9 @@ export function writeSample(base: string, now = Date.now()): { roots: Record<str
   const aobaC = ws.find((w) => w.dir === 'aoba')!.cockpit
   aobaC.main = { ...aobaC.main, run_id: 'run_aoba' }
   aobaC.tasks.push({ id: 't5', stream: 's1', phase: '調査', title: '朝の地図の遅さの調査', state: 'run', next: '地図の読み込みを測って原因を絞る', worker: { task_id: 'task_aoba_map', dispatch_id: 'ctx_aoba_map' } })
+  // 見張る仕事（R152）。青葉物流は Orca に Bot があり、ハーネスは Orca に無い automation を指す（「Orca に設定が無い」の見本）。
+  aobaC.streams.push({ id: 's5', title: '管理表と Slack の見回り', form: 'watch', watch: { automation: 'auto-aoba', targets: ['青葉の管理表', 'Slack #aoba-dev'], to: '青葉物流の窓口' } })
+  ws.find((w) => w.dir === 'harness')!.cockpit.streams.push({ id: 'h3', title: '朝の定期確認', form: 'watch', watch: { automation: 'auto-gone', targets: ['全案件の操縦席'], to: 'ハーネスの窓口' } })
   for (const w of ws) {
     const root = path.join(base, w.dir)
     mkdirSync(path.join(root, '.orca', 'cockpit', 'figures'), { recursive: true })
@@ -89,6 +93,10 @@ export function writeSample(base: string, now = Date.now()): { roots: Record<str
       return { handle, tabId, leafId }
     }),
     plugins: async () => [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }],
+    automations: async () => [{ id: 'auto-aoba', name: '青葉の管理表・Slack 見回り', rrule: '0,30 9-19 * * *', timezone: 'Asia/Tokyo', enabled: true, nextRunAt: now + 20 * 60_000, lastRunAt: now - 10 * 60_000 }],
+    automationRun: async (id) => (id === 'auto-aoba'
+      ? { status: 'completed', at: now - 10 * 60_000, chat: 'orca_session_id:sess-bot', content: '新着は 2 件です（管理表 2 件・Slack 0 件）。返事が要るものはありません。\n\n- **管理表**: No.12（配車の締め時刻）・No.13（地図の表示）は担当に回しました' }
+      : null),
     agents: async () => [{ session: 'sess-aws', kind: 'chat', state: 'working', title: 'AWS 構成案（担当）', worktree: path.join(base, 'aoba-aws') }],
     // 見本の worker の記録（sample.ts の tasks[].worker）の Dispatch。端末でタスクと結ぶ。
     show: async (dispatch) =>
@@ -154,9 +162,15 @@ if (import.meta.main) {
   // 一緒に作る仕事の見本（R145）: AWS 構成案を一緒に作る仕事にし、担当がターンを終えて深田さんの返事を待っている形にする。
   // 試験（writeSample を使う）には入れない。止まった問いの行の数を変えないため。
   const file = path.join(roots.aoba!, '.orca', 'cockpit.json')
-  const aoba = JSON.parse(readFileSync(file, 'utf8')) as { streams: { id: string; form?: string }[] }
+  const aoba = JSON.parse(readFileSync(file, 'utf8')) as { streams: { id: string; form?: string }[]; tasks: { id: string; check_on?: string }[] }
   for (const [id, form] of [['s1', 'delegate'], ['s2', 'cowork']]) aoba.streams.find((x) => x.id === id)!.form = form
+  // 確認日の見本（R142・R171）: 森さんの返事を待つタスクは今日が確認日（要対応に 1 行）、構成案の図は 2 日後。
+  const day = (d: number) => new Date(Date.now() + d * 86_400_000).toLocaleDateString('sv-SE')
+  aoba.tasks.find((x) => x.id === 't3')!.check_on = day(0)
+  aoba.tasks.find((x) => x.id === 't2')!.check_on = day(2)
   writeFileSync(file, JSON.stringify(aoba, null, 2))
+  // 窓が t3 を昨日から見ている形にする（今日の 0:00 より前から動いていない）。
+  writeFileSync(path.join(roots.aoba!, '.orca', 'cockpit', 'taskseen.json'), JSON.stringify({ t3: { sig: taskSig(aoba.tasks.find((x) => x.id === 't3') as Task), at: new Date(Date.now() - 86_400_000).toISOString() } }))
   orca.agents = async () => [{ session: 'sess-aws', kind: 'chat', state: 'done', title: '一緒に｜AWS 構成案', worktree: path.join(base, 'aoba-aws'), updatedAt: Date.now() - 4 * 60_000 }]
   orca.chatLast = async () => '構成案の下書きを Drive に置きました。本番の経路は図に、運用の説明は本文に分けています。\n\n定例では、費用の見積もりを先に説明しますか、それとも構成図から説明しますか？'
   orca.tabs = async (root) => (root === roots.aoba ? ['ask1', 'ask2'].map((id) => ({ title: askTitle('青葉物流 配車アプリ', id), handles: [`term_${id}`] })) : [])

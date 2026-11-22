@@ -213,7 +213,7 @@ export function parseRulings(text: string): Ruling[] {
       const texts = Object.fromEntries((['at', 'kind', 'text', 'quote', 'dec'] as const).filter((k) => typeof v[k] === 'string').map((k) => [k, v[k] as string]))
       // hook は配列で書く（compaction-keep.py の rule）。手で書いた文字列 1 つも受ける。
       const sup = Array.isArray(v.supersedes) ? v.supersedes.filter((x): x is string => typeof x === 'string') : typeof v.supersedes === 'string' ? [v.supersedes] : []
-      out.push({ id: v.id, ...(affects && { affects }), ...from, ...texts, ...(sup.length && { supersedes: sup }) })
+      out.push({ id: v.id, ...(affects && { affects }), ...from, ...texts, ...(sup.length && { supersedes: sup }), ...(typeof v.scope === 'string' && { scope: v.scope }), ...(typeof v.allow === 'boolean' && { allow: v.allow }) })
     } catch {
       // 書きかけの行。
     }

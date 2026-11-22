@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { ASK_ID, askItem, chatMain, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
-import type { Ask, AskDecideResult, AskResult, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
+import type { Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
 import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances } from '../src/state.ts'
 import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
@@ -37,6 +37,17 @@ const POLL_MS = 60_000
 const REFRESH_GAP_MS = 5_000
 
 export type TerminalRow = { handle: string; tabId: string; leafId: string }
+/** orca automations list の 1 件のうち窓が使う欄。 */
+export type AutomationRow = { id: string; name: string; rrule: string; timezone?: string; enabled: boolean; nextRunAt?: number; lastRunAt?: number }
+/**
+ * 窓に渡す Bot の今。読んだ実行（cached、読んだときの lastRunAt を添える）が今の lastRunAt のものだけを前回として渡す
+ * （読み直しに失敗したとき、前の実行を最新として出さない。Codex 3）。Orca に無い id は name の無い行。
+ */
+export function automationFact(id: string, a: AutomationRow | undefined, cached: { at: number | undefined; run: AutomationRun | null } | undefined): AutomationFact {
+  if (!a) return { id }
+  const fresh = cached !== undefined && cached.at === a.lastRunAt
+  return { id, name: a.name, rrule: a.rrule, timezone: a.timezone, enabled: a.enabled, nextRunAt: a.nextRunAt, last: fresh ? cached.run ?? undefined : undefined, ...(a.lastRunAt && !fresh ? { lastUnread: true as const } : {}) }
+}
 /** 端末の一覧を読む上限。上限まで返ったら一覧が切れているかもしれないので、無い handle を「閉じた」と言い切らない。 */
 export const TERMINAL_LIMIT = 500
 
@@ -60,6 +71,9 @@ export type Orca = {
   chatOpen?(handle: string): Promise<boolean>
   /** チャットの最後の返事の全文（orca agent show の lastAssistantMessage）。無ければ null、読めなければ投げる。 */
   chatLast?(handle: string): Promise<string | null>
+  automations?(): Promise<AutomationRow[]>
+  /** その automation の最後の実行（orca automations runs --limit 1）。まだ無ければ null。 */
+  automationRun?(id: string): Promise<AutomationRun | null>
   /** 端末の今の画面の行（terminal read --screen）。AskUserQuestion の問いは画面にしか無い。 */
   screen?(terminal: string): Promise<string[]>
   send(terminal: string, text: string): Promise<void>
@@ -103,6 +117,13 @@ export function orcaCli(bin = 'orca'): Orca {
         // worktreeId は「リポジトリの id::パス」の形。開くのはパス。
         worktree: a.worktreeId?.split('::').slice(1).join('::') || undefined, updatedAt: a.updatedAt
       }))
+    },
+    automations: async () =>
+      ((await run(['automations', 'list'])).automations as AutomationRow[]).map(({ id, name, rrule, timezone, enabled, nextRunAt, lastRunAt }) => ({ id, name, rrule, timezone, enabled, nextRunAt, lastRunAt })),
+    automationRun: async (id) => {
+      type Run = { status: string; scheduledFor: number; outputSnapshot?: { content?: string } | null; error?: string | null; chatSessionId?: string | null }
+      const r = ((await run(['automations', 'runs', '--id', id, '--limit', '1'])).runs as Run[])[0]
+      return r ? { status: r.status, at: r.scheduledFor, content: r.outputSnapshot?.content ?? undefined, error: r.error ?? undefined, chat: r.chatSessionId ? `${CHAT_HANDLE}${r.chatSessionId}` : undefined } : null
     },
     terminals: async () =>
       ((await run(['terminal', 'list', '--limit', String(TERMINAL_LIMIT)])).terminals as TerminalRow[]).map(({ handle, tabId, leafId }) => ({ handle, tabId, leafId })),
@@ -265,6 +286,9 @@ export function createServer(opts: Options) {
   let owners: OwnerLive[] = []
   /** orca agent list を読めなかった。チャットが「無い」と言い切らないために持つ。 */
   let ownersStale = false
+  /** 見張る仕事の Bot（読めていなければ undefined）と、automation の id → 最後の実行（読んだときの lastRunAt を添える）。 */
+  let autos: AutomationRow[] | undefined
+  const runs = new Map<string, { at: number | undefined; run: AutomationRun | null }>()
   /** Orca が止まったチャットに残した理由（orca-state.ts の Failure）。 */
   let failures: Record<string, Failure> = {}
   /** 答えの無い orchestration の question（全案件）と、案件ごとに結んだもの。 */
@@ -308,6 +332,23 @@ export function createServer(opts: Options) {
     return owner?.path ?? p
   }
 
+  function autoFacts(c: Cockpit | undefined): AutomationFact[] | undefined {
+    const ids = [...new Set((c?.streams ?? []).flatMap((s) => (s.form === 'watch' && s.watch ? [s.watch.automation] : [])))]
+    if (!autos || !ids.length) return undefined
+    return ids.map((id) => automationFact(id, autos!.find((x) => x.id === id), runs.get(id)))
+  }
+
+  /** 見張る仕事のある案件があるときだけ automations を読み、前の実行から変わった（lastRunAt が進んだ）ものだけ最後の実行を読み直す。 */
+  async function readAutomations(): Promise<void> {
+    const ids = new Set([...wss.values()].flatMap((ws) => (ws.files.cockpit?.streams ?? []).flatMap((s) => (s.form === 'watch' && s.watch ? [s.watch.automation] : []))))
+    if (!ids.size || !orca.automations) return void (autos = undefined)
+    autos = await orca.automations().catch((e: Error) => void console.error(`automations: ${e.message}`))
+    await Promise.all((autos ?? []).filter((a) => ids.has(a.id) && orca.automationRun && runs.get(a.id)?.at !== a.lastRunAt).map(async (a) => {
+      const run = await orca.automationRun!(a.id).catch((e: Error) => void console.error(`automations runs: ${e.message}`))
+      if (run !== undefined) runs.set(a.id, { at: a.lastRunAt, run })
+    }))
+  }
+
   const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root), currents.get(root), failures)
   const workersOf = (root: string, files: Files) => agentsOf(root, files).workers
 
@@ -337,7 +378,7 @@ export function createServer(opts: Options) {
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen, taskSeen: files.taskSeen,
       returned: files.cockpit ? returnedUtterances(files.cockpit, files.rulings, files.consults, files.asks) : undefined,
       terminals: lastRefresh && !orcaError ? [...terms.values(), ...chats] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
-      consults: consultsFor(files.consults, cockpit, archive), questions: root ? questionsBy.get(root) : undefined,
+      consults: consultsFor(files.consults, cockpit, archive), questions: root ? questionsBy.get(root) : undefined, automations: autoFacts(files.cockpit),
       asks: slimAsks(files.asks), drafts: await drafts
     }
   }
@@ -508,6 +549,8 @@ export function createServer(opts: Options) {
       }
       lastRefresh = Date.now()
       await sync()
+      // 帳簿を読んだあとに読む（見張る仕事のある案件だけ問い合わせるため）。
+      if (!orcaError) await readAutomations()
       // 1 回の読み直しの中では、同じ Dispatch の worker-show を案件ごとに問い合わせ直さない。
       const shown = new Map<string, Promise<WorkerShow | null>>()
       const showOnce = (d: string) => shown.get(d) ?? (shown.set(d, orca.show(d)), shown.get(d)!)
@@ -921,6 +964,10 @@ export function createServer(opts: Options) {
       if (liveTerminal(terminal)) {
         await orca.switchTerminal(terminal)
         return { focused: true, how: '端末' }
+      }
+      if (terminal && [...runs].some(([id, x]) => x.run?.chat === terminal && automationFact(id, autos?.find((a) => a.id === id), x).last)) {
+        await orca.switchTerminal(terminal)
+        return { focused: true, how: 'Bot の実行のチャット' }
       }
       const wt = str(b.worktree)
       if (wt && rowOf(wt)) {

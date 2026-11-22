@@ -126,7 +126,17 @@ export type CockpitView = {
   asks?: AskThread[]
   /** 閉じていないカードの文面を宛先の書式で検査した結果（カード id ごと）。コピーは結果の無い・違反のある文面を入れない。 */
   drafts?: Record<string, DraftCheck>
+  /**
+   * この案件の見張る仕事の Bot の今（orca automations list・runs から。R152）。Orca を読めていなければ無い。パネルは持たない。
+   * 帳簿の watch.automation が Orca に無いものは name の無い行で入る。
+   */
+  automations?: AutomationFact[]
 }
+
+/** 見張る仕事の Bot（orca automations の 1 件）。name が無ければ Orca に設定が無い。lastUnread は実行したが最後の実行を読めていない。 */
+export type AutomationFact = { id: string; name?: string; rrule?: string; timezone?: string; enabled?: boolean; nextRunAt?: number; last?: AutomationRun; lastUnread?: true }
+/** 最後の実行。at は予定の時刻（scheduledFor）、content は出力の全文、chat はその実行のチャットの handle（前に出すのに使う）。 */
+export type AutomationRun = { status: string; at: number; content?: string; error?: string; chat?: string }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */
 export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string; answer?: AskAnswer }

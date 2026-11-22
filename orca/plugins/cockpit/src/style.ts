@@ -516,6 +516,8 @@ body { margin:0; }
 /* 「返事待ち（あなた）」のタスクがある箱だけ、状態の欄を広げて 1 行に収める（箱の中の行の左端はそろえる。Neon）。 */
 .ck.win .inner.wide .tsel { grid-template-columns:8.5em minmax(0,1fr); }
 .ck.win .task .tn { display:grid; min-width:0; }
+.ck.win .chk { margin-left:.6em; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
+.ck.win b.chk { color:var(--ink); }
 .ck.win .cardrow .kd small, .ck.win .task .id { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
 .ck.win .task .nx { color:var(--ink2); font-size:var(--fs-xs); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
@@ -534,6 +536,14 @@ body { margin:0; }
 .ck.win .donebox { font-size:var(--fs-xs); color:var(--ink3); padding:4px 0 0; }
 .ck.win .wmore { border:0; background:none; color:var(--focus); font-size:var(--fs-s); padding:2px 0; text-align:left; justify-self:start; }
 .ck.win .watch { display:grid; gap:6px; }
+/* 見張る仕事の行（R152）。押すと右に詳細。線で区切り、色は足さない。 */
+.ck.win ul.wrows { margin:0; padding:0; list-style:none; border-top:1px solid var(--rule2); }
+.ck.win .wrow { display:grid; gap:2px; padding:8px 10px; border-bottom:1px solid var(--rule2); cursor:pointer; font-size:var(--fs-s); }
+.ck.win .wrow.cur { background:var(--sunk); }
+.ck.win .wrow .wl1 { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; justify-content:space-between; }
+.ck.win .wrow .wl2, .ck.win .wrow .wl3 { font-size:var(--fs-xs); overflow-wrap:anywhere; }
+.ck.win .wrow .wl3 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.ck.win .wbot { border:0; background:none; padding:0; font:inherit; font-weight:600; color:var(--ink); text-align:left; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
 .ck.win .watch .rrow { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; padding:7px 10px; font-size:var(--fs-s); }
 .ck.win .watch .rrow + .rrow { border-top:1px solid var(--rule2); }
 .ck.win .watch ul.rows { margin:0; padding:0; list-style:none; }

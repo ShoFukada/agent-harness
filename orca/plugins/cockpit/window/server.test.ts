@@ -10,9 +10,9 @@ import { sample } from '../fixtures/sample.ts'
 import { draftLinter } from '../src/lint.ts'
 import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
 import { renderWindow, todoGroups } from '../src/window-view.ts'
-import type { OwnerLive, WindowView } from '../src/protocol.ts'
+import type { AutomationRun, OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
-import { askCli, askNotice, askTitle, createServer, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import { askCli, askNotice, askTitle, automationFact, createServer, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -985,4 +985,41 @@ test('送る文面の書式の検査（R161・R162）: 状態を作るときに�
   assert.ok('violations' in d22)
   assert.deepEqual([d22.format, d22.violations.map((x) => x.line)], ['slack', [4, 5, 6, 7]])
   assert.equal(readFileSync(`${bin}.calls`, 'utf8').split('\n').filter(Boolean).length, 1)
+})
+
+test('見張る仕事の Bot（R152）: 帳簿の watch が指す automation を Orca から読んで案件ごとに載せ、最後の実行は Orca にある Bot の分だけ読む。実行のチャットは前に出せる（偽の Orca は fixtures/demo.ts）', async () => {
+  const base = tmp('cockpit-watch-')
+  const now = Date.now()
+  const { roots, orca } = writeSample(base, now)
+  const runCalls: string[] = []
+  const automationRun = orca.automationRun!
+  orca.automationRun = (id) => (runCalls.push(id), automationRun(id))
+  const s = createServer({ port: 0, dir: tmp('cockpit-dir-'), orca })
+  servers.push(s)
+  const port = await s.listen()
+  const v = await listen(port, s.token).until((x) => !!board(x, roots.aoba!)?.automations)
+  assert.deepEqual(board(v, roots.aoba!)!.automations!.map((a) => [a.id, a.name, a.last?.status, a.last?.chat]), [['auto-aoba', '青葉の管理表・Slack 見回り', 'completed', 'orca_session_id:sess-bot']])
+  // Orca に無い automation は name の無い行で載る（窓が「Orca に設定が無い」と出す）。
+  assert.deepEqual(board(v, roots.harness!)!.automations, [{ id: 'auto-gone' }])
+  const origin = `http://127.0.0.1:${port}`
+  const focus = async (terminalId: string) => (await fetch(`${origin}/api/focus`, { method: 'POST', headers: { 'content-type': 'application/json', origin, 'x-cockpit-token': s.token }, body: JSON.stringify({ terminalId }) })).json()
+  assert.deepEqual(await focus('orca_session_id:sess-bot'), { focused: true, how: 'Bot の実行のチャット' })
+  assert.deepEqual(await focus('orca_session_id:sess-other'), { focused: false })
+  // 実行の記録は、Orca にある Bot の分だけ読む（無い auto-gone は問い合わせない）。
+  assert.deepEqual(runCalls, ['auto-aoba'])
+})
+
+test('見張る仕事の前回の結果: 読んだ実行が今の lastRunAt のものだけを前回として渡し、読み直せていなければ読めていない印を付ける（Codex 3）', () => {
+  const row = { id: 'b1', name: '見回り', rrule: '0 9 * * *', enabled: true, lastRunAt: 200 }
+  const runA: AutomationRun = { status: 'completed', at: 100, content: 'A', chat: 'orca_session_id:a' }
+  assert.equal(automationFact('b1', row, { at: 200, run: runA }).last, runA)
+  // lastRunAt が進んだのに読み直せていない（前の A が残っている・まだ一度も読めていない）。
+  for (const cached of [{ at: 100, run: runA }, undefined]) {
+    const f = automationFact('b1', row, cached)
+    assert.deepEqual([f.last, f.lastUnread], [undefined, true])
+  }
+  // まだ実行していない Bot と、実行の記録が無い Bot には印を付けない。
+  assert.equal(automationFact('b1', { ...row, lastRunAt: undefined }, undefined).lastUnread, undefined)
+  assert.deepEqual(automationFact('b1', row, { at: 200, run: null }), { id: 'b1', name: '見回り', rrule: '0 9 * * *', timezone: undefined, enabled: true, nextRunAt: undefined, last: undefined })
+  assert.deepEqual(automationFact('gone', undefined, undefined), { id: 'gone' })
 })

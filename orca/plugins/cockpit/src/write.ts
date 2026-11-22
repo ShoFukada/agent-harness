@@ -1,7 +1,7 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
+  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WATCH_SHAPE, WORKER_SHAPE,
   type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 
@@ -58,7 +58,7 @@ const REQUEST_KEYS: Keys = {
   top: ['id', 'deliverables', ...Object.keys(REQUEST_SHAPE)],
   nested: { utterances: ['id', 'quote'], evidence: ['when', 'kind', 'ref', 'card', 'rev'], source: ['session', 'at', 'quote'] }
 }
-const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'sources', 'form'], nested: {} }
+const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'sources', 'form', 'watch'], nested: { watch: ['automation', 'targets', 'to'] } }
 const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'state'], nested: {} }
 const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through'], nested: {} }
 const ASK_KEYS: Keys = { top: ['id', 'card', 'task', 'memo', 'from_returns', 'held_returns', 'notify'], nested: { notify: ['return_id', 'task', 'message_id'] } }
@@ -254,6 +254,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       errors.push(`仕事 ${s.id}: summary は文字列、sources は文字列の配列`)
     if (s.form !== undefined && !FORMS.includes(s.form as StreamForm)) errors.push(`仕事 ${s.id}: form は ${FORMS.join('・')} のどれか`)
     if (s.form === undefined) warnings.push(`仕事 ${s.id}: form（delegate・cowork・watch）が無い`)
+    if (s.form === 'watch' ? !WATCH_SHAPE(s.watch) : s.watch !== undefined)
+      errors.push(`仕事 ${s.id}: ${s.form === 'watch' ? '見張る仕事は watch を { automation（orca automations の id）, targets（見張る対象の名前の配列、1 件以上）, to（送り先） } で書く' : 'watch は見張る仕事（form: watch）だけに書く'}`)
   }
   for (const o of ch.owners ?? []) {
     if (typeof o.title !== 'string' || !o.title.trim()) errors.push(`担当 ${o.id}: title が無い`)
@@ -272,7 +274,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     // null は、その行に元から null で書かれていた欄だけ書き戻してよい（読み込みは null の欄を無いものとして読む）。
     const was = old as unknown as Record<string, unknown> | undefined
     const bad = Object.keys(TASK_SHAPE).filter((k) => rec[k] !== undefined && !(rec[k] === null && was?.[k] === null) && !TASK_SHAPE[k]!(rec[k]))
-    if (bad.length) errors.push(`タスク ${t.id}: ${bad.join('・')} の形が違う（done は文字列か { text, at } の配列、reviewed_for・sources は文字列の配列、ほかは文字列）`)
+    if (bad.length) errors.push(`タスク ${t.id}: ${bad.join('・')} の形が違う（done は文字列か { text, at } の配列、reviewed_for・sources は文字列の配列、check_on は YYYY-MM-DD の日付、ほかは文字列）`)
     if (t.worker !== undefined) {
       if (!WORKER_SHAPE(t.worker)) errors.push(`タスク ${t.id}: worker は { run_id, task_id }`)
       // 今の Dispatch は窓が Run の続きから引く。dispatch_id は版 2 の記録をそのまま持ち越すときだけ受ける。

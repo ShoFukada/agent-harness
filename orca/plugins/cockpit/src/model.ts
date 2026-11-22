@@ -43,7 +43,7 @@ export type Task = {
   state: TaskState
   /** wait で外の相手（顧客・他社）を待つときの相手。 */
   waiting_on?: string
-  /** 確認日（YYYY-MM-DD）。その日までは放置の検出で拾わない（欄の検査と日付が来たときの扱いは追加 31）。 */
+  /** 確認日（YYYY-MM-DD、R142）。その日までは放置の検出で拾わず、その日の 0:00 に線を越えたものとして要対応に出す（R171）。 */
   check_on?: string
   waiting_since?: string
   goal?: string
@@ -68,8 +68,13 @@ export const taskSig = (t: Task) => JSON.stringify([t.state, t.phase, t.next ?? 
 export type StreamForm = 'delegate' | 'cowork' | 'watch'
 export const FORMS: StreamForm[] = ['cowork', 'delegate', 'watch']
 export const FORM_LABEL: Record<StreamForm, string> = { delegate: '任せる', cowork: '一緒に作る', watch: '見張る' }
-/** 仕事（大タスク）。担当のチャットは仕事ごとに 1 つまで。 */
-export type Stream = { id: string; title: string; summary?: string; sources?: string[]; form?: StreamForm }
+/**
+ * 見張る仕事の Bot（R152）。automation は orca automations の id、targets は見張る対象の名前、to は気づいたことの送り先。
+ * Bot の名前・頻度・有効か・前回の結果は帳簿に書かず、窓が Orca から引く。
+ */
+export type StreamWatch = { automation: string; targets: string[]; to: string }
+/** 仕事（大タスク）。担当のチャットは仕事ごとに 1 つまで。watch は form が watch の仕事だけが持ち、その仕事には要る。 */
+export type Stream = { id: string; title: string; summary?: string; sources?: string[]; form?: StreamForm; watch?: StreamWatch }
 
 /**
  * 仕事の担当。仕事が終わるまで残る、話し相手のエージェント（Orca のチャットか端末）。
@@ -290,6 +295,7 @@ export type Intake = { through?: string; none?: string[]; checked_through?: stri
 export type Ruling = {
   id: string; affects?: string[]; from_return?: string
   at?: string; kind?: string; text?: string; quote?: string; dec?: string; supersedes?: string[]
+  scope?: string; allow?: boolean
 }
 /**
  * カードの相談が窓口に返したもの（相談のメモの「## 窓口に返したもの」の節の ```json の塊）。窓は読むだけで、反映は窓口が書く道具で行う。
@@ -451,6 +457,15 @@ const strs: Shape = (v) => Array.isArray(v) && v.every(str)
 const obj = (need: string[], opt: string[] = []): Shape => (v) =>
   isObj(v) && need.every((k) => str(v[k])) && opt.every((k) => v[k] === undefined || str(v[k]))
 const list = (one: Shape): Shape => (v) => Array.isArray(v) && v.every(one)
+const filled = (v: unknown) => typeof v === 'string' && !!v.trim()
+export const DAY: Shape = (v) => {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false
+  // 月 13・日 00 は Invalid Date になり toISOString が投げる。2/30 は 3 月に繰り上がるので、戻した日付で比べる。
+  const t = new Date(`${v}T00:00:00Z`)
+  return Number.isFinite(t.getTime()) && t.toISOString().startsWith(v)
+}
+export const WATCH_SHAPE: Shape = (v) =>
+  isObj(v) && Object.keys(v).every((k) => ['automation', 'targets', 'to'].includes(k)) && filled(v.automation) && Array.isArray(v.targets) && v.targets.length > 0 && v.targets.every(filled) && filled(v.to)
 /** カードの相談の返しの id（<カード id>-<連番>）。連番の数字は compaction-keep.py（python の \d）と同じく Unicode の十進数字を受ける。 */
 export const RETURN_ID = /^[A-Za-z0-9_]+-\p{Nd}+$/u
 export const returnId: Shape = (v) => str(v) && RETURN_ID.test(v as string)
@@ -523,7 +538,7 @@ export function upgradeCard(c: Card): Card {
 
 /** タスクの省略できる欄の形（id・title・phase・state・worker は parseCockpit が先に断る）。 */
 export const TASK_SHAPE: Record<string, Shape> = {
-  stream: str, next: str, goal: str, waiting_on: str, waiting_since: str, sources: strs, reviewed_for: strs,
+  stream: str, next: str, goal: str, waiting_on: str, waiting_since: str, check_on: DAY, sources: strs, reviewed_for: strs,
   done: list((d) => str(d) || obj(['text'], ['at'])(d)),
   repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
 }
@@ -590,6 +605,11 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
     if (isObj(st) && st.form !== undefined && !FORMS.includes(st.form as StreamForm)) {
       problems.push(`cockpit.json の仕事 ${String(st.id)} の form（${String(st.form)}）が不正なので、形が書かれていない仕事として出しています`)
       delete st.form
+    }
+  for (const st of v.streams as Record<string, unknown>[])
+    if (isObj(st) && st.watch !== undefined && (st.form !== 'watch' || !WATCH_SHAPE(st.watch))) {
+      problems.push(`cockpit.json の仕事 ${String(st.id)} の watch ${st.form !== 'watch' ? 'は見張る仕事（form: watch）だけが持つ' : 'の形が違う（{ automation, targets, to }）'}ので、その欄を外して読んでいます`)
+      delete st.watch
     }
   for (const key of ['owners', 'routes', 'requests'] as const)
     if (v[key] !== undefined && (!Array.isArray(v[key]) || (v[key] as unknown[]).some((x) => !isObj(x) || typeof x.id !== 'string')))

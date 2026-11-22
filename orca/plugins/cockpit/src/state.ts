@@ -27,6 +27,9 @@ export const localDay = (t: number) => {
   const d = new Date(t)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
+/** 東京の暦日の YYYY-MM-DD と、その日の 0:00 の時刻。確認日（R171）は手元の時計に依らず東京の日付で決める。 */
+export const tokyoDay = (t: number) => new Date(t + 9 * 3_600_000).toISOString().slice(0, 10)
+export const tokyoStart = (day: string) => Date.parse(`${day}T00:00:00+09:00`)
 export function fmtDate(iso: string | undefined): string {
   if (!iso) return ''
   // 日付だけの値は手元の 0 時として読む（new Date('YYYY-MM-DD') は UTC の 0 時になる）。
@@ -93,7 +96,7 @@ export const isHot = (due: string | undefined, now: number) => !!due && !Number.
  * terminals は Orca にある端末の handle（読めていなければ無い。カードの相談のタブの生死に使う）。terminalsPartial は一覧が上限で切れているかもしれない印で、
  * そのときは一覧に無い handle を「閉じた」と言い切らない（一覧にある handle は生きていると使える）。
  */
-export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; ownersStale?: boolean; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean; questions?: QuestionFact[] }
+export type OrcaFacts = { automations?: { id: string; name: string }[]; workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; ownersStale?: boolean; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean; questions?: QuestionFact[] }
 
 /** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
 export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
@@ -138,10 +141,9 @@ export type OrcaStatus = 'todo' | 'in-progress' | 'in-review' | 'completed'
 export const ORCA_STATUS: Record<JobState, OrcaStatus> = { mine: 'in-review', stopped: 'in-progress', working: 'in-progress', customer: 'in-progress', idle: 'todo', done: 'completed' }
 /** サイドバーは 20 文字ほどで切れる。仕事の名前はこれ以内にし、何の仕事かを先頭に置く。 */
 export const NAME_MAX = 20
-/** 端末とチャットの題。窓口は「窓口（<案件の役割>）」。 */
 /**
  * Orca のタブと worktree の名前の頭（R146）。仕事の形を付けて成果物の名前を続ける。見張るは R146 に無いので、ほかと同じ形で「見張る」を頭にする。
- * 形の無い仕事の担当は、今までどおり「<題>（担当）」。worker は「作業｜<題>」（bin/orca-launch が付ける）。
+ * 形の無い仕事の担当は、今までどおり「<題>（担当）」。worker は「作業｜<題>」（bin/orca-launch が付ける）。窓口は「<案件の役割> 窓口」（R146）。
  */
 export const NAME_HEAD: Record<StreamForm, string> = { cowork: '一緒に', delegate: '任せる', watch: '見張る' }
 export const WORKER_HEAD = '作業'
@@ -437,7 +439,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const idle = idleTasks(c, tasks, facts, opts.taskSeen, now)
   const idleRows = idle.map((x): Row => {
     const t = tasks.get(x.task)!.task
-    const card: Card = { id: `${IDLE_ID}${t.id}`, rev: Date.parse(x.since), kind: 'talk', state: 'open', stream: t.stream, tasks: [t.id], since: x.since, title: `「${t.title}」が${x.hours}時間動いていない`, next: t.next }
+    const card: Card = { id: `${IDLE_ID}${t.id}`, rev: Date.parse(x.since), kind: 'talk', state: 'open', stream: t.stream, tasks: [t.id], since: x.since, title: x.check ? `「${t.title}」の確認日が来た` : `「${t.title}」が${x.hours}時間動いていない`, next: t.next }
     return { card, status: 'mine', pending: false, root, ws: c.workspace.name, owner: ownerOf(c, { stream: t.stream }, facts), stream: c.streams.find((s) => s.id === t.stream), idle: x }
   })
   const queue = [...found.filter((r) => !cowork.absorbed.has(r)), ...cowork.rows, ...idleRows].sort(byUrgency)
@@ -532,28 +534,50 @@ export function returnedUtterances(c: Cockpit, rulings: Ruling[], memos: Consult
   return [...new Set(rets.flatMap((r) => [...(inRulings.has(r.return_id) ? ids(r.decisions) : []), ...(inRequests.has(r.return_id) ? ids(r.requests) : [])]))]
 }
 
+/** 案件の名前の区切りと形の言い方（R165）。hook は checks.workspace_name.message を流すだけにし、形をここ 1 か所に持つ（R181）。 */
+export const WORKSPACE_NAME_SEP = '｜'
+export const WORKSPACE_NAME_FORM = `「<顧客>${WORKSPACE_NAME_SEP}<案件>」（社内は「社内${WORKSPACE_NAME_SEP}<案件>」）`
 /** 案件の名前が「顧客｜案件」の形か（R165）。全角の｜でちょうど 2 つに分かれ、前後の空白を外して両方が空でないこと。 */
 export const workspaceNameOk = (name: string) => {
-  const parts = name.trim().split('｜')
+  const parts = name.trim().split(WORKSPACE_NAME_SEP)
   return parts.length === 2 && parts.every((p) => p.trim() !== '')
+}
+export const workspaceNameCheck = (name: unknown): { name: string; message: string } | null =>
+  typeof name !== 'string' || !name.trim()
+    ? { name: '', message: `案件の名前（cockpit.json の workspace.name）が無い。${WORKSPACE_NAME_FORM}の形で書く（R165）` }
+    : workspaceNameOk(name) ? null
+    : { name, message: `案件の名前「${name}」が${WORKSPACE_NAME_FORM}の形になっていない。cockpit.json の workspace.name を直す（R165）` }
+
+/**
+ * その案件で一任された許可の単位（R95・R173）。深田が「この案件では一任する」を押して窓口が記録した、有効な（置き換えられていない）
+ * permission の判断（allow が true）の scope。cockpit skill の cards.md の N1 と同じ見分け方。
+ */
+export const delegatedScopes = (rulings: Ruling[]): Set<string> => {
+  const replaced = new Set(rulings.flatMap((r) => r.supersedes ?? []))
+  return new Set(rulings.filter((r) => !replaced.has(r.id) && r.kind === 'permission' && r.allow === true && typeof r.scope === 'string').map((r) => r.scope!.trim()))
 }
 
 /** 放置の線（R169・R170）。worker も担当も動いていない作業中は 2 時間、未着手・待機は 24 時間。 */
 export const IDLE_HOURS: Partial<Record<TaskState, number>> = { run: 2, idle: 24, wait: 24 }
-/** 線を越えたタスク。since は最後に動いた時刻で、from はその出どころ（帳簿の更新・済んだことの記録・worker の最後の動き）。 */
-export type IdleTask = { task: string; since: string; hours: number; line: number; from: string; worker: string }
+/**
+ * 線を越えたタスク。since は最後に動いた時刻で、from はその出どころ（帳簿の更新・済んだことの記録・worker の最後の動き）。
+ * check は確認日（check_on）が来て出したときのその日付で、since はその日の 0:00（R171）。
+ */
+export type IdleTask = { task: string; since: string; hours: number; line: number; from: string; worker: string; check?: string }
 
 /**
  * 線を越えて動いていないタスク（R170）。待つ相手（waiting_on）のあるタスクと、確認日（check_on）の前のタスクは拾わない。
+ * 確認日の来た済んでいないタスクは、その日の 0:00 より後に動いていなければ、待つ相手があっても線を越えたものとして出す（R171）。
  * 作業中は、worker が動いている・担当が作業中のものと、Orca を読めていない（動いているか分からない）ものを除く。
  * 一緒に作る仕事で担当がターンを終えたものは、返事待ちの行（R128）が出るので除く。未着手・待機は帳簿のままのもの（worker の取り込み待ちは checks.intake）。
  */
 export function idleTasks(c: Cockpit, tasks: Map<string, TaskView>, facts: OrcaFacts | undefined, seen: TaskSeen | undefined, now: number): IdleTask[] {
-  const today = localDay(now)
+  const today = tokyoDay(now)
   return [...tasks.values()].flatMap((t): IdleTask[] => {
     const task = t.task
     const line = IDLE_HOURS[t.state]
-    if (!line || t.why !== 'record' || task.waiting_on?.trim() || (task.check_on && today < task.check_on)) return []
+    const due = !!task.check_on && today >= task.check_on && t.state !== 'ok' && t.why === 'record'
+    if (!due && (!line || t.why !== 'record' || task.waiting_on?.trim() || (task.check_on && today < task.check_on))) return []
     const owner = ownerOf(c, { stream: task.stream }, facts)
     if (t.state === 'run') {
       // Orca を読めていない（窓は端末の一覧が無い・hook の CLI は facts が無い）か、チャットの担当の様子を読めていないと、動いているか分からないので保留する。
@@ -569,9 +593,12 @@ export function idleTasks(c: Cockpit, tasks: Map<string, TaskView>, facts: OrcaF
       [t.settledAt ?? 0, 'worker の最後の動き']
     ]
     const [at, from] = marks.reduce((a, b) => (b[0] > a[0] ? b : a))
-    if (now - at < line * 3_600_000) return []
     const worker = task.worker ? (t.state === 'run' ? 'worker の記録はあるが Orca に動きなし' : 'worker の記録あり') : 'worker なし'
-    const who = owner.how === 'main' ? '担当は立てていない（窓口が受け持つ）' : `担当「${owner.title}」は${owner.state === 'working' ? '作業中' : owner.state === 'done' ? '待機' : owner.state ? '止まっている' : '状態不明'}`
+    const who = owner.how === 'main' ? '担当を立てず窓口が受け持つ' : `担当「${owner.title}」は${owner.state === 'working' ? '作業中' : owner.state === 'done' ? '待機' : owner.state ? '止まっている' : '状態不明'}`
+    const start = due ? tokyoStart(task.check_on!) : 0
+    if (due && at <= start)
+      return [{ task: task.id, since: new Date(start).toISOString(), hours: Math.floor((now - start) / 3_600_000), line: 0, from, worker: `${worker}・${who}`, check: task.check_on }]
+    if (!line || task.waiting_on?.trim() || now - at < line * 3_600_000) return []
     return [{ task: task.id, since: new Date(at).toISOString(), hours: Math.floor((now - at) / 3_600_000), line, from, worker: `${worker}・${who}` }]
   })
 }
@@ -660,11 +687,13 @@ export type StateReport = {
     orphan_waits: string[]
     intake: string[]
     missing_workers: string[]
-    /** 進行中のタスクが無く、push の許すも開いていない（hook が git を見て、残りがあれば push を聞かせる）。 */
+    /** 進行中のタスクが無く、push の許すも開いておらず、push も一任されていない（hook が git を見て、残りがあれば push の許すを出させる）。 */
     push_check: boolean
+    /** 進行中のタスクが無く、この案件の push が一任されている（hook が git を見て、残りがあれば窓口に自分で push させる。許すは出さない）。 */
+    push_delegated: boolean
     plugin: string | null
-    /** 「顧客｜案件」の形になっていない案件の名前（workspace.name、R165）。形が合っていれば null。hook が窓口に直させる。 */
-    workspace_name: string | null
+    /** 「顧客｜案件」の形になっていない案件の名前（workspace.name、R165）と、窓口に流す 1 文。形が合っていれば null。hook は message をそのまま流す。 */
+    workspace_name: { name: string; message: string } | null
     /** 読めていない経路。 */
     routes: string[]
     /** サイドバーで切れる長さの仕事・担当・タスクの名前（NAME_MAX を超える）。 */
@@ -685,6 +714,10 @@ export type StateReport = {
     unknown_phase: string[]
     /** 形（form: delegate・cowork・watch）の書かれていない、済んでいない仕事（R51）。 */
     no_form: string[]
+    /** watch（{ automation, targets, to }）の書かれていない見張る仕事（R152）。 */
+    watch_missing: string[]
+    /** watch の automation が Orca の automations に無い見張る仕事（「s3（4f1ce9db…）」の形）。Orca を読めなかったときは空。 */
+    watch_unknown: string[]
     /** 「これでよい」の op が来ているのに、要素（elements）の行き先（element_map）が欠けたカードと欠けた番号（9.2）。 */
     unmapped_elements: { card: string; missing: number[] }[]
     /** 結ばれたタスクが全部済なのに、証拠の無い済の条件（done_when の番号、1 始まり）が残る依頼（9.4）。 */
@@ -863,6 +896,9 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
   const mine = d.queue.filter((r) => COUNTED.includes(r.card.kind))
   const next = mine[0]
   const intake = tasks.filter((t) => t.why === 'intake' && now - (t.settledAt ?? 0) >= INTAKE_GRACE_MS)
+  const pushDelegated = delegatedScopes(opts.rulings ?? []).has('push')
+  // 見張る仕事はタスクを持たないことが多く、仕事の今は「完了」になるので、済んだかでは絞らない。
+  const watching = c.streams.filter((s) => s.form === 'watch')
   const pushOpen = c.cards.some((x) => x.kind === 'permit' && x.scope === 'push' && (x.state === 'open' || (x.resolved_option === 'later' && now - Date.parse(x.resolved_at ?? '0') < PUSH_LATER_MS)))
   const open = c.cards.filter((x) => x.state === 'open')
   // 欠けた欄を窓口が埋めている途中のカードも、そのタスクを指している（checks.incomplete_cards と二重に名指ししない）。
@@ -893,9 +929,10 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       orphan_waits: tasks.filter((t) => t.why === 'record' && (t.state === 'stop' || t.state === 'wait') && !t.task.waiting_on?.trim() && !pointed.has(t.task.id)).map((t) => t.task.id),
       intake: intake.map((t) => t.task.id),
       missing_workers: tasks.filter((t) => t.why === 'missing').map((t) => t.task.id),
-      push_check: !tasks.some((t) => t.state === 'run') && !pushOpen,
+      push_check: !tasks.some((t) => t.state === 'run') && !pushOpen && !pushDelegated,
+      push_delegated: !tasks.some((t) => t.state === 'run') && pushDelegated,
       plugin: plugin ?? null,
-      workspace_name: typeof c.workspace.name !== 'string' ? '（名前が無い）' : workspaceNameOk(c.workspace.name) ? null : c.workspace.name,
+      workspace_name: workspaceNameCheck(c.workspace.name),
       routes: (c.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x),
       // 頭の語（一緒に｜・任せる｜・作業｜ など。R146）も含めて数える。サイドバーに出るのはその名前のため。
       long_names: [
@@ -911,6 +948,8 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       loose_tasks: live.filter((t) => !c.streams.some((s) => s.id === t.stream)).map((t) => t.id),
       unknown_phase: live.filter((t) => !stageOf(t.phase)).map((t) => `${t.id}（${t.phase}）`),
       no_form: d.jobs.filter((j) => j.state !== 'done' && !c.streams.find((s) => s.id === j.id)?.form).map((j) => j.id),
+      watch_missing: watching.filter((s) => !s.watch).map((s) => s.id),
+      watch_unknown: facts?.automations ? watching.filter((s) => s.watch && !facts.automations!.some((a) => a.id === s.watch!.automation)).map((s) => `${s.id}（${s.watch!.automation}）`) : [],
       unmapped_elements: c.cards
         .filter((x) => x.elements?.length && log.ops.some((o) => o.type === 'accept' && o.item_id === x.id && o.item_rev === x.rev && !undone.has(o.op_id)))
         .map((x) => ({ card: x.id, missing: unmappedElements(x) }))
