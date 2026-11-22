@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -372,9 +372,9 @@ test('相談の返し: メモにあって判断の記録か帳簿に無いもの
   ])
 })
 
-// nix-darwin の hook（compaction-keep.py unreflected）と同じ結果になること。hook の無い手元では飛ばす。
-const KEEP = path.join(os.homedir(), '.config/nix-darwin/claude/hooks/compaction-keep.py')
-test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結果', { skip: !existsSync(KEEP) && 'compaction-keep.py が無い' }, async () => {
+// 同じリポジトリの hook（compaction-keep.py unreflected）と同じ結果になること
+const KEEP = new URL('../../../../claude/hooks/compaction-keep.py', import.meta.url).pathname
+test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結果', async () => {
   const root = consultRoot()
   const f = await loadFiles(root, emptyFiles())
   const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
@@ -427,7 +427,7 @@ test('質問の返し: 帳簿・判断の記録・保留・担当への通知の
   assert.equal(a1.answers, 1)
 })
 
-test('質問の返し: compaction-keep.py unreflected <root> --json と同じ結果', { skip: !existsSync(KEEP) && 'compaction-keep.py が無い' }, async () => {
+test('質問の返し: compaction-keep.py unreflected <root> --json と同じ結果', async () => {
   const root = askRoot()
   const f = await loadFiles(root, emptyFiles())
   const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))

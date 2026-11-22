@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""検証用の worker の sandbox の外で、自前の Seatbelt で囲った PostgreSQL を起こす・止める。
+
+  pg-sandboxed init   <データのフォルダ>（空のフォルダを先に sandbox の中で mkdir しておく）
+  pg-sandboxed start  <データのフォルダ> <ポート>
+  pg-sandboxed stop   <データのフォルダ>
+  pg-sandboxed status <データのフォルダ>
+
+settings.worker.verify.json の sandbox.excludedCommands がこのスクリプトだけを sandbox の外に出す。
+PostgreSQL は起動時に SysV の共有メモリ（shmget）を必ず作り、Claude Code の Seatbelt にはそれを許す設定が無いので、
+Claude の sandbox の中では起動できない。外に出す代わりに、initdb・pg_ctl・postgres とその子（COPY ... PROGRAM・
+archive_command も含む）を下の PROFILE で囲う:
+- 読めないのは settings.worker.json の denyRead（Claude の sandbox と同じ。glob は手前の階層ごと塞ぐ）
+- 書けるのはデータのフォルダの中だけ。通信は 127.0.0.1 と ::1 の <ポート> での待ち受けと、データのフォルダの中の Unix socket だけ（TCP の発信は許さない）
+- mach の参照はユーザー名の解決とログに要る分だけで、open・Apple Events・pasteboard には届かない
+データのフォルダは Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限る。サブコマンドと引数の形を固定し、
+任意のコマンドを外で走らせる踏み台にしない。postgres は nix-darwin の /run/current-system/sw/bin のものを使う
+（nixpkgs の postgres は symlink を辿らず sw/share を見るため、store のパスに解決せずに呼ぶ）。
+psql は Claude の sandbox の中から `psql -h 127.0.0.1 -p <ポート> -U postgres` で繋ぐ。
+"""
+
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from sandbox_tmp import read_file, tmp_root, worker_denied_paths as denied_paths  # noqa: E402
+
+PG_BIN = "/run/current-system/sw/bin"
+USAGE = __doc__.split("\n\n")[1]
+
+
+def sb_str(s):
+    return json.dumps(s)
+
+
+def profile(data, port):
+    deny_read = "\n".join(f"  (subpath {sb_str(p)})" for p in denied_paths())
+    # 待ち受けだけを許し、TCP の発信は許さない（同じポートに別のプロセスが居ても、postgres の子から繋がせない）
+    tcp = f'(allow network-bind network-inbound (local ip "localhost:{port}"))' if port else ""
+    return f"""(version 1)
+(deny default)
+(allow process-exec process-fork)
+(allow process-info* (target same-sandbox))
+(allow signal (target same-sandbox))
+(allow sysctl-read)
+(allow user-preference-read)
+(allow file-read*)
+(deny file-read*
+{deny_read})
+(allow file-write* (subpath {sb_str(data)}))
+(allow file-write-data file-ioctl (literal "/dev/null"))
+(allow ipc-sysv-shm ipc-sysv-sem ipc-posix-shm ipc-posix-sem)
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.system.logger")
+  (global-name "com.apple.logd"))
+(allow system-socket)
+(allow network-bind network-inbound (local unix-socket (subpath {sb_str(data)})))
+(allow network-outbound (remote unix-socket (subpath {sb_str(data)})))
+{tcp}
+"""
+
+
+def data_dir(path):
+    real = os.path.realpath(path)
+    root = tmp_root()
+    if os.path.commonpath([real, root]) != root or real == root:
+        sys.exit(f"pg-sandboxed: データのフォルダは {root} の下に置く: {path}")
+    if not os.path.isdir(real):
+        sys.exit(f"pg-sandboxed: {real} が無い。init の前に sandbox の中で mkdir する")
+    return real
+
+
+def parse_port(s):
+    if not re.fullmatch(r"[0-9]{4,5}", s) or not 1024 <= int(s) <= 65535:
+        sys.exit("pg-sandboxed: ポートは 1024〜65535 の数字で渡す")
+    return int(s)
+
+
+def pg_argv(cmd, data, port):
+    if cmd == "init":
+        return [f"{PG_BIN}/initdb", "-D", data, "-U", "postgres", "-A", "trust", "-E", "UTF8", "--no-locale"]
+    opts = f"-p {port} -c listen_addresses=localhost -k {data}"
+    return [f"{PG_BIN}/pg_ctl", "-D", data, "-l", os.path.join(data, "server.log"), "-o", opts, "-w", "start"]
+
+
+def build(argv):
+    """argv から (サブコマンド, 囲う前のコマンド, データのフォルダ, ポート) を作る。形が違えば終了する。
+    stop と status は囲いの中で pg_ctl を走らせない（下の postmaster）ので、コマンドは None。"""
+    shapes = {"init": 3, "start": 4, "stop": 3, "status": 3}
+    if len(argv) < 2 or shapes.get(argv[1]) != len(argv):
+        sys.exit(USAGE)
+    cmd = argv[1]
+    # フォルダは worker に作らせる。外のこのスクリプトが作ると、確かめた後に親を symlink に差し替えられて一時領域の外に作ってしまう
+    data = data_dir(argv[2])
+    if cmd == "init" and os.listdir(data):
+        sys.exit(f"pg-sandboxed: {data} が空ではない")
+    port = parse_port(argv[3]) if cmd == "start" else None
+    return cmd, pg_argv(cmd, data, port) if cmd in ("init", "start") else None, data, port
+
+
+def postmaster(data, env):
+    """このフォルダの postmaster の pid。動いていなければ None。
+    postmaster は start のときの sandbox にいて、別の sandbox の pg_ctl からは signal（生存確認の kill 0 も）が届かないので、
+    stop と status は外のこのスクリプトが確かめる。postmaster.pid は worker が書き換えられるので、
+    そこにある pid が本当にこのフォルダの postgres かを ps で確かめる。"""
+    try:
+        raw = read_file(os.path.join(data, "postmaster.pid"))
+    except FileNotFoundError:
+        return None
+    try:
+        pid = int(raw.split(b"\n", 1)[0])
+    except ValueError:
+        sys.exit(f"pg-sandboxed: {data}/postmaster.pid の pid が読めない")
+    r = subprocess.run(["/bin/ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, env=env)
+    args = r.stdout.split()
+    # -k（socket のフォルダ）に同じパスを渡した別のクラスタと取り違えないよう、-D の直後で照合する
+    if not args or os.path.basename(args[0]) != "postgres" or "-D" not in args[:-1] \
+            or args[args.index("-D") + 1] != data:
+        return None
+    return pid
+
+
+def main(argv):
+    if not os.path.exists(f"{PG_BIN}/pg_ctl"):
+        sys.exit(f"pg-sandboxed: {PG_BIN}/pg_ctl が無い（nix-darwin の environment.systemPackages に postgresql を入れる）")
+    cmd, pg, data, port = build(argv)
+    env = {"PATH": f"{PG_BIN}:/usr/bin:/bin", "HOME": os.path.expanduser("~"), "LANG": "C", "LC_ALL": "C",
+           "TMPDIR": data}
+    if pg:
+        return subprocess.run(["/usr/bin/sandbox-exec", "-p", profile(data, port), *pg], env=env,
+                              stdin=subprocess.DEVNULL).returncode
+    pid = postmaster(data, env)
+    if pid is None:
+        print(f"pg-sandboxed: {data} の postgres は動いていない")
+        return 3  # pg_ctl status と同じ
+    if cmd == "stop":
+        return stop(pid)
+    print(f"pg-sandboxed: 動いている（pid {pid}）")
+    return 0
+
+
+def stop(pid):
+    """SIGINT（pg_ctl stop -m fast と同じ）を送り、終わるまで待つ。直後にフォルダを消しても終了処理と競合しないように。"""
+    try:
+        os.kill(pid, signal.SIGINT)
+        for _ in range(100):
+            time.sleep(0.1)
+            os.kill(pid, 0)
+    except ProcessLookupError:
+        print(f"pg-sandboxed: 止めた（pid {pid}）")
+        return 0
+    sys.exit(f"pg-sandboxed: pid {pid} が 10 秒で止まらない")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

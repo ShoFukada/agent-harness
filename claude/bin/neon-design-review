@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""worker の sandbox の外で、撮った画面を Gemini 4 Neon に採点させる（dev-standards の scripts/design-review-neon.py）。
+
+  neon-design-review <画像のフォルダ> --kind business|lp [--product <product.md>] [--frontend-design <SKILL.md>]
+                     [--model <gemini-…>]
+
+settings.worker.json の sandbox.excludedCommands がこのスクリプトだけを sandbox の外に出す。
+agy は ~/.gemini に書き、Google に通信するので、Claude の sandbox の中では起動できない。
+外に出す代わりに、鍵を外へ送る道をここで塞ぐ:
+- 画像・product.md・frontend-design は Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限り、symlink と
+  hard link をたどらずに、worker が書けない作業場所（macOS の利用者の一時フォルダ）へ写してから渡す。
+  そうしないと、外で動く Neon に鍵のファイルを画像や基準として読ませて送れる
+- 走らせるのは、worker が書けないプラグインの置き場の dev-standards/*/scripts/design-review-neon.py だけで、引数では
+  受けない（環境変数 NEON_DESIGN_REVIEW_SCRIPT は settings の env からだけ入る。worker はコマンドの前に変数を
+  付けられない。sandbox-exclude-guard が止める）
+- スクリプトが呼ぶ agy は、この入口が差し込んだ代役（PATH の先頭）を通り、--sandbox と、コマンド・書き込み・
+  URL の読み取り・MCP・worker の denyRead の read_file を拒否して写した画像のフォルダの read_file を許す settings に置き換わる。
+  スクリプトが渡す引数のほか（--dangerously-skip-permissions・--remote-agent など）は通さない。
+  環境変数は agy_launch.py の許可リストで絞る
+採点は stdout、理由は stderr に出る。終了コードはスクリプトのもの（Neon が使えないと 1、引数の誤りは 2）。
+"""
+
+import argparse
+import glob
+import json
+import os
+import re
+import shlex
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import agy_launch  # noqa: E402
+from sandbox_tmp import open_dir_nofollow, read_file  # noqa: E402
+# agy の read_file の既定が workspace の外を断るかが分からないので、denyRead を名指しでも拒否する
+from sandbox_tmp import worker_denied_paths as denied_paths  # noqa: E402
+
+ENTRY = os.path.realpath(__file__)
+AS_AGY = "NEON_DESIGN_REVIEW_AS_AGY"
+REAL_AGY = "/run/current-system/sw/bin/agy"
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
+MAX_IMAGES = 60
+MAX_BYTES = 20 * 1024 * 1024
+HOME = os.path.expanduser("~")
+PLUGIN_ROOTS = [os.path.join(HOME, ".claude", "plugins"),
+                *glob.glob(os.path.join(HOME, "Library", "Application Support", "orca", "claude-profiles", "*", "home", "plugins"))]
+# スクリプト（design-review-neon.py の call_agy）が渡す引数だけ
+AGY_VALUE_FLAGS = {"--model", "--input-format", "--output-format", "--print-timeout", "--json-schema", "--add-dir", "--settings"}
+AGY_BARE_FLAGS = {"--disable-slash-commands"}
+
+
+def die(msg, code=2):
+    sys.stderr.write(f"neon-design-review: {msg}\n")
+    sys.exit(code)
+
+
+def private_root():
+    """worker の sandbox が書けない一時フォルダ。worker の TMPDIR（/tmp/claude-<uid>）に写すと、写した後に差し替えられる。
+    NEON_DESIGN_REVIEW_TMP はテストが sandbox の中で走らせるため（NEON_DESIGN_REVIEW_SCRIPT と同じく worker は付けられない）。"""
+    d = os.environ.get("NEON_DESIGN_REVIEW_TMP")
+    return os.path.realpath(d) if d else agy_launch.user_tmp()
+
+
+def agy_settings(shots):
+    # 未検証: deny と allow のどちらが勝つか、read_file(<フォルダ>) が下のファイルに当たるかは agy 1.5.3 の help と changelog に無い
+    return {"agentMode": "", "permissions": {
+        "allow": [f"read_file({shots})"],
+        "deny": ["command(*)", "write_file(*)", "read_url(*)", "mcp(*)"] + [f"read_file({p})" for p in denied_paths()]}}
+
+
+def agy_args(shots, argv):
+    """スクリプトが渡した agy の引数を、決めた形に置き換える。"""
+    out = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in AGY_BARE_FLAGS:
+            out.append(a)
+            i += 1
+        elif a in AGY_VALUE_FLAGS and i + 1 < len(argv):
+            v = argv[i + 1]
+            i += 2
+            if a == "--settings":
+                continue
+            if a == "--add-dir" and os.path.realpath(v) != shots:
+                die(f"agy の --add-dir は写した画像のフォルダだけ（{v}）")
+            out += [a, v]
+        else:
+            die(f"agy に {a} は渡さない")
+    return [REAL_AGY, "--sandbox", "--settings", json.dumps(agy_settings(shots))] + out
+
+
+def resolve_script():
+    """引数では受けない。プラグインの置き場の下でも採点のスクリプト以外を外で走らせられるため。"""
+    path = os.environ.get("NEON_DESIGN_REVIEW_SCRIPT")
+    if not path:
+        found = [p for r in PLUGIN_ROOTS for p in glob.glob(os.path.join(r, "cache", "*", "dev-standards", "*", "scripts", "design-review-neon.py"))]
+        path = max(found, key=os.path.getmtime) if found else None
+    if not path or not os.path.isfile(path):
+        die("design-review-neon.py が見つからない。dev-standards のプラグインを上げるか、settings の env の NEON_DESIGN_REVIEW_SCRIPT で指す")
+    return path
+
+
+def copy_shots(src, dest):
+    """一時領域の中の画像を、symlink・hard link・普通でないファイルを飛ばして dest に写す。"""
+    dfd = open_dir_nofollow(src)
+    os.makedirs(dest, mode=0o700)
+    n = 0
+    try:
+        for name in sorted(os.listdir(dfd)):
+            if not name.lower().endswith(IMAGE_EXT):
+                continue
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
+            except OSError:
+                continue
+            with os.fdopen(fd, "rb") as f:
+                st = os.fstat(f.fileno())
+                if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+                    continue
+                data = f.read(MAX_BYTES + 1)  # fstat のあとに追記されても上限より多くは読まない
+                if len(data) > MAX_BYTES:
+                    continue
+                with open(os.path.join(dest, name), "wb") as out:
+                    out.write(data)
+            n += 1
+            if n > MAX_IMAGES:
+                die(f"画像は {MAX_IMAGES} 枚まで")
+    finally:
+        os.close(dfd)
+    if not n:
+        die(f"{src} に、hard link のない png・jpg・webp が無い")
+    return dest
+
+
+def copy_one(path, dest):
+    """一時領域の中の文書を dest に写す。dest は用途ごとの固定の名前（同じ名前の 2 つが上書きし合わないように）。"""
+    data = read_file(path)
+    with open(dest, "wb") as f:
+        f.write(data)
+    return dest
+
+
+def main(argv):
+    if os.environ.get(AS_AGY):
+        shots = os.environ[AS_AGY]
+        if os.path.commonpath([os.path.realpath(shots), private_root()]) != private_root():
+            die("代役の agy は、この入口が写した画像のフォルダでだけ動く")
+        agy_launch.exec_(agy_args(os.path.realpath(shots), argv[1:]))
+    p = argparse.ArgumentParser(prog="neon-design-review", description="撮った画面を Gemini 4 Neon に採点させる（sandbox の外）")
+    p.add_argument("shots_dir")
+    p.add_argument("--kind", choices=("business", "lp"), required=True)
+    p.add_argument("--product")
+    p.add_argument("--frontend-design")
+    p.add_argument("--model")
+    a = p.parse_args(argv[1:])
+    if a.model and not re.fullmatch(r"gemini-[a-z0-9.-]+", a.model):
+        die("--model は gemini- で始まる名前にする")
+    script = resolve_script()
+    work = tempfile.mkdtemp(prefix="neon-design-review-", dir=private_root())
+    try:
+        shots = copy_shots(a.shots_dir, os.path.join(work, "shots"))
+        cmd = [sys.executable, "-I", script, shots, "--kind", a.kind]
+        for flag, path in (("--product", a.product), ("--frontend-design", a.frontend_design)):
+            if path:
+                cmd += [flag, copy_one(path, os.path.join(work, flag.lstrip("-") + ".md"))]
+        if a.model:
+            cmd += ["--model", a.model]
+        bindir = os.path.join(work, "bin")
+        os.makedirs(bindir, mode=0o700)
+        shim = os.path.join(bindir, "agy")
+        with open(shim, "w") as f:
+            f.write(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -I {shlex.quote(ENTRY)} \"$@\"\n")
+        os.chmod(shim, 0o700)
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ.get("PATH", ""), TMPDIR=work, **{AS_AGY: shots})
+        return subprocess.run(cmd, env=env, cwd=work).returncode
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

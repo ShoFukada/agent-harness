@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 284" width="560" height="284" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>シーケンス図</title>
+<desc>形: 登場するものを上に並べて縦の点線を下ろし、やり取りを上から時刻順の矢印で描く。戻りは点線。
+使う場面: 画面・API・外部サービスの間で、どの順に何を渡すかを見せる。障害の調査、連携の設計。
+使わない場面: やり取りより作業の手順が要点のとき（手順の一列・スイムレーン）、登場するものが 6 を超えるとき。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+.msg line{animation-name:ml}.msg text{animation-name:mt}.msg *{animation-duration:12s;animation-iteration-count:infinite}
+.m2 *{animation-delay:2s}.m3 *{animation-delay:4s}.m4 *{animation-delay:6s}.m5 *{animation-delay:8s}.m6 *{animation-delay:10s}
+@keyframes ml{0%,15%{stroke:var(--_a);stroke-width:2}17%,100%{stroke:var(--_sub);stroke-width:1.5}}
+@keyframes mt{0%,15%{fill:var(--_a)}17%,100%{fill:var(--_sub)}}
+@media (prefers-reduced-motion:reduce){.dg *{animation:none!important}}
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="284"/>
+<g><rect class="fa" x="28" y="12" width="96" height="32" rx="6"/><text class="h mid" x="76" y="33">利用者</text></g>
+<line class="ln dash" x1="76" y1="44" x2="76" y2="268"/>
+<g><rect class="box" x="164" y="12" width="96" height="32" rx="6"/><text class="h mid" x="212" y="33">画面</text></g>
+<line class="ln dash" x1="212" y1="44" x2="212" y2="268"/>
+<g><rect class="box" x="300" y="12" width="96" height="32" rx="6"/><text class="h mid" x="348" y="33">API</text></g>
+<line class="ln dash" x1="348" y1="44" x2="348" y2="268"/>
+<g><rect class="box" x="436" y="12" width="96" height="32" rx="6"/><text class="h mid" x="484" y="33">DB</text></g>
+<line class="ln dash" x1="484" y1="44" x2="484" y2="268"/>
+<g class="msg m1"><line class="ar" x1="76" y1="78" x2="211" y2="78" marker-end="url(#dg-tip)"/><text class="s mid" x="144" y="70">保存を押す</text></g>
+<g class="msg m2"><line class="ar" x1="212" y1="114" x2="347" y2="114" marker-end="url(#dg-tip)"/><text class="s mid" x="280" y="106">POST /orders</text></g>
+<g class="msg m3"><line class="ar" x1="348" y1="150" x2="483" y2="150" marker-end="url(#dg-tip)"/><text class="s mid" x="416" y="142">INSERT</text></g>
+<g class="msg m4"><line class="ar dash" x1="484" y1="186" x2="349" y2="186" marker-end="url(#dg-tip)"/><text class="s mid" x="416" y="178">採番した id</text></g>
+<g class="msg m5"><line class="ar dash" x1="348" y1="222" x2="213" y2="222" marker-end="url(#dg-tip)"/><text class="s mid" x="280" y="214">201 Created</text></g>
+<g class="msg m6"><line class="ar dash" x1="212" y1="258" x2="77" y2="258" marker-end="url(#dg-tip)"/><text class="s mid" x="144" y="250">完了を表示</text></g>
+</svg>

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 162" width="560" height="162" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>関門のある流れ</title>
+<desc>形: 手順の一列の途中に縦の門を立て、通る条件を下に書く。通らなかったときに戻る先を点線で描く。
+使う場面: 人の許可・承認・チェックを通らないと先へ進めない手順を見せる。本番への反映、支払い、送信。
+使わない場面: 関門のない手順（手順の一列）、承認者が何人もいて回し方が要点のとき（スイムレーン）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="162"/>
+<g><rect class="box" x="16" y="30" width="96" height="44" rx="6"/><text class="mid" x="64" y="57">直す</text></g>
+<line class="ar" x1="113" y1="52" x2="143" y2="52" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="144" y="30" width="96" height="44" rx="6"/><text class="mid" x="192" y="57">確かめる</text></g>
+<line class="ar" x1="241" y1="52" x2="267" y2="52" marker-end="url(#dg-tip)"/>
+<rect class="fb" x="268" y="24" width="8" height="56" rx="2"/>
+<text class="s mid tb" x="272" y="100">人の許可</text>
+<line class="ar" x1="277" y1="52" x2="303" y2="52" marker-end="url(#dg-tip)"/>
+<g><rect class="fa" x="304" y="30" width="112" height="44" rx="6"/><text class="mid" x="360" y="57">本番に出す</text></g>
+<line class="ar" x1="417" y1="52" x2="447" y2="52" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="448" y="30" width="96" height="44" rx="6"/><text class="mid" x="496" y="57">完了</text></g>
+<path class="ew dash" d="M272,110 L272,126 Q272,130 268,130 L196,130 Q192,130 192,126 L192,75" marker-end="url(#dg-tip)"/>
+<text class="s tw" x="284" y="134">許可がなければ戻して出し直す</text>
+</svg>

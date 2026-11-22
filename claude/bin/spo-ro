@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""旧名。`spo-ro <SharePoint のコマンド>` と `spo-ro teams ...` を guestctl-ro に渡す（既存の brief や skill の呼び方を壊さないため）。"""
+
+import os
+import sys
+
+GUESTCTL_RO = os.path.join(os.path.dirname(os.path.realpath(__file__)), "guestctl-ro")
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    os.execv(GUESTCTL_RO, [GUESTCTL_RO, *(args if args[:1] == ["teams"] else ["sharepoint", *args])])

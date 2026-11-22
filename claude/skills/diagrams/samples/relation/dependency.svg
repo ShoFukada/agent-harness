@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 208" width="560" height="208" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>依存関係</title>
+<desc>形: 作業や部品を箱にし、先に済む必要があるものから後のものへ矢印を引く。遅れが全体に響く道を太くする。
+使う場面: 作業の前後関係・部品の依存・どれが詰まると全体が止まるかを見せる。
+使わない場面: 日付が要点のとき（ガント風の予定）、依存が 1 本道のとき（手順の一列）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="208"/>
+<g><rect class="box" x="16" y="80" width="112" height="40" rx="6"/><text class="mid" x="72" y="105">要件を確定</text></g>
+<g><rect class="box" x="164" y="30" width="112" height="40" rx="6"/><text class="mid" x="220" y="55">画面の設計</text></g>
+<g><rect class="box" x="164" y="130" width="112" height="40" rx="6"/><text class="mid" x="220" y="155">DB の設計</text></g>
+<g><rect class="box" x="312" y="80" width="112" height="40" rx="6"/><text class="mid" x="368" y="105">作る</text></g>
+<g><rect class="box" x="448" y="80" width="96" height="40" rx="6"/><text class="mid" x="496" y="105">受入テスト</text></g>
+<path class="ar" d="M129,100 L142,100 Q146,100 146,104 L146,146 Q146,150 150,150 L163,150" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M277,150 L290,150 Q294,150 294,146 L294,104 Q294,100 298,100 L311,100" marker-end="url(#dg-tip)"/>
+<path class="em" d="M129,100 L142,100 Q146,100 146,96 L146,54 Q146,50 150,50 L163,50" marker-end="url(#dg-tip)"/>
+<path class="em" d="M277,50 L290,50 Q294,50 294,54 L294,96 Q294,100 298,100 L311,100" marker-end="url(#dg-tip)"/>
+<line class="em" x1="425" y1="100" x2="447" y2="100" marker-end="url(#dg-tip)"/>
+<text class="s" x="16" y="196">太い青の線が、遅れると全体が遅れる道</text>
+</svg>

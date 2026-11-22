@@ -1,0 +1,2147 @@
+<title>図の見本集</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 見本の SVG を主役にした型録。紙の地に図の面を白く置き、文字と罫は図の線と同じ系統の色で控える */
+:root{
+  color-scheme:light;
+  --paper:#f3f4f7;--surface:#ffffff;--ink:#18202c;--ink-2:#4f5868;--ink-3:#727b8b;--rule:#dde1e8;--focus:#2c56c9;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --dg-bg:#ffffff;--dg-ink:#18202c;--dg-sub:#596579;--dg-line:#c3cbd6;--dg-link:#9aa6b6;--dg-soft:#f3f5f8;--dg-a:#365fb5;--dg-a-bg:#edf2fb;--dg-b:#8a621e;--dg-b-bg:#f8f2e7;--dg-c:#26786d;--dg-c-bg:#edf5f2;--dg-w:#a34f39;--dg-w-bg:#faefea;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#7e8899;--rule:#283141;--focus:#8ea9f2;
+  --dg-bg:#181e27;--dg-ink:#e6eaf1;--dg-sub:#abb5c5;--dg-line:#596679;--dg-link:#7d899b;--dg-soft:#222b37;--dg-a:#8aa7e8;--dg-a-bg:#222e45;--dg-b:#d4b16c;--dg-b-bg:#342e23;--dg-c:#77bfb0;--dg-c-bg:#213630;--dg-w:#df9b83;--dg-w-bg:#3a2b26;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#7e8899;--rule:#283141;--focus:#8ea9f2;
+  --dg-bg:#181e27;--dg-ink:#e6eaf1;--dg-sub:#abb5c5;--dg-line:#596679;--dg-link:#7d899b;--dg-soft:#222b37;--dg-a:#8aa7e8;--dg-a-bg:#222e45;--dg-b:#d4b16c;--dg-b-bg:#342e23;--dg-c:#77bfb0;--dg-c-bg:#213630;--dg-w:#df9b83;--dg-w-bg:#3a2b26;
+}
+body{background:var(--paper);color:var(--ink);font-family:var(--font);line-height:1.7}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+.wrap{max-width:1200px;margin:0 auto;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px));padding-block:40px 80px}
+header{display:grid;gap:12px;max-width:46em}
+header h1{font-size:30px;line-height:1.3;margin:0;letter-spacing:.02em;text-wrap:balance}
+header p{margin:0;color:var(--ink-2);font-size:14.5px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:4px 0 0;padding:0;list-style:none;font-size:13px;color:var(--ink-2)}
+.legend li{display:flex;align-items:center;gap:7px}
+.legend i{width:14px;height:14px;border-radius:4px;border:1.25px solid}
+.legend .a{background:var(--dg-a-bg);border-color:var(--dg-a)}
+.legend .b{background:var(--dg-b-bg);border-color:var(--dg-b)}
+.legend .c{background:var(--dg-c-bg);border-color:var(--dg-c)}
+.legend .w{background:var(--dg-w-bg);border-color:var(--dg-w)}
+nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:2;display:flex;flex-wrap:wrap;gap:4px 20px;margin-top:28px;padding-block:12px;background:var(--paper);border-bottom:1px solid var(--rule)}
+nav a{color:var(--ink-2);text-decoration:none;font-size:14px;display:flex;align-items:baseline;gap:6px;padding-block:2px;border-bottom:2px solid transparent}
+nav a:hover{color:var(--ink);border-bottom-color:var(--ink-3)}
+nav a span{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+section{scroll-margin-top:64px;margin-top:48px}
+.sec-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin-bottom:16px}
+h2{font-size:22px;line-height:1.4;margin:0;letter-spacing:.02em}
+.sec-head p{margin:0;color:var(--ink-2);font-size:14px}
+.sec-head .count{margin-left:auto;color:var(--ink-3);font-size:12px;font-variant-numeric:tabular-nums}
+/* 同じ行のカードで、図・名前・説明の上端を揃える */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,500px),1fr));gap:24px}
+.card{display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:0;background:var(--surface);border:1px solid var(--rule);border-radius:12px;overflow:hidden}
+.fig{position:relative;display:flex;align-items:center;justify-content:center;padding:20px;border-block:1px solid var(--rule);background:var(--dg-bg);cursor:zoom-in}
+.fig > div{width:100%}
+.zoom{position:absolute;top:10px;right:10px;font:inherit;font-size:12px;color:var(--ink-2);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:2px 10px;cursor:zoom-in;opacity:0;transition:opacity .15s}
+.fig:hover .zoom,.zoom:focus-visible{opacity:1}
+@media (hover:none){.zoom{opacity:1}}
+.name{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 12px;padding:16px 20px 12px}
+.card h3{font-size:16px;line-height:1.5;margin:0}
+.path{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0;padding:14px 20px 18px;font-size:13px;line-height:1.65;align-content:start}
+dt{color:var(--ink-3);font-size:12px;padding-top:1px}
+dd{margin:0;color:var(--ink-2)}
+dd.use{color:var(--ink)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+dialog{width:min(1100px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--rule);border-radius:14px;background:var(--dg-bg);color:var(--ink);box-shadow:0 20px 60px rgb(0 0 0 / .25)}
+dialog::backdrop{background:rgb(15 19 26 / .55)}
+.dlg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px 12px 24px;border-bottom:1px solid var(--rule);background:var(--surface)}
+.dlg-head h3{margin:0;font-size:16px}
+.dlg-head button{font:inherit;font-size:13px;color:var(--ink);background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:3px 12px;cursor:pointer}
+.dlg-body{padding:32px;overflow:auto}
+@media (max-width:600px){.wrap{padding-block:28px 56px}.fig{padding:14px}.name,dl{padding-inline:16px}.dlg-body{padding:16px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<div class="wrap">
+<header>
+<h1>図の見本集</h1>
+<p>資料・artifact・設計書に図を入れるときは、論点が答える問いで分類を選び、この中から形を選んで写します。31 枚。データの推移や比べはグラフなので、ここには載せず dataviz skill に従います。</p>
+<p>各カードの名前の右のパスが見本の SVG です。写したら文字を替え、箱の幅を文字に合わせて広げます。図を押すと大きく開きます。</p>
+<ul class="legend" aria-label="色の意味">
+<li><i class="a"></i>主役・推す案</li>
+<li><i class="b"></i>顧客・人の判断</li>
+<li><i class="c"></i>良くなる点・置き場所</li>
+<li><i class="w"></i>困りごと・止まる所</li>
+</ul>
+</header>
+<nav aria-label="分類">
+<a href="#flow">流れ<span>9</span></a>
+<a href="#state">状態<span>3</span></a>
+<a href="#structure">構成<span>5</span></a>
+<a href="#compare">比べ<span>5</span></a>
+<a href="#time">時間<span>4</span></a>
+<a href="#relation">関係<span>5</span></a>
+</nav>
+<section id="flow"><div class="sec-head"><h2>流れ</h2><p>何がどの順に起きるか</p><span class="count">9 枚</span></div>
+<div class="grid">
+<article class="card">
+<div class="name"><h3>手順の一列</h3><span class="path">samples/flow/steps.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 128" width="560" height="128" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>手順の一列</title>
+<desc>形: 番号付きの箱を左から右へ矢印でつなぐ。
+使う場面: 分岐も戻りもない手順・処理の段階を 3〜6 段で見せる。
+使わない場面: 途中で分かれる・戻る流れ（流れ図・繰り返しの輪）、担当が入れ替わる流れ（スイムレーン）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+.st rect{animation-name:hl;animation-duration:8s;animation-iteration-count:infinite}.s2 rect{animation-delay:2s}.s3 rect{animation-delay:4s}.s4 rect{animation-delay:6s}
+@keyframes hl{0%,22%{fill:var(--_a-bg);stroke:var(--_a)}25%,100%{fill:var(--_bg);stroke:var(--_line)}}
+@media (prefers-reduced-motion:reduce){.dg *{animation:none!important}}
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="128"/>
+<g class="st s1"><rect class="box" x="16" y="24" width="114" height="80" rx="6"/><text class="n" x="30" y="46">1</text><text class="h" x="30" y="70">受け付ける</text><text class="s" x="30" y="90">メールで届く</text></g>
+<line class="ar" x1="131" y1="64" x2="153" y2="64" marker-end="url(#dg-tip)"/>
+<g class="st s2"><rect class="box" x="154" y="24" width="114" height="80" rx="6"/><text class="n" x="168" y="46">2</text><text class="h" x="168" y="70">仕分ける</text><text class="s" x="168" y="90">種別を付ける</text></g>
+<line class="ar" x1="269" y1="64" x2="291" y2="64" marker-end="url(#dg-tip)"/>
+<g class="st s3"><rect class="box" x="292" y="24" width="114" height="80" rx="6"/><text class="n" x="306" y="46">3</text><text class="h" x="306" y="70">対応する</text><text class="s" x="306" y="90">担当が直す</text></g>
+<line class="ar" x1="407" y1="64" x2="429" y2="64" marker-end="url(#dg-tip)"/>
+<g class="st s4"><rect class="box" x="430" y="24" width="114" height="80" rx="6"/><text class="n" x="444" y="46">4</text><text class="h" x="444" y="70">返信する</text><text class="s" x="444" y="90">結果を伝える</text></g>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>番号付きの箱を左から右へ矢印でつなぐ。</dd><dt>使う場面</dt><dd class="use">分岐も戻りもない手順・処理の段階を 3〜6 段で見せる。</dd><dt>使わない場面</dt><dd>途中で分かれる・戻る流れ（流れ図・繰り返しの輪）、担当が入れ替わる流れ（スイムレーン）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>分岐のある流れ図</h3><span class="path">samples/flow/flowchart.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 304" width="560" height="304" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>分岐のある流れ図</title>
+<desc>形: 処理を箱、判断をひし形で描き、分かれ道に「はい・いいえ」を書く。
+使う場面: 条件で処理が分かれる手順、例外の扱い、運用の判断の順番を見せる。
+使わない場面: 分岐のない手順（手順の一列）、担当ごとの受け渡しが要点のとき（スイムレーン）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="304"/>
+<g><rect class="box" x="108" y="16" width="160" height="40" rx="20"/><text class="mid" x="188" y="41">問い合わせが届く</text></g>
+<line class="ar" x1="188" y1="57" x2="188" y2="83" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="108" y="84" width="160" height="40" rx="6"/><text class="mid" x="188" y="109">内容を読む</text></g>
+<line class="ar" x1="188" y1="125" x2="188" y2="151" marker-end="url(#dg-tip)"/>
+<polygon class="fa" points="124,186 188,152 252,186 188,220"/>
+<text class="h mid" x="188" y="191">急ぎか</text>
+<line class="ar" x1="252" y1="186" x2="327" y2="186" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="290" y="178">はい</text>
+<g><rect class="box" x="328" y="166" width="124" height="40" rx="6"/><text class="mid" x="390" y="191">その日に返す</text></g>
+<line class="ar" x1="188" y1="220" x2="188" y2="247" marker-end="url(#dg-tip)"/>
+<text class="s" x="196" y="238">いいえ</text>
+<g><rect class="box" x="108" y="248" width="160" height="40" rx="6"/><text class="mid" x="188" y="273">翌朝にまとめて返す</text></g>
+<line class="ar" x1="390" y1="207" x2="390" y2="247" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="269" y1="268" x2="327" y2="268" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="328" y="248" width="124" height="40" rx="20"/><text class="mid" x="390" y="273">記録する</text></g>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>処理を箱、判断をひし形で描き、分かれ道に「はい・いいえ」を書く。</dd><dt>使う場面</dt><dd class="use">条件で処理が分かれる手順、例外の扱い、運用の判断の順番を見せる。</dd><dt>使わない場面</dt><dd>分岐のない手順（手順の一列）、担当ごとの受け渡しが要点のとき（スイムレーン）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>スイムレーン</h3><span class="path">samples/flow/swimlane.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 252" width="560" height="252" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>スイムレーン</title>
+<desc>形: 担当ごとに横の帯を引き、作業の箱を担当の帯に置いて順に矢印でつなぐ。
+使う場面: 誰が何をして、どこで手が渡るかを見せる。業務フロー、問い合わせ対応、承認の回り方。
+使わない場面: 担当が 1 人だけの手順（手順の一列）、時刻ごとのやり取りが要点のとき（シーケンス図）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="252"/>
+<rect class="soft" x="16" y="12" width="528" height="76"/>
+<text class="h tb" x="28" y="55">顧客</text>
+<text class="h ta" x="28" y="131">窓口</text>
+<rect class="soft" x="16" y="164" width="528" height="76"/>
+<text class="h" x="28" y="207">担当</text>
+<line class="ln" x1="84" y1="12" x2="84" y2="240"/>
+<g><rect class="fb" x="96" y="30" width="84" height="40" rx="6"/><text class="mid" x="138" y="55">依頼する</text></g>
+<g><rect class="fa" x="188" y="106" width="84" height="40" rx="6"/><text class="mid" x="230" y="131">受け付ける</text></g>
+<g><rect class="box" x="280" y="182" width="84" height="40" rx="6"/><text class="mid" x="322" y="207">調べて直す</text></g>
+<g><rect class="fb" x="372" y="30" width="84" height="40" rx="6"/><text class="mid" x="414" y="55">確かめる</text></g>
+<g><rect class="fa" x="456" y="106" width="84" height="40" rx="6"/><text class="mid" x="498" y="131">完了にする</text></g>
+<path class="ar" d="M181,50 L226,50 Q230,50 230,54 L230,105" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M273,126 L318,126 Q322,126 322,130 L322,181" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M365,202 L410,202 Q414,202 414,198 L414,71" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M457,50 L494,50 Q498,50 498,54 L498,105" marker-end="url(#dg-tip)"/>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>担当ごとに横の帯を引き、作業の箱を担当の帯に置いて順に矢印でつなぐ。</dd><dt>使う場面</dt><dd class="use">誰が何をして、どこで手が渡るかを見せる。業務フロー、問い合わせ対応、承認の回り方。</dd><dt>使わない場面</dt><dd>担当が 1 人だけの手順（手順の一列）、時刻ごとのやり取りが要点のとき（シーケンス図）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>シーケンス図</h3><span class="path">samples/flow/sequence.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 284" width="560" height="284" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>シーケンス図</title>
+<desc>形: 登場するものを上に並べて縦の点線を下ろし、やり取りを上から時刻順の矢印で描く。戻りは点線。
+使う場面: 画面・API・外部サービスの間で、どの順に何を渡すかを見せる。障害の調査、連携の設計。
+使わない場面: やり取りより作業の手順が要点のとき（手順の一列・スイムレーン）、登場するものが 6 を超えるとき。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+.msg line{animation-name:ml}.msg text{animation-name:mt}.msg *{animation-duration:12s;animation-iteration-count:infinite}
+.m2 *{animation-delay:2s}.m3 *{animation-delay:4s}.m4 *{animation-delay:6s}.m5 *{animation-delay:8s}.m6 *{animation-delay:10s}
+@keyframes ml{0%,15%{stroke:var(--_a);stroke-width:2}17%,100%{stroke:var(--_sub);stroke-width:1.5}}
+@keyframes mt{0%,15%{fill:var(--_a)}17%,100%{fill:var(--_sub)}}
+@media (prefers-reduced-motion:reduce){.dg *{animation:none!important}}
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="284"/>
+<g><rect class="fa" x="28" y="12" width="96" height="32" rx="6"/><text class="h mid" x="76" y="33">利用者</text></g>
+<line class="ln dash" x1="76" y1="44" x2="76" y2="268"/>
+<g><rect class="box" x="164" y="12" width="96" height="32" rx="6"/><text class="h mid" x="212" y="33">画面</text></g>
+<line class="ln dash" x1="212" y1="44" x2="212" y2="268"/>
+<g><rect class="box" x="300" y="12" width="96" height="32" rx="6"/><text class="h mid" x="348" y="33">API</text></g>
+<line class="ln dash" x1="348" y1="44" x2="348" y2="268"/>
+<g><rect class="box" x="436" y="12" width="96" height="32" rx="6"/><text class="h mid" x="484" y="33">DB</text></g>
+<line class="ln dash" x1="484" y1="44" x2="484" y2="268"/>
+<g class="msg m1"><line class="ar" x1="76" y1="78" x2="211" y2="78" marker-end="url(#dg-tip)"/><text class="s mid" x="144" y="70">保存を押す</text></g>
+<g class="msg m2"><line class="ar" x1="212" y1="114" x2="347" y2="114" marker-end="url(#dg-tip)"/><text class="s mid" x="280" y="106">POST /orders</text></g>
+<g class="msg m3"><line class="ar" x1="348" y1="150" x2="483" y2="150" marker-end="url(#dg-tip)"/><text class="s mid" x="416" y="142">INSERT</text></g>
+<g class="msg m4"><line class="ar dash" x1="484" y1="186" x2="349" y2="186" marker-end="url(#dg-tip)"/><text class="s mid" x="416" y="178">採番した id</text></g>
+<g class="msg m5"><line class="ar dash" x1="348" y1="222" x2="213" y2="222" marker-end="url(#dg-tip)"/><text class="s mid" x="280" y="214">201 Created</text></g>
+<g class="msg m6"><line class="ar dash" x1="212" y1="258" x2="77" y2="258" marker-end="url(#dg-tip)"/><text class="s mid" x="144" y="250">完了を表示</text></g>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>登場するものを上に並べて縦の点線を下ろし、やり取りを上から時刻順の矢印で描く。戻りは点線。</dd><dt>使う場面</dt><dd class="use">画面・API・外部サービスの間で、どの順に何を渡すかを見せる。障害の調査、連携の設計。</dd><dt>使わない場面</dt><dd>やり取りより作業の手順が要点のとき（手順の一列・スイムレーン）、登場するものが 6 を超えるとき。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>データの流れ</h3><span class="path">samples/flow/data-flow.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 196" width="560" height="196" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>データの流れ</title>
+<desc>形: 入力元・処理・保存先・出力を左から並べ、データが動く向きに矢印を引く。保存先は円筒で描く。
+使う場面: どのデータがどこから来て、どこに残り、誰に届くかを見せる。連携の設計、集計の仕組み。
+使わない場面: 人の作業の順番が要点のとき（手順の一列・スイムレーン）、ファイルの配置や読み書きの権限が要点のとき（読み書きの向き）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+.stage>:first-child,.stage ellipse{animation-name:hl;animation-duration:8s;animation-iteration-count:infinite}.s2>*{animation-delay:2s}.s3>*{animation-delay:4s}.s4>*{animation-delay:6s}
+.stage.store>*{animation-name:hls}
+@keyframes hl{0%,22%{fill:var(--_a-bg);stroke:var(--_a)}25%,100%{fill:var(--_bg);stroke:var(--_line)}}
+@keyframes hls{0%,22%{fill:var(--_a-bg);stroke:var(--_a)}25%,100%{fill:var(--_c-bg);stroke:var(--_c)}}
+@media (prefers-reduced-motion:reduce){.dg *{animation:none!important}}
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="196"/>
+<g class="stage s1"><rect class="box" x="16" y="30" width="110" height="40" rx="6"/><text class="mid" x="71" y="55">受注 CSV</text></g>
+<g class="stage s1"><rect class="box" x="16" y="110" width="110" height="40" rx="6"/><text class="mid" x="71" y="135">在庫 API</text></g>
+<path class="ar" d="M127,50 L144,50 Q148,50 148,54 L148,74 Q148,78 152,78 L169,78" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M127,130 L144,130 Q148,130 148,126 L148,106 Q148,102 152,102 L169,102" marker-end="url(#dg-tip)"/>
+<g class="stage s2"><rect class="box" x="170" y="64" width="110" height="52" rx="6"/><text class="h mid" x="225" y="86">突き合わせる</text><text class="s mid" x="225" y="104">欠品を見つける</text></g>
+<line class="ar" x1="281" y1="90" x2="319" y2="90" marker-end="url(#dg-tip)"/>
+<g class="stage s3 store"><path class="fc" d="M320,62 v56 a45,9 0 0 0 90,0 v-56"/><ellipse class="fc" cx="365" cy="62" rx="45" ry="9"/><text class="h mid" x="365" y="95">在庫表</text></g>
+<line class="ar" x1="411" y1="90" x2="445" y2="90" marker-end="url(#dg-tip)"/>
+<g class="stage s4"><rect class="box" x="446" y="70" width="98" height="40" rx="6"/><text class="mid" x="495" y="95">日次レポート</text></g>
+<text class="s" x="16" y="180">毎晩 2 時に取り込み、朝 8 時にレポートを送る</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>入力元・処理・保存先・出力を左から並べ、データが動く向きに矢印を引く。保存先は円筒で描く。</dd><dt>使う場面</dt><dd class="use">どのデータがどこから来て、どこに残り、誰に届くかを見せる。連携の設計、集計の仕組み。</dd><dt>使わない場面</dt><dd>人の作業の順番が要点のとき（手順の一列・スイムレーン）、ファイルの配置や読み書きの権限が要点のとき（読み書きの向き）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>繰り返しの輪</h3><span class="path">samples/flow/cycle.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 260" width="560" height="260" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>繰り返しの輪</title>
+<desc>形: 作業の箱を円の上に置き、時計回りの矢印で一周させる。中央に回す単位や止める条件を書く。
+使う場面: 同じ手順を何度も回す仕事を見せる。下書きと直しの往復、週ごとの改善、定期の点検。
+使わない場面: 終わりがある一度きりの手順（手順の一列）、回すたびに中身が変わる予定（時間軸）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="260"/>
+<g><rect class="fa" x="224" y="16" width="112" height="40" rx="6"/><text class="mid" x="280" y="41">下書きを作る</text></g>
+<g><rect class="box" x="370" y="110" width="112" height="40" rx="6"/><text class="mid" x="426" y="135">画面に出す</text></g>
+<g><rect class="box" x="224" y="204" width="112" height="40" rx="6"/><text class="mid" x="280" y="229">見ながら言う</text></g>
+<g><rect class="box" x="78" y="110" width="112" height="40" rx="6"/><text class="mid" x="134" y="135">会話で直す</text></g>
+<path class="ar" d="M340,36 C387,36 426,67 426,106" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M426,154 C426,193 387,224 340,224" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M220,224 C173,224 134,193 134,154" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M134,106 C134,67 173,36 220,36" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="280" y="126">気が済むまで</text>
+<text class="s mid" x="280" y="144">繰り返す</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>作業の箱を円の上に置き、時計回りの矢印で一周させる。中央に回す単位や止める条件を書く。</dd><dt>使う場面</dt><dd class="use">同じ手順を何度も回す仕事を見せる。下書きと直しの往復、週ごとの改善、定期の点検。</dd><dt>使わない場面</dt><dd>終わりがある一度きりの手順（手順の一列）、回すたびに中身が変わる予定（時間軸）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>関門のある流れ</h3><span class="path">samples/flow/gate.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 162" width="560" height="162" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>関門のある流れ</title>
+<desc>形: 手順の一列の途中に縦の門を立て、通る条件を下に書く。通らなかったときに戻る先を点線で描く。
+使う場面: 人の許可・承認・チェックを通らないと先へ進めない手順を見せる。本番への反映、支払い、送信。
+使わない場面: 関門のない手順（手順の一列）、承認者が何人もいて回し方が要点のとき（スイムレーン）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="162"/>
+<g><rect class="box" x="16" y="30" width="96" height="44" rx="6"/><text class="mid" x="64" y="57">直す</text></g>
+<line class="ar" x1="113" y1="52" x2="143" y2="52" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="144" y="30" width="96" height="44" rx="6"/><text class="mid" x="192" y="57">確かめる</text></g>
+<line class="ar" x1="241" y1="52" x2="267" y2="52" marker-end="url(#dg-tip)"/>
+<rect class="fb" x="268" y="24" width="8" height="56" rx="2"/>
+<text class="s mid tb" x="272" y="100">人の許可</text>
+<line class="ar" x1="277" y1="52" x2="303" y2="52" marker-end="url(#dg-tip)"/>
+<g><rect class="fa" x="304" y="30" width="112" height="44" rx="6"/><text class="mid" x="360" y="57">本番に出す</text></g>
+<line class="ar" x1="417" y1="52" x2="447" y2="52" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="448" y="30" width="96" height="44" rx="6"/><text class="mid" x="496" y="57">完了</text></g>
+<path class="ew dash" d="M272,110 L272,126 Q272,130 268,130 L196,130 Q192,130 192,126 L192,75" marker-end="url(#dg-tip)"/>
+<text class="s tw" x="284" y="134">許可がなければ戻して出し直す</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>手順の一列の途中に縦の門を立て、通る条件を下に書く。通らなかったときに戻る先を点線で描く。</dd><dt>使う場面</dt><dd class="use">人の許可・承認・チェックを通らないと先へ進めない手順を見せる。本番への反映、支払い、送信。</dd><dt>使わない場面</dt><dd>関門のない手順（手順の一列）、承認者が何人もいて回し方が要点のとき（スイムレーン）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>段階的な代替</h3><span class="path">samples/flow/fallback.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 168" width="560" height="168" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>段階的な代替</title>
+<desc>形: 試す順に手段を並べ、失敗したら右へ進む矢印と、成功したら抜ける点線を描く。最後の手段は色を変える。
+使う場面: 取得や連携の手段が複数あり、順に試す運用を見せる。障害時の切り替え、ファイルの取り方。
+使わない場面: 条件で行き先が分かれるだけのとき（流れ図）、手段どうしの比較が要点のとき（案の比較表）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="168"/>
+<g><rect class="fc" x="16" y="24" width="130" height="52" rx="6"/><text class="h mid" x="81" y="46">MCP で読む</text><text class="s mid" x="81" y="64">まず試す</text></g>
+<line class="ar" x1="147" y1="50" x2="214" y2="50" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="180" y="42">取れない</text>
+<g><rect class="box" x="215" y="24" width="130" height="52" rx="6"/><text class="h mid" x="280" y="46">ブラウザで取る</text><text class="s mid" x="280" y="64">次に試す</text></g>
+<line class="ar" x1="346" y1="50" x2="413" y2="50" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="379" y="42">取れない</text>
+<g><rect class="fw" x="414" y="24" width="130" height="52" rx="6"/><text class="h mid" x="479" y="46">人に貼ってもらう</text><text class="s mid" x="479" y="64">最後の手段</text></g>
+<line class="ar" x1="81" y1="77" x2="81" y2="119" marker-end="url(#dg-tip)"/>
+<text class="s" x="89" y="102">取れた</text>
+<line class="ar" x1="280" y1="77" x2="280" y2="119" marker-end="url(#dg-tip)"/>
+<text class="s" x="288" y="102">取れた</text>
+<line class="ar" x1="479" y1="77" x2="479" y2="119" marker-end="url(#dg-tip)"/>
+<text class="s" x="487" y="102">貼れた</text>
+<rect class="box" x="16" y="120" width="528" height="32" rx="6"/>
+<text class="h mid" x="280" y="141">取れた時点で、その結果を使って先へ進む</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>試す順に手段を並べ、失敗したら右へ進む矢印と、成功したら抜ける点線を描く。最後の手段は色を変える。</dd><dt>使う場面</dt><dd class="use">取得や連携の手段が複数あり、順に試す運用を見せる。障害時の切り替え、ファイルの取り方。</dd><dt>使わない場面</dt><dd>条件で行き先が分かれるだけのとき（流れ図）、手段どうしの比較が要点のとき（案の比較表）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>絞り込み</h3><span class="path">samples/flow/funnel.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 236" width="560" height="236" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>絞り込み</title>
+<desc>形: 幅の狭まる段を上から重ね、各段の件数と割合を右に書く。
+使う場面: 件数が段階ごとに減る様子を見せる。問い合わせの振り分け、応募から採用まで、自動化できる割合。
+使わない場面: 段ごとの件数を正確に比べたいとき（棒グラフにし dataviz skill に従う）、減らない手順（手順の一列）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="236"/>
+<polygon class="fa" points="20,16 380,16 350,56 50,56"/>
+<text class="mid" x="200" y="41">届いた問い合わせ</text>
+<line class="ln" x1="373" y1="36" x2="412" y2="36"/>
+<text class="h end" x="468" y="41">120 件</text><text class="s" x="480" y="41">100%</text>
+<polygon class="box" points="56,64 344,64 314,104 86,104"/>
+<text class="mid" x="200" y="89">返事が要る</text>
+<line class="ln" x1="337" y1="84" x2="412" y2="84"/>
+<text class="h end" x="468" y="89">64 件</text><text class="s" x="480" y="89">53%</text>
+<polygon class="box" points="92,112 308,112 278,152 122,152"/>
+<text class="mid" x="200" y="137">その日に返す</text>
+<line class="ln" x1="301" y1="132" x2="412" y2="132"/>
+<text class="h end" x="468" y="137">30 件</text><text class="s" x="480" y="137">25%</text>
+<polygon class="box" points="128,160 272,160 242,200 158,200"/>
+<text class="mid" x="200" y="185">人が書く</text>
+<line class="ln" x1="265" y1="180" x2="412" y2="180"/>
+<text class="h end" x="468" y="185">12 件</text><text class="s" x="480" y="185">10%</text>
+<text class="s" x="16" y="226">割合は全 120 件に対する値。段の幅は模式で、件数に比例しない</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>幅の狭まる段を上から重ね、各段の件数と割合を右に書く。</dd><dt>使う場面</dt><dd class="use">件数が段階ごとに減る様子を見せる。問い合わせの振り分け、応募から採用まで、自動化できる割合。</dd><dt>使わない場面</dt><dd>段ごとの件数を正確に比べたいとき（棒グラフにし dataviz skill に従う）、減らない手順（手順の一列）。</dd></dl>
+</article>
+</div></section>
+<section id="state"><div class="sec-head"><h2>状態</h2><p>1 つのものがどう移り変わるか</p><span class="count">3 枚</span></div>
+<div class="grid">
+<article class="card">
+<div class="name"><h3>状態遷移図</h3><span class="path">samples/state/state-machine.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 206" width="560" height="206" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>状態遷移図</title>
+<desc>形: 状態を角の丸い箱にし、移るきっかけを矢印の上に書く。始まりは黒丸、終わりは二重の枠。
+使う場面: 書類・申請・注文など 1 つのものが取りうる状態と、どの操作で移るかを見せる。差し戻しや取り消しの戻り道を漏らさないとき。
+使わない場面: 状態より作業の順番が要点のとき（流れ図）、状態ごとの件数を見せたいとき（状態ごとの件数）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="206"/>
+<circle class="dot" cx="22" cy="70" r="6"/>
+<line class="ar" x1="29" y1="70" x2="51" y2="70" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="52" y="50" width="80" height="40" rx="6"/><text class="mid" x="92" y="75">下書き</text></g>
+<line class="ar" x1="133" y1="70" x2="183" y2="70" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="158" y="62">出す</text>
+<g><rect class="fa" x="184" y="50" width="100" height="40" rx="6"/><text class="mid" x="234" y="75">確認待ち</text></g>
+<line class="ar" x1="285" y1="70" x2="333" y2="70" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="309" y="62">承認</text>
+<g><rect class="box" x="334" y="50" width="100" height="40" rx="6"/><text class="mid" x="384" y="75">承認済み</text></g>
+<line class="ar" x1="435" y1="70" x2="473" y2="70" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="454" y="62">公開</text>
+<rect class="box" x="474" y="50" width="70" height="40" rx="6"/>
+<rect class="box" x="478" y="54" width="62" height="32" rx="4"/>
+<text class="mid" x="509" y="75">公開中</text>
+<line class="ar" x1="234" y1="91" x2="234" y2="149" marker-end="url(#dg-tip)"/>
+<text class="s" x="244" y="124">直しを頼む</text>
+<g><rect class="fw" x="184" y="150" width="100" height="40" rx="6"/><text class="mid" x="234" y="175">差し戻し</text></g>
+<path class="ar" d="M183,170 H72 V91" marker-end="url(#dg-tip)"/>
+<text class="s end" x="172" y="162">直して出し直す</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>状態を角の丸い箱にし、移るきっかけを矢印の上に書く。始まりは黒丸、終わりは二重の枠。</dd><dt>使う場面</dt><dd class="use">書類・申請・注文など 1 つのものが取りうる状態と、どの操作で移るかを見せる。差し戻しや取り消しの戻り道を漏らさないとき。</dd><dt>使わない場面</dt><dd>状態より作業の順番が要点のとき（流れ図）、状態ごとの件数を見せたいとき（状態ごとの件数）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>ライフサイクル</h3><span class="path">samples/state/lifecycle.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 128" width="560" height="128" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>ライフサイクル</title>
+<desc>形: 状態を左から右へ矢羽で並べ、矢羽の中にその状態でできること、境目の下に移るきっかけを書く。
+使う場面: 戻りのない一生（作成から廃棄まで）を見せる。アカウント・契約・データの保存期間。
+使わない場面: 戻りや差し戻しがあるとき（状態遷移図）、日付が要点のとき（時間軸・ガント風の予定）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="128"/>
+<polygon class="fb" points="16,16 134,16 142,50 134,84 16,84"/>
+<text class="h mid" x="79" y="38">申請中</text><text class="s mid" x="79" y="56">読むだけ</text>
+<polygon class="fa" points="150,16 268,16 276,50 268,84 150,84 158,50"/>
+<text class="h mid" x="217" y="38">利用中</text><text class="s mid" x="217" y="56">読み書き</text>
+<polygon class="box" points="284,16 402,16 410,50 402,84 284,84 292,50"/>
+<text class="h mid" x="351" y="38">休止中</text><text class="s mid" x="351" y="56">ログイン</text><text class="s mid" x="351" y="74">できない</text>
+<polygon class="fw" points="418,16 536,16 544,50 536,84 418,84 426,50"/>
+<text class="h mid" x="485" y="38">廃棄</text><text class="s mid" x="485" y="56">30 日は戻せる</text>
+<line class="ln" x1="146" y1="90" x2="146" y2="100"/>
+<text class="s mid" x="146" y="116">承認されたら</text>
+<line class="ln" x1="280" y1="90" x2="280" y2="100"/>
+<text class="s mid" x="280" y="116">90 日使わなければ</text>
+<line class="ln" x1="414" y1="90" x2="414" y2="100"/>
+<text class="s mid" x="414" y="116">持ち主が消したら</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>状態を左から右へ矢羽で並べ、矢羽の中にその状態でできること、境目の下に移るきっかけを書く。</dd><dt>使う場面</dt><dd class="use">戻りのない一生（作成から廃棄まで）を見せる。アカウント・契約・データの保存期間。</dd><dt>使わない場面</dt><dd>戻りや差し戻しがあるとき（状態遷移図）、日付が要点のとき（時間軸・ガント風の予定）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>状態ごとの件数</h3><span class="path">samples/state/status-board.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 224" width="560" height="224" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>状態ごとの件数</title>
+<desc>形: 状態ごとに縦の列を立て、件数を見出しに、項目をカードで積む。滞っている列だけ色を変える。
+使う場面: どの状態で仕事が溜まっているかを見せる。課題の棚卸し、問い合わせの滞留、確認待ちの多さ。
+使わない場面: 状態の移り方そのものが要点のとき（状態遷移図）、件数の推移を見せたいとき（グラフにし dataviz skill に従う）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="224"/>
+<rect class="soft" x="16" y="14" width="124" height="196" rx="8"/>
+<text class="h" x="26" y="38">未着手</text>
+<text class="s end" x="130" y="38">3 件</text>
+<rect class="box" x="24" y="52" width="108" height="30" rx="4"/><text x="32" y="72">請求書の様式</text>
+<rect class="box" x="24" y="90" width="108" height="30" rx="4"/><text x="32" y="110">権限の整理</text>
+<rect class="box" x="24" y="128" width="108" height="30" rx="4"/><text x="32" y="148">ログの保存期間</text>
+<rect class="soft" x="150" y="14" width="124" height="196" rx="8"/>
+<text class="h" x="160" y="38">作業中</text>
+<text class="s end" x="264" y="38">2 件</text>
+<rect class="box" x="158" y="52" width="108" height="30" rx="4"/><text x="166" y="72">一覧の検索</text>
+<rect class="box" x="158" y="90" width="108" height="30" rx="4"/><text x="166" y="110">CSV の取り込み</text>
+<rect class="pw" x="284" y="14" width="124" height="196" rx="8"/>
+<text class="h tw" x="294" y="38">確認待ち</text>
+<text class="h end tw" x="398" y="38">4 件</text>
+<rect class="box" x="292" y="52" width="108" height="30" rx="4"/><text x="300" y="72">帳票の文言</text>
+<rect class="box" x="292" y="90" width="108" height="30" rx="4"/><text x="300" y="110">通知の宛先</text>
+<rect class="box" x="292" y="128" width="108" height="30" rx="4"/><text x="300" y="148">画面の色</text>
+<rect class="box" x="292" y="166" width="108" height="30" rx="4"/><text x="300" y="186">移行の手順</text>
+<rect class="soft" x="418" y="14" width="124" height="196" rx="8"/>
+<text class="h" x="428" y="38">完了</text>
+<text class="s end" x="532" y="38">6 件</text>
+<rect class="box" x="426" y="52" width="108" height="30" rx="4"/><text x="434" y="72">ログイン</text>
+<text class="s" x="434" y="110">…ほか 5 件</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>状態ごとに縦の列を立て、件数を見出しに、項目をカードで積む。滞っている列だけ色を変える。</dd><dt>使う場面</dt><dd class="use">どの状態で仕事が溜まっているかを見せる。課題の棚卸し、問い合わせの滞留、確認待ちの多さ。</dd><dt>使わない場面</dt><dd>状態の移り方そのものが要点のとき（状態遷移図）、件数の推移を見せたいとき（グラフにし dataviz skill に従う）。</dd></dl>
+</article>
+</div></section>
+<section id="structure"><div class="sec-head"><h2>構成</h2><p>何が何でできているか</p><span class="count">5 枚</span></div>
+<div class="grid">
+<article class="card">
+<div class="name"><h3>層の構成</h3><span class="path">samples/structure/layers.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 216" width="560" height="216" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>層の構成</title>
+<desc>形: 横長の帯を上下に積み、左に層の名前、右に中身を書く。上下の決まり（呼ぶ向き・残る期間）を脇の矢印で示す。
+使う場面: システムの層、文書や記憶の階層、権限の段など、上下に積み重なる関係を見せる。
+使わない場面: 層をまたぐやり取りの順番が要点のとき（シーケンス図）、上下ではなく包み合う関係（入れ子）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="216"/>
+<rect class="box" x="16" y="16" width="454" height="40" rx="6"/>
+<path class="pa" d="M22,16.5 H134 V55.5 H22 a5.5,5.5 0 0 1 -5.5,-5.5 V22 a5.5,5.5 0 0 1 5.5,-5.5 z"/>
+<text class="h ta" x="32" y="41">画面</text><text class="s" x="150" y="41">一覧・詳細・入力フォーム</text>
+<rect class="box" x="16" y="64" width="454" height="40" rx="6"/>
+<line class="ln" x1="134" y1="64" x2="134" y2="104"/>
+<text class="h" x="32" y="89">API</text><text class="s" x="150" y="89">認証・入力の検証・権限</text>
+<rect class="box" x="16" y="112" width="454" height="40" rx="6"/>
+<line class="ln" x1="134" y1="112" x2="134" y2="152"/>
+<text class="h" x="32" y="137">業務の処理</text><text class="s" x="150" y="137">締め・請求・在庫の引き当て</text>
+<rect class="box" x="16" y="160" width="454" height="40" rx="6"/>
+<path class="pc" d="M22,160.5 H134 V199.5 H22 a5.5,5.5 0 0 1 -5.5,-5.5 V166 a5.5,5.5 0 0 1 5.5,-5.5 z"/>
+<text class="h tc" x="32" y="185">データ</text><text class="s" x="150" y="185">PostgreSQL・S3</text>
+<text class="s mid" x="510" y="30">呼ぶ向き</text>
+<line class="ar" x1="510" y1="42" x2="510" y2="200" marker-end="url(#dg-tip)"/>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>横長の帯を上下に積み、左に層の名前、右に中身を書く。上下の決まり（呼ぶ向き・残る期間）を脇の矢印で示す。</dd><dt>使う場面</dt><dd class="use">システムの層、文書や記憶の階層、権限の段など、上下に積み重なる関係を見せる。</dd><dt>使わない場面</dt><dd>層をまたぐやり取りの順番が要点のとき（シーケンス図）、上下ではなく包み合う関係（入れ子）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>木（分類と内訳）</h3><span class="path">samples/structure/tree.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 206" width="560" height="206" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>木（分類と内訳）</title>
+<desc>形: 全体を上に置き、分類を下へ枝分かれさせる。各箱に件数や金額を書く。
+使う場面: 分類と内訳、組織の構成、課題の親子、機能の一覧を見せる。
+使わない場面: 内訳の大きさを比べたいとき（積み上げ棒にし dataviz skill に従う）、枝どうしが行き来するとき（依存関係）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="206"/>
+<path class="cn" d="M280,50 V68 M96,68 H464 M96,68 V86 M280,68 V86 M464,68 V86"/>
+<path class="cn" d="M96,122 V140 M54,140 H138 M54,140 V158 M138,140 V158"/>
+<path class="cn" d="M280,122 V140 M238,140 H322 M238,140 V158 M322,140 V158"/>
+<path class="cn" d="M464,122 V158"/>
+<g><rect class="fa" x="196" y="14" width="168" height="36" rx="6"/><text class="h mid" x="280" y="37">問い合わせ 120 件</text></g>
+<g><rect class="box" x="16" y="86" width="160" height="36" rx="6"/><text class="mid" x="96" y="109">操作の質問 64 件</text></g>
+<g><rect class="box" x="200" y="86" width="160" height="36" rx="6"/><text class="mid" x="280" y="109">不具合 38 件</text></g>
+<g><rect class="box" x="384" y="86" width="160" height="36" rx="6"/><text class="mid" x="464" y="109">要望 18 件</text></g>
+<g><rect class="box" x="16" y="158" width="76" height="32" rx="4"/><text class="s mid" x="54" y="178">画面</text></g>
+<g><rect class="box" x="100" y="158" width="76" height="32" rx="4"/><text class="s mid" x="138" y="178">帳票</text></g>
+<g><rect class="fw" x="200" y="158" width="76" height="32" rx="4"/><text class="mid" x="238" y="178">再現した</text></g>
+<g><rect class="box" x="284" y="158" width="76" height="32" rx="4"/><text class="s mid" x="322" y="178">未再現</text></g>
+<g><rect class="box" x="384" y="158" width="160" height="32" rx="4"/><text class="s mid" x="464" y="178">次の改修で検討</text></g>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>全体を上に置き、分類を下へ枝分かれさせる。各箱に件数や金額を書く。</dd><dt>使う場面</dt><dd class="use">分類と内訳、組織の構成、課題の親子、機能の一覧を見せる。</dd><dt>使わない場面</dt><dd>内訳の大きさを比べたいとき（積み上げ棒にし dataviz skill に従う）、枝どうしが行き来するとき（依存関係）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>入れ子</h3><span class="path">samples/structure/nested.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 236" width="560" height="236" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>入れ子</title>
+<desc>形: 外側の枠の中に内側の枠を描き、含む・含まれるを枠の重なりで見せる。境界の種類は線の種類で分ける。
+使う場面: クラウドのアカウントとネットワーク、組織と部署、権限の範囲など、包み合う関係を見せる。
+使わない場面: 上下に積む関係（層の構成）、つながりの向きが要点のとき（依存関係・データの流れ）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="236"/>
+<rect class="soft" x="16" y="16" width="528" height="204" rx="8"/>
+<text class="g" x="32" y="42">AWS の組織</text>
+<rect class="box" x="32" y="56" width="240" height="148" rx="8"/>
+<text class="h" x="48" y="80">本番アカウント</text>
+<rect class="ln dash" x="44" y="92" width="216" height="100" rx="6"/>
+<text class="s" x="56" y="110">VPC</text>
+<g><rect class="box" x="56" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="101" y="145">API</text><text class="s mid" x="101" y="163">ECS</text></g>
+<g><rect class="fc" x="158" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="203" y="145">DB</text><text class="s mid" x="203" y="163">RDS</text></g>
+<rect class="box" x="288" y="56" width="240" height="148" rx="8"/>
+<text class="h" x="304" y="80">検証アカウント</text>
+<rect class="ln dash" x="300" y="92" width="216" height="100" rx="6"/>
+<text class="s" x="312" y="110">VPC</text>
+<g><rect class="box" x="312" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="357" y="145">API</text><text class="s mid" x="357" y="163">ECS</text></g>
+<g><rect class="fc" x="414" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="459" y="145">DB</text><text class="s mid" x="459" y="163">RDS</text></g>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>外側の枠の中に内側の枠を描き、含む・含まれるを枠の重なりで見せる。境界の種類は線の種類で分ける。</dd><dt>使う場面</dt><dd class="use">クラウドのアカウントとネットワーク、組織と部署、権限の範囲など、包み合う関係を見せる。</dd><dt>使わない場面</dt><dd>上下に積む関係（層の構成）、つながりの向きが要点のとき（依存関係・データの流れ）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>ハブと放射</h3><span class="path">samples/structure/hub-spoke.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 260" width="560" height="260" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>ハブと放射</title>
+<desc>形: 中心に 1 つ置き、周りの要素を線で中心につなぐ。周りどうしは線でつながない。
+使う場面: 1 つの役や仕組みが周りを束ねている構成を見せる。進行役と各担当、共通基盤と各サービス。
+使わない場面: 周りどうしのやり取りが要点のとき（依存関係・シーケンス図）、周りが 8 を超えるとき（木）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="260"/>
+<line class="cn" x1="280" y1="130" x2="142" y2="64"/>
+<line class="cn" x1="280" y1="130" x2="418" y2="64"/>
+<line class="cn" x1="280" y1="130" x2="136" y2="130"/>
+<line class="cn" x1="280" y1="130" x2="424" y2="130"/>
+<line class="cn" x1="280" y1="130" x2="142" y2="196"/>
+<line class="cn" x1="280" y1="130" x2="418" y2="196"/>
+<g><rect class="box" x="40" y="24" width="120" height="40" rx="6"/><text class="mid" x="100" y="49">worker</text></g>
+<g><rect class="box" x="400" y="24" width="120" height="40" rx="6"/><text class="mid" x="460" y="49">相談スレッド</text></g>
+<g><rect class="box" x="16" y="110" width="120" height="40" rx="6"/><text class="mid" x="76" y="135">定期実行</text></g>
+<g><rect class="box" x="424" y="110" width="120" height="40" rx="6"/><text class="mid" x="484" y="135">Codex に相談</text></g>
+<g><rect class="box" x="40" y="196" width="120" height="40" rx="6"/><text class="mid" x="100" y="221">操縦席</text></g>
+<g><rect class="box" x="400" y="196" width="120" height="40" rx="6"/><text class="mid" x="460" y="221">顧客メモ</text></g>
+<circle class="fa" cx="280" cy="130" r="46"/>
+<text class="h mid" x="280" y="128">メイン</text>
+<text class="s mid" x="280" y="146">進行役</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>中心に 1 つ置き、周りの要素を線で中心につなぐ。周りどうしは線でつながない。</dd><dt>使う場面</dt><dd class="use">1 つの役や仕組みが周りを束ねている構成を見せる。進行役と各担当、共通基盤と各サービス。</dd><dt>使わない場面</dt><dd>周りどうしのやり取りが要点のとき（依存関係・シーケンス図）、周りが 8 を超えるとき（木）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>画面の区割り</h3><span class="path">samples/structure/screen-grid.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 260" width="560" height="260" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>画面の区割り</title>
+<desc>形: 画面の外枠の中を、メニュー・一覧・詳細などの領域に区切り、各領域に何が出るかを書く。
+使う場面: 画面の案、操作の場所、どの領域に何を置くかを、作る前に合わせる。
+使わない場面: 画面の見た目を決めるとき（実物の画面か Figma で作る）、画面どうしの行き来が要点のとき（流れ図）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="260"/>
+<rect class="box" x="16" y="16" width="528" height="228" rx="8"/>
+<path class="soft" d="M24,16.5 H536 a7.5,7.5 0 0 1 7.5,7.5 V44 H16.5 V24 a7.5,7.5 0 0 1 7.5,-7.5 z"/>
+<circle cx="34" cy="30" r="4" style="fill:var(--_line)"/>
+<circle cx="48" cy="30" r="4" style="fill:var(--_line)"/>
+<circle cx="62" cy="30" r="4" style="fill:var(--_line)"/>
+<path class="soft" d="M16.5,44 H126 V243.5 H24 a7.5,7.5 0 0 1 -7.5,-7.5 z"/>
+<line class="ln" x1="16" y1="44" x2="544" y2="44"/>
+<text class="s" x="30" y="70">メニュー</text>
+<text style="font-weight:600" x="30" y="96">問い合わせ</text>
+<text class="s" x="30" y="120">顧客</text>
+<text class="s" x="30" y="144">設定</text>
+<text class="h" x="146" y="72">一覧</text>
+<rect class="pa" x="140" y="84" width="228" height="28" rx="4"/>
+<text x="148" y="103">#1024 帳票が出ない</text>
+<line class="ln" x1="140" y1="112" x2="368" y2="112"/>
+<text class="s" x="148" y="134">#1023 権限の追加</text>
+<line class="ln" x1="140" y1="146" x2="368" y2="146"/>
+<text class="s" x="148" y="168">#1022 CSV の文字化け</text>
+<line class="ln" x1="140" y1="180" x2="368" y2="180"/>
+<text class="s" x="148" y="202">#1021 画面が重い</text>
+<line class="ln" x1="140" y1="214" x2="368" y2="214"/>
+<rect class="box" x="382" y="56" width="150" height="176" rx="6"/>
+<rect class="ta" x="382" y="62" width="2" height="164"/>
+<text class="h" x="396" y="78">詳細</text>
+<text class="s" x="396" y="100">選んだ行の中身</text>
+<text class="s" x="396" y="122">状態・担当・期限</text>
+<rect class="fa" x="394" y="192" width="126" height="28" rx="4"/>
+<text class="mid ta" style="font-weight:600" x="457" y="211">返信を書く</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>画面の外枠の中を、メニュー・一覧・詳細などの領域に区切り、各領域に何が出るかを書く。</dd><dt>使う場面</dt><dd class="use">画面の案、操作の場所、どの領域に何を置くかを、作る前に合わせる。</dd><dt>使わない場面</dt><dd>画面の見た目を決めるとき（実物の画面か Figma で作る）、画面どうしの行き来が要点のとき（流れ図）。</dd></dl>
+</article>
+</div></section>
+<section id="compare"><div class="sec-head"><h2>比べ</h2><p>どちらを選ぶか、何が変わるか</p><span class="count">5 枚</span></div>
+<div class="grid">
+<article class="card">
+<div class="name"><h3>前後の並置</h3><span class="path">samples/compare/before-after.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 256" width="560" height="256" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>前後の並置</title>
+<desc>形: 左に今、右に変えたあとを同じ並びで描き、間に矢印を置く。困りごとと解決を色で対にする。
+使う場面: 業務や仕組みを変える提案で、何がどう変わるかを見せる。as-is と to-be。
+使わない場面: 案が 3 つ以上あるとき（案の比較表）、変化の時期が要点のとき（時間軸）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="256"/>
+<rect class="box" x="16" y="16" width="240" height="224" rx="8"/>
+<text class="h tw" x="32" y="42">今</text>
+<g><rect class="box" x="32" y="56" width="208" height="40" rx="6"/><text class="mid" x="136" y="81">メールで依頼が届く</text></g>
+<line class="ar" x1="136" y1="97" x2="136" y2="119" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="32" y="120" width="208" height="40" rx="6"/><text class="mid" x="136" y="145">表に手で写す</text></g>
+<line class="ar" x1="136" y1="161" x2="136" y2="183" marker-end="url(#dg-tip)"/>
+<g><rect class="fw" x="32" y="184" width="208" height="40" rx="6"/><text class="mid" x="136" y="209">確認が漏れる</text></g>
+<line class="em" x1="264" y1="140" x2="296" y2="140" marker-end="url(#dg-tip)"/>
+<rect class="box" x="304" y="16" width="240" height="224" rx="8"/>
+<text class="h tc" x="320" y="42">変えたあと</text>
+<g><rect class="box" x="320" y="56" width="208" height="40" rx="6"/><text class="mid" x="424" y="81">フォームで依頼する</text></g>
+<line class="ar" x1="424" y1="97" x2="424" y2="119" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="320" y="120" width="208" height="40" rx="6"/><text class="mid" x="424" y="145">表に自動で入る</text></g>
+<line class="ar" x1="424" y1="161" x2="424" y2="183" marker-end="url(#dg-tip)"/>
+<g><rect class="fc" x="320" y="184" width="208" height="40" rx="6"/><text class="mid" x="424" y="209">期限の前に通知する</text></g>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>左に今、右に変えたあとを同じ並びで描き、間に矢印を置く。困りごとと解決を色で対にする。</dd><dt>使う場面</dt><dd class="use">業務や仕組みを変える提案で、何がどう変わるかを見せる。as-is と to-be。</dd><dt>使わない場面</dt><dd>案が 3 つ以上あるとき（案の比較表）、変化の時期が要点のとき（時間軸）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>案の比較表</h3><span class="path">samples/compare/option-table.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 236" width="560" height="236" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>案の比較表</title>
+<desc>形: 案を列、判断の観点を行にした表。推す案の列に色を敷き、見出しの下に「おすすめ」と書く。
+使う場面: 2〜4 案から 1 つを選んでもらう。費用・期間・効果・リスクを同じ物差しで並べる。
+使わない場面: 2 つの軸で多くの項目を位置づけたいとき（2×2）、案が 1 つで良し悪しを並べるとき（長所と短所）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="236"/>
+<path class="pa" d="M288,12 H416 V218 a6,6 0 0 1 -6,6 H294 a6,6 0 0 1 -6,-6 z"/>
+<rect class="ta" x="288" y="12" width="128" height="2"/>
+<text class="h mid" x="224" y="47">A 今のまま</text>
+<text class="h mid ta" x="352" y="37">B 一部を自動に</text>
+<text class="s mid ta" x="352" y="56">おすすめ</text>
+<text class="h mid" x="480" y="47">C 作り直す</text>
+<line class="ln" x1="16" y1="72" x2="544" y2="72"/>
+<text class="s" x="28" y="97">費用</text>
+<text class="mid" x="224" y="97">なし</text>
+<text class="mid" x="352" y="97">月 2 万円</text>
+<text class="mid" x="480" y="97">300 万円</text>
+<line class="ln" x1="16" y1="110" x2="544" y2="110"/>
+<text class="s" x="28" y="135">始めるまで</text>
+<text class="mid" x="224" y="135">すぐ</text>
+<text class="mid" x="352" y="135">2 週間</text>
+<text class="mid" x="480" y="135">3 か月</text>
+<line class="ln" x1="16" y1="148" x2="544" y2="148"/>
+<text class="s" x="28" y="173">手間の減り</text>
+<text class="mid" x="224" y="173">変わらない</text>
+<text class="mid" x="352" y="173">半分</text>
+<text class="mid" x="480" y="173">8 割</text>
+<line class="ln" x1="16" y1="186" x2="544" y2="186"/>
+<text class="s" x="28" y="211">リスク</text>
+<text class="mid" x="224" y="211">漏れが続く</text>
+<text class="mid" x="352" y="211">小さい</text>
+<text class="mid" x="480" y="211">移行が重い</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>案を列、判断の観点を行にした表。推す案の列に色を敷き、見出しの下に「おすすめ」と書く。</dd><dt>使う場面</dt><dd class="use">2〜4 案から 1 つを選んでもらう。費用・期間・効果・リスクを同じ物差しで並べる。</dd><dt>使わない場面</dt><dd>2 つの軸で多くの項目を位置づけたいとき（2×2）、案が 1 つで良し悪しを並べるとき（長所と短所）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>2×2</h3><span class="path">samples/compare/matrix-2x2.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 304" width="560" height="304" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>2×2</title>
+<desc>形: 2 つの観点を縦横の軸にして 4 つの象限に分け、項目を点で置く。推す象限に色を敷く。
+使う場面: 多くの候補を 2 つの観点で仕分けて、手を付ける順を決める。効果と手間、緊急と重要。
+使わない場面: 観点が 3 つ以上あるとき（案の比較表）、数値で正確に置きたいとき（散布図にし dataviz skill に従う）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="304"/>
+<path class="pc" d="M88,16 H310 V136 H80 V24 a8,8 0 0 1 8,-8 z"/>
+<rect class="ln" x="80" y="16" width="460" height="240" rx="8"/>
+<line class="ln" x1="310" y1="16" x2="310" y2="256"/>
+<line class="ln" x1="80" y1="136" x2="540" y2="136"/>
+<text class="h tc" x="92" y="38">すぐやる</text>
+<text class="h" x="322" y="38">計画して進める</text>
+<text class="h" x="92" y="158">ついでにやる</text>
+<text class="h" x="322" y="158">やらない</text>
+<text class="s end" x="72" y="28">大</text>
+<text class="s end" x="72" y="256">小</text>
+<text class="s" x="80" y="276">小</text>
+<text class="s end" x="540" y="276">大</text>
+<text class="s mid" x="310" y="294">手間</text>
+<text class="s mid" x="48" y="132">効<tspan x="48" dy="18">果</tspan></text>
+<circle class="tc" cx="140" cy="72" r="4"/><text x="152" y="77">テンプレを配る</text>
+<circle class="tc" cx="196" cy="108" r="4"/><text x="208" y="113">通知の文言</text>
+<circle class="ring" cx="380" cy="84" r="4"/><text x="392" y="89">一覧の作り直し</text>
+<circle class="ring" cx="370" cy="200" r="4"/><text x="382" y="205">帳票の全面改修</text>
+<circle class="ring" cx="140" cy="204" r="4"/><text x="152" y="209">色の調整</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>2 つの観点を縦横の軸にして 4 つの象限に分け、項目を点で置く。推す象限に色を敷く。</dd><dt>使う場面</dt><dd class="use">多くの候補を 2 つの観点で仕分けて、手を付ける順を決める。効果と手間、緊急と重要。</dd><dt>使わない場面</dt><dd>観点が 3 つ以上あるとき（案の比較表）、数値で正確に置きたいとき（散布図にし dataviz skill に従う）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>長所と短所</h3><span class="path">samples/compare/pros-cons.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 232" width="560" height="232" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>長所と短所</title>
+<desc>形: 左に良い点、右に気になる点を同じ数だけ並べ、下に判断を 1 行で書く。
+使う場面: 1 つの案を採るかどうかを決める。ツールの導入、運用の変更。
+使わない場面: 案が 2 つ以上あるとき（案の比較表）、変える前後の違いが要点のとき（前後の並置）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="232"/>
+<rect class="box" x="16" y="16" width="256" height="150" rx="8"/>
+<path class="pc" d="M24,16.5 H264 a7.5,7.5 0 0 1 7.5,7.5 V50 H16.5 V24 a7.5,7.5 0 0 1 7.5,-7.5 z"/>
+<text class="h tc" x="32" y="38">良い点</text>
+<text class="h tc" x="32" y="78">＋</text><text x="54" y="78">入力の手間が半分になる</text>
+<text class="h tc" x="32" y="108">＋</text><text x="54" y="108">今の表をそのまま使える</text>
+<text class="h tc" x="32" y="138">＋</text><text x="54" y="138">月 2 万円で始められる</text>
+<rect class="box" x="288" y="16" width="256" height="150" rx="8"/>
+<path class="pw" d="M296,16.5 H536 a7.5,7.5 0 0 1 7.5,7.5 V50 H288.5 V24 a7.5,7.5 0 0 1 7.5,-7.5 z"/>
+<text class="h tw" x="304" y="38">気になる点</text>
+<text class="h tw" x="304" y="78">－</text><text x="326" y="78">画面の作り込みはできない</text>
+<text class="h tw" x="304" y="108">－</text><text x="326" y="108">慣れるまで 2 週間かかる</text>
+<text class="h tw" x="304" y="138">－</text><text x="326" y="138">外部に顧客名が出る</text>
+<rect class="fa" x="16" y="186" width="528" height="34" rx="6"/>
+<text class="h" x="32" y="208"><tspan class="ta">判断:</tspan> 1 案件で 2 週間試してから広げる</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>左に良い点、右に気になる点を同じ数だけ並べ、下に判断を 1 行で書く。</dd><dt>使う場面</dt><dd class="use">1 つの案を採るかどうかを決める。ツールの導入、運用の変更。</dd><dt>使わない場面</dt><dd>案が 2 つ以上あるとき（案の比較表）、変える前後の違いが要点のとき（前後の並置）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>一本の軸での位置づけ</h3><span class="path">samples/compare/spectrum.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 146" width="560" height="146" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>一本の軸での位置づけ</title>
+<desc>形: 両端に極端な状態を書いた 1 本の軸を引き、選択肢を点で置く。今と目標に印を付ける。
+使う場面: どこまで任せるか・どこまで作り込むかのように、程度の段階から 1 つを選ぶ。今と目標の距離を見せる。
+使わない場面: 観点が 2 つあるとき（2×2）、段階ごとの中身を比べたいとき（案の比較表）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="146"/>
+<line class="cn" x1="40" y1="56" x2="520" y2="56"/>
+<line class="cn" x1="40" y1="50" x2="40" y2="62"/>
+<line class="cn" x1="520" y1="50" x2="520" y2="62"/>
+<text class="s" x="40" y="84">人が全部やる</text>
+<text class="s end" x="520" y="84">任せきる</text>
+<circle class="ring" cx="140" cy="56" r="7"/><text class="mid" x="140" y="36">下書きだけ</text>
+<circle class="fb" cx="280" cy="56" r="7"/><text class="mid" x="280" y="36">確認して送る</text>
+<text class="h mid tb" x="280" y="84">今</text>
+<circle class="fa" cx="420" cy="56" r="7"/><text class="mid" x="420" y="36">定型は自動で送る</text>
+<text class="h mid ta" x="420" y="84">目標</text>
+<path class="em" d="M290,98 Q350,118 410,98" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="350" y="134">3 か月で動かす</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>両端に極端な状態を書いた 1 本の軸を引き、選択肢を点で置く。今と目標に印を付ける。</dd><dt>使う場面</dt><dd class="use">どこまで任せるか・どこまで作り込むかのように、程度の段階から 1 つを選ぶ。今と目標の距離を見せる。</dd><dt>使わない場面</dt><dd>観点が 2 つあるとき（2×2）、段階ごとの中身を比べたいとき（案の比較表）。</dd></dl>
+</article>
+</div></section>
+<section id="time"><div class="sec-head"><h2>時間</h2><p>いつ何が起きる・起きたか</p><span class="count">4 枚</span></div>
+<div class="grid">
+<article class="card">
+<div class="name"><h3>時間軸</h3><span class="path">samples/time/timeline.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 164" width="560" height="164" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>時間軸</title>
+<desc>形: 横に時の流れの線を引き、出来事を点で置く。上に日時、下に出来事と補足を書く。
+使う場面: 経緯の報告、障害の振り返り、決まったことの順番を見せる。
+使わない場面: 先の予定と担当を見せたいとき（ガント風の予定）、出来事より節目の条件が要点のとき（マイルストーン）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+.dg text.h{font-size:13px}
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="164"/>
+<line class="cn" x1="24" y1="70" x2="106" y2="70"/>
+<line class="cn" x1="104" y1="77" x2="110" y2="63"/>
+<line class="cn" x1="114" y1="77" x2="120" y2="63"/>
+<line class="cn" x1="118" y1="70" x2="536" y2="70" marker-end="url(#dg-tip)"/>
+<circle class="fw" cx="60" cy="70" r="6"/><text class="s mid" x="60" y="50">11/18</text><text class="h mid" x="60" y="98">指摘を受ける</text><text class="s mid" x="60" y="117">顧客から</text>
+<circle class="ring" cx="170" cy="70" r="6"/><text class="s mid" x="170" y="50">11/19 12:00</text><text class="h mid" x="170" y="98">調べ始める</text><text class="s mid" x="170" y="117">本番を読む</text>
+<circle class="ring" cx="280" cy="70" r="6"/><text class="s mid" x="280" y="50">12:17</text><text class="h mid" x="280" y="98">原因が分かる</text><text class="s mid" x="280" y="117">集計の漏れ</text>
+<circle class="ring" cx="390" cy="70" r="6"/><text class="s mid" x="390" y="50">15:00</text><text class="h mid" x="390" y="98">直して確かめる</text><text class="s mid" x="390" y="117">stg で再現</text>
+<circle class="fa" cx="500" cy="70" r="6"/><text class="s mid" x="500" y="50">18:03</text><text class="h mid" x="500" y="98">本番に出す</text><text class="s mid" x="500" y="117">許可を得て</text>
+<text class="s" x="16" y="152">調べ始めた日のうちに直して出した。軸の切れ目で 1 日を詰めている</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>横に時の流れの線を引き、出来事を点で置く。上に日時、下に出来事と補足を書く。</dd><dt>使う場面</dt><dd class="use">経緯の報告、障害の振り返り、決まったことの順番を見せる。</dd><dt>使わない場面</dt><dd>先の予定と担当を見せたいとき（ガント風の予定）、出来事より節目の条件が要点のとき（マイルストーン）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>ガント風の予定</h3><span class="path">samples/time/gantt.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 236" width="560" height="236" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>ガント風の予定</title>
+<desc>形: 作業を行、週を列にして、期間を横棒で描く。担当で色を分け、今日の位置に縦の線を引く。
+使う場面: 先の予定・作業の重なり・誰の作業待ちかを見せる。定例の進捗、見積もりの根拠。
+使わない場面: 済んだ経緯を見せるとき（時間軸）、作業が 15 を超えるとき（スプレッドシートの WBS にする）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="236"/>
+<line class="ln" x1="150" y1="16" x2="150" y2="198"/><text class="s" x="156" y="32">11/24</text>
+<line class="ln" x1="206" y1="16" x2="206" y2="198"/><text class="s" x="212" y="32">12/1</text>
+<line class="ln" x1="262" y1="16" x2="262" y2="198"/><text class="s" x="268" y="32">12/8</text>
+<line class="ln" x1="318" y1="16" x2="318" y2="198"/><text class="s" x="324" y="32">12/15</text>
+<line class="ln" x1="374" y1="16" x2="374" y2="198"/><text class="s" x="380" y="32">12/22</text>
+<line class="ln" x1="430" y1="16" x2="430" y2="198"/><text class="s" x="436" y="32">12/29</text>
+<line class="ln" x1="486" y1="16" x2="486" y2="198"/><text class="s" x="492" y="32">1/5</text>
+<line class="ln" x1="542" y1="16" x2="542" y2="198"/>
+<line class="ln" x1="16" y1="40" x2="542" y2="40"/>
+<text x="24" y="69">要件の確認</text><rect class="fa" x="150" y="54" width="88" height="20" rx="4"/>
+<text x="24" y="99">設計</text><rect class="fa" x="206" y="84" width="88" height="20" rx="4"/>
+<text x="24" y="129">作る</text><rect class="fa" x="262" y="114" width="144" height="20" rx="4"/>
+<text x="24" y="159">受入テスト</text><rect class="fb" x="390" y="144" width="72" height="20" rx="4"/>
+<text x="24" y="189">本番開始</text>
+<polygon class="fa" points="486,174 495,184 486,194 477,184"/>
+<line class="ew dash" x1="286" y1="40" x2="286" y2="198"/>
+<text class="s tw" x="290" y="212">今日</text>
+<text class="s" x="16" y="228">青は自社、黄土は顧客の作業。1 列が 1 週</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>作業を行、週を列にして、期間を横棒で描く。担当で色を分け、今日の位置に縦の線を引く。</dd><dt>使う場面</dt><dd class="use">先の予定・作業の重なり・誰の作業待ちかを見せる。定例の進捗、見積もりの根拠。</dd><dt>使わない場面</dt><dd>済んだ経緯を見せるとき（時間軸）、作業が 15 を超えるとき（スプレッドシートの WBS にする）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>マイルストーン</h3><span class="path">samples/time/milestones.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 200" width="560" height="200" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>マイルストーン</title>
+<desc>形: 時の流れの線に節目をひし形で置き、各節目の下に「何ができたら通過か」の条件を書く。
+使う場面: 節目ごとの完了条件を顧客と合わせる。計画の説明、受入の前提。
+使わない場面: 日々の作業の重なりが要点のとき（ガント風の予定）、済んだ出来事を並べるとき（時間軸）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+.dg text.h{font-size:13px}
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="200"/>
+<line class="ar" x1="24" y1="64" x2="536" y2="64" marker-end="url(#dg-tip)"/>
+<polygon class="fc" points="86,54 96,64 86,74 76,64"/>
+<text class="s mid" x="86" y="22">12/5<tspan class="tc" dx="6">済</tspan></text><text class="h mid" x="86" y="42">要件を確定</text>
+<line class="ln" x1="86" y1="74" x2="86" y2="92"/>
+<rect class="soft" x="26" y="92" width="120" height="76" rx="6"/><text class="s" x="38" y="112">条件</text>
+<text style="font-size:12px" x="38" y="134">要件書の承認</text>
+<text style="font-size:12px" x="38" y="154">画面の数が決まる</text>
+<polygon class="fc" points="214,54 224,64 214,74 204,64"/>
+<text class="s mid" x="214" y="22">12/19<tspan class="tc" dx="6">済</tspan></text><text class="h mid" x="214" y="42">画面を見せる</text>
+<line class="ln" x1="214" y1="74" x2="214" y2="92"/>
+<rect class="soft" x="154" y="92" width="120" height="76" rx="6"/><text class="s" x="166" y="112">条件</text>
+<text style="font-size:12px" x="166" y="134">主な画面が動く</text>
+<text style="font-size:12px" x="166" y="154">顧客が触れる</text>
+<polygon class="box" points="342,54 352,64 342,74 332,64"/>
+<text class="s mid" x="342" y="22">1/16</text><text class="h mid" x="342" y="42">受入テスト</text>
+<line class="ln" x1="342" y1="74" x2="342" y2="92"/>
+<rect class="soft" x="282" y="92" width="120" height="76" rx="6"/><text class="s" x="294" y="112">条件</text>
+<text style="font-size:12px" x="294" y="134">QA 項目を通す</text>
+<text style="font-size:12px" x="294" y="154">直しが残らない</text>
+<polygon class="box" points="470,54 480,64 470,74 460,64"/>
+<text class="s mid" x="470" y="22">1/30</text><text class="h mid" x="470" y="42">本番開始</text>
+<line class="ln" x1="470" y1="74" x2="470" y2="92"/>
+<rect class="soft" x="410" y="92" width="120" height="76" rx="6"/><text class="s" x="422" y="112">条件</text>
+<text style="font-size:12px" x="422" y="134">移行が終わる</text>
+<text style="font-size:12px" x="422" y="154">窓口が決まる</text>
+<text class="s" x="16" y="190">緑の印と「済」は通過した節目</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>時の流れの線に節目をひし形で置き、各節目の下に「何ができたら通過か」の条件を書く。</dd><dt>使う場面</dt><dd class="use">節目ごとの完了条件を顧客と合わせる。計画の説明、受入の前提。</dd><dt>使わない場面</dt><dd>日々の作業の重なりが要点のとき（ガント風の予定）、済んだ出来事を並べるとき（時間軸）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>定例のリズム</h3><span class="path">samples/time/week-rhythm.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 204" width="560" height="204" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>定例のリズム</title>
+<desc>形: 曜日を列、時間帯を行にした格子に、繰り返す予定を置く。毎日のものは横に通す帯にする。
+使う場面: 週の定例・締切・定期の作業がいつ入るかを見せる。運用の回し方、チームの 1 週間。
+使わない場面: 一度きりの予定（ガント風の予定）、時刻まで細かく見せたいとき（カレンダーそのものを見せる）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="204"/>
+<text class="h mid" x="126" y="30">月</text>
+<text class="h mid" x="218" y="30">火</text>
+<text class="h mid" x="310" y="30">水</text>
+<text class="h mid" x="402" y="30">木</text>
+<text class="h mid" x="494" y="30">金</text>
+<line class="ln" x1="80" y1="40" x2="80" y2="188"/>
+<line class="ln" x1="172" y1="40" x2="172" y2="188"/>
+<line class="ln" x1="264" y1="40" x2="264" y2="188"/>
+<line class="ln" x1="356" y1="40" x2="356" y2="188"/>
+<line class="ln" x1="448" y1="40" x2="448" y2="188"/>
+<line class="ln" x1="540" y1="40" x2="540" y2="188"/>
+<text class="s" x="16" y="67">毎朝</text>
+<text class="s" x="16" y="117">午前</text>
+<text class="s" x="16" y="169">午後</text>
+<rect class="soft" x="84" y="46" width="452" height="32" rx="4"/><text class="s mid" x="310" y="67">9:00 届いたものの仕分け</text>
+<g><rect class="fa" x="84" y="90" width="84" height="44" rx="6"/><text class="mid" x="126" y="117">週の計画</text></g>
+<g><rect class="fw" x="360" y="90" width="84" height="44" rx="6"/><text class="mid" x="402" y="117">資料の締切</text></g>
+<g><rect class="fb" x="268" y="142" width="84" height="44" rx="6"/><text class="mid" x="310" y="169">顧客定例</text></g>
+<g><rect class="fc" x="452" y="142" width="84" height="44" rx="6"/><text class="mid" x="494" y="169">振り返り</text></g>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>曜日を列、時間帯を行にした格子に、繰り返す予定を置く。毎日のものは横に通す帯にする。</dd><dt>使う場面</dt><dd class="use">週の定例・締切・定期の作業がいつ入るかを見せる。運用の回し方、チームの 1 週間。</dd><dt>使わない場面</dt><dd>一度きりの予定（ガント風の予定）、時刻まで細かく見せたいとき（カレンダーそのものを見せる）。</dd></dl>
+</article>
+</div></section>
+<section id="relation"><div class="sec-head"><h2>関係</h2><p>誰と何がどうつながるか</p><span class="count">5 枚</span></div>
+<div class="grid">
+<article class="card">
+<div class="name"><h3>依存関係</h3><span class="path">samples/relation/dependency.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 208" width="560" height="208" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>依存関係</title>
+<desc>形: 作業や部品を箱にし、先に済む必要があるものから後のものへ矢印を引く。遅れが全体に響く道を太くする。
+使う場面: 作業の前後関係・部品の依存・どれが詰まると全体が止まるかを見せる。
+使わない場面: 日付が要点のとき（ガント風の予定）、依存が 1 本道のとき（手順の一列）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="208"/>
+<g><rect class="box" x="16" y="80" width="112" height="40" rx="6"/><text class="mid" x="72" y="105">要件を確定</text></g>
+<g><rect class="box" x="164" y="30" width="112" height="40" rx="6"/><text class="mid" x="220" y="55">画面の設計</text></g>
+<g><rect class="box" x="164" y="130" width="112" height="40" rx="6"/><text class="mid" x="220" y="155">DB の設計</text></g>
+<g><rect class="box" x="312" y="80" width="112" height="40" rx="6"/><text class="mid" x="368" y="105">作る</text></g>
+<g><rect class="box" x="448" y="80" width="96" height="40" rx="6"/><text class="mid" x="496" y="105">受入テスト</text></g>
+<path class="ar" d="M129,100 L142,100 Q146,100 146,104 L146,146 Q146,150 150,150 L163,150" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M277,150 L290,150 Q294,150 294,146 L294,104 Q294,100 298,100 L311,100" marker-end="url(#dg-tip)"/>
+<path class="em" d="M129,100 L142,100 Q146,100 146,96 L146,54 Q146,50 150,50 L163,50" marker-end="url(#dg-tip)"/>
+<path class="em" d="M277,50 L290,50 Q294,50 294,54 L294,96 Q294,100 298,100 L311,100" marker-end="url(#dg-tip)"/>
+<line class="em" x1="425" y1="100" x2="447" y2="100" marker-end="url(#dg-tip)"/>
+<text class="s" x="16" y="196">太い青の線が、遅れると全体が遅れる道</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>作業や部品を箱にし、先に済む必要があるものから後のものへ矢印を引く。遅れが全体に響く道を太くする。</dd><dt>使う場面</dt><dd class="use">作業の前後関係・部品の依存・どれが詰まると全体が止まるかを見せる。</dd><dt>使わない場面</dt><dd>日付が要点のとき（ガント風の予定）、依存が 1 本道のとき（手順の一列）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>責任の分担</h3><span class="path">samples/relation/raci.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 244" width="560" height="244" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>責任の分担</title>
+<desc>形: 作業を行、人や組織を列にした表で、各マスに担当・承認・相談・報告を書く。承認は各行に 1 つだけ。
+使う場面: 誰が何を持ち、誰が最後に決めるかを顧客や社内と合わせる。体制の説明、役割の線引き。
+使わない場面: 作業の順番が要点のとき（スイムレーン）、人が 1〜2 人だけのとき（文章で書く）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="244"/>
+<text class="h mid" x="222" y="38">自社 PM</text>
+<text class="h mid" x="314" y="38">開発</text>
+<text class="h mid" x="406" y="38">顧客</text>
+<text class="h mid" x="498" y="38">運用</text>
+<line class="ln" x1="16" y1="48" x2="544" y2="48"/>
+<text x="28" y="71">要件を決める</text>
+<rect class="fa" x="196" y="55" width="52" height="22" rx="11"/><text class="mid ta" x="222" y="71">担当</text>
+<text class="s mid" x="314" y="71">相談</text>
+<rect class="fb" x="380" y="55" width="52" height="22" rx="11"/><text class="mid tb" x="406" y="71">承認</text>
+<text class="s mid" x="498" y="71">報告</text>
+<line class="ln" x1="16" y1="84" x2="544" y2="84"/>
+<text x="28" y="107">画面を作る</text>
+<rect class="fb" x="196" y="91" width="52" height="22" rx="11"/><text class="mid tb" x="222" y="107">承認</text>
+<rect class="fa" x="288" y="91" width="52" height="22" rx="11"/><text class="mid ta" x="314" y="107">担当</text>
+<text class="s mid" x="406" y="107">相談</text>
+<line class="ln" x1="16" y1="120" x2="544" y2="120"/>
+<text x="28" y="143">受入テスト</text>
+<rect class="fa" x="196" y="127" width="52" height="22" rx="11"/><text class="mid ta" x="222" y="143">担当</text>
+<text class="s mid" x="314" y="143">相談</text>
+<rect class="fb" x="380" y="127" width="52" height="22" rx="11"/><text class="mid tb" x="406" y="143">承認</text>
+<line class="ln" x1="16" y1="156" x2="544" y2="156"/>
+<text x="28" y="179">本番に出す</text>
+<rect class="fb" x="196" y="163" width="52" height="22" rx="11"/><text class="mid tb" x="222" y="179">承認</text>
+<rect class="fa" x="288" y="163" width="52" height="22" rx="11"/><text class="mid ta" x="314" y="179">担当</text>
+<text class="s mid" x="406" y="179">報告</text>
+<text class="s mid" x="498" y="179">相談</text>
+<line class="ln" x1="16" y1="192" x2="544" y2="192"/>
+<text class="s" x="16" y="216">担当＝手を動かす　承認＝最後に決める（各行 1 人）</text>
+<text class="s" x="16" y="234">相談＝事前に聞く　報告＝後で知らせる</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>作業を行、人や組織を列にした表で、各マスに担当・承認・相談・報告を書く。承認は各行に 1 つだけ。</dd><dt>使う場面</dt><dd class="use">誰が何を持ち、誰が最後に決めるかを顧客や社内と合わせる。体制の説明、役割の線引き。</dd><dt>使わない場面</dt><dd>作業の順番が要点のとき（スイムレーン）、人が 1〜2 人だけのとき（文章で書く）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>読み書きの向き</h3><span class="path">samples/relation/read-write.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 240" width="560" height="240" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>読み書きの向き</title>
+<desc>形: 使う側を左、置き場所を右に並べ、書くは実線、読むは点線の矢印で向きを描く。
+使う場面: 誰がどのファイル・表・メモを読み、誰が書くかを見せる。引き継ぎの仕組み、権限の設計。
+使わない場面: データが加工されながら流れるとき（データの流れ）、やり取りの順番が要点のとき（シーケンス図）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="240"/>
+<g><rect class="box" x="16" y="20" width="120" height="48" rx="6"/><text class="mid" x="76" y="49">メイン</text></g>
+<g><rect class="box" x="16" y="88" width="120" height="48" rx="6"/><text class="mid" x="76" y="117">worker</text></g>
+<g><rect class="box" x="16" y="156" width="120" height="48" rx="6"/><text class="mid" x="76" y="185">相談スレッド</text></g>
+<g><rect class="fc" x="424" y="20" width="120" height="48" rx="6"/><text class="h mid" x="484" y="41">作業メモ</text><text class="s mid" x="484" y="59">state.md</text></g>
+<g><rect class="fc" x="424" y="156" width="120" height="48" rx="6"/><text class="h mid" x="484" y="177">顧客メモ</text><text class="s mid" x="484" y="195">人と発言</text></g>
+<line class="ar" x1="137" y1="36" x2="423" y2="36" marker-end="url(#dg-tip)"/>
+<line class="ar dash" x1="423" y1="52" x2="137" y2="52" marker-end="url(#dg-tip)"/>
+<line class="ar dash" x1="423" y1="62" x2="137" y2="106" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="137" y1="172" x2="423" y2="172" marker-end="url(#dg-tip)"/>
+<line class="ar dash" x1="423" y1="188" x2="137" y2="188" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="16" y1="226" x2="48" y2="226" marker-end="url(#dg-tip)"/>
+<text class="s" x="56" y="230">書く</text>
+<line class="ar dash" x1="100" y1="226" x2="132" y2="226" marker-end="url(#dg-tip)"/>
+<text class="s" x="140" y="230">読む</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>使う側を左、置き場所を右に並べ、書くは実線、読むは点線の矢印で向きを描く。</dd><dt>使う場面</dt><dd class="use">誰がどのファイル・表・メモを読み、誰が書くかを見せる。引き継ぎの仕組み、権限の設計。</dd><dt>使わない場面</dt><dd>データが加工されながら流れるとき（データの流れ）、やり取りの順番が要点のとき（シーケンス図）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>配布の配線</h3><span class="path">samples/relation/wiring.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 240" width="560" height="240" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>配布の配線</title>
+<desc>形: 元を左に 1 つ置き、配る仕組みを経て右の読み手へ線を広げる。届き方の違いを線の種類で分ける。
+使う場面: 設定や文書の元がどこにあり、どこへ配られ、直したらどこまで届くかを見せる。
+使わない場面: 読み手が書き戻すとき（読み書きの向き）、配る順番や時刻が要点のとき（データの流れ）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="240"/>
+<g><rect class="fa" x="16" y="80" width="150" height="60" rx="6"/><text class="h mid" x="91" y="106">元ファイル</text><text class="s mid" x="91" y="124">claude/skills</text></g>
+<line class="ar" x1="167" y1="110" x2="219" y2="110" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="220" y="90" width="120" height="40" rx="6"/><text class="mid" x="280" y="115">home.nix</text></g>
+<path class="ar" d="M341,110 H364 M364,34 V134"/>
+<line class="ar" x1="364" y1="34" x2="399" y2="34" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="364" y1="84" x2="399" y2="84" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="364" y1="134" x2="399" y2="134" marker-end="url(#dg-tip)"/>
+<path class="ar dash" d="M280,131 L280,180 Q280,184 284,184 L399,184" marker-end="url(#dg-tip)"/>
+<g><rect class="box" x="400" y="16" width="144" height="36" rx="6"/><text class="mid" x="472" y="39">~/.claude/skills</text></g>
+<g><rect class="box" x="400" y="66" width="144" height="36" rx="6"/><text class="mid" x="472" y="89">~/.agents/skills</text></g>
+<g><rect class="box" x="400" y="116" width="144" height="36" rx="6"/><text class="mid" x="472" y="139">Orca のプロファイル</text></g>
+<g><rect class="box" x="400" y="166" width="144" height="36" rx="6"/><text class="mid" x="472" y="189">社外に渡す zip</text></g>
+<line class="ar" x1="16" y1="226" x2="48" y2="226" marker-end="url(#dg-tip)"/>
+<text class="s" x="56" y="230">リンク（編集がすぐ届く）</text>
+<line class="ar dash" x1="220" y1="226" x2="252" y2="226" marker-end="url(#dg-tip)"/>
+<text class="s" x="260" y="230">コピー（作り直しが要る）</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>元を左に 1 つ置き、配る仕組みを経て右の読み手へ線を広げる。届き方の違いを線の種類で分ける。</dd><dt>使う場面</dt><dd class="use">設定や文書の元がどこにあり、どこへ配られ、直したらどこまで届くかを見せる。</dd><dt>使わない場面</dt><dd>読み手が書き戻すとき（読み書きの向き）、配る順番や時刻が要点のとき（データの流れ）。</dd></dl>
+</article>
+<article class="card">
+<div class="name"><h3>重なり</h3><span class="path">samples/relation/venn.svg</span></div>
+<div class="fig"><div><template shadowrootmode="open"><style>:host{display:block}svg{display:block;width:100%;height:auto}svg *{animation-play-state:paused!important}</style><svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 222" width="560" height="222" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>重なり</title>
+<desc>形: 集合を円で描いて重ね、重なった部分に両方に当てはまるものを書く。
+使う場面: 2〜3 の範囲の重なりと差を見せる。機能の範囲、対象者の条件、担当範囲のかぶり。
+使わない場面: 集合が 4 つ以上あるとき（案の比較表）、大きさを比べたいとき（グラフにし dataviz skill に従う）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="222"/>
+<circle class="pa" cx="220" cy="120" r="90"/>
+<circle class="pc" cx="340" cy="120" r="90" style="fill-opacity:.7"/>
+<circle class="fa" cx="220" cy="120" r="90" style="fill:none"/>
+<circle class="fc" cx="340" cy="120" r="90" style="fill:none"/>
+<text class="h mid ta" x="190" y="22">画面で見える</text>
+<text class="h mid tc" x="370" y="22">API で取れる</text>
+<text class="mid" x="170" y="114">グラフ</text>
+<text class="mid" x="170" y="136">印刷</text>
+<text class="h mid" x="280" y="114">一覧</text>
+<text class="h mid" x="280" y="136">詳細</text>
+<text class="mid" x="390" y="114">一括取得</text>
+<text class="mid" x="390" y="136">変更の履歴</text>
+</svg></template></div><button type="button" class="zoom">拡大</button></div>
+<dl><dt>形</dt><dd>集合を円で描いて重ね、重なった部分に両方に当てはまるものを書く。</dd><dt>使う場面</dt><dd class="use">2〜3 の範囲の重なりと差を見せる。機能の範囲、対象者の条件、担当範囲のかぶり。</dd><dt>使わない場面</dt><dd>集合が 4 つ以上あるとき（案の比較表）、大きさを比べたいとき（グラフにし dataviz skill に従う）。</dd></dl>
+</article>
+</div></section>
+</div>
+<dialog id="zoom" aria-labelledby="zoom-title">
+<div class="dlg-head"><h3 id="zoom-title"></h3><button type="button" id="zoom-close">閉じる</button></div>
+<div class="dlg-body"><div id="zoom-fig"></div></div>
+</dialog>
+<script>
+(() => {
+  const dlg = document.getElementById("zoom");
+  const host = document.getElementById("zoom-fig");
+  const root = host.attachShadow({mode: "open"});
+  const open = card => {
+    const src = card.querySelector(".fig > div").shadowRoot;
+    root.innerHTML = src.innerHTML + "<style>svg *{animation-play-state:running!important}</style>";
+    document.getElementById("zoom-title").textContent = card.querySelector("h3").textContent;
+    dlg.showModal();
+  };
+  document.querySelectorAll(".card").forEach(card => {
+    card.querySelector(".fig").addEventListener("click", () => open(card));
+  });
+  document.getElementById("zoom-close").addEventListener("click", () => dlg.close());
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+})();
+</script>

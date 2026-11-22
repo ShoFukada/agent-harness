@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""worker の sandbox の外で、読むだけの Codex を起動する。
+
+  codex-ro <作業ディレクトリ> <prompt.md> <out.md> [<session id>]
+
+settings.worker.json の sandbox.excludedCommands がこのスクリプトだけを sandbox の外に出す。
+codex は ~/.codex に書き、自分でも Seatbelt を張るので、Claude の sandbox の中では起動できない。
+外に出す代わりに、鍵を外へ送る道をここで塞ぐ:
+- ~/.codex/config.toml を読まない（MCP・plugin・web 検索・hook を載せない）。web 検索・app・plugin も明示して切る
+- コマンドは Codex の permission profile で、全体を読むだけ・通信なし・settings.worker.json の denyRead を読めなくする
+- prompt と out はどちらも Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限り、symlink をたどらずに開く（sandbox_tmp.py）。
+  そうしないと、外で動くこのスクリプトに鍵のファイルを prompt として読ませたり、任意の場所を上書きさせたりできる
+stderr（session id を含む）は <out.md>.log に書く。session id を渡すと、その相談の続きとして送る。
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from sandbox_tmp import read_file as read_prompt, tmp_root, worker_denied_paths as denied_paths, write_file  # noqa: E402,F401
+
+MODEL = "gpt-6.2-astra"
+PROFILE = "worker-ro"
+DISABLED_FEATURES = ["apps", "plugins", "remote_plugin", "multi_agent", "image_generation"]
+
+
+def toml_str(s):
+    return json.dumps(s, ensure_ascii=False)
+
+
+def codex_args(workdir, out_tmp, session):
+    fs = ", ".join([f'{toml_str(":root")} = "read"'] + [f'{toml_str(p)} = "deny"' for p in denied_paths()])
+    args = ["codex", "exec"]
+    if session:
+        args += ["resume", session]
+    args += [
+        "--ignore-user-config",
+        "-m", MODEL,
+        # ChatGPT のアカウント側の app（サイトの公開・ページの共有・web 検索）は config を読まなくても載るので、機能ごと切る
+        *[a for f in DISABLED_FEATURES for a in ("--disable", f)],
+        "-c", 'web_search="disabled"',
+        "-c", f'default_permissions="{PROFILE}"',
+        "-c", f"permissions.{PROFILE}.filesystem={{{fs}}}",
+        "-c", f"permissions.{PROFILE}.network.enabled=false",
+        "-c", 'approval_policy="never"',
+        "-o", out_tmp,
+        "--skip-git-repo-check",
+    ]
+    if not session:  # resume は -C を受け付けないので、cwd で渡す
+        args += ["-C", workdir]
+    return args + ["-"]
+
+
+def main(argv):
+    if len(argv) not in (4, 5):
+        sys.exit(__doc__)
+    workdir, prompt, out = argv[1:4]
+    session = argv[4] if len(argv) == 5 else None
+    if not os.path.isdir(workdir):
+        sys.exit(f"codex-ro: {workdir} はディレクトリではない")
+    # `--dangerously-bypass-approvals-and-sandbox` のようなフラグを session id として紛れ込ませないよう、UUID の形に限る
+    if session and not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", session):
+        sys.exit("codex-ro: session id は UUID の形で渡す")
+    workdir = os.path.abspath(workdir)
+    body = read_prompt(prompt)
+    work = tempfile.mkdtemp(prefix="codex-ro-")
+    try:
+        out_tmp = os.path.join(work, "out.md")
+        r = subprocess.run(codex_args(workdir, out_tmp, session), input=body, cwd=workdir,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        write_file(out + ".log", r.stderr)
+        if os.path.exists(out_tmp):
+            with open(out_tmp, "rb") as f:
+                write_file(out, f.read())
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    for line in r.stderr.decode(errors="replace").splitlines():
+        if line.startswith("session id:"):
+            print(line)
+            break
+    print(f"exit {r.returncode}: 回答は {out}、ログは {out}.log")
+    return r.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

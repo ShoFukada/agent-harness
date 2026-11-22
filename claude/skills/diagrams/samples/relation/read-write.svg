@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 240" width="560" height="240" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>読み書きの向き</title>
+<desc>形: 使う側を左、置き場所を右に並べ、書くは実線、読むは点線の矢印で向きを描く。
+使う場面: 誰がどのファイル・表・メモを読み、誰が書くかを見せる。引き継ぎの仕組み、権限の設計。
+使わない場面: データが加工されながら流れるとき（データの流れ）、やり取りの順番が要点のとき（シーケンス図）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="240"/>
+<g><rect class="box" x="16" y="20" width="120" height="48" rx="6"/><text class="mid" x="76" y="49">メイン</text></g>
+<g><rect class="box" x="16" y="88" width="120" height="48" rx="6"/><text class="mid" x="76" y="117">worker</text></g>
+<g><rect class="box" x="16" y="156" width="120" height="48" rx="6"/><text class="mid" x="76" y="185">相談スレッド</text></g>
+<g><rect class="fc" x="424" y="20" width="120" height="48" rx="6"/><text class="h mid" x="484" y="41">作業メモ</text><text class="s mid" x="484" y="59">state.md</text></g>
+<g><rect class="fc" x="424" y="156" width="120" height="48" rx="6"/><text class="h mid" x="484" y="177">顧客メモ</text><text class="s mid" x="484" y="195">人と発言</text></g>
+<line class="ar" x1="137" y1="36" x2="423" y2="36" marker-end="url(#dg-tip)"/>
+<line class="ar dash" x1="423" y1="52" x2="137" y2="52" marker-end="url(#dg-tip)"/>
+<line class="ar dash" x1="423" y1="62" x2="137" y2="106" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="137" y1="172" x2="423" y2="172" marker-end="url(#dg-tip)"/>
+<line class="ar dash" x1="423" y1="188" x2="137" y2="188" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="16" y1="226" x2="48" y2="226" marker-end="url(#dg-tip)"/>
+<text class="s" x="56" y="230">書く</text>
+<line class="ar dash" x1="100" y1="226" x2="132" y2="226" marker-end="url(#dg-tip)"/>
+<text class="s" x="140" y="230">読む</text>
+</svg>

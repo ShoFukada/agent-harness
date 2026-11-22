@@ -76,7 +76,7 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 2. 迷うカードは「担当と話す」を押します。カードの書き出しがクリップボードに入り、Orca でその仕事の担当のいるワークスペースが前に出るので、知らせに出たタブを開いて貼ります。決まったことは担当がカードに書き戻します
 3. SlackやTeamsの連絡は、見張りのBot（このリポジトリの外）が拾って「受信」に出し、返事が要るものは担当が「送信前」の文面にします。人はコピーして送り、「送信済みにする」を押します
 4. workerの結果は「確認」に出ます。止まったworkerは、窓口が書かなくても1列の先頭の「停止」に出ます
-5. 一緒に作る仕事は、返事待ちでなくても1列に「共同作業」として常に出て、そこから担当のチャットに移れます。仕事の形の細部はnix-darwinのcockpit skillの「仕事の形」にあります
+5. 一緒に作る仕事は、返事待ちでなくても1列に「共同作業」として常に出て、そこから担当のチャットに移れます。仕事の形の細部は `claude/skills/cockpit/SKILL.md` の「仕事の形」にあります
 6. 夕方は要対応のタブの下の「報告（参照のみ）」、全体のタブの「顧客待ち」の仕事、対応済みのタブ（直近14日）を見て、残りを確かめます
 
 画面の見方、カードの種類、キーボードの操作は [操縦席の README](orca/plugins/cockpit/README.md) にあります。
@@ -89,7 +89,7 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提とし�
    ```sh
    git clone https://github.com/<owner>/agent-harness ~/.config/agent-harness
    ```
-2. `orca-launch` を PATH に通し、worker に付ける Claude Code 設定のパスを `ORCA_WORKER_SETTINGS` に入れる（無ければ設定を付けずに起動する）。どの worker にも渡す決まりの文言を `~/.config/nix-darwin/claude/skills/worktree-flow/references/worker-rules.md` に置く（orca-launch が brief の先頭に足す。無ければ立てずに断る）
+2. `orca-launch` を PATH に通し、worker に付ける Claude Code 設定のパスを `ORCA_WORKER_SETTINGS` に入れる（無ければ設定を付けずに起動する）。どの worker にも渡す決まりの文言は `claude/skills/worktree-flow/references/worker-rules.md` にある（orca-launch が brief の先頭に足す。無ければ立てずに断る）
    ```sh
    ln -s ~/.config/agent-harness/bin/orca-launch ~/.local/bin/orca-launch
    export ORCA_WORKER_SETTINGS=~/.claude/settings.worker.json
@@ -329,6 +329,24 @@ Dispatch の開いている担当のチャットは、Orca が新しい席へ移
 | `bin/account-failover`・`bin/account_failover_test.py` | 利用枠の上限での席の切り替えとそのテスト。記録先は stallwatch と同じ `STALLWATCH_HOME`（`failover-state.json`・`failover.json`・`failover-history.jsonl`） |
 | `bin/orca-watch`・`bin/orca_watch_test.py` | Orca本体が人のいないあいだに落ちたときの起動し直しとそのテスト。記録先はstallwatchと同じ `STALLWATCH_HOME`（`orca-watch-state.json`・`orca-watch.json`・`orca-watch.pause`） |
 | `bin/worktree-sweep`・`bin/worktree_sweep_test.py` | 使い終わった worktree の見回りとそのテスト。結果の書き出し先は `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`） |
+| `claude/` | Claude Codeに読ませるskill・agent・hookと、workerのsandboxの外で動くスクリプト（下の「claude/」） |
+
+## claude/
+
+Claude Codeの `~/.claude/` に張る道具です。並びは `~/.claude/` と同じで、nix-darwin がこのcloneの各フォルダへのsymlinkを張ります。settings.json・CLAUDE.md・rolesなど持ち主の環境に依るものは、このリポジトリに置きません。
+
+| 場所 | 中身 |
+|---|---|
+| `claude/agents/` | subagent（researcher・test-runner・test-sweeper） |
+| `claude/skills/<名前>/` | skill。本文は `SKILL.md` |
+| `claude/hooks/` | hookと、その試験・`testdata/`。どの出来事で呼ぶかとtimeoutは、持ち主の環境の settings.json が決める |
+| `claude/bin/` | workerのsandboxの外で動かすスクリプト（Codex・Gemini・PostgreSQL・顧客のSharePointを読む囲い）と、その共通部品（`sandbox_tmp.py`・`agy_launch.py`） |
+
+外に置くものは環境変数で受け取ります。
+
+- `claude/bin/` のスクリプトは、workerのsettingsの `denyRead` を自分でも塞ぐため、そのパスを `$ORCA_WORKER_SETTINGS` から読む（無ければ動かずに止まる）。orca-launch と account-failover は、worker を起こすときに `--settings` と同じ絶対パスをこの変数にも入れる
+- `claude/hooks/periodic-reminder.sh` は、カードの相談の役割の文書を `$CLAUDE_ROLES_DIR`（既定は `~/.config/nix-darwin/claude/roles`）から読む
+- `claude/hooks/sandbox-exclude-guard.py` は、sandboxの外で動かしてよいスクリプトを、自分の場所から見た `../bin` で決める。settings.worker.json の `excludedCommands` には、このcloneの `claude/bin/` のパスを書く
 
 ## テスト
 
@@ -339,6 +357,8 @@ python3 bin/stallwatch_test.py
 python3 bin/worktree_sweep_test.py
 python3 bin/account_failover_test.py
 python3 bin/orca_watch_test.py
+for t in claude/bin/*_test.py claude/hooks/*_test.py claude/skills/*/*_test.py; do python3 "$t"; done
+python3 claude/skills/diagrams/build_catalog.py --check
 ```
 
 ## ライセンス

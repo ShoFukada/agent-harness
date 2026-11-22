@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 232" width="560" height="232" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>長所と短所</title>
+<desc>形: 左に良い点、右に気になる点を同じ数だけ並べ、下に判断を 1 行で書く。
+使う場面: 1 つの案を採るかどうかを決める。ツールの導入、運用の変更。
+使わない場面: 案が 2 つ以上あるとき（案の比較表）、変える前後の違いが要点のとき（前後の並置）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="232"/>
+<rect class="box" x="16" y="16" width="256" height="150" rx="8"/>
+<path class="pc" d="M24,16.5 H264 a7.5,7.5 0 0 1 7.5,7.5 V50 H16.5 V24 a7.5,7.5 0 0 1 7.5,-7.5 z"/>
+<text class="h tc" x="32" y="38">良い点</text>
+<text class="h tc" x="32" y="78">＋</text><text x="54" y="78">入力の手間が半分になる</text>
+<text class="h tc" x="32" y="108">＋</text><text x="54" y="108">今の表をそのまま使える</text>
+<text class="h tc" x="32" y="138">＋</text><text x="54" y="138">月 2 万円で始められる</text>
+<rect class="box" x="288" y="16" width="256" height="150" rx="8"/>
+<path class="pw" d="M296,16.5 H536 a7.5,7.5 0 0 1 7.5,7.5 V50 H288.5 V24 a7.5,7.5 0 0 1 7.5,-7.5 z"/>
+<text class="h tw" x="304" y="38">気になる点</text>
+<text class="h tw" x="304" y="78">－</text><text x="326" y="78">画面の作り込みはできない</text>
+<text class="h tw" x="304" y="108">－</text><text x="326" y="108">慣れるまで 2 週間かかる</text>
+<text class="h tw" x="304" y="138">－</text><text x="326" y="138">外部に顧客名が出る</text>
+<rect class="fa" x="16" y="186" width="528" height="34" rx="6"/>
+<text class="h" x="32" y="208"><tspan class="ta">判断:</tspan> 1 案件で 2 週間試してから広げる</text>
+</svg>

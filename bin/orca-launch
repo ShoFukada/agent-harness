@@ -14,7 +14,8 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
 cockpit.json は読むだけで書かない（受け取りの runId・taskId は窓口が cockpit-write で書く）。root を省くと、今のディレクトリから上に
 .orca/cockpit.json を探し、無ければ git の本線（リポジトリのルート）を使う。
 
-claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなければ呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動し、
+claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなければ呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動し
+（選んだ設定の絶対パスを、claude/bin の入口が読む子プロセスの $ORCA_WORKER_SETTINGS にも渡す）、
 端末と設定のファイルを stallwatch の worker-launches.json に記録する（席の切り替えで Orca が --settings を落としたとき、account-failover が戻す）。
 呼んだ側の値をそのまま渡さないのは、account-failover が利用枠の上限で席を切り替えたあとも元の席に残るチャットの担当から立てたとき、
 worker が上限の席で起動するのを避けるため。
@@ -46,9 +47,10 @@ sw = importlib.util.module_from_spec(importlib.util.spec_from_loader("stallwatch
 _loader.exec_module(sw)
 
 WAIT_MS = 90000
-STATE_TS = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "orca", "plugins", "cockpit", "src", "state.ts")
+ROOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..")
+STATE_TS = os.path.join(ROOT, "orca", "plugins", "cockpit", "src", "state.ts")
 # どの worker にも渡す決まりの文言の置き場所。文言はここだけが持ち、brief に人が手で書かない。
-WORKER_RULES = os.path.expanduser("~/.config/nix-darwin/claude/skills/worktree-flow/references/worker-rules.md")
+WORKER_RULES = os.path.join(ROOT, "claude", "skills", "worktree-flow", "references", "worker-rules.md")
 
 
 def name_rule():
@@ -94,7 +96,7 @@ def stopped_at(handle, home, email, why):
 
 def worker_settings(a):
     settings = a.settings or os.environ.get("ORCA_WORKER_SETTINGS")
-    return os.path.expanduser(settings) if settings else None
+    return os.path.abspath(os.path.expanduser(settings)) if settings else None
 
 
 def command(a, home):
@@ -104,8 +106,9 @@ def command(a, home):
     settings = worker_settings(a)
     if settings:
         argv += ["--settings", settings]
-    env = ["env", "CLAUDE_CONFIG_DIR=" + home] if home else []
-    return shlex.join(env + argv + a.extra)
+    # sandbox の外で動く claude/bin の入口は、denyRead を $ORCA_WORKER_SETTINGS から読むので、--settings と同じファイルを渡す
+    env = (["CLAUDE_CONFIG_DIR=" + home] if home else []) + (["ORCA_WORKER_SETTINGS=" + settings] if settings else [])
+    return shlex.join((["env", *env] if env else []) + argv + a.extra)
 
 
 def cockpit_root(given):

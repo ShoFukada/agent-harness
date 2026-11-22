@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 168" width="560" height="168" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>段階的な代替</title>
+<desc>形: 試す順に手段を並べ、失敗したら右へ進む矢印と、成功したら抜ける点線を描く。最後の手段は色を変える。
+使う場面: 取得や連携の手段が複数あり、順に試す運用を見せる。障害時の切り替え、ファイルの取り方。
+使わない場面: 条件で行き先が分かれるだけのとき（流れ図）、手段どうしの比較が要点のとき（案の比較表）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs>
+<rect class="bg" width="560" height="168"/>
+<g><rect class="fc" x="16" y="24" width="130" height="52" rx="6"/><text class="h mid" x="81" y="46">MCP で読む</text><text class="s mid" x="81" y="64">まず試す</text></g>
+<line class="ar" x1="147" y1="50" x2="214" y2="50" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="180" y="42">取れない</text>
+<g><rect class="box" x="215" y="24" width="130" height="52" rx="6"/><text class="h mid" x="280" y="46">ブラウザで取る</text><text class="s mid" x="280" y="64">次に試す</text></g>
+<line class="ar" x1="346" y1="50" x2="413" y2="50" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="379" y="42">取れない</text>
+<g><rect class="fw" x="414" y="24" width="130" height="52" rx="6"/><text class="h mid" x="479" y="46">人に貼ってもらう</text><text class="s mid" x="479" y="64">最後の手段</text></g>
+<line class="ar" x1="81" y1="77" x2="81" y2="119" marker-end="url(#dg-tip)"/>
+<text class="s" x="89" y="102">取れた</text>
+<line class="ar" x1="280" y1="77" x2="280" y2="119" marker-end="url(#dg-tip)"/>
+<text class="s" x="288" y="102">取れた</text>
+<line class="ar" x1="479" y1="77" x2="479" y2="119" marker-end="url(#dg-tip)"/>
+<text class="s" x="487" y="102">貼れた</text>
+<rect class="box" x="16" y="120" width="528" height="32" rx="6"/>
+<text class="h mid" x="280" y="141">取れた時点で、その結果を使って先へ進む</text>
+</svg>

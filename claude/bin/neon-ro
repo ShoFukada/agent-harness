@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""読むだけの Gemini 4 Neon に相談する（relay-consult skill の Neon 側。codex-ro と同じ引数）。
+
+  neon-ro <リポジトリ> <prompt.md> <out.md>
+
+今はメイン（Claude の sandbox の外）だけで使う。agy は ~/.gemini に書き、Google に通信するので、sandbox の中では起動できない。
+worker から使うには settings.worker.json の excludedCommands に足すことになり、そのときは鍵を外へ送る道を見直す。
+- 呼び方は polish.py と同じ: agy_launch.py から起動し、cwd は使い捨ての空ディレクトリにして project 設定を読ませず、
+  環境変数を許可リストで絞る。本文は argv ではなく stdin の stream-json で渡す
+- 権限は neon-design-review と同じ settings（--sandbox、コマンド・書き込み・URL の読み取り・MCP・worker の denyRead の read_file を拒否）。
+  read_file を許すのは <リポジトリ> だけ
+- prompt と out は Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限り、symlink をたどらずに開く（sandbox_tmp.py）
+答えの本文は <out.md>、agy の stderr と、本文を取り出せなかったときの stdout は <out.md>.log に書く。
+"""
+
+import importlib.machinery
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import agy_launch  # noqa: E402
+from sandbox_tmp import open_dir_nofollow, read_file as read_prompt, write_file  # noqa: E402
+
+MODEL = "gemini-4-neon-high"
+PRINT_TIMEOUT = "15m"
+KILL_AFTER = 16 * 60
+
+
+def _load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+# 権限の settings と応答の取り出しは、neon-design-review と polish.py のものをそのまま使う（ずれないように）
+_NDR = _load("neon_design_review", os.path.join(HERE, "neon-design-review"))
+_POLISH = _load("ja_polish", os.path.join(HERE, "..", "skills", "ja-writing", "polish.py"))
+
+
+def agy_args(repo):
+    return ["agy", "--sandbox", "--settings", json.dumps(_NDR.agy_settings(repo)),
+            "--model", MODEL, "--add-dir", repo,
+            "--input-format", "stream-json", "--output-format", "stream-json",
+            "--print-timeout", PRINT_TIMEOUT, "--disable-slash-commands"]
+
+
+def stream_line(body):
+    return json.dumps({"event": "user", "message": {
+        "role": "user", "content": [{"type": "text", "text": body}]}}) + "\n"
+
+
+def main(argv):
+    if len(argv) != 4:
+        sys.exit(__doc__)
+    repo, prompt, out = argv[1:4]
+    if not os.path.isdir(repo):
+        sys.exit(f"neon-ro: {repo} はディレクトリではない")
+    repo = os.path.realpath(repo)
+    body = read_prompt(prompt).decode("utf-8")
+    if not body.strip():
+        sys.exit(f"neon-ro: {prompt} が空")
+    os.close(open_dir_nofollow(os.path.dirname(os.path.abspath(out))))  # 枠を使う前に、書けない out で止める
+    try:
+        r = agy_launch.run(agy_args(repo), input=stream_line(body), timeout=KILL_AFTER, prefix="neon-ro-")
+        code, stdout, stderr = r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired as e:
+        text = lambda b: b.decode(errors="replace") if isinstance(b, bytes) else (b or "")  # noqa: E731
+        code, stdout = 124, text(e.stdout)
+        stderr = text(e.stderr) + f"neon-ro: {KILL_AFTER} 秒で打ち切った\n"
+    answer = _POLISH.parse_agy(code, stdout)
+    if answer is None or not answer.strip():
+        write_file(out + ".log", (stderr + "\n--- stdout ---\n" + stdout).encode())
+        print(f"exit {code or 1}: 答えを取り出せなかった（未実行・timeout・認証切れ・枠切れのいずれか）。ログは {out}.log")
+        return code or 1
+    write_file(out + ".log", stderr.encode())
+    write_file(out, answer.encode())
+    print(f"exit 0: 答えは {out}、ログは {out}.log")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

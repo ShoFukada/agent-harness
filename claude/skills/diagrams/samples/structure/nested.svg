@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 236" width="560" height="236" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>入れ子</title>
+<desc>形: 外側の枠の中に内側の枠を描き、含む・含まれるを枠の重なりで見せる。境界の種類は線の種類で分ける。
+使う場面: クラウドのアカウントとネットワーク、組織と部署、権限の範囲など、包み合う関係を見せる。
+使わない場面: 上下に積む関係（層の構成）、つながりの向きが要点のとき（依存関係・データの流れ）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="236"/>
+<rect class="soft" x="16" y="16" width="528" height="204" rx="8"/>
+<text class="g" x="32" y="42">AWS の組織</text>
+<rect class="box" x="32" y="56" width="240" height="148" rx="8"/>
+<text class="h" x="48" y="80">本番アカウント</text>
+<rect class="ln dash" x="44" y="92" width="216" height="100" rx="6"/>
+<text class="s" x="56" y="110">VPC</text>
+<g><rect class="box" x="56" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="101" y="145">API</text><text class="s mid" x="101" y="163">ECS</text></g>
+<g><rect class="fc" x="158" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="203" y="145">DB</text><text class="s mid" x="203" y="163">RDS</text></g>
+<rect class="box" x="288" y="56" width="240" height="148" rx="8"/>
+<text class="h" x="304" y="80">検証アカウント</text>
+<rect class="ln dash" x="300" y="92" width="216" height="100" rx="6"/>
+<text class="s" x="312" y="110">VPC</text>
+<g><rect class="box" x="312" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="357" y="145">API</text><text class="s mid" x="357" y="163">ECS</text></g>
+<g><rect class="fc" x="414" y="120" width="90" height="56" rx="6"/><text class="mid" style="font-weight:600" x="459" y="145">DB</text><text class="s mid" x="459" y="163">RDS</text></g>
+</svg>

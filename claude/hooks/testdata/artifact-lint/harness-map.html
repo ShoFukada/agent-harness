@@ -1,0 +1,511 @@
+<!-- fixture: harness-map/index.html から CSS と要素の構造だけを残し、文字と属性値をダミーに置き換えたもの。段落・リスト・blockquote だけを 44〜52em に絞った形（R75 で落ちる見本） -->
+<title>harness-map</title>
+<style>
+:root{
+  color-scheme:light;
+  --paper:#f3f4f7;--surface:#ffffff;--ink:#18202c;--ink-2:#4f5868;--ink-3:#727b8b;--rule:#dde1e8;--focus:#2c56c9;
+  --accent:#365fb5;--accent-bg:#edf2fb;--person:#8a621e;--person-bg:#f8f2e7;--ok:#26786d;--ok-bg:#edf5f2;--warn:#a34f39;--warn-bg:#faefea;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --dg-bg:#ffffff;--dg-ink:#18202c;--dg-sub:#596579;--dg-line:#c3cbd6;--dg-link:#9aa6b6;--dg-soft:#f3f5f8;--dg-a:#365fb5;--dg-a-bg:#edf2fb;--dg-b:#8a621e;--dg-b-bg:#f8f2e7;--dg-c:#26786d;--dg-c-bg:#edf5f2;--dg-w:#a34f39;--dg-w-bg:#faefea;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#7e8899;--rule:#283141;--focus:#8ea9f2;
+  --accent:#8aa7e8;--accent-bg:#222e45;--person:#d4b16c;--person-bg:#342e23;--ok:#77bfb0;--ok-bg:#213630;--warn:#df9b83;--warn-bg:#3a2b26;
+  --dg-bg:#181e27;--dg-ink:#e6eaf1;--dg-sub:#abb5c5;--dg-line:#596679;--dg-link:#7d899b;--dg-soft:#222b37;--dg-a:#8aa7e8;--dg-a-bg:#222e45;--dg-b:#d4b16c;--dg-b-bg:#342e23;--dg-c:#77bfb0;--dg-c-bg:#213630;--dg-w:#df9b83;--dg-w-bg:#3a2b26;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#7e8899;--rule:#283141;--focus:#8ea9f2;
+  --accent:#8aa7e8;--accent-bg:#222e45;--person:#d4b16c;--person-bg:#342e23;--ok:#77bfb0;--ok-bg:#213630;--warn:#df9b83;--warn-bg:#3a2b26;
+  --dg-bg:#181e27;--dg-ink:#e6eaf1;--dg-sub:#abb5c5;--dg-line:#596679;--dg-link:#7d899b;--dg-soft:#222b37;--dg-a:#8aa7e8;--dg-a-bg:#222e45;--dg-b:#d4b16c;--dg-b-bg:#342e23;--dg-c:#77bfb0;--dg-c-bg:#213630;--dg-w:#df9b83;--dg-w-bg:#3a2b26;
+}
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+.dg .frame{fill:none;stroke:var(--_line);stroke-width:2}
+body{background:var(--paper);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.8}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 96px}
+header.top{display:grid;gap:10px;max-width:48em}
+.eyebrow{margin:0;font-size:12.5px;letter-spacing:.06em;color:var(--ink-3)}
+h1{margin:0;font-size:32px;line-height:1.3;letter-spacing:.02em;text-wrap:balance}
+.lead{margin:0;color:var(--ink-2);font-size:15.5px}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);z-index:3;margin-top:28px;background:var(--paper);border-bottom:1px solid var(--rule);padding-block:10px;display:flex;flex-wrap:wrap;gap:2px 18px}
+nav.toc a{color:var(--ink-2);text-decoration:none;font-size:13.5px;display:flex;gap:6px;align-items:baseline;padding-block:2px;border-bottom:2px solid transparent}
+nav.toc a span{font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+nav.toc a:hover{color:var(--ink);border-bottom-color:var(--ink-3)}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:3px}
+section{scroll-margin-top:64px;margin-top:56px;display:grid;gap:16px}
+h2{margin:0;font-size:23px;line-height:1.4;letter-spacing:.02em;text-wrap:balance;display:flex;gap:12px;align-items:baseline}
+h2 .no{font-size:13px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums;min-width:1.6em}
+h3{margin:8px 0 0;font-size:17px;line-height:1.5;text-wrap:balance}
+p{margin:0;max-width:46em}
+.answer{font-size:16.5px;font-weight:600;line-height:1.7;max-width:44em}
+.prose{display:grid;gap:12px}
+ul,ol{margin:0;padding-left:1.4em;max-width:46em;display:grid;gap:6px}
+code,.mono{font-family:var(--mono);font-size:.88em;background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+blockquote{margin:0;max-width:44em;padding:12px 16px;background:var(--surface);border:1px solid var(--rule);border-radius:6px;color:var(--ink-2);white-space:pre-line}
+blockquote cite{display:block;margin-top:6px;font-style:normal;font-size:12.5px;color:var(--ink-3)}
+figure{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:16px;display:grid;gap:10px}
+.scroll{overflow-x:auto}
+.scroll svg{display:block;width:100%;height:auto}
+.w-wide svg{min-width:980px}
+.w-mid svg{min-width:760px}
+figcaption{font-size:13px;color:var(--ink-2);display:flex;flex-wrap:wrap;gap:4px 18px;align-items:center}
+figcaption .t{font-weight:600;color:var(--ink)}
+.key{display:inline-flex;align-items:center;gap:6px}
+.key i{width:14px;height:14px;border-radius:4px;border:1.25px solid;display:inline-block}
+.key .a{background:var(--dg-a-bg);border-color:var(--dg-a)}
+.key .b{background:var(--dg-b-bg);border-color:var(--dg-b)}
+.key .c{background:var(--dg-c-bg);border-color:var(--dg-c)}
+.key .w{background:var(--dg-w-bg);border-color:var(--dg-w)}
+.key .s{background:var(--dg-soft);border-color:var(--dg-soft)}
+.key .d{border:0;border-top:1.5px dashed var(--dg-sub);height:0;border-radius:0;width:18px}
+details{max-width:100%;background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:10px 14px}
+details>summary{cursor:pointer;font-weight:600;font-size:14px;color:var(--ink-2)}
+details[open]>summary{margin-bottom:10px}
+details .prose{gap:10px}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.6}
+th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--rule)}
+th{font-weight:600;color:var(--ink-2);font-size:12.5px;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.t{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.tbl-note{font-size:12.5px;color:var(--ink-3);margin-top:6px}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;line-height:1.5;padding:0 7px;border-radius:999px;border:1px solid;white-space:nowrap;vertical-align:1px}
+.pill.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn)}
+.pill.ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok)}
+.pill.mute{color:var(--ink-3);background:transparent;border-color:var(--rule)}
+.pill.acc{color:var(--accent);background:var(--accent-bg);border-color:var(--accent)}
+.findings{list-style:none;padding:0;display:grid;gap:12px;max-width:52em}
+.findings li{display:grid;grid-template-columns:9.5em 1fr;gap:4px 16px;padding-bottom:12px;border-bottom:1px solid var(--rule)}
+.findings li b{font-size:14px}
+@media (max-width:640px){.findings li{grid-template-columns:1fr}}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;gap:8px;align-items:baseline;padding:4px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--surface);font-size:13.5px}
+.chip code{border:0;padding:0;background:none;color:var(--ink-3)}
+.chip.counted{border-color:var(--accent);background:var(--accent-bg)}
+.sk td:first-child{white-space:nowrap}
+.sk .grp td{background:var(--paper);font-weight:600;color:var(--ink);padding-top:14px}
+.bar{width:140px;height:8px;background:var(--rule);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;width:calc(var(--v) / 244 * 100%);background:var(--accent)}
+.zero td:first-child{color:var(--warn)}
+.ask{list-style:none;padding:0;display:grid;gap:14px;max-width:52em;counter-reset:q}
+.ask li{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:14px 16px;display:grid;gap:6px;counter-increment:q}
+.ask li>b{font-size:15.5px}
+.ask li>b::before{content:counter(q) ". ";color:var(--accent)}
+.ask .rec{font-size:14px}
+.ask .rec::before{content:"おすすめ ";font-weight:600;color:var(--accent)}
+.src{font-size:12.5px;color:var(--ink-2)}
+.src li{overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+<svg width="0" height="0" style="position:absolute"></svg>
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">字字字字字字字字字字字字 字 字字字字字字字字字字 字字字字字 字字字字字字字字字字字字 字字字 字字字字字 字字字字</p>
+  <h1>字字字字字字字字字</h1>
+  <p class="lead">字字字字字字字字字字字字 字字字字字字字字字字字字 字 字字字字字 字 字字字字字字字字字</p>
+</header>
+<nav class="toc">
+  <a><span>字</span>字字字字字</a>
+  <a><span>字</span>字字</a>
+  <a><span>字</span>字字字</a>
+  <a><span>字</span>字字字字字</a>
+  <a><span>字</span>字字字</a>
+  <a><span>字</span>字字字字字</a>
+  <a><span>字</span>字字字字字</a>
+  <a><span>字</span>字字字字字</a>
+  <a><span>字</span>字字字字字字 字字字字</a>
+  <a><span>字</span>字字字字字字</a>
+  <a><span>字</span>字字字字字字字字字</a>
+</nav>
+<section id="bg">
+  <h2><span class="no">字</span>字字字字字</h2>
+  <div class="prose">
+    <p>字字字字字字字字字字字字 字字字字字字字字字字字字</p>
+    <blockquote>字字字字字字字字字字字字
+字字字字字字字字字字字字
+字字字字字字字字字字字字
+字字字字字字字字字字字字
+字字字字字字字字字字字字
+字字字字字字字字字字字字<cite>字字字字字字字字字字字字</cite></blockquote>
+    <p>字字字字字字字字字字字字 字 字字字字字字字字字字字</p>
+    <ul>
+      <li><b>字字字字字字字字字字 字 <code>字字字字字字字</code></b>字 字字字字字字字<code>字字字字字字字字字</code> 字 <code>字字字字字字字字字字字字</code>字字字字字字字字字字字字<code>字字字字字字字字字字字</code>字字字字字<code>字字字字字字字字字字字字</code> 字 字字字字字字 字字 <code>字字字字字字字字字字字字</code>字</li>
+      <li><b>字字字字字字字字字字字字</b>字 字字字字字字字字字字字字 字字字字 <code>字字字字字字字字字字字</code>字字字字字字字字字字字字 <code>字字字字字字字字字字</code></li>
+      <li><b>字字字字字字字字字字字字 字字字字字</b>字 字字字字字字字字字 字字字字字字字字字字字字 字字 字字字字字字字 字 字字字字字字字字 字字字字字字 字字字字字</li>
+      <li><b>字字字字</b>字 字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字</li>
+    </ul>
+    <p>字字 字字字字字 字字字字字字字字 字字字字字字字 <code>字字字字字字字字字</code> 字字 字字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字</p>
+    <p>字字字字字字字 <code>字字字</code> 字字字字字字字字字字字字<code>字字字</code> 字字字字字字字字字字字字<code>字字字字字字字字字字字字</code>字字<code>字字字</code>字<code>字字字</code> 字字字字字字字字字字 字字字字字字 字字字字字字字字字字字字 <code>字字字字字字字字</code> 字字字字<code>字字字字 字字字字字字字字 字字 字字字字字字</code>字字字字 字字字字<code>字字字字字字字字字字字字</code>字字字字字字字字字字字字</p>
+  </div>
+</section>
+<section id="conclusion">
+  <h2><span class="no">字</span>字字</h2>
+  <ul class="findings">
+    <li><b>字字字字</b><span>字字字字字字字字字字字字 字字字字字字 字字字字字字字字字字字字 字字字字 字 字字字字字字字字字字字字 字字字字字字字字 <code>字字字字字字字字字</code> 字 <code>字字字字字字字字字</code>字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字</span></li>
+    <li><b>字字字字字 字字</b><span>字字字字字 字字字字字字字字字字字字 字字字字字 字字字字 字 字字字字字 字字字字字字字字字字字字 字 字字字字字字字字字字字字 字字字字字字 字字字字字字字字字字字字 字字字字字字字 字 字字字字</span></li>
+    <li><b>字字字字字字 字字字</b><span>字字字字字 字字字字字字字字字字字<code>字字字字字字字字字 字字字字</code>字字字字字 字字字字字 字字字字字字 <code>字字字字字字字字字</code> 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字 字字字字字字字字字字字字</span></li>
+    <li><b>字字字字字字</b><span>字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字字字字字 字 字字字字字字字字字字字字<span class="pill warn">字字字</span> 字字字</span></li>
+  </ul>
+</section>
+<section id="overview">
+  <h2><span class="no">字</span>字字字字 字字字字</h2>
+  <p class="answer">字字字字字字字字字字字字 字字字字字字 字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字</p>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 520" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字</span><span class="key"><i class="b"></i>字</span><span class="key"><i class="a"></i>字字字字字字</span><span class="key"><i class="s"></i>字字字字字 字字字字 字字</span><span>字字字字字字字字字字字字</span></figcaption>
+  </figure>
+  <details>
+    <summary>字字字字字字字字字字字字</summary>
+    <div class="tbl"><table>
+      <thead><tr><th>字</th><th>字字字字字</th><th>字字字</th><th>字字字字</th></tr></thead>
+      <tbody>
+        <tr><td>字字</td><td>字字字字字字字字字字字字 字字字字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字 字字字</td><td>字字字字字字字字字字字字</td><td><code>字字字字字字字字字字字字</code>字字字字字字字字 字字字字字</td></tr>
+        <tr><td>字字</td><td>字 字字字字字字字字字字字字 字字字 字字字字字字字字字字 字字字字字字字字字字字字</td><td><code>字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字 字字字字字字字字字 字 字字字字字字字字字字字</code></td><td><code>字字字字字字字字字字字字</code></td></tr>
+        <tr><td>字字字字字字</td><td>字 字字 字字字字字字字字字字 字字 字字字字 字字字字字字字字字字字字 字字字字字字字字</td><td><code>字字字字字字字字字字字 字字字字字字字字字字 字字字字 字字字字字字字字字字字 字字字字字字字</code></td><td>字字字字字 字 <code>字字字字字字字字字字字字</code></td></tr>
+        <tr><td>字字字字字字</td><td>字 字 字 字字字字字字字字字字字字</td><td><code>字字字字字字字 字字字字 字字字字字 字字字字字字字字 字字字字字字字字字字字字</code></td><td><code>字字字字字字字字字字字字</code></td></tr>
+        <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td>字字字 <code>字字字字字 字字字字 字字 字字字字字字字字字字字字 字字 字字字字字字字字字</code>字字字字字字字 字 <code>字字字字字字字字</code></td><td>字字字字字字字字字字字字 字字字字字</td></tr>
+        <tr><td>字字字字</td><td>字字字字字字字字字字字字 字 <code>字字字字字字字字字</code>字字字字字字字字字字字字</td><td><code>字字字</code>字<code>字字字字字字字</code>字<code>字字字字字字字字字字字字</code> 字字字</td><td>字字字字字字字字字字字字 字字字字字</td></tr>
+        <tr><td>字字字字 字 字字字字字字字字字字字</td><td>字字字字字字字字 字字字字字字 字字 字 字字字字字 字字字字字字字 字字字字 字字 字字 字字字字字字字字字</td><td><code>字字字字 字字字字字字字字字字字</code> 字 字 字</td><td>字字字字 字字字字字</td></tr>
+        <tr><td>字字字字字字字</td><td>字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字</td><td><code>字字字字字字字字字字字字</code> 字 <code>字字字字字字字字字字字字</code></td><td>字字字字字字字字字字字字 字 字字字字字字</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">字字字字字字字字字字 字 字字字字 字 字字字字字字字字字字字 字字字 字字字字字字字 字字字字字字字字字字字 字字字字字字字字字字字字<code>字字字字字字字字字字字字</code> 字字字字字字字</p>
+  </details>
+</section>
+<section id="flow">
+  <h2><span class="no">字</span>字字字字字字 字字字字字字字字字</h2>
+  <p class="answer">字字字 字字 字字字字字字字字字字字字 字字字字 字字字字字字字字字字字字 <code>字字字字字</code> 字字字字字字字字字字字</p>
+  <figure>
+    <div class="scroll w-wide">
+<svg class="dg" viewbox="0 0 1184 384" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字</span><span class="key"><i class="b"></i>字字字字字字字</span><span class="key"><i class="a"></i>字字字字字</span><span class="key"><i class="w"></i>字字字字字字字字字字字字</span><span>字字字字字字字字字字字字 字字字字字字 字字字字字字字字 字字字 字字字字字</span></figcaption>
+  </figure>
+  <h3>字字字 字字字字字字字字字字字字</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>字字</th><th>字字字字字</th><th>字字</th></tr></thead>
+    <tbody>
+      <tr><td class="t">字字字字字</td><td>字字字字字字字字字 字字字字字字字字 字字字字字 字字字字字字字字字字字字</td><td>字字字字字字 字字字</td></tr>
+      <tr><td class="t">字字字字字</td><td>字字字 字字字字字字字字字字字字</td><td>字字字</td></tr>
+      <tr><td class="t">字字字字字字字字字字字</td><td>字字字字字字字字字字 字字字字字字 字 字 字字字字字字字字字字字字 字 <code>字字字字字字字字字字字字</code>字字字字字字字</td><td>字字字字 <code>字字字字字字字字字字字字</code>字字字字字字字字字 <code>字字字字字字字字字字字字</code>字字字字 <code>字字字字字字字字字字字字</code></td></tr>
+      <tr><td class="t">字字字字字</td><td>字字字字字字 字 字 字字 字字字字字字 字字字字字字字字字 字字字字 字字字 <code>字字字字字字字</code>字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字 字字</td><td><code>字字字字字字字</code>字<code>字字字字字字字</code>字<code>字字字字字字字</code></td></tr>
+      <tr><td class="t">字字字字字</td><td>字字字字字字字字字字字字 字字字 字 <code>字字字字字字字</code> 字 字 字字<code>字字字字字字字</code> 字 字字字字 字 字 字字字字字 字字字字 字字字字</td><td>字字字 字字字字字字字字字字字字 字 <code>字字字字字字字字字</code></td></tr>
+      <tr><td class="t">字字字字字</td><td>字字字字字字字字字字字字 字字字字字字字字字字字字</td><td>字字字</td></tr>
+      <tr><td class="t">字字字字字 字字</td><td>字字字字字字 字字字字字字 字字字字字字字字字字字字 字 <code>字字字字字字字字字字字字</code>字字字字字字</td><td>字字字字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code></td></tr>
+      <tr><td class="t">字字字字字</td><td><code>字字字字字字字字字字字字</code> 字 字字字字字字字字 字字字字字字字<code>字字字字字字字字字字字字</code> 字字字字字 <code>字字字字字字字字字</code> 字 <code>字字字字字字字字字字字字</code>字字字字字字字字字字</td><td>字字字字字字字字字字</td></tr>
+    </tbody>
+  </table></div>
+  <details>
+    <summary>字字字字 字字字字字字字字字字字字</summary>
+    <div class="tbl"><table>
+      <thead><tr><th>字字字字</th><th>字字</th><th>字字字字</th></tr></thead>
+      <tbody>
+        <tr><td><code>字字字字字字字字字字字</code>字字字字字字字字字字字</td><td>字字字字 字字字字字</td><td>字字字字字字字字字字字字 字字字字字字 字 <code>字字字字</code></td></tr>
+        <tr><td><code>字字字字字字字字字字字</code>字字字字字字字字</td><td>字字字字字字 字字字字字字字字</td><td>字字字字字字字字字字字 <code>字字字字</code>字字字字字字字字字字字</td></tr>
+        <tr><td><code>字字字字字字字字</code></td><td>字字字字字字 字 <code>字字字</code></td><td>字字字字字字字字字字字字 <code>字字字字字</code>字字字字字字字字字字字字</td></tr>
+        <tr><td><code>字字字字字字字字字字</code>字字字字字字字字字字</td><td>字字字字字字字字字字字 字字字字字字字字字字</td><td>字字字字字字字字字字字字 <code>字字字字</code> 字字字</td></tr>
+        <tr><td><code>字字字字字字字字字字</code>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td>字字字字字字 <code>字字字字字字字字字字字字 字字字字字字 字 字字字字字字字字字字 字</code> 字字字字字</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">字字字字字字字字字字 <code>字字字字</code> 字字字字字字字字字字字字 字字字字字字字字字字字 字字 <code>字字字字字</code> 字字字字字字字字字字字字 字 字字字字 字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字 字字字字字字字字字字字字</p>
+  </details>
+</section>
+<section id="cockpit">
+  <h2><span class="no">字</span>字字字字 字字字字字字字字字字字</h2>
+  <p class="answer">字字字字字 <code>字字字字字字字字字字字字</code> 字字字字字字字字字字字字 <code>字字字字字字字字字字字字</code> 字字字字字字字字字字字 <code>字字字字字字字字</code> 字 字 字字字字字字字字字字字字</p>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 440" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字</span><span class="key"><i class="a"></i>字字字字字字</span><span class="key"><i class="b"></i>字</span><span class="key"><i class="d"></i>字字字字字字字字字字字字</span></figcaption>
+  </figure>
+  <div class="prose">
+    <p>字字字字 字 字字字字字字字字字字字字 字 字字字字字字字 字 字字字字字字字字字字字字</p>
+    <div class="chips">
+      <span class="chip counted">字字字 <code>字字字字字</code></span>
+      <span class="chip counted">字字 <code>字字字字字字</code></span>
+      <span class="chip counted">字字字 <code>字字字字字字</code></span>
+      <span class="chip counted">字字字 <code>字字字字</code></span>
+      <span class="chip counted">字字 <code>字字字字字字</code></span>
+      <span class="chip">字字字 <code>字字字字字</code></span>
+      <span class="chip">字字字 <code>字字字字</code></span>
+      <span class="chip">字字 <code>字字字字字字</code></span>
+    </div>
+    <p>字字字字字 字字字字字字字字字字字字 字 字字字字 字字字字字字字字字字字字 字 字字 字 字字字字字字字字字字字字 字字字字字字 字 字 字字字字字字字字字字字字 字 字字字字字字 字字字字字字 字 字字 字字字字</p>
+  </div>
+  <details>
+    <summary>字字字字字字字字字字字字 字 字字字字字字字字</summary>
+    <div class="tbl"><table>
+      <thead><tr><th>字字字字</th><th>字字字</th><th>字字</th></tr></thead>
+      <tbody>
+        <tr><td><code>字字字字字字字字字字字字</code></td><td>字字字字</td><td>字字字字字字字字字字字字 字字字<code>字字字字字字字</code>字<code>字字字字字</code>字<code>字字字字字</code>字<code>字字字字字字</code></td></tr>
+        <tr><td><code>字字字字字字字字字字字字</code></td><td>字字字字</td><td>字字字字字字字字字字字字<code>字字字字字字字字字字字</code> 字字字</td></tr>
+        <tr><td><code>字字字字字字字字字字字字</code></td><td>字字字字字<code>字字字字字字字字字字字字 字字字字</code>字</td><td>字字字字字字字字字字字字</td></tr>
+        <tr><td><code>字字字字字字字字字字字字</code></td><td>字字字字 字字</td><td>字字字字字字字字字字</td></tr>
+        <tr><td><code>字字字字字字字字字字字字</code></td><td>字字</td><td>字字字字字字字字字字 字字字字字字字字字字字字</td></tr>
+      </tbody>
+    </table></div>
+    <p class="tbl-note">字字字字字字字字字字字字 字字字字字字字 字字字字 字 字字字字字字字字 字字字字字字字 <code>字字字字字字字字字字字字</code> 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字 字字字字字字字字字字字字</p>
+  </details>
+</section>
+<section id="rules">
+  <h2><span class="no">字</span>字字字字字字 字字字字字字字字字字字</h2>
+  <p class="answer">字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字</p>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 316" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字</span><span class="key"><i class="b"></i>字字字字</span><span class="key"><i class="a"></i>字字字字字字字字字字字字</span><span class="key"><i class="c"></i>字字字字字字字 字字字字</span></figcaption>
+  </figure>
+  <h3>字字字字字字字字字字字字</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>字字字字字字</th><th>字字字字字字字</th></tr></thead>
+    <tbody>
+      <tr><td><code>字字字字字字字字字</code> 字字</td><td>字字字字字字字字字字字字 字 字字字字字字 字 字字字 字字字字字字字字字字字字 字 字字字字字字字字字 字字字字 字 字字字字字字 <code>字字字字字字字字字</code> 字字字字字字字字字字字 字 字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字 <code>字字字字字字字字字字字字</code> 字字字 字字字字字字 字</td></tr>
+      <tr><td><code>字字字字字字字字字</code> 字字</td><td>字字字字字字字字字字字字 字字字字 字 字字 字 字字字字 字 字字字字字字字字字字字字 字 字字字字字字字字字字字字 字 字 字 字 字字字字字字字字字字字字</td></tr>
+      <tr><td><code>字字字字字字字字字</code> 字字</td><td>字字字字字字字字字字字字</td></tr>
+      <tr><td><code>字字字字字字字字字</code> 字字</td><td>字字字字字字字 字字字字字字字字字字字字 字字字 字字字字字字字字字字字字 字字字字字 字字字 字字字字字字字字字字字字 字 字字字字字字字字字字字字 字 字 字字字字字字字字</td></tr>
+      <tr><td><code>字字字字字字字字字</code> 字字字</td><td>字字字字 字字字字 字 字字字字字字字字 字字字字字 字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字 字 字字字字字字字 字字字字字字字字字字字字 字字字 字字字字字字字字字字字字 字字 字字字字字字字</td></tr>
+      <tr><td><code>字字字字字字字字字</code> 字字字字字字字</td><td>字字字字字字字字字 <code>字字字字字字</code>字字字字 <code>字字字字字字字字</code>字字字字字字 字字字字字字字字字字字字 字字字字字字字字 字字字字字字字字字字字字 字字字字字字 字 <code>字字字字</code> 字字字字</td></tr>
+      <tr><td><code>字字字字字字字字字</code> 字字字字字字字 字字字字字字字字字字字字</td><td>字字字 字 字字字字字字字字字字 字字字字字字字字字字字字 字字 字字字</td></tr>
+      <tr><td><code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code></td><td>字字字字字字字字字字字字<code>字字字</code> 字字字字字 <code>字字字字</code> 字字字字字字字字字字字字</td></tr>
+    </tbody>
+  </table></div>
+</section>
+<section id="skills">
+  <h2><span class="no">字</span>字字字字字 字字字字字字字字</h2>
+  <p class="answer">字字字字字 字 字 字字字字字字字字字字字字 字字字 字字字字字字字字字字字字 字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字 字 字 字字字字字 字字 字字字字字字</p>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 332" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字</span><span>字 字字字字字字字字字字字字 字字字字字 字字字字字字字字字 字字字字字 字字 字字字 字字 字字字字字字字字字字字字</span></figcaption>
+  </figure>
+  <div class="prose">
+    <p>字字字字字字字字字字字字 字字字字字字字字字字字字 <code>字字字字字字字字字字字字</code>字字字字字字字字字字字 字 <code>字字字字字字字字字字字字</code> 字字字字字字字字字字字字 字字字字字字字字字字字字<code>字字字</code> 字字字字字字字字字字字字 字字字字字字字字字字字字 字字 字 字 字字 字字字字字 字字字</p>
+  </div>
+  <div class="tbl"><table class="sk">
+    <thead><tr><th>字字字字字</th><th>字字字字字</th><th>字字 字</th><th class="num">字</th><th class="num">字字字</th><th>字字</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="6">字字字字字字字字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字 字字字字字字字字字字字字</td><td><div class="bar" style="--v:64"><i></i></div></td><td class="num">字字</td><td class="num">字字字</td><td></td></tr>
+      <tr><td>字字字字字字字字</td><td>字字字字字 字字 字字字字字字字字字字字字</td><td><div class="bar" style="--v:28"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字</td><td>字字字字 字 字字字字字字字字字字字字 字字字 字字字</td><td><div class="bar" style="--v:26"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:14"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字 字字字字字字字字 字字字</td><td><div class="bar" style="--v:9"><i></i></div></td><td class="num">字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字 字 字字字字字字 字字字字字字字字字字字字 字字字字</td><td><div class="bar" style="--v:4"><i></i></div></td><td class="num">字</td><td class="num">字</td><td><span class="pill mute">字字字字</span></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字 字字字字字字字字字字字字 字字字字</td><td><div class="bar" style="--v:3"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字</td><td>字字字 字字 字字字字字字字字</td><td><div class="bar" style="--v:1"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr class="grp"><td colspan="6">字字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字</td><td>字字字字字字字字字字字 字字字字 字字字字字</td><td><div class="bar" style="--v:198"><i></i></div></td><td class="num">字字字</td><td class="num">字字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:11"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字</td><td>字字字字字 字字字字字字字字字字字字</td><td><div class="bar" style="--v:2"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字字字</td><td>字字字字字字 字字 字字字字字字字字</td><td><div class="bar" style="--v:1"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字 字 字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td><span class="pill mute">字字字 字字</span></td></tr>
+      <tr class="grp"><td colspan="6">字字字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:244"><i></i></div></td><td class="num">字字字</td><td class="num">字字字</td><td></td></tr>
+      <tr class="zero"><td>字字字字字字字字字字字字</td><td>字字字字 字 字字字字字 字字字字字字 字 字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td><span class="pill acc">字字字字字</span></td></tr>
+      <tr class="zero"><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr class="zero"><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr class="zero"><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字</td><td>字字字 字字字字字字 字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td><span class="pill mute">字字字 字字</span></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字 字字字字 字字 字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td><span class="pill mute">字字字 字字</span></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字 字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td><span class="pill mute">字字字 字字</span></td></tr>
+      <tr class="grp"><td colspan="6">字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字 字字字字</td><td><div class="bar" style="--v:3"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:1"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:1"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td><span class="pill mute">字字字 字字</span></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字 字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td><span class="pill mute">字字字字字</span></td></tr>
+      <tr class="grp"><td colspan="6">字字字字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字 字 字字字 字</td><td><div class="bar" style="--v:38"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字 字字字字字字字字字</td><td><div class="bar" style="--v:8"><i></i></div></td><td class="num">字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字 字字字字字字字字字字字字</td><td><div class="bar" style="--v:3"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr><td>字字字字字字字字字</td><td>字字字字 字字字字字字字</td><td><div class="bar" style="--v:2"><i></i></div></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr class="zero"><td>字字字字字字字字</td><td>字字字 字字字字字字字字字字字字 字字字字字字字 字字字</td><td></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr class="grp"><td colspan="6">字字字字字字字字</td></tr>
+      <tr class="zero"><td>字字字字字字字字字字字字</td><td>字字字字字字字 字 字字字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr class="zero"><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字 字字字字字 字字字字字</td><td></td><td class="num">字</td><td class="num">字</td><td></td></tr>
+      <tr class="grp"><td colspan="6">字字字字字字字字字字字字 字 字字字字字字 字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字</td><td><div class="bar" style="--v:31"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字 字字字字字字字字 字</td><td><div class="bar" style="--v:28"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:18"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:11"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:10"><i></i></div></td><td class="num">字字</td><td class="num">字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:9"><i></i></div></td><td class="num">字字字</td><td class="num">字字字</td><td></td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td><div class="bar" style="--v:3"><i></i></div></td><td class="num">字字字字字</td><td class="num">字字字字字字</td><td></td></tr>
+      <tr class="zero"><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字</td><td></td><td class="num">字</td><td class="num">字字字字字字字</td><td></td></tr>
+    </tbody>
+  </table></div>
+  <details>
+    <summary>字 字 字字字字字字字字字字字字</summary>
+    <ol>
+      <li><code>字字字字字字字 字字字字字字字字字字字字</code> 字字字字字字字字字字字字</li>
+      <li><code>字字字字字字字</code> 字 <code>字字字字字字字字字字字字</code> 字字字字字字字字 字字字字字 字字字字字字字字字 字字字字字字 字字 字字字字字字字字字字字字</li>
+      <li>字字 字 字 字字字字字 字字字字字 字字字字字字字字字字 字字字字字字字字字字字 字字字字字字字字字字 <code>字字字字字字字字字字字字</code> 字 <code>字字字字字字字字字字字字</code> 字字字字字字字字字字 <code>字字字</code> 字字字字字字</li>
+      <li>字字字字字字字字 字字字字 字字字字字 字字字字字字字字字字字字 字字字字字 字字字字字字字字字字字字</li>
+    </ol>
+    <p class="tbl-note">字字字字字字字字字字字字 字 字字字字字 字字字字字字字字字字字字</p>
+  </details>
+</section>
+<section id="review">
+  <h2><span class="no">字</span>字字字字字字字字字字</h2>
+  <p class="answer">字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字 字字字字 字 字字字字字 字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字 字字字字字字</p>
+  <div class="tbl"><table>
+    <thead><tr><th>字字字字字</th><th>字字字字字</th><th>字字</th></tr></thead>
+    <tbody>
+      <tr><td>字字字字字字 字字字字字字字字字字字字</td><td>字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字</td><td>字字字字字 字字字字字字字字 字 字字字字字字字字字字字字 字字字字字 字字字 字字字字 字 字字字字字字字字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字</td><td>字字字字字<code>字字字字字字字字字字字字</code>字字字字字字字字字字字 字字字字 字 <code>字字字字字字字字字</code></td><td>字字字字字字字字字字字字 字字字字 字字字字 字 字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字 字字字字字字字字字字字字</td></tr>
+      <tr><td>字字字字字字字字</td><td>字字字字字字字字字字字字 字 字字字字字字字字字字字字 字字字字字字字字字 字字字字<code>字字字字字字字字字字字字</code></td><td>字字字 字字 字字字字字字字字字字字字 字字字字 字字字字</td></tr>
+      <tr><td>字字字字字字字</td><td>字字字字字字字字字字字字 字 字字字字字 字 字 字字字字</td><td>字字字字字字字字字字字字 字字字字字字字字字字字字</td></tr>
+      <tr><td>字字字字字</td><td><code>字字字字字字字字字字字字</code></td><td>字字字字字字</td></tr>
+      <tr><td>字字字字字字字字字字字字</td><td>字字字字字字字字字字字字 字 <code>字字字字字字字字字字字字</code>字字字字字字字字字字字字</td><td>字字字字字字字字字字字 字字字 字字字</td></tr>
+      <tr><td>字字字字字字 字字字字字</td><td>字字字字字字字字字字字</td><td><code>字字字</code> 字字字字字字字字 字字字字字字字字字</td></tr>
+    </tbody>
+  </table></div>
+  <h3>字字字字字字字字字字字字 字字字字字字字 字字字字</h3>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 384" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字</span><span>字字字字字字字字字字字字 <code>字字字</code> 字字字字字字字字字字字字</span><span>字字字字字字字字 字 字字字字字字字字字字字字</span></figcaption>
+  </figure>
+  <div class="prose">
+    <p>字字字字 字 字字字字字字 字字字字 字字字字字字字字字字字字 字 字字字字字字字字字字</p>
+    <ul>
+      <li><b>字字字</b>字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字<code>字字字字字字字字字</code>字字字字 字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字</li>
+      <li><b>字字字</b>字字字字字字字字 字字字字字字字字字字字字 字字字字字字 字字字字字字 字字字字 字字字字字字字字字字字字 字字字字字字 字字字字字字字字字字字字</li>
+    </ul>
+    <p>字字字 字字字字字字字字 字 字字字 字字字字 <code>字字字字字字字字字字字字</code> 字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字字字字字 字字字字 <code>字字字字字字字</code>字字字字字字字字 字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字 字字字字字字字字字字字字 字字字字字字 字字字字字字字字</p>
+  </div>
+</section>
+<section id="cleanup">
+  <h2><span class="no">字</span>字字字字字字 字字字字字 字字字字字字</h2>
+  <p class="answer">字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字</p>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 168" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字字字</span><span class="key"><i class="c"></i>字字字字字字字字字字</span><span class="key"><i class="w"></i>字字字字字</span></figcaption>
+  </figure>
+  <div class="prose">
+    <p>字字字 字字字字字字字字字字字字 字 <code>字字字字字字字字字 字字字字</code> 字 字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字 字字字字字字字字字字字字 <code>字字字字字字字</code>字字字字字字字 字字字字字字字 字字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字字字字字</p>
+  </div>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 316" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字字字</span><span>字 字字字字 字 字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字 字 <code>字字字字 字字字字字字字字 字字 字字字字字字</code> 字 <code>字字字 字字字字字字 字字字字 字字字字</code></span><span class="key"><i class="w"></i>字字字字字</span></figcaption>
+  </figure>
+  <div class="prose">
+    <p><b>字字字字字 字字字字</b> 字字字字字字字字字字字字 字 字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字 字 字字 字字字字字字字字字字字字 字字字 字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字 字 字字字字字 字字字字字字字字</p>
+    <p>字字字字字字字字字字字字 字字字字字字字字字字字字 字 字字 字 字字字字字字字字字字 <code>字字字字字字字字字字字字</code> 字 字 字字字字字字字字字字字字 字字字字 字字字字字字 字 字字字字字字字字字字字字 字 字 字字字字字字字字字字字字</p>
+    <p>字字字字字字字字字 字字字字字字字字 字 字字 字字字字字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字 字字字 字字字字字字字字字 字字字字字字字字字字字字 字字字字字字 字 字字字字字字字字 字 <code>字字字字字字字字字</code> 字字字字字字字字 字字字 字字字字 字字字字 <code>字字字字字字字字字字字</code> 字字字字字字</p>
+  </div>
+  <details>
+    <summary>字字字字字字字字字字</summary>
+    <ul>
+      <li><b>字字字字字字字字</b>字字字字字字字字字字字字 字字字字字字字 <code>字字字字字字字字字字字字</code>字字 字字字字字字字字字字字字 字 字 字字字字字字 字 字字字字 字字字 字字字字字字 字字字字字字字字字字 字 <code>字字字字 字字字字字字字字 字字 字字字字字字字字字字 字字字字字字字字字字字 字字字字字字字字字字字字</code></li>
+      <li><b>字字字字字字</b>字 字字字字字字字字字字字字 <code>字字字字 字字字字字字字字 字字 字字字字字字</code> 字字字字字字字字字字字字</li>
+      <li><b>字字字字字字</b>字 字字字 字字字字字字字字字字字 字字字字字字字字字 <code>字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字 字字字字</code> 字字字字字字字字字 字字字字字字字字 字字字</li>
+      <li><b>字字</b>字 字字字字 字字字字字字 字字字字 字字字字 字字 字 字字字字字字字字<code>字字字字字字字字字字字</code> 字字字字</li>
+      <li><b>字字字字字</b>字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字 字 字</li>
+      <li><b>字字字字字</b>字字字字字字 字字字 字 字字 字 字字字 字 字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字</li>
+    </ul>
+  </details>
+  <h3>字字字字字字字字字字字字</h3>
+  <p>字字字字 字字字字字 字字字字字字字字字字字 字字字字字字<code>字字字字字字字字字字字字</code> 字字字字字字字字字字字字<code>字字字字字字字</code> 字字字字字字字字字字字字 字 字 字字字字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字字字字字 字字字字字字 字字字字字字字字字字</p>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 252" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字字字</span><span class="key"><i class="c"></i>字字字字字字字字字字字字</span><span class="key"><i class="b"></i>字字字字字字字字字字字字</span><span>字字字字字字字字字字字字<code>字字字字字字字字字字字字</code> 字字字字字字字字字字字字</span></figcaption>
+  </figure>
+  <div class="prose">
+    <p>字字字字字字字字字字 字字字字 字字字字字字字 字字字字字字字字字字字字 <code>字字字字字字字字字字</code> 字 字字字 字字字字字字字字字字 字 <code>字字字字字字字字字 字字字字</code> 字 字字字字字 字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字字字字 字字字字字字字字字字字字</p>
+  </div>
+</section>
+<section id="context">
+  <h2><span class="no">字</span>字字字字字字字 字 字字字字字字字字字字字字</h2>
+  <p class="answer">字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字 <code>字字字字字字字字字字字字</code> 字字字字字字字字字字 字字字字 字字字字字字字字字字字</p>
+  <figure>
+    <div class="scroll w-mid">
+<svg class="dg" viewbox="0 0 960 400" role="img"></svg>
+    </div>
+    <figcaption><span class="t">字 字</span><span class="key"><i class="a"></i>字字字字字字</span><span class="key"><i class="w"></i>字字字字字字字字字字</span><span>字字字字 <code>字字字字字字字字字字字字</code> 字字字字字字</span></figcaption>
+  </figure>
+  <h3>字字字字字字字字字字字字</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>字字</th><th>字字字</th><th>字字</th></tr></thead>
+    <tbody>
+      <tr><td class="t">字字字字字</td><td>字字字字字字 字字 字字字字 字字字字字字字字字字字</td><td></td></tr>
+      <tr><td class="t">字字字字字</td><td>字 字字字字字字字字字字字 字字字字字 字字字字字字字 字字字 字字字字字</td><td>字字字字<code>字字字字字字字字字字字字</code> 字字字字字字字字字字字字</td></tr>
+      <tr><td class="t">字字字字字</td><td>字字字字字字</td><td>字 字字字字字字字字字字字字 字字字 字 字字字字字</td></tr>
+      <tr><td class="t">字字字字字</td><td>字 字字字字字字字字字字字 字字字字字 字字字字字字字 字字字 字字字字字</td><td>字字字字字字字字字字</td></tr>
+      <tr><td class="t">字字字字字</td><td>字字字字字字</td><td>字 字字字字字字字字 字字字 字 字字字字字</td></tr>
+    </tbody>
+  </table></div>
+  <div class="prose">
+    <p><span class="pill warn">字字字</span> 字字字字字字字字字字字字 字字字字 字字字字字字字字字字字字 字 字字字 字 字字字字 字 字字字字字字字字字字字字 字字字字字字字字字字字字</p>
+    <p>字字字字 <code>字字字字字字字字</code> 字 字字字字字 字字字 字字字字字字 字字字字字字<code>字字字字字字字字字</code> 字字字字字字字字 字字字字字字字字字字字字</p>
+    <p>字字字字字字字字字字字字 字 字字字字字字字字字字字字 字字字字字字字字 字字字字字字 字字字字字字 字字字字字字字字字字字字<code>字字字字字字字字字字字字</code> 字 字 字字 字 字字字字字字字字字字字字 字 字字字字字字字字字</p>
+  </div>
+</section>
+<section id="ask">
+  <h2><span class="no">字</span>字字字字字字字字字字字字</h2>
+  <ol class="ask">
+    <li><b>字字 字 字 字字 字字字字字 字字字</b><span>字字字字字字字字字字字 字 字字字字字 字字 字字字字字字字字字字字字 字字字字字字字字字字字字 字 字字字字字字字字字字字字 字字字字 <code>字字字字字字字字字字字字</code> 字字字字字字字字字字</span><span class="rec">字字字字字字字字字字字字 字字字 字字 字字字字字字 字 字字字字字字 字 字字字字字字</span></li>
+    <li><b>字字字字字字字字字字 字字字字字字</b><span>字字字字字字字字字字字字 字 字字字字字字字字字字字字</span><span class="rec">字字字字字字字字字字字字 <code>字字字字字字字字</code> 字字字字字字字字</span></li>
+  </ol>
+</section>
+<section id="sources">
+  <h2><span class="no">　</span>字字字字字</h2>
+  <ul class="src">
+    <li><code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code></li>
+    <li><code>字字字字字字字字字字字字</code> 字 字字字字字字字字<code>字字字字字字字字字字字字</code>字字字字字字字字字字字字<code>字字字字字字字字字字字字</code>字字字字字字字字字字字字 字 字字字字字字字字</li>
+    <li><code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code> 字字字字 <code>字字字字字字字字字字字</code>字<code>字字字字字字字</code>字<code>字字字字字字字</code>字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字</code>字<code>字字字字字字字字字字字</code>字字字字字字字</li>
+    <li><code>字字字字字字字字字字字字</code>字字字字字 字字字字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code>字字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code> 字 字字字字字字字</li>
+    <li><code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code></li>
+    <li><code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字字字字</code>字字字字 字字字字<code>字字字字字字字</code> 字字字</li>
+    <li><code>字字字字字字字字字字字字 字字字字字字字</code> 字字字字字字字字字字 字字字字字字字字字字<code>字字字字字字字字</code> 字字字字<code>字字字字字字字字字字字字</code>字<code>字字字字字字字字字</code></li>
+    <li><code>字字字字 字字字字字字字字 字字 字字字字字字</code>字<code>字字字字 字字字字字字字字字字字字 字字字字字字字字字字字</code>字<code>字字字字字字字字字</code>字<code>字字字字 字字字字字字字字字字字 字字字字</code>字字 字字字字字字字字 字 <code>字字字 字字字字字字 字字字字 字字字字</code> 字 <code>字字 字字 字字字字</code></li>
+    <li><code>字字字字字字字字字字字字</code> 字 字字字字字字字字字字字字 字字字</li>
+  </ul>
+</section>
+</div>

@@ -14,7 +14,7 @@ STALLWATCH = os.path.join(HERE, "stallwatch")
 MIN = 60_000
 HOUR = 60 * MIN
 A, B, C = "aaaaaaaa-0000-0000-0000-000000000001", "bbbbbbbb-0000-0000-0000-000000000002", "cccccccc-0000-0000-0000-000000000003"
-EMAIL = {A: "owner@example.com", B: "admin@example.com", C: "member@example.com"}
+EMAIL = {A: "seat-a@example.com", B: "seat-b@example.com", C: "seat-c@example.com"}
 SEATS = ["--seat", EMAIL[A], "--seat", EMAIL[B], "--seat", EMAIL[C]]
 LIMIT_LINE = "  ⎿  You've hit your 5-hour limit · resets 4:40pm (Asia/Tokyo)"
 
@@ -359,7 +359,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertEqual(self.selects(), [B])
         h = self.history()[-1]
         self.assertEqual((h["event"], h["from"], h["to"]), ("switched", EMAIL[A], EMAIL[B]))
-        self.assertIn("admin@example.com に切り替えた", self.notes()[0])
+        self.assertIn("seat-b@example.com に切り替えた", self.notes()[0])
 
     def test_tries_a_seat_whose_usage_is_unknown_when_no_seat_is_known_free(self):
         # stale-token は「しばらく動いていない席のトークンが古いだけ」（Orca の説明）なので、ログインが要るとは見なさない。
@@ -400,7 +400,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertEqual(sorted(h["nudged"]), ["題 t1（t1）", "題 t2（t2）"])
         self.assertEqual(h["not_moved"], ["題 t4（t4）"])
         self.assertIn("Orca が起動し直さなかった端末", self.notes()[0])
-        self.assertTrue(all("席を admin@example.com に切り替えて" in c for c in self.calls() if c.startswith("terminal send")))
+        self.assertTrue(all("席を seat-b@example.com に切り替えて" in c for c in self.calls() if c.startswith("terminal send")))
 
     def test_seat_that_needs_login_is_not_chosen_and_is_named(self):
         self.accounts(A, {A: usage(session=100), B: usage(session=100), C: usage(status="error", failure="missing-credentials")})
@@ -408,13 +408,13 @@ class AccountFailoverTest(unittest.TestCase):
         self.run_failover()
         self.assertEqual(self.selects(), [])
         self.assertEqual(len(self.notes()), 1)
-        self.assertIn("切り替えられる席が無い。member@example.com はログインが要る", self.notes()[0])
+        self.assertIn("切り替えられる席が無い。seat-c@example.com はログインが要る", self.notes()[0])
         self.assertTrue(self.status()[0]["id"].startswith("failover:no-seat:"))
 
     def test_dry_run_names_the_seat_that_needs_login(self):
         self.accounts(A, {A: usage(session=10), B: usage(), C: usage(status="error", failure="missing-credentials")})
         out = self.run_failover("--dry-run")
-        self.assertIn("行き先にできない席: member@example.com はログインが要る", out)
+        self.assertIn("行き先にできない席: seat-c@example.com はログインが要る", out)
         self.assertIn("切り替えない", out)
         # 上限でないあいだも、帯で先に知らせる。
         self.run_failover()
@@ -424,7 +424,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.accounts(A, {A: usage(session=100), B: usage(session=100), C: usage()})
         self.seat_home(C)
         out = self.run_failover("--dry-run")
-        self.assertIn("member@example.com はclaude を起こすと「auto mode を既定にするかの確認」で止まる", out)
+        self.assertIn("seat-c@example.com はclaude を起こすと「auto mode を既定にするかの確認」で止まる", out)
         self.run_failover()
         self.assertEqual(self.selects(), [])
         # その席で一度答えれば（.claude.json に答えが残る）行き先になる。
@@ -722,8 +722,8 @@ class AccountFailoverTest(unittest.TestCase):
         self.put("heads.json", {"t1-new": dict(launch_head(S1, head_settings), truncated=truncated)})
 
     def relaunch_line(self):
-        return "env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s" % (
-            os.path.join(self.tmp, "seat-" + A[:8]), WORKER_SETTINGS, S1)
+        return "env CLAUDE_CONFIG_DIR=%s ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s --resume %s" % (
+            os.path.join(self.tmp, "seat-" + A[:8]), WORKER_SETTINGS, WORKER_SETTINGS, S1)
 
     def test_after_switch_restores_the_worker_settings_before_rebinding(self):
         self.lost_worker_without_settings()
@@ -776,8 +776,8 @@ class AccountFailoverTest(unittest.TestCase):
                                 "t1-new": launch_head(S1)})
         self.run_failover()
         sends = [c.split("--text ")[1] for c in self.calls() if c.startswith("terminal send")]
-        self.assertEqual(sends[:2], ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
-                                     % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1)])
+        self.assertEqual(sends[:2], ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s --resume %s --enter"
+                                     % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, WORKER_SETTINGS, S1)])
         self.assertEqual(len(sends), 2)
         acts = [c for c in self.calls() if c.startswith(("terminal send", "orchestration worker-start"))]
         self.assertEqual(acts[-1], "orchestration worker-start --task task_1 --terminal t1-new --from coord_1 --run run_1")
@@ -802,16 +802,26 @@ class AccountFailoverTest(unittest.TestCase):
         self.finished_worker()
         self.run_failover()
         sends = [c.split("--text ")[1] for c in self.calls() if c.startswith("terminal send")]
-        self.assertEqual(sends, ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
-                                 % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1)])
+        self.assertEqual(sends, ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s --resume %s --enter"
+                                 % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, WORKER_SETTINGS, S1)])
         self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
+
+    def test_switch_hands_the_recorded_settings_to_helper_bins_over_the_default(self):
+        # $ORCA_WORKER_SETTINGS に別の既定があっても、記録した設定を --settings と claude/bin の入口の両方に渡す
+        self.finished_worker()
+        base = self.env
+        self.env = lambda: dict(base(), ORCA_WORKER_SETTINGS="/cfg/claude/other.json")
+        self.run_failover()
+        sends = [c.split("--text ")[1] for c in self.calls() if c.startswith("terminal send")]
+        self.assertEqual(sends[1], "env CLAUDE_CONFIG_DIR=%s ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s --resume %s --enter"
+                         % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, WORKER_SETTINGS, S1))
 
     def test_switch_reads_the_worker_settings_from_the_launch_line_before_switching(self):
         # orca-launch の記録が無い（記録を始める前に立てた）worker は、切り替える前の起動の行から設定を読む。
         self.finished_worker(record=False, head={"tail": ["env 'CLAUDE_CONFIG_DIR=/seat/a' claude --model opus --settings " + WORKER_SETTINGS]})
         self.run_failover()
-        self.assertIn("terminal send --terminal t1-new --text env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
-                      % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1), self.calls())
+        self.assertIn("terminal send --terminal t1-new --text env CLAUDE_CONFIG_DIR=%s ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s --resume %s --enter"
+                      % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, WORKER_SETTINGS, S1), self.calls())
 
     def test_switch_does_not_take_settings_given_as_json_for_a_worker(self):
         # Orca は claude に JSON の設定を直に渡すことがある。それは worker の設定ではないので、worker と見なさない。
@@ -839,8 +849,8 @@ class AccountFailoverTest(unittest.TestCase):
         self.seat_session(B, S2, "/w/other", pid=2)
         self.seat_session(B, S2, "/w/t1", pid=3, entrypoint="orca")  # 同じ worktree のチャットは数えない
         self.run_failover()
-        self.assertEqual(self.texts(), ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
-                                        % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1)])
+        self.assertEqual(self.texts(), ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s --resume %s --enter"
+                                        % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, WORKER_SETTINGS, S1)])
 
     def test_switch_does_not_guess_the_conversation_of_a_finished_worker(self):
         # 同じ worktree で切り替えのあとに起きた claude が 2 つあり、どちらの会話か決まらない。
@@ -963,8 +973,8 @@ class AccountFailoverTest(unittest.TestCase):
         self.run_failover()
         acts = [c for c in self.calls() if c.startswith(("terminal send", "terminal close", "orchestration worker-start"))]
         self.assertEqual(acts, ["terminal send --terminal n1 --text /exit --enter --wait-submit 10",
-                                "terminal send --terminal n1 --text env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
-                                % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1),
+                                "terminal send --terminal n1 --text env CLAUDE_CONFIG_DIR=%s ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s --resume %s --enter"
+                                % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, WORKER_SETTINGS, S1),
                                 "orchestration worker-start --task task_1 --terminal n1 --from coord_1 --run run_1"])
 
     def test_after_switch_closes_orcas_restart_left_beside_a_rebuilt_worker(self):
@@ -997,8 +1007,9 @@ class AccountFailoverTest(unittest.TestCase):
         self.seat_home(B, hasSeenAutoDefaultNudge=True)
 
     def relaunched_to(self, settings=None):
-        return "env CLAUDE_CONFIG_DIR=%s claude%s --resume %s --enter" % (
-            os.path.join(self.tmp, "seat-" + B[:8]), " --model opus --settings " + settings if settings else "", S2)
+        return "env CLAUDE_CONFIG_DIR=%s%s claude%s --resume %s --enter" % (
+            os.path.join(self.tmp, "seat-" + B[:8]), " ORCA_WORKER_SETTINGS=" + settings if settings else "",
+            " --model opus --settings " + settings if settings else "", S2)
 
     def texts(self):
         return [c.split("--text ")[1] for c in self.calls() if c.startswith("terminal send")]
@@ -1008,8 +1019,8 @@ class AccountFailoverTest(unittest.TestCase):
         self.run_failover()
         sends = self.texts()
         self.assertEqual(sends[:2], ["/exit --enter --wait-submit 10", self.relaunched_to()])
-        self.assertIn("席を admin@example.com に切り替えて", sends[2])  # 上限で止まっていたので続きを頼む
-        self.assertIn("題 t4（t4） を今の席 admin@example.com で起こし直した", self.notes()[-1])
+        self.assertIn("席を seat-b@example.com に切り替えて", sends[2])  # 上限で止まっていたので続きを頼む
+        self.assertIn("題 t4（t4） を今の席 seat-b@example.com で起こし直した", self.notes()[-1])
         self.run_failover()
         self.assertEqual(len(self.texts()), 3)  # 1 回だけ
 
@@ -1047,7 +1058,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.run_failover()
         sends = self.texts()
         self.assertEqual(sends[:2], ["/exit --enter --wait-submit 10", self.relaunched_to(WORKER_SETTINGS)])
-        self.assertIn("席を admin@example.com に切り替えて", sends[2])
+        self.assertIn("席を seat-b@example.com に切り替えて", sends[2])
         self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
 
     def test_worker_left_on_the_old_seat_is_rebound_when_exiting_closed_its_dispatch(self):
@@ -1070,7 +1081,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.put("screens.json", {})
         self.run_failover()
         self.assertEqual(self.texts().count(self.relaunched_to()), 1)
-        self.assertIn("題 t4（t4） を今の席 admin@example.com で起こし直した", self.notes()[-1])
+        self.assertIn("題 t4（t4） を今の席 seat-b@example.com で起こし直した", self.notes()[-1])
 
     def test_terminal_left_on_the_old_seat_is_started_when_exit_could_not_be_confirmed(self):
         self.stale_terminal()
@@ -1392,7 +1403,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertEqual(self.selects(), [B])
         (note,) = self.notes()
         self.assertTrue(note.startswith("Claude の席を切り替えた\t"), note)
-        self.assertIn("admin@example.com に切り替えた。続きを頼む後処理が失敗した", note)
+        self.assertIn("seat-b@example.com に切り替えた。続きを頼む後処理が失敗した", note)
         self.assertEqual(len(self.status()), 1)
 
     def test_seat_never_started_is_not_chosen(self):
@@ -1431,7 +1442,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertEqual(len(self.notes()), 1)
         self.assertIn("全部の席が利用枠の上限", self.notes()[0])
         # 日付をまたぐと「11/22 00:10」のように日付が付くので、時刻だけを見る。
-        self.assertIn("最初に戻るのは admin@example.com の ", self.notes()[0])
+        self.assertIn("最初に戻るのは seat-b@example.com の ", self.notes()[0])
         self.assertIn(time.strftime("%H:%M", time.localtime(soon / 1000)), self.notes()[0])
         self.assertEqual(len(self.status()), 1)
         # stallwatch は帯にだけ合流させ、通知を重ねない。
@@ -1508,7 +1519,7 @@ class AccountFailoverTest(unittest.TestCase):
         self.agents([{"kind": "terminal", "agent": "claude", "state": "done", "paneKey": "tab-t1:leaf-t1"}])
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
         out = self.run_failover("--dry-run")
-        self.assertIn("切り替える: owner@example.com → admin@example.com", out)
+        self.assertIn("切り替える: seat-a@example.com → seat-b@example.com", out)
         self.assertIn("題 t1（t1）", out)
         self.assertEqual([c for c in self.calls() if c.startswith(("account select", "terminal send"))], [])
         self.assertFalse(os.path.exists(self.home))

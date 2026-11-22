@@ -1,0 +1,289 @@
+{
+  "version": 2,
+  "workspace": {
+    "name": "<顧客>｜<案件>（社内の案件は 社内｜<案件>）",
+    "milestones": [
+      { "date": "2026-11-21", "label": "定例" },
+      { "date": "2026-12-12", "label": "設計の合意" }
+    ]
+  },
+  "main": {
+    "agent": "claude",
+    "terminal": "<$ORCA_TERMINAL_HANDLE の値。チャットで動くなら空>",
+    "run_id": "<orca orchestration run-current の runId。カードの相談が返しを送る宛先>"
+  },
+  "phases": ["調査", "決定", "作成", "確認", "反映"],
+  "streams": [
+    {
+      "id": "s1",
+      "title": "<仕事の名前。20 字以内の名詞句>",
+      "form": "delegate",
+      "summary": "<何ができたら終わりか 1〜2 行。管理表の番号や指摘の日付もここに>",
+      "sources": ["<管理表の行・Slack のスレッド・議事録の URL かパス>"]
+    },
+    {
+      "id": "s2",
+      "title": "A社の管理表・Slack の定期確認",
+      "form": "watch",
+      "summary": "a-desk が管理表と Slack の新着を定期確認し、気づいたことを窓口に送る",
+      "watch": {
+        "automation": "<orca automations の id。例: auto_adesk01>",
+        "targets": ["管理表『運用保守対応』", "Slack 7 チャンネル"],
+        "to": "Main · sample-app"
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "stream": "s1",
+      "phase": "決定",
+      "title": "<タスク名。20 字以内の名詞句>",
+      "state": "run",
+      "goal": "<なんのため。1 文>",
+      "next": "<次にやること。1 文>",
+      "done": [{ "text": "<ここまでに済んだこと>", "at": "2026-11-16T18:30:00+09:00" }],
+      "sources": ["docs/design/screens.md"],
+      "worker": {
+        "run_id": "<orca-launch か worker-start の受け取りの runId>",
+        "task_id": "<同じ受け取りの taskId。続きを頼んでも書き換えない>"
+      },
+      "repo": "<owner/name。#123 を PR のリンクにする>"
+    },
+    {
+      "id": "t2",
+      "stream": "s1",
+      "phase": "決定",
+      "title": "<外の相手を待つタスク>",
+      "state": "wait",
+      "waiting_on": "先方の担当者（認証情報）",
+      "waiting_since": "2026-11-17",
+      "next": "届いたら、12/1 の週に検証環境へ入れる日程を確定する"
+    },
+    {
+      "id": "t3",
+      "stream": "s1",
+      "phase": "確認",
+      "title": "<日付が来たら見直すタスク>",
+      "state": "idle",
+      "next": "12/4 ごろ、通知が出たかを確認する",
+      "check_on": "2026-12-04"
+    }
+  ],
+  "owners": [
+    {
+      "id": "o1",
+      "title": "<仕事の名前。s1 と同じ>",
+      "stream": "s1",
+      "agent": "claude",
+      "session": "<担当のチャットの orcaSessionId。端末なら代わりに terminal: term_…>",
+      "state": "open"
+    }
+  ],
+  "routes": [
+    { "id": "slack", "label": "<Slack #チャンネル名>", "stale_minutes": 120 }
+  ],
+  "cards": [
+    {
+      "id": "d1",
+      "rev": 1,
+      "kind": "decide",
+      "title": "<何を・どうする の 1 行。例: 担当者の割り当て方を決める>",
+      "state": "open",
+      "at": "2026-11-17T10:00:00+09:00",
+      "due": "2026-11-18T18:00:00+09:00",
+      "stream": "s1",
+      "tasks": ["t1"],
+      "owner": "o1",
+      "purpose": "<何のため 1 行。決まると何が進むか>",
+      "why": "<今決める理由: いつまでに決めないと何が止まるか。1〜2 行>",
+      "context": {
+        "what": "<これは何か: 誰が作った何で、何をするものか。具体例を 1 つ>",
+        "now": "<今どうなっているか: 今の扱いと困っていること>",
+        "how": "<入れるならどうするか: 手順・触るファイル・手間・戻し方>",
+        "gain": "<得られること: 深田の作業のどの場面で何が変わるか>",
+        "cost": "<失うこと: 手間・リスク・外に出るもの>"
+      },
+      "options": [
+        {
+          "id": "auto",
+          "label": "<選択肢の名前>",
+          "recommended": true,
+          "example": "<選んだら何が起きるかの実際の値を 1 行。例: 30 件 → 5 人に 6 件ずつ>",
+          "body": "<選ぶ理由>"
+        },
+        {
+          "id": "self",
+          "label": "<もう一つの選択肢>",
+          "example": "<同じ値で比べた 1 行。例: 30 件 → 取られるまで残る>",
+          "body": "<選ぶ理由>"
+        }
+      ],
+      "fallback": "<対象のタスク> は止めたまま、<独立した作業> を先に進めます。<遅れたときに起きること>。",
+      "figure": ".orca/cockpit/figures/d1.svg",
+      "compare": {
+        "columns": ["", "<比べる観点 1>", "<比べる観点 2>"],
+        "rows": [
+          ["<選択肢の名前>", "<実際の値>", "<実際の値>"],
+          ["<もう一つの選択肢>", "<実際の値>", "<実際の値>"]
+        ]
+      },
+      "background": {
+        "text": "<いきさつ 2〜3 行。並びのある説明は改行と「- 」の箇条で>",
+        "quote": "「<顧客の発言の原文>」<発言者>",
+        "date": "2026-11-14"
+      },
+      "links": [{ "label": "<資料の名前>", "href": "<相対パス・:行・子の worktree の絶対パス・http(s) の URL>" }]
+    },
+    {
+      "id": "p1",
+      "rev": 1,
+      "kind": "permit",
+      "title": "<何を許すか の 1 行。例: ワークスペースの root を push する>",
+      "state": "open",
+      "at": "2026-11-17T10:00:00+09:00",
+      "due": "2026-11-17T18:00:00+09:00",
+      "stream": "s1",
+      "purpose": "<許すと何が進むか>",
+      "fallback": "<返事が無いとき窓口が何をするか>",
+      "links": [{ "label": "<対象の PR か差分>", "href": "<URL>" }],
+      "target": "<対象そのもの: commit の範囲・送る本文・書き換える行>",
+      "effect": "<何が変わるか>",
+      "undo": "<戻し方の手順>",
+      "scope": "push"
+    },
+    {
+      "id": "w1",
+      "rev": 1,
+      "kind": "send",
+      "title": "<相手>へ<何>を送る",
+      "state": "open",
+      "at": "2026-11-17T10:00:00+09:00",
+      "due": "2026-11-18T12:00:00+09:00",
+      "stream": "s1",
+      "tasks": ["t2"],
+      "purpose": "<送ると何が進むか>",
+      "fallback": "<返事が無いとき窓口が何をするか>",
+      "draft": {
+        "to": "<相手>",
+        "via": "<経路・チャンネル>",
+        "format": "<slack・teams・mail のどれか。text を書いた宛先の書式>",
+        "text": "<送る本文そのまま。改行も保つ>",
+        "href": "<元のスレッドか下書きを置いた場所のリンク>"
+      }
+    },
+    {
+      "id": "v1",
+      "rev": 1,
+      "kind": "review",
+      "title": "<成果物>を確認する",
+      "state": "open",
+      "at": "2026-11-17T10:00:00+09:00",
+      "due": "2026-11-20T18:00:00+09:00",
+      "stream": "s1",
+      "tasks": ["t1"],
+      "purpose": "<確かめると何が進むか>",
+      "fallback": "<返事が無いとき窓口が何をするか>",
+      "request": "<深田の依頼の原文>",
+      "request_id": "r1",
+      "look_for": ["<見てほしい点 1>", "<見てほしい点 2>"],
+      "evidence": ["<確かめた結果: コマンドと結果・変わったところ>"],
+      "href": "<artifact の URL・Drive の URL・リポジトリのパス>",
+      "diff": "<差分の PR の URL。無ければ消す>"
+    },
+    {
+      "id": "x1",
+      "rev": 1,
+      "kind": "stuck",
+      "title": "<仕事の名前> が<何>で止まっている",
+      "state": "open",
+      "at": "2026-11-17T09:00:00+09:00",
+      "due": "2026-11-17T18:00:00+09:00",
+      "stream": "s1",
+      "owner": "o1",
+      "purpose": "<答えると何が進むか>",
+      "fallback": "<返事が無いとき窓口が何をするか>",
+      "quote": "<担当の問いの原文>",
+      "reason": "<担当の問いか止まった理由の原文>",
+      "since": "2026-11-17T09:00:00+09:00",
+      "answerable": true,
+      "unblock": "<何をすれば進むか>"
+    },
+    {
+      "id": "i1",
+      "rev": 1,
+      "kind": "inbox",
+      "title": "<誰から何が届いたか の 1 行>",
+      "state": "open",
+      "at": "2026-11-17T08:40:00+09:00",
+      "stream": "s1",
+      "from": { "who": "<送り主>", "via": "<経路>", "at": "2026-11-17T08:40:00+09:00", "href": "<元の連絡のリンク>" },
+      "quote": "<連絡の原文>",
+      "asked": "<聞かれていること 1 行>",
+      "routed": "<どの担当が何を始めたか>",
+      "reply": "needed"
+    },
+    {
+      "id": "c1",
+      "rev": 1,
+      "kind": "consult",
+      "title": "<何を相談するか の 1 行>",
+      "state": "open",
+      "at": "2026-11-17T11:00:00+09:00",
+      "due": "2026-11-18",
+      "stream": "s1",
+      "owner": "o1",
+      "purpose": "<話がまとまると何が進むか>",
+      "fallback": "<返事が無いとき窓口が何をするか>",
+      "links": [{ "label": "<話の元になる資料>", "href": "<URL>" }],
+      "issue": "<論点。何を決めたいか 1 行>",
+      "stance": "<担当の今の考え>",
+      "known": ["<分かっていること>"],
+      "undecided": ["<決めかねていること>"]
+    },
+    {
+      "id": "a1",
+      "rev": 1,
+      "kind": "report",
+      "title": "エージェントが決めたこと 2 件",
+      "state": "open",
+      "at": "2026-11-17T12:00:00+09:00",
+      "stream": "s1",
+      "done": [
+        { "what": "<決めた・済ませたこと>", "why": "<理由>", "undo": "<戻し方>", "task": "t1" }
+      ]
+    },
+    {
+      "id": "w0",
+      "rev": 1,
+      "kind": "send",
+      "title": "<送ったあと返事を待つもの>",
+      "state": "waiting",
+      "stream": "s1",
+      "tasks": ["t2"],
+      "draft": { "to": "<相手>", "via": "<経路>", "format": "<slack・teams・mail>", "text": "<送った本文>" },
+      "awaiting": {
+        "who": "<相手>",
+        "what": "<何の返事を待つか>",
+        "since": "2026-11-17T10:00:00+09:00",
+        "resumes": "<返事で何を再開するか>",
+        "remind_at": "2026-11-20T10:00:00+09:00"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "id": "r1",
+      "at": "2026-11-16T10:00:00+09:00",
+      "title": "<何をするか 1 行>",
+      "utterances": [{ "id": "u-12", "quote": "<この依頼に当たる深田の発言の範囲>" }],
+      "kind": "work",
+      "done_when": ["<済の条件 1。例: 直しが main に入る>", "<済の条件 2>"],
+      "check": true,
+      "tasks": ["t1"],
+      "evidence": [{ "when": 1, "kind": "commit", "ref": "<main に入った commit>" }]
+    }
+  ],
+  "intake": { "through": "u-12", "none": [] },
+  "applied_ops": []
+}

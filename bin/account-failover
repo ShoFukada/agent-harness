@@ -561,8 +561,11 @@ def launched_session(handle, cache):
 
 def relaunch_command(x, home):
     rl = x["relaunch"]
-    worker = ["--model", rl["model"], "--settings", rl["settings"]] if rl.get("settings") else []
-    return shlex.join((["env", "CLAUDE_CONFIG_DIR=" + home] if home else []) + ["claude", *worker, "--resume", rl["session"]])
+    settings = os.path.abspath(rl["settings"]) if rl.get("settings") else None
+    worker = ["--model", rl["model"], "--settings", settings] if settings else []
+    # sandbox の外で動く claude/bin の入口は、denyRead を $ORCA_WORKER_SETTINGS から読むので、--settings と同じファイルを渡す
+    env = (["CLAUDE_CONFIG_DIR=" + home] if home else []) + (["ORCA_WORKER_SETTINGS=" + settings] if settings else [])
+    return shlex.join((["env", *env] if env else []) + ["claude", *worker, "--resume", rl["session"]])
 
 
 def relaunch(x, home, trusted=False):

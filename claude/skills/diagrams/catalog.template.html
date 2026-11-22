@@ -1,0 +1,108 @@
+<title>図の見本集</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 見本の SVG を主役にした型録。紙の地に図の面を白く置き、文字と罫は図の線と同じ系統の色で控える */
+:root{
+  color-scheme:light;
+  --paper:#f3f4f7;--surface:#ffffff;--ink:#18202c;--ink-2:#4f5868;--ink-3:#727b8b;--rule:#dde1e8;--focus:#2c56c9;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  {{dg_light}}
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#7e8899;--rule:#283141;--focus:#8ea9f2;
+  {{dg_dark}}
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#7e8899;--rule:#283141;--focus:#8ea9f2;
+  {{dg_dark}}
+}
+body{background:var(--paper);color:var(--ink);font-family:var(--font);line-height:1.7}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+.wrap{max-width:1200px;margin:0 auto;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px));padding-block:40px 80px}
+header{display:grid;gap:12px;max-width:46em}
+header h1{font-size:30px;line-height:1.3;margin:0;letter-spacing:.02em;text-wrap:balance}
+header p{margin:0;color:var(--ink-2);font-size:14.5px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:4px 0 0;padding:0;list-style:none;font-size:13px;color:var(--ink-2)}
+.legend li{display:flex;align-items:center;gap:7px}
+.legend i{width:14px;height:14px;border-radius:4px;border:1.25px solid}
+.legend .a{background:var(--dg-a-bg);border-color:var(--dg-a)}
+.legend .b{background:var(--dg-b-bg);border-color:var(--dg-b)}
+.legend .c{background:var(--dg-c-bg);border-color:var(--dg-c)}
+.legend .w{background:var(--dg-w-bg);border-color:var(--dg-w)}
+nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:2;display:flex;flex-wrap:wrap;gap:4px 20px;margin-top:28px;padding-block:12px;background:var(--paper);border-bottom:1px solid var(--rule)}
+nav a{color:var(--ink-2);text-decoration:none;font-size:14px;display:flex;align-items:baseline;gap:6px;padding-block:2px;border-bottom:2px solid transparent}
+nav a:hover{color:var(--ink);border-bottom-color:var(--ink-3)}
+nav a span{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+section{scroll-margin-top:64px;margin-top:48px}
+.sec-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin-bottom:16px}
+h2{font-size:22px;line-height:1.4;margin:0;letter-spacing:.02em}
+.sec-head p{margin:0;color:var(--ink-2);font-size:14px}
+.sec-head .count{margin-left:auto;color:var(--ink-3);font-size:12px;font-variant-numeric:tabular-nums}
+/* 同じ行のカードで、図・名前・説明の上端を揃える */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,500px),1fr));gap:24px}
+.card{display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:0;background:var(--surface);border:1px solid var(--rule);border-radius:12px;overflow:hidden}
+.fig{position:relative;display:flex;align-items:center;justify-content:center;padding:20px;border-block:1px solid var(--rule);background:var(--dg-bg);cursor:zoom-in}
+.fig > div{width:100%}
+.zoom{position:absolute;top:10px;right:10px;font:inherit;font-size:12px;color:var(--ink-2);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:2px 10px;cursor:zoom-in;opacity:0;transition:opacity .15s}
+.fig:hover .zoom,.zoom:focus-visible{opacity:1}
+@media (hover:none){.zoom{opacity:1}}
+.name{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 12px;padding:16px 20px 12px}
+.card h3{font-size:16px;line-height:1.5;margin:0}
+.path{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0;padding:14px 20px 18px;font-size:13px;line-height:1.65;align-content:start}
+dt{color:var(--ink-3);font-size:12px;padding-top:1px}
+dd{margin:0;color:var(--ink-2)}
+dd.use{color:var(--ink)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+dialog{width:min(1100px,calc(100vw - 32px));max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--rule);border-radius:14px;background:var(--dg-bg);color:var(--ink);box-shadow:0 20px 60px rgb(0 0 0 / .25)}
+dialog::backdrop{background:rgb(15 19 26 / .55)}
+.dlg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px 12px 24px;border-bottom:1px solid var(--rule);background:var(--surface)}
+.dlg-head h3{margin:0;font-size:16px}
+.dlg-head button{font:inherit;font-size:13px;color:var(--ink);background:var(--paper);border:1px solid var(--rule);border-radius:6px;padding:3px 12px;cursor:pointer}
+.dlg-body{padding:32px;overflow:auto}
+@media (max-width:600px){.wrap{padding-block:28px 56px}.fig{padding:14px}.name,dl{padding-inline:16px}.dlg-body{padding:16px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<div class="wrap">
+<header>
+<h1>図の見本集</h1>
+<p>資料・artifact・設計書に図を入れるときは、論点が答える問いで分類を選び、この中から形を選んで写します。{{total}} 枚。データの推移や比べはグラフなので、ここには載せず dataviz skill に従います。</p>
+<p>各カードの名前の右のパスが見本の SVG です。写したら文字を替え、箱の幅を文字に合わせて広げます。図を押すと大きく開きます。</p>
+<ul class="legend" aria-label="色の意味">
+<li><i class="a"></i>主役・推す案</li>
+<li><i class="b"></i>顧客・人の判断</li>
+<li><i class="c"></i>良くなる点・置き場所</li>
+<li><i class="w"></i>困りごと・止まる所</li>
+</ul>
+</header>
+<nav aria-label="分類">
+{{nav}}
+</nav>
+{{sections}}
+</div>
+<dialog id="zoom" aria-labelledby="zoom-title">
+<div class="dlg-head"><h3 id="zoom-title"></h3><button type="button" id="zoom-close">閉じる</button></div>
+<div class="dlg-body"><div id="zoom-fig"></div></div>
+</dialog>
+<script>
+(() => {
+  const dlg = document.getElementById("zoom");
+  const host = document.getElementById("zoom-fig");
+  const root = host.attachShadow({mode: "open"});
+  const open = card => {
+    const src = card.querySelector(".fig > div").shadowRoot;
+    root.innerHTML = src.innerHTML + "<style>svg *{animation-play-state:running!important}</style>";
+    document.getElementById("zoom-title").textContent = card.querySelector("h3").textContent;
+    dlg.showModal();
+  };
+  document.querySelectorAll(".card").forEach(card => {
+    card.querySelector(".fig").addEventListener("click", () => open(card));
+  });
+  document.getElementById("zoom-close").addEventListener("click", () => dlg.close());
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+})();
+</script>

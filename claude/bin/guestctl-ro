@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""worker の sandbox の外で、guestctl（SharePoint・Teams・Slack）を読むだけの操作に限って動かす。
+
+  guestctl-ro sharepoint whoami|ls|stat|cat|lists <url>
+  guestctl-ro sharepoint search <site-url> <query> [--limit N]
+  guestctl-ro sharepoint items <site-url> <list> [--select S] [--filter F] [--limit N] [--all]
+  guestctl-ro sharepoint get <file-url> -o <保存先>      # 保存先は /tmp/claude-<uid> の中のファイルかディレクトリ
+  guestctl-ro sharepoint api GET <https://.../_api/...> [--all]
+  guestctl-ro teams chats <tenant> [--limit N]
+  guestctl-ro teams channels <tenant>
+  guestctl-ro teams messages <tenant> <conversation-id> [--limit N]
+  guestctl-ro slack file <url_private か permalink> -o <保存先> [-w <workspace>]   # 保存先は get と同じ
+
+settings.worker.json の sandbox.excludedCommands がこのスクリプト（と旧名の spo-ro）だけを sandbox の外に出す。
+guestctl は顧客のテナントにログインした Chrome のプロフィール（~/.local/share/spo-cli/profiles/）をまるごと使い、
+Chrome は環境変数のプロキシを見ないので、sandbox の中では動かせない。プロフィールの読み書きと通信を
+sandbox の全コマンドに許すと、Cookie を読んで curl で送るのも通るので、外に出すのはこの入口だけにし、
+プロフィールは denyRead で sandbox の中から読めなくする。代わりにここで次を守る:
+- 書き込み（put・mkdir・cp・mv・rm・item-add・item-update、api の GET 以外）と login は受け付けない
+- 引数は自前で解釈し直し、guestctl に渡すときは値をオプション名と = で繋ぐ（argparse の略記や - で始まる値で別のオプションに化けさせない）
+- get と slack file は guestctl には自分だけが書ける一時ディレクトリに保存させ、/tmp/claude-<uid> の中へ symlink をたどらずに移す（sandbox_tmp.py）
+"""
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from sandbox_tmp import open_dir_nofollow, write_file  # noqa: E402
+
+GUESTCTL = os.path.expanduser("~/.local/bin/guestctl")
+# 既定の一時領域（TMPDIR=/tmp/claude-<uid>）は worker が書けるので、ダウンロードの途中のファイルを symlink に
+# 差し替えられる。guestctl のプロフィールの隣は settings.worker.json の denyRead で、sandbox から読み書きできない
+WORK_ROOT = os.path.expanduser("~/.local/share/spo-cli/tmp")
+
+
+class Parser(argparse.ArgumentParser):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, allow_abbrev=False, **kw)
+
+    def error(self, message):
+        sys.exit(f"guestctl-ro: {message}\n{__doc__}")
+
+
+def value(s):
+    if s.startswith("-"):
+        raise argparse.ArgumentTypeError(f"- で始まる値は渡せない: {s}")
+    return s
+
+
+def https(s):
+    if not s.startswith("https://"):
+        raise argparse.ArgumentTypeError(f"https:// の URL を渡す: {s}")
+    return s
+
+
+def positive(s):
+    if not s.isdigit() or int(s) < 1:
+        raise argparse.ArgumentTypeError("1 以上の整数")
+    return s
+
+
+def build_parser():
+    p = Parser(prog="guestctl-ro")
+    services = p.add_subparsers(dest="service", required=True, parser_class=Parser)
+
+    sub = services.add_parser("sharepoint").add_subparsers(dest="cmd", required=True, parser_class=Parser)
+    for name in ("whoami", "ls", "stat", "cat", "lists"):
+        sub.add_parser(name).add_argument("url", type=https)
+    c = sub.add_parser("search")
+    c.add_argument("url", type=https)
+    c.add_argument("query", type=value)
+    c.add_argument("--limit", type=positive)
+    c = sub.add_parser("items")
+    c.add_argument("url", type=https)
+    c.add_argument("list", type=value)
+    c.add_argument("--select", type=value)
+    c.add_argument("--filter", type=value)
+    c.add_argument("--limit", type=positive)
+    c.add_argument("--all", action="store_true")
+    c = sub.add_parser("get")
+    c.add_argument("url", type=https)
+    c.add_argument("-o", "--output", required=True, type=value)
+    c = sub.add_parser("api")
+    c.add_argument("method", choices=["GET"])
+    c.add_argument("url", type=https)
+    c.add_argument("--all", action="store_true")
+
+    t = services.add_parser("teams").add_subparsers(dest="cmd", required=True, parser_class=Parser)
+    c = t.add_parser("chats")
+    c.add_argument("tenant", type=value)
+    c.add_argument("--limit", type=positive)
+    t.add_parser("channels").add_argument("tenant", type=value)
+    c = t.add_parser("messages")
+    c.add_argument("tenant", type=value)
+    c.add_argument("conversation_id", type=value)
+    c.add_argument("--limit", type=positive)
+
+    s = services.add_parser("slack").add_subparsers(dest="cmd", required=True, parser_class=Parser)
+    c = s.add_parser("file")
+    c.add_argument("url", type=https)
+    c.add_argument("-o", "--output", required=True, type=value)
+    c.add_argument("-w", "--workspace", type=value)
+    return p
+
+
+def writes_file(a):
+    return (a.service, a.cmd) in (("sharepoint", "get"), ("slack", "file"))
+
+
+def guestctl_argv(a, out_dir=None):
+    """解釈し直した引数から guestctl の argv を組み立てる。値は位置引数か --name=値 でしか渡さない。"""
+    argv = [a.service, a.cmd]
+    if a.cmd == "search":
+        argv += [a.url, a.query]
+    elif a.cmd == "items":
+        argv += [a.url, a.list] + [f"--{k}={getattr(a, k)}" for k in ("select", "filter") if getattr(a, k)]
+    elif a.cmd == "api":
+        argv += ["GET", a.url]
+    elif a.cmd == "messages":
+        argv += [a.tenant, a.conversation_id]
+    elif a.service == "teams":
+        argv += [a.tenant]
+    else:
+        argv += [a.url]
+    if writes_file(a):
+        argv.append(f"--output={out_dir}")
+    if getattr(a, "workspace", None):
+        argv.append(f"--workspace={a.workspace}")
+    if getattr(a, "limit", None):
+        argv.append(f"--limit={a.limit}")
+    if getattr(a, "all", False):
+        argv.append("--all")
+    return argv
+
+
+def download(a):
+    # 保存先が一時領域の中にあることを、ダウンロードの前に確かめる
+    dest = os.path.abspath(a.output)
+    dest_dir = dest if os.path.isdir(dest) else os.path.dirname(dest)
+    os.close(open_dir_nofollow(dest_dir))
+    os.makedirs(WORK_ROOT, mode=0o700, exist_ok=True)
+    work = tempfile.mkdtemp(prefix="guestctl-ro-", dir=WORK_ROOT)
+    try:
+        r = subprocess.run([GUESTCTL, *guestctl_argv(a, work)], stdout=subprocess.PIPE)
+        if r.returncode != 0:
+            sys.stdout.buffer.write(r.stdout)
+            return r.returncode
+        meta = json.loads(r.stdout)
+        with open(meta["path"], "rb") as f:
+            body = f.read()
+        target = os.path.join(dest, os.path.basename(meta["path"])) if dest_dir == dest else dest
+        try:
+            write_file(target, body, overwrite=False)
+        except FileExistsError:
+            print(json.dumps({"error": {"code": "exists", "message": f"上書きしない。消すか -o で別の場所を指定する: {target}"}},
+                             ensure_ascii=False))
+            return 1
+        print(json.dumps({**meta, "path": target}, ensure_ascii=False, indent=2))
+        return 0
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def main(argv):
+    a = build_parser().parse_args(argv[1:])
+    if writes_file(a):
+        return download(a)
+    return subprocess.run([GUESTCTL, *guestctl_argv(a)]).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -160,7 +160,7 @@ cat "$f"
         return a
 
     def failed_main(self, at, said="Orca が再起動したので、状態を確かめ直しました。途中で止まった作業はありません。"):
-        """2026-11-21 に上限で止まった resi-dra のメインの形。Orca は outcome: failure を付けるが、
+        """2026-11-21 に上限で止まった、ある案件のメインの形。Orca は outcome: failure を付けるが、
         lastAssistantMessage には上限の 1 行が入らず、その前の普通の報告が残る。"""
         return self.main_agent(stateStartedAt=at, updatedAt=at + 47, mainAgent={"state": "done", "outcome": "failure", "stateStartedAt": at},
                                lastAssistantMessage=said)
@@ -233,7 +233,7 @@ cat "$f"
                       "最後の応答の時刻が Orca の記録と合わない会話記録は別の会話なので見ない")
 
     def test_worker_put_back_with_the_main_by_an_orca_restart_is_quiet(self):
-        # 2026-11-21 14:57:04 の再起動で、pasona のメインと worker の stateStartedAt が 5ms 差で付け直された形。
+        # 2026-11-21 14:57:04 の再起動で、ある案件のメインと worker の stateStartedAt が 5ms 差で付け直された形。
         back = now_ms() - 195 * MIN
         main = self.main_agent(paneKey="91bc831e:aad12dd0", stateStartedAt=back, updatedAt=back + 3327, hasLivePty=True,
                                mainAgent={"state": "done", "stateStartedAt": back + 3327}, lastAssistantMessage=None)

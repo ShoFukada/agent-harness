@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 236" width="560" height="236" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>ガント風の予定</title>
+<desc>形: 作業を行、週を列にして、期間を横棒で描く。担当で色を分け、今日の位置に縦の線を引く。
+使う場面: 先の予定・作業の重なり・誰の作業待ちかを見せる。定例の進捗、見積もりの根拠。
+使わない場面: 済んだ経緯を見せるとき（時間軸）、作業が 15 を超えるとき（スプレッドシートの WBS にする）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="236"/>
+<line class="ln" x1="150" y1="16" x2="150" y2="198"/><text class="s" x="156" y="32">11/24</text>
+<line class="ln" x1="206" y1="16" x2="206" y2="198"/><text class="s" x="212" y="32">12/1</text>
+<line class="ln" x1="262" y1="16" x2="262" y2="198"/><text class="s" x="268" y="32">12/8</text>
+<line class="ln" x1="318" y1="16" x2="318" y2="198"/><text class="s" x="324" y="32">12/15</text>
+<line class="ln" x1="374" y1="16" x2="374" y2="198"/><text class="s" x="380" y="32">12/22</text>
+<line class="ln" x1="430" y1="16" x2="430" y2="198"/><text class="s" x="436" y="32">12/29</text>
+<line class="ln" x1="486" y1="16" x2="486" y2="198"/><text class="s" x="492" y="32">1/5</text>
+<line class="ln" x1="542" y1="16" x2="542" y2="198"/>
+<line class="ln" x1="16" y1="40" x2="542" y2="40"/>
+<text x="24" y="69">要件の確認</text><rect class="fa" x="150" y="54" width="88" height="20" rx="4"/>
+<text x="24" y="99">設計</text><rect class="fa" x="206" y="84" width="88" height="20" rx="4"/>
+<text x="24" y="129">作る</text><rect class="fa" x="262" y="114" width="144" height="20" rx="4"/>
+<text x="24" y="159">受入テスト</text><rect class="fb" x="390" y="144" width="72" height="20" rx="4"/>
+<text x="24" y="189">本番開始</text>
+<polygon class="fa" points="486,174 495,184 486,194 477,184"/>
+<line class="ew dash" x1="286" y1="40" x2="286" y2="198"/>
+<text class="s tw" x="290" y="212">今日</text>
+<text class="s" x="16" y="228">青は自社、黄土は顧客の作業。1 列が 1 週</text>
+</svg>

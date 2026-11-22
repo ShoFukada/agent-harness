@@ -5,6 +5,7 @@ import importlib.util
 from importlib.machinery import SourceFileLoader
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -67,7 +68,13 @@ class LaunchTest(unittest.TestCase):
         self.spec = os.path.join(self.tmp, "brief.md")
         with open(self.spec, "w") as fh:
             fh.write("brief")
-        self.rules = os.path.join(self.tmp, ".config", "nix-darwin", "claude", "skills", "worktree-flow", "references", "worker-rules.md")
+        # 決まりの文言はリポジトリの中から読むので、入口と読む相手を一時のリポジトリの形に写して差し替える
+        repo = os.path.join(self.tmp, "repo")
+        for rel in ("bin/orca-launch", "bin/stallwatch", "orca/plugins/cockpit/src/state.ts"):
+            os.makedirs(os.path.dirname(os.path.join(repo, rel)), exist_ok=True)
+            shutil.copy(os.path.join(HERE, "..", rel), os.path.join(repo, rel))
+        self.launch = os.path.join(repo, "bin", "orca-launch")
+        self.rules = os.path.join(repo, "claude", "skills", "worktree-flow", "references", "worker-rules.md")
         os.makedirs(os.path.dirname(self.rules))
         with open(self.rules, "w") as fh:
             fh.write(RULES + "\n")
@@ -76,7 +83,7 @@ class LaunchTest(unittest.TestCase):
                     "STALLWATCH_HOME": os.path.join(self.tmp, "stallwatch"), "HOME": self.tmp}
 
     def run_launch(self, *extra, title="t", **env):
-        return subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--title", title,
+        return subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--title", title,
                                "--spec-file", self.spec, *extra], capture_output=True, text=True,
                               env={**self.env, **env})
 
@@ -174,13 +181,36 @@ class LaunchTest(unittest.TestCase):
         self.assertIn("worker に渡す決まり", r.stderr)
         self.assertFalse(os.path.exists(self.log))
 
+    def test_rules_live_in_this_repo(self):
+        with open(ol.WORKER_RULES, encoding="utf-8") as fh:
+            self.assertTrue(fh.read().strip())
+
     def test_follows_the_seat_orca_has_selected(self):
         # account-failover が席を切り替えたあと、元の席に残った担当（CLAUDE_CONFIG_DIR は古い席）から立てても、新しい席で起動する。
         accounts = {"activeAccountId": "b", "accounts": [{"id": "a", "home": self.cfg}, {"id": "b", "home": "/p/b/home"}]}
         r = self.run_launch(FAKE_ACCOUNTS=json.dumps(accounts))
         self.assertEqual(r.returncode, 0, r.stderr)
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
-        self.assertTrue(create[create.index("--command") + 1].startswith("env CLAUDE_CONFIG_DIR=/p/b/home claude "))
+        self.assertTrue(create[create.index("--command") + 1].startswith("env CLAUDE_CONFIG_DIR=/p/b/home ORCA_WORKER_SETTINGS=/s/worker.json claude "))
+
+    def launch_command(self, *extra, env=None):
+        r = subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--title", "t", "--spec-file", self.spec, *extra],
+                           capture_output=True, text=True, env=env or self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
+        return create[create.index("--command") + 1]
+
+    def test_given_settings_reach_helper_bins_over_the_default(self):
+        # claude/bin の入口は denyRead を $ORCA_WORKER_SETTINGS から読むので、選んだ設定を --settings と同じ絶対パスで渡す
+        cmd = self.launch_command("--settings", "~/verify.json")
+        given = os.path.join(self.tmp, "verify.json")
+        self.assertIn("ORCA_WORKER_SETTINGS=%s claude --model opus --settings %s" % (given, given), cmd)
+        self.assertNotIn("/s/worker.json", cmd)
+
+    def test_given_settings_reach_helper_bins_without_the_default(self):
+        env = {k: v for k, v in self.env.items() if k != "ORCA_WORKER_SETTINGS"}
+        cmd = self.launch_command("--settings", "/s/verify.json", env=env)
+        self.assertIn("ORCA_WORKER_SETTINGS=/s/verify.json claude --model opus --settings /s/verify.json", cmd)
 
     def test_seat_switched_while_starting_closes_the_terminal(self):
         a = {"activeAccountId": "a", "accounts": [{"id": "a", "home": "/p/a/home"}, {"id": "b", "home": "/p/b/home"}]}
@@ -194,7 +224,9 @@ class LaunchTest(unittest.TestCase):
         r = self.run_launch(FAKE_ACCOUNTS=json.dumps({"activeAccountId": None, "accounts": [{"id": "a", "home": self.cfg}]}))
         self.assertEqual(r.returncode, 0, r.stderr)
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
-        self.assertTrue(create[create.index("--command") + 1].startswith("claude "))
+        cmd = create[create.index("--command") + 1]
+        self.assertTrue(cmd.startswith("env ORCA_WORKER_SETTINGS=/s/worker.json claude "), cmd)
+        self.assertNotIn("CLAUDE_CONFIG_DIR", cmd)
 
     def test_blocked_prompt_does_not_dispatch(self):
         r = self.run_launch("--run", "run_9", "--keep-open", FAKE_BLOCKED="agent-trust-workspace")
@@ -209,23 +241,23 @@ class LaunchTest(unittest.TestCase):
         self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
 
     def test_blocked_prompt_names_the_seat_and_the_screen(self):
-        accounts = {"activeAccountId": "c", "accounts": [{"id": "c", "home": "/p/c/home", "email": "member@example.com"}]}
+        accounts = {"activeAccountId": "c", "accounts": [{"id": "c", "home": "/p/c/home", "email": "seat-c@example.com"}]}
         screen = ["● 前の会話の続き: Do you trust の話をした", "", "Accessing workspace:", "/w/failover-fix",
                   "Quick safety check: Is this a project you created or one you trust?", "❯ 1. Yes, I trust this folder", "  2. No, exit"]
         r = self.run_launch(FAKE_ACCOUNTS=json.dumps(accounts), FAKE_BLOCKED="agent-trust-workspace", FAKE_SCREEN=json.dumps(screen))
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("席 member@example.com の端末 term_x が「フォルダを信頼するかの確認", r.stderr)
+        self.assertIn("席 seat-c@example.com の端末 term_x が「フォルダを信頼するかの確認", r.stderr)
         self.assertIn("  | ❯ 1. Yes, I trust this folder", r.stderr)
         self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
 
     def test_screen_orca_does_not_know_is_named_on_timeout(self):
         # auto mode の確認の画面は Orca の blockedReason に出ず、入力待ちにならないまま時間切れになる。
-        accounts = {"activeAccountId": "c", "accounts": [{"id": "c", "home": "/p/c/home", "email": "member@example.com"}]}
+        accounts = {"activeAccountId": "c", "accounts": [{"id": "c", "home": "/p/c/home", "email": "seat-c@example.com"}]}
         screen = ["Auto mode lets Claude handle permission prompts automatically.", "❯ Yes, set auto mode as my default permission mode",
                   "  No, keep bypass permissions"]
         r = self.run_launch(FAKE_ACCOUNTS=json.dumps(accounts), FAKE_SCREEN=json.dumps(screen))
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("席 member@example.com の端末 term_x が「auto mode を既定にするかの確認」で止まっている", r.stderr)
+        self.assertIn("席 seat-c@example.com の端末 term_x が「auto mode を既定にするかの確認」で止まっている", r.stderr)
         self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
 
     def test_own_worktree_keeps_its_name(self):
@@ -250,7 +282,7 @@ class LaunchTest(unittest.TestCase):
         return root
 
     def run_cockpit(self, root):
-        return subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--cockpit-task", "t65", "--cockpit-root", root,
+        return subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--cockpit-task", "t65", "--cockpit-root", root,
                                "--spec-file", self.spec], capture_output=True, text=True, env=self.env)
 
     def test_cockpit_task_names_parents_and_passes_done_when(self):
@@ -331,7 +363,7 @@ class LaunchTest(unittest.TestCase):
 
     def test_cockpit_task_unknown(self):
         root = self.cockpit([])
-        r = subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--cockpit-task", "t99", "--cockpit-root", root,
+        r = subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--cockpit-task", "t99", "--cockpit-root", root,
                             "--spec-file", self.spec], capture_output=True, text=True, env=self.env)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("タスク t99 が無い", r.stderr)

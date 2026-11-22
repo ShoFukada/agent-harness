@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="dg" viewBox="0 0 560 244" width="560" height="244" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>責任の分担</title>
+<desc>形: 作業を行、人や組織を列にした表で、各マスに担当・承認・相談・報告を書く。承認は各行に 1 つだけ。
+使う場面: 誰が何を持ち、誰が最後に決めるかを顧客や社内と合わせる。体制の説明、役割の線引き。
+使わない場面: 作業の順番が要点のとき（スイムレーン）、人が 1〜2 人だけのとき（文章で書く）。</desc>
+<style>
+/* base: base.css から build_catalog.py が書き写す。ここは直接直さない */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+@media (prefers-color-scheme:dark){.dg{--_bg:var(--dg-bg,#181e27);--_ink:var(--dg-ink,#e6eaf1);--_sub:var(--dg-sub,#abb5c5);--_line:var(--dg-line,#596679);--_link:var(--dg-link,#7d899b);--_soft:var(--dg-soft,#222b37);--_a:var(--dg-a,#8aa7e8);--_a-bg:var(--dg-a-bg,#222e45);--_b:var(--dg-b,#d4b16c);--_b-bg:var(--dg-b-bg,#342e23);--_c:var(--dg-c,#77bfb0);--_c-bg:var(--dg-c-bg,#213630);--_w:var(--dg-w,#df9b83);--_w-bg:var(--dg-w-bg,#3a2b26)}}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pc{fill:var(--_c-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .dot{fill:var(--_a)}
+.dg .ring{fill:var(--_bg);stroke:var(--_sub);stroke-width:1.5}
+/* /base */
+</style>
+<rect class="bg" width="560" height="244"/>
+<text class="h mid" x="222" y="38">自社 PM</text>
+<text class="h mid" x="314" y="38">開発</text>
+<text class="h mid" x="406" y="38">顧客</text>
+<text class="h mid" x="498" y="38">運用</text>
+<line class="ln" x1="16" y1="48" x2="544" y2="48"/>
+<text x="28" y="71">要件を決める</text>
+<rect class="fa" x="196" y="55" width="52" height="22" rx="11"/><text class="mid ta" x="222" y="71">担当</text>
+<text class="s mid" x="314" y="71">相談</text>
+<rect class="fb" x="380" y="55" width="52" height="22" rx="11"/><text class="mid tb" x="406" y="71">承認</text>
+<text class="s mid" x="498" y="71">報告</text>
+<line class="ln" x1="16" y1="84" x2="544" y2="84"/>
+<text x="28" y="107">画面を作る</text>
+<rect class="fb" x="196" y="91" width="52" height="22" rx="11"/><text class="mid tb" x="222" y="107">承認</text>
+<rect class="fa" x="288" y="91" width="52" height="22" rx="11"/><text class="mid ta" x="314" y="107">担当</text>
+<text class="s mid" x="406" y="107">相談</text>
+<line class="ln" x1="16" y1="120" x2="544" y2="120"/>
+<text x="28" y="143">受入テスト</text>
+<rect class="fa" x="196" y="127" width="52" height="22" rx="11"/><text class="mid ta" x="222" y="143">担当</text>
+<text class="s mid" x="314" y="143">相談</text>
+<rect class="fb" x="380" y="127" width="52" height="22" rx="11"/><text class="mid tb" x="406" y="143">承認</text>
+<line class="ln" x1="16" y1="156" x2="544" y2="156"/>
+<text x="28" y="179">本番に出す</text>
+<rect class="fb" x="196" y="163" width="52" height="22" rx="11"/><text class="mid tb" x="222" y="179">承認</text>
+<rect class="fa" x="288" y="163" width="52" height="22" rx="11"/><text class="mid ta" x="314" y="179">担当</text>
+<text class="s mid" x="406" y="179">報告</text>
+<text class="s mid" x="498" y="179">相談</text>
+<line class="ln" x1="16" y1="192" x2="544" y2="192"/>
+<text class="s" x="16" y="216">担当＝手を動かす　承認＝最後に決める（各行 1 人）</text>
+<text class="s" x="16" y="234">相談＝事前に聞く　報告＝後で知らせる</text>
+</svg>
