@@ -94,7 +94,7 @@ test('コピーの書式: 操縦席から入れた中身は、同じ本文を cl
   }
 })
 
-test('コピーの書式: 見てのカードの見本（追加 25）は、押した 3 つのボタンそれぞれの書式で同じ本文を入れる。メールは clip-draft が本文をそのまま素の文字列で入れる', { skip }, async () => {
+test('コピーの書式: 見てのカードの見本（追加 25）は、押した 3 つのボタンそれぞれの書式で同じ本文を入れる。メールは clip-draft が Markdown の記号を外した素の文字列で入れる', { skip }, async () => {
   const got: Record<string, Got> = {}
   for (const f of ['slack', 'teams', 'mail'] as const) {
     const d = copyTarget(REVIEW_SAMPLE, f)!
@@ -104,7 +104,7 @@ test('コピーの書式: 見てのカードの見本（追加 25）は、押し
   assert.deepEqual(got, {
     slack: { name: PB, text: REVIEW_SAMPLE.text, html: null },
     teams: { name: PB, text: REVIEW_SAMPLE.text, html: CHAT_HTML },
-    mail: { name: PB, text: REVIEW_SAMPLE.text, html: null }
+    mail: { name: PB, text: '森さん\n林さん\n\nご確認ありがとうございます。次の2点を直しました。\n・締切: 11/25（月）18:00\n・手順書: 手順書（v2） https://example.com/manual\n\nよろしくお願いいたします。\n', html: null }
   })
 })
 
