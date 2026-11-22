@@ -75,7 +75,9 @@ class Entry(unittest.TestCase):
         self.assertIn("read_file(%s)" % os.path.realpath(os.path.expanduser("~/.aws")), deny)
 
     def test_agy_gets_sandbox_and_fixed_settings_only(self):
-        shots = "/private/var/folders/x/T/neon-design-review-1/shots"
+        shots = os.path.realpath(os.path.join(self.d, "private", "shots"))
+        os.makedirs(shots)
+        self.m.write_agy_settings(shots)
         args = self.m.agy_args(shots, ["--model", "gemini-4-neon-high", "--disable-slash-commands", "--add-dir", shots,
                                        "--settings", '{"permissions": {"allow": ["command(*)"]}}', "--json-schema", "{}"])
         self.assertEqual(args[:2], [self.m.REAL_AGY, "--sandbox"])
@@ -118,6 +120,7 @@ class Entry(unittest.TestCase):
         private = os.path.join(self.d, "private")
         shots = os.path.join(private, "shots")
         os.makedirs(shots)
+        self.m.write_agy_settings(shots)
         fake = os.path.join(agy_testing.install(self.d), "agy")
         code = ("import importlib.machinery, importlib.util, sys\n"
                 f"loader = importlib.machinery.SourceFileLoader('ndr', {ENTRY!r})\n"
@@ -134,6 +137,42 @@ class Entry(unittest.TestCase):
         self.assertEqual(call["argv"][0], "--sandbox")
         self.assertNotIn("NEON_DESIGN_REVIEW_AS_AGY", call["env"])
         self.assertEqual(agy_testing.leaks(call, [os.path.realpath(self.d), self.d]), [])
+
+    def test_stand_in_agy_works_without_worker_settings_in_its_env(self):
+        # design-review-neon.py の agy_env は、名前か値に claude を含む変数を落としてから agy（代役）を起こす。
+        # ORCA_WORKER_SETTINGS は値に claude を含むので代役には届かない（割り込み 50。届く前提だと必ず終了コード 1 で止まる）
+        import agy_testing
+        private = os.path.join(self.d, "private")
+        shots = os.path.join(private, "shots")
+        os.makedirs(shots)
+        self.m.write_agy_settings(shots)  # 親の段（ORCA_WORKER_SETTINGS のある環境）で書く
+        fake = os.path.join(agy_testing.install(self.d), "agy")
+        code = ("import importlib.machinery, importlib.util, sys\n"
+                f"loader = importlib.machinery.SourceFileLoader('ndr', {ENTRY!r})\n"
+                "spec = importlib.util.spec_from_loader('ndr', loader)\n"
+                "m = importlib.util.module_from_spec(spec); loader.exec_module(m)\n"
+                f"m.REAL_AGY = {fake!r}\n"
+                "m.main(['agy'] + sys.argv[1:])\n")
+        env = agy_testing.polluted_env(os.path.dirname(fake), NEON_DESIGN_REVIEW_TMP=private,
+                                       NEON_DESIGN_REVIEW_AS_AGY=shots, TMPDIR=private)
+        env = {k: v for k, v in env.items() if "claude" not in (k + v).lower() or k in ("PATH", "TMPDIR", "NEON_DESIGN_REVIEW_TMP", "NEON_DESIGN_REVIEW_AS_AGY")}
+        self.assertNotIn("ORCA_WORKER_SETTINGS", env)
+        r = subprocess.run([sys.executable, "-c", code, "--model", "gemini-4-neon-high", "--add-dir", shots],
+                           input="採点して", env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (call,) = agy_testing.calls(os.path.dirname(fake))
+        settings = json.loads(call["argv"][2])
+        self.assertIn("read_file(%s)" % os.path.realpath(os.path.expanduser("~/.aws")), settings["permissions"]["deny"])
+        self.assertEqual(settings["permissions"]["allow"], ["read_file(%s)" % os.path.realpath(shots)])
+
+    def test_stand_in_agy_refuses_without_the_settings_the_parent_wrote(self):
+        private = os.path.join(self.d, "private")
+        shots = os.path.join(private, "shots")
+        os.makedirs(shots)
+        os.environ["NEON_DESIGN_REVIEW_TMP"] = private
+        self.addCleanup(os.environ.pop, "NEON_DESIGN_REVIEW_TMP")
+        with self.assertRaises(SystemExit):
+            self.m.agy_args(os.path.realpath(shots), ["--model", "gemini-4-neon-high"])
 
 
 class Guard(unittest.TestCase):

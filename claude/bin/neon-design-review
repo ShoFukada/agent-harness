@@ -15,6 +15,7 @@ agy は ~/.gemini に書き、Google に通信するので、Claude の sandbox 
   付けられない。sandbox-exclude-guard が止める）
 - スクリプトが呼ぶ agy は、この入口が差し込んだ代役（PATH の先頭）を通り、--sandbox と、コマンド・書き込み・
   URL の読み取り・MCP・worker の denyRead の read_file を拒否して写した画像のフォルダの read_file を許す settings に置き換わる。
+  この settings は親が作業場所に書いておく（代役には worker の settings のパスの変数が届かないため）。
   スクリプトが渡す引数のほか（--dangerously-skip-permissions・--remote-agent など）は通さない。
   環境変数は agy_launch.py の許可リストで絞る
 採点は stdout、理由は stderr に出る。終了コードはスクリプトのもの（Neon が使えないと 1、引数の誤りは 2）。
@@ -64,6 +65,18 @@ def private_root():
     return os.path.realpath(d) if d else agy_launch.user_tmp()
 
 
+def settings_path(shots):
+    """親が書く agy の settings（写した画像のフォルダの隣。worker が書けない作業場所の中）。"""
+    return os.path.join(os.path.dirname(shots), "agy-settings.json")
+
+
+def write_agy_settings(shots):
+    """worker の denyRead は親の段で読んで settings に焼き込む。design-review-neon.py の agy_env は名前か値に claude を
+    含む変数を落としてから代役を起こすので、代役の段では $ORCA_WORKER_SETTINGS（値にパスの claude を含む）が読めない。"""
+    with open(settings_path(shots), "w") as f:
+        json.dump(agy_settings(shots), f)
+
+
 def agy_settings(shots):
     # 未検証: deny と allow のどちらが勝つか、read_file(<フォルダ>) が下のファイルに当たるかは agy 1.5.3 の help と changelog に無い
     return {"agentMode": "", "permissions": {
@@ -90,7 +103,12 @@ def agy_args(shots, argv):
             out += [a, v]
         else:
             die(f"agy に {a} は渡さない")
-    return [REAL_AGY, "--sandbox", "--settings", json.dumps(agy_settings(shots))] + out
+    try:
+        with open(settings_path(shots)) as f:
+            settings = json.load(f)
+    except (OSError, ValueError) as e:
+        die(f"親が書いた agy の settings が読めない（{e}）")
+    return [REAL_AGY, "--sandbox", "--settings", json.dumps(settings)] + out
 
 
 def resolve_script():
@@ -163,6 +181,7 @@ def main(argv):
     work = tempfile.mkdtemp(prefix="neon-design-review-", dir=private_root())
     try:
         shots = copy_shots(a.shots_dir, os.path.join(work, "shots"))
+        write_agy_settings(shots)
         cmd = [sys.executable, "-I", script, shots, "--kind", a.kind]
         for flag, path in (("--product", a.product), ("--frontend-design", a.frontend_design)):
             if path:
