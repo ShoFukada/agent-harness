@@ -181,8 +181,24 @@ class HttpError extends Error {
 export type Consult = (root: string, card: string) => Promise<string>
 /** 窓からの質問のタブを立てる（開いていれば前に出して質問を送る）道具。返すのはタブの端末の handle。 */
 export type AskCmd = (root: string, id: string, o: { card?: string; task?: string; question?: string }) => Promise<string>
-/** clip はテストで差し替える（既定は clip-draft を呼ぶ）。 */
-export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft; consult?: Consult; ask?: AskCmd }
+/**
+ * clip はテストで差し替える（既定は clip-draft を呼ぶ）。tailnetHosts は tailscale serve が HTTPS で渡す Host（例: mac.tail1234.ts.net）で、
+ * その Host と Origin（https://<Host>）も許す。待ち受けは 127.0.0.1 のまま（serve が Mac の中から繋ぐ）。
+ */
+export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft; consult?: Consult; ask?: AskCmd; tailnetHosts?: string[] }
+
+/** COCKPIT_TAILNET_HOSTS（カンマ区切り）を読む。ホスト名[:ポート] の形でないものは捨てて理由を出す（ワイルドカードや URL を許す一覧に入れない）。 */
+export function parseTailnetHosts(v: string | undefined): string[] {
+  return (v ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean).flatMap((h) => {
+    const m = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+)\.?(?::(\d{1,5}))?$/.exec(h)
+    if (!m) {
+      console.error(`COCKPIT_TAILNET_HOSTS: ホスト名の形でないので許さない: ${h}`)
+      return []
+    }
+    // ブラウザは https の 443 を Host と Origin から省くので、設定の :443 も外す。
+    return [m[5] && m[5] !== '443' ? `${m[1]}:${m[5]}` : m[1]!]
+  })
+}
 
 /** nix-darwin の consult --card。標準出力の 1 行目が端末の handle、失敗は 0 以外の終了と標準エラーの理由。 */
 export function consultCli(cmd: string): Consult {
@@ -533,7 +549,9 @@ export function createServer(opts: Options) {
     refreshTimer = undefined
   }
 
-  const hosts = () => [`127.0.0.1:${port}`, `localhost:${port}`]
+  const tailnet = opts.tailnetHosts ?? []
+  const hosts = () => [`127.0.0.1:${port}`, `localhost:${port}`, ...tailnet]
+  const origins = () => [`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...tailnet.map((h) => `https://${h}`)]
   const tokenOk = (got: unknown) =>
     typeof got === 'string' && got.length === token.length && timingSafeEqual(Buffer.from(got), Buffer.from(token))
 
@@ -901,7 +919,7 @@ export function createServer(opts: Options) {
 
     const name = url.pathname.startsWith('/api/') ? url.pathname.slice(5) : ''
     if (req.method !== 'POST' || !Object.hasOwn(api, name)) return json(404, { error: 'ありません' })
-    if (!hosts().map((h) => `http://${h}`).includes(req.headers.origin ?? '')) return json(403, { error: 'origin が違います' })
+    if (!origins().includes(req.headers.origin ?? '')) return json(403, { error: 'origin が違います' })
     if (!tokenOk(req.headers['x-cockpit-token'])) return json(403, { error: 'トークンが違います' })
     if (!String(req.headers['content-type']).startsWith('application/json')) return json(415, { error: 'JSON で送ってください' })
     try {
@@ -960,7 +978,8 @@ if (import.meta.main) {
   const dir = process.env.COCKPIT_DIR ?? path.join(os.homedir(), 'Library/Application Support/cockpit')
   const port = Number(process.env.COCKPIT_PORT ?? 47231)
   const cmd = process.env.COCKPIT_CONSULT_CMD ?? path.join(os.homedir(), '.config/nix-darwin/claude/bin/consult')
-  const s = createServer({ port, dir, orca: orcaCli(process.env.COCKPIT_ORCA ?? 'orca'), consult: consultCli(cmd), ask: askCli(cmd) })
-  s.listen().then((p) => console.error(`cockpit window: http://127.0.0.1:${p}`))
+  const tailnetHosts = parseTailnetHosts(process.env.COCKPIT_TAILNET_HOSTS)
+  const s = createServer({ port, dir, orca: orcaCli(process.env.COCKPIT_ORCA ?? 'orca'), consult: consultCli(cmd), ask: askCli(cmd), tailnetHosts })
+  s.listen().then((p) => console.error(`cockpit window: http://127.0.0.1:${p}${tailnetHosts.map((h) => `  https://${h}`).join('')}`))
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => void s.close().then(() => process.exit(0)))
 }

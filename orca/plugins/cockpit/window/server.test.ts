@@ -10,7 +10,7 @@ import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
 import { renderWindow, todoGroups } from '../src/window-view.ts'
 import type { OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
-import { askCli, askNotice, askTitle, createServer, stopReason, tabsOf, type AskCmd, type Consult, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import { askCli, askNotice, askTitle, createServer, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -66,14 +66,14 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs'] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; tailnetHosts?: string[] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
   if (focusPath) setFocus(focusPath)
   const fake = fakeOrca(rows, plugins, owners, shows, showDelay, more.terms)
   if (more.tabs) fake.orca.tabs = more.tabs
-  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask })
+  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts })
   servers.push(s)
   const port = await s.listen()
   const origin = `http://127.0.0.1:${port}`
@@ -148,6 +148,66 @@ test('トークンが無い・Origin が違う・Host が違う書き込みを�
   assert.equal(rebound, 403)
   assert.equal((await fetch(`${origin}/events?token=bad`)).status, 403)
   assert.throws(() => readFileSync(path.join(a, '.orca/cockpit.user.json')))
+})
+
+/** Host を指定して送る（fetch は Host を変えられない）。tailscale serve は元の Host のまま 127.0.0.1 に繋ぐ。 */
+function viaHost(port: number, method: string, p: string, headers: Record<string, string>, body?: unknown) {
+  return new Promise<{ status: number; text: string }>((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: body === undefined ? headers : { 'content-type': 'application/json', ...headers } }, (res) => {
+      let text = ''
+      res.setEncoding('utf8')
+      res.on('data', (c: string) => {
+        text += c
+        // SSE は閉じないので、最初の 1 通で切る。
+        if (res.headers['content-type']?.startsWith('text/event-stream') && text.includes('\n\n')) req.destroy(), resolve({ status: res.statusCode!, text })
+      })
+      res.on('end', () => resolve({ status: res.statusCode!, text }))
+    })
+    req.on('error', reject)
+    req.end(body === undefined ? undefined : JSON.stringify(body))
+  })
+}
+
+test('tailnet のホスト名を渡さなければ、tailscale serve 経由の Host と Origin は今どおり断る', async () => {
+  const { a, rows } = workspaces()
+  const { s, port, post } = await start(rows, a)
+  const ts = 'mac.tail1234.ts.net'
+  assert.equal((await viaHost(port, 'GET', '/', { host: ts })).status, 403)
+  assert.equal((await viaHost(port, 'GET', `/events?token=${s.token}`, { host: ts })).status, 403)
+  assert.equal((await viaHost(port, 'POST', '/api/op', { host: ts, origin: `https://${ts}`, 'x-cockpit-token': s.token }, { root: a, item_id: 'r5', item_rev: 1, type: 'accept' })).status, 403)
+  assert.equal((await post('op', { root: a, item_id: 'r5', item_rev: 1, type: 'accept' }, { origin: `https://${ts}` })).status, 403)
+  assert.throws(() => readFileSync(path.join(a, '.orca/cockpit.user.json')))
+})
+
+test('渡した tailnet のホスト名は、https の Origin とトークンが合えば読み込みと操作を通し、ほかは断る', async () => {
+  const { a, rows } = workspaces()
+  const ts = 'mac.tail1234.ts.net'
+  const { s, port, post } = await start(rows, a, undefined, undefined, undefined, undefined, { tailnetHosts: [ts] })
+  const op = { root: a, item_id: 'r5', item_rev: 1, type: 'accept' }
+  const page = await viaHost(port, 'GET', '/', { host: ts })
+  assert.equal(page.status, 200)
+  assert.match(page.text, new RegExp(`content="${s.token}"`))
+  assert.equal((await viaHost(port, 'GET', '/window/page.ts', { host: ts })).status, 200)
+  assert.equal((await viaHost(port, 'GET', `/events?token=${s.token}`, { host: ts })).status, 200)
+  // 断るもの: 一覧に無い tailnet の名前・http の Origin・別の Origin・違うトークン・トークン無しの SSE
+  assert.equal((await viaHost(port, 'GET', '/', { host: 'other.tail1234.ts.net' })).status, 403)
+  assert.equal((await viaHost(port, 'POST', '/api/op', { host: 'other.tail1234.ts.net', origin: 'https://other.tail1234.ts.net', 'x-cockpit-token': s.token }, op)).status, 403)
+  assert.equal((await viaHost(port, 'POST', '/api/op', { host: ts, origin: `http://${ts}`, 'x-cockpit-token': s.token }, op)).status, 403)
+  assert.equal((await viaHost(port, 'POST', '/api/op', { host: ts, origin: 'https://evil.example', 'x-cockpit-token': s.token }, op)).status, 403)
+  assert.equal((await viaHost(port, 'POST', '/api/op', { host: ts, origin: `https://${ts}`, 'x-cockpit-token': 'x' }, op)).status, 403)
+  assert.equal((await viaHost(port, 'GET', '/events?token=bad', { host: ts })).status, 403)
+  assert.throws(() => readFileSync(path.join(a, '.orca/cockpit.user.json')))
+  const ok = await viaHost(port, 'POST', '/api/op', { host: ts, origin: `https://${ts}`, 'x-cockpit-token': s.token }, op)
+  assert.equal(ok.status, 200, ok.text)
+  assert.equal(JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8')).ops.at(-1).type, 'accept')
+})
+
+test('COCKPIT_TAILNET_HOSTS はホスト名[:ポート] だけを読み、空なら何も許さない', () => {
+  assert.deepEqual(parseTailnetHosts(undefined), [])
+  assert.deepEqual(parseTailnetHosts(''), [])
+  assert.deepEqual(parseTailnetHosts(' Mac.Tail1234.ts.net. , mac.tail1234.ts.net:8443 '), ['mac.tail1234.ts.net', 'mac.tail1234.ts.net:8443'])
+  assert.deepEqual(parseTailnetHosts('mac.tail1234.ts.net:443,mac.tail1234.ts.net.:443'), ['mac.tail1234.ts.net', 'mac.tail1234.ts.net'])
+  assert.deepEqual(parseTailnetHosts('*.ts.net,https://mac.tail1234.ts.net,mac,a b.ts.net,mac.tail1234.ts.net:8443:443'), [])
 })
 
 test('ページだけにトークンを埋め、TS は型を除いて配る。一覧に無いファイルは配らない', async () => {

@@ -292,6 +292,7 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 
 - 待ち受けは 127.0.0.1 だけ。Host が `127.0.0.1:<port>`・`localhost:<port>` 以外の要求は断る（DNS rebinding）
 - 書き込みと送信（`/api/*`）は、起動のたびに作るトークン（配るページにだけ埋める）と Origin の両方が合うものだけ受ける。SSE もトークンが要る
+- スマホからは `tailscale serve`（tailnetの中だけ。Funnelは使わない）で開く。serveは元のHostのまま127.0.0.1に繋ぐので、環境変数 `COCKPIT_TAILNET_HOSTS`（カンマ区切りの `ホスト名[:ポート]`）に入れた名前だけをHostとして、`https://<名前>` だけをOriginとして足す。空なら今までどおり。tailnetの端末は誰でもページ（とトークン）を受け取れるので、tailnetに他の人の端末を入れない。スマホから押した「開く」「端末に切り替え」はMacの上で動く
 - 読むファイルは `.orca/` の中だけで、`..` とシンボリックリンクで外へ出るものは読まない（`src/store.ts` の `readInOrca`）。開くファイルもワークスペースの中だけ
 - figure の SVG は、パネルと同じように script・外部参照・イベント属性を取り除いてから描く
 
