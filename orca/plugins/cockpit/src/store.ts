@@ -469,18 +469,30 @@ async function lock(file: string, staleMs = 10_000, waitMs = 3_000): Promise<() 
 
 /** 端末に文字を送る。送れなければ理由を返す。パネルは Orca の host API、窓は orca CLI で送る。 */
 export type SendText = (terminal: string, text: string) => Promise<NotifyResult>
+/** 窓口の Run に orchestration の知らせを送る（Orca が窓口のチャットを起こして届ける）。窓だけが持つ。 */
+export type SendRun = (runId: string, subject: string, body: string) => Promise<NotifyResult>
 
-/** メインの端末に合図の 1 行を送る。送れたら、合図に含めた最後の op_id を返す。 */
-export async function notifyMain(cockpit: Cockpit | undefined, log: UserLog, send: SendText): Promise<NotifyResult & { lastOp?: number }> {
+export function runSignalBody(cockpit: Cockpit, ops: Op[]): string {
+  const said = ops.filter((o) => o.type === 'talk' || o.type === 'repeat' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
+  const text = said?.text?.trim()
+  return [`${cockpit.workspace.name} の操縦席の窓から: ${signalText(ops)}`, ...(text ? ['', '書いた文（全文）:', text] : []), '', '未反映の操作を cockpit skill の手順で反映してください。'].join('\n')
+}
+
+/**
+ * メインに合図を送る。端末（main.terminal）があれば合図の 1 行を入力し、無くて Run（main.run_id）があれば
+ * orchestration の知らせで送る（窓口が Orca のチャットで動いていると端末が無く、何も届かなかった）。
+ * ops は signalPlan の due（送る時機の来た操作だけ）。送れたら、その最後の op_id を返す。
+ */
+export async function notifyMain(cockpit: Cockpit | undefined, ops: Op[], send: SendText, sendRun?: SendRun): Promise<NotifyResult & { lastOp?: number }> {
   const main = cockpit?.main
-  if (!main?.terminal) return { sent: false, reason: 'cockpit.json に main がありません' }
+  if (!cockpit || !(main?.terminal || (main?.run_id && sendRun))) return { sent: false, reason: 'cockpit.json に main がありません' }
   try {
-    const r = await send(main.terminal, signalText(unappliedOps(cockpit, log)))
+    const r = main!.terminal ? await send(main!.terminal, signalText(ops)) : await sendRun!(main!.run_id!, SIGNAL, runSignalBody(cockpit, ops))
     if (!r.sent) return r
   } catch (e) {
     return { sent: false, reason: (e as Error).message }
   }
-  return { sent: true, lastOp: log.ops.reduce((n, o) => Math.max(n, o.op_id), 0) }
+  return { sent: true, lastOp: ops.reduce((n, o) => Math.max(n, o.op_id), 0) || undefined }
 }
 
 let tmpSeq = 0
@@ -502,14 +514,19 @@ export function signalPlan(c: Cockpit, log: UserLog, notified: number, now: numb
   const cancelled = new Set(un.filter((o) => o.type === 'undo' && un.some((x) => x.op_id === o.undo_of)).flatMap((o) => [o.op_id, o.undo_of!]))
   const due: Op[] = []
   let nextAt: number | undefined
+  let held = Infinity
   for (const o of un) {
     // 「これで決める」は返しが届いてから窓口が反映するので、窓口の本線に合図を送らない（返しは hook が窓口の Run に知らせる。R105）。
     if (o.op_id <= notified || cancelled.has(o.op_id) || o.type === 'ask_decide' || (o.type === 'undo' && un.some((x) => x.op_id === o.undo_of && x.type === 'ask_decide'))) continue
     const at = Date.parse(o.at) + (mine(o) ? UNDO_GRACE_MS : UNDO_GRACE_MS * 3)
     if (at <= now) due.push(o)
-    else nextAt = Math.min(nextAt ?? Infinity, at)
+    else {
+      nextAt = Math.min(nextAt ?? Infinity, at)
+      held = Math.min(held, o.op_id)
+    }
   }
-  return { due, nextAt }
+  // 送った位置は op_id の 1 つの数で持つので、猶予中の操作より後の操作は、その操作と一緒に送る（先に送ると猶予中の操作を飛ばす）。
+  return { due: due.filter((o) => o.op_id < held), nextAt }
 }
 
 /** どの操作までメインに知らせたか。パネルと窓が共有する（~/Library/Application Support/cockpit/notified.json）。 */
@@ -524,14 +541,20 @@ export async function readNotified(dir: string, root: string): Promise<number> {
 
 export async function writeNotified(dir: string, root: string, op: number): Promise<void> {
   const file = path.join(dir, 'notified.json')
-  let v: Record<string, number> = {}
+  // 案件ごとの位置を 1 つのファイルに持つので、窓の案件どうし・パネルと窓が同時に書くと先の書き込みが消える。
+  const release = await lock(`${file}.lock`)
   try {
-    v = JSON.parse(await fsp.readFile(file, 'utf8'))
-  } catch {
-    // 無い・壊れているときは作り直す（失うのは「どこまで知らせたか」だけで、もう一度合図が届くだけ）。
+    let v: Record<string, number> = {}
+    try {
+      v = JSON.parse(await fsp.readFile(file, 'utf8'))
+    } catch {
+      // 無い・壊れているときは作り直す（失うのは「どこまで知らせたか」だけで、もう一度合図が届くだけ）。
+    }
+    v[root] = Math.max(v[root] ?? 0, op)
+    await writeAtomic(file, JSON.stringify(v) + '\n')
+  } finally {
+    await release()
   }
-  v[root] = Math.max(v[root] ?? 0, op)
-  await writeAtomic(file, JSON.stringify(v) + '\n')
 }
 
 /** 「path:12」を ファイルと行に分ける。行の無いパスと、名前に : を含むだけのパスはそのまま。 */

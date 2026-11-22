@@ -825,6 +825,8 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
   const total = COUNTED.reduce((n, k) => n + b.d.counts[k], 0)
   const body = tab === 'todo' ? viewTodo(b, ui, now, svg) : tab === 'whole' ? viewWhole(b, ui, now, svg, m.boards) : viewDone(b, ui, now, svg)
   const open = ui.sideOpen !== false
+  const unsent = m.boards.filter((x) => x.v.signal?.state === 'failed').map((x) =>
+    `<div>${esc(x.v.cockpit?.workspace.name ?? '')} のメインに、押した操作が届いていません（${esc(x.v.signal!.reason ?? '')}）。<button class="btn quiet" type="button" data-act="notify" data-root="${esc(x.root)}">もう一度送る</button></div>`).join('')
   const front = m.boards.find((x) => x.root === m.focused)
   const orcaBtns = `<span class="orcab"><button class="btn quiet" type="button" data-orca="open">Orca で開く</button><button class="btn quiet" type="button" data-orca="sync"${!front || front.root === b.root ? ' disabled' : ''}>Orca に合わせる</button></span>`
   return `<div class="ck win${open ? ' side-open' : ''}" data-theme="${ui.dark ? 'dark' : 'light'}">
@@ -833,7 +835,7 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
       <div class="flags">${stuck ? `<span class="err">停止中 ${stuck} 件</span>` : ''}
         ${orcaBtns}${theme}</div></div>
     <div class="wmain">${open ? `${casesSide(m, b, orcaBtns)}<button class="wscrim" type="button" data-side="close" aria-label="案件の一覧を閉じる"></button>` : ''}<div class="wcol">
-    ${hard.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
+    ${hard.length || unsent.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}${unsent}</div>` : ''}
     ${choresHtml(b.d.gaps, soft.length, 'wnotes')}
     <main class="wbody split">${body}</main></div></div>${toastsHtml(ui, now, b.root)}</div>`
 }

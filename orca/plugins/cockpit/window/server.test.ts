@@ -12,7 +12,7 @@ import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
 import { renderWindow, todoGroups } from '../src/window-view.ts'
 import type { AutomationRun, OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
-import { askCli, askNotice, askTitle, automationFact, createServer, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import { askCli, askNotice, askTitle, automationFact, createServer, orcaCli, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -37,9 +37,11 @@ const agent = (paneKey: string, over: Partial<PsAgent> = {}): PsAgent => ({ pane
 function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false }], owners: OwnerLive[] = [], shows: Record<string, WorkerShow> = {}, showDelay = 0, extraTerms: string[] = []) {
   const calls: string[][] = []
   const showCalls: string[] = []
+  const boxes: string[] = []
   const orca: Orca = {
     ps: async () => rows,
     terminals: async () => [
+      ...boxes.map((h) => ({ handle: h, tabId: 't', leafId: h })),
       { handle: 'term_main', tabId: 't', leafId: 'main' },
       { handle: 'term_w1', tabId: 't', leafId: 'w1' },
       { handle: 'term_aoba_w1', tabId: 't', leafId: 'aw1' },
@@ -53,6 +55,12 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
       return shows[dispatch] ?? null
     },
     send: async (t, text) => void calls.push(['send', t, text]),
+    notifyRun: async (from, id, subject, body) => void calls.push(['run', from, id, subject, body]),
+    mailbox: async (root) => {
+      boxes.push(`term_box${boxes.length + 1}`)
+      calls.push(['mailbox', root])
+      return boxes.at(-1)!
+    },
     activate: async (root) => void calls.push(['activate', root]),
     switchTerminal: async (t) => void calls.push(['switch', t]),
     openFile: async (root, abs, line) => void calls.push(line ? ['open', root, abs, String(line)] : ['open', root, abs]),
@@ -68,7 +76,7 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; tailnetHosts?: string[]; lint?: Options['lint'] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; notifyRun?: Orca['notifyRun']; mailbox?: Orca['mailbox']; mailboxFile?: string; tailnetHosts?: string[]; lint?: Options['lint'] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
@@ -77,6 +85,9 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
   if (more.tabs) fake.orca.tabs = more.tabs
   if (more.chatOpen) fake.orca.chatOpen = more.chatOpen
   if (more.chatLast) fake.orca.chatLast = more.chatLast
+  if (more.notifyRun) fake.orca.notifyRun = more.notifyRun
+  if (more.mailbox) fake.orca.mailbox = more.mailbox
+  if (more.mailboxFile) writeFileSync(path.join(dir, 'mailbox.json'), more.mailboxFile)
   const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts, lint: more.lint })
   servers.push(s)
   const port = await s.listen()
@@ -544,6 +555,34 @@ test('窓から質問する: consult が立てられなければ理由を返す�
   assert.deepEqual((await bare.post('ask', { root: a, question: 'x' })).body, { opened: false, reason: '質問の道具（consult --ask）が渡されていません' })
 })
 
+test('窓口の Run への知らせ（追加 44）: 書いた文は引数にせず --body-file - の標準入力で渡す（引用符・改行・「--」で始まる行でも壊さない）', async () => {
+  const dir = tmp('cockpit-notifyrun-')
+  const bin = path.join(dir, 'orca')
+  writeFileSync(bin, '#!/bin/sh\nprintf "%s\\n" "$@" > "$(dirname "$0")/args"\ncat > "$(dirname "$0")/stdin"\necho \'{"ok":true,"result":{}}\'\n')
+  chmodSync(bin, 0o755)
+  const body = '青葉物流 の操縦席の窓から: 【操縦席】未反映の操作があります\n\n書いた文（全文）:\n"引用"\n--to run:other --body x'
+  await orcaCli(bin).notifyRun!('term_box', 'run_1', '【操縦席】未反映の操作があります', body)
+  assert.deepEqual(readFileSync(path.join(dir, 'args'), 'utf8').trimEnd().split('\n'), ['orchestration', 'send', '--from', 'term_box', '--to', 'run:run_1', '--type', 'status', '--subject', '【操縦席】未反映の操作があります', '--body-file', '-', '--json'])
+  assert.equal(readFileSync(path.join(dir, 'stdin'), 'utf8'), body)
+})
+
+test('郵便受けの端末は、その worktree に題を付けて AI を動かさないコマンドで作り、handle を返す（追加 44 の補足）', async () => {
+  const dir = tmp('cockpit-mailbox-')
+  const bin = path.join(dir, 'orca')
+  writeFileSync(bin, '#!/bin/sh\nprintf "%s\\n" "$@" > "$(dirname "$0")/args"\necho \'{"ok":true,"result":{"terminal":{"handle":"term_box9"}}}\'\n')
+  chmodSync(bin, 0o755)
+  assert.equal(await orcaCli(bin).mailbox!('/ws/a'), 'term_box9')
+  assert.deepEqual(readFileSync(path.join(dir, 'args'), 'utf8').trimEnd().split('\n'), ['terminal', 'create', '--worktree', 'path:/ws/a', '--title', '操縦席｜郵便受け', '--command', 'tail -f /dev/null', '--json'])
+})
+
+test('Run への知らせで orca が本文を読まずに終わっても、窓のプロセスは落ちずに失敗を返す（Codex 追加 44）', async () => {
+  const dir = tmp('cockpit-notifyrun-epipe-')
+  const bin = path.join(dir, 'orca')
+  writeFileSync(bin, '#!/bin/sh\necho \'{"ok":false,"error":{"message":"Run run_x が見つかりません"}}\'\nexit 1\n')
+  chmodSync(bin, 0o755)
+  await assert.rejects(orcaCli(bin).notifyRun!('term_box', 'run_x', SIGNAL, 'あ'.repeat(1 << 20)), /Run run_x が見つかりません/)
+})
+
 test('窓から質問する: consult --ask の引数と、失敗の理由の頭の「consult: 」を外すこと', async () => {
   const dir = tmp('cockpit-askcli-')
   const ok = path.join(dir, 'ok')
@@ -824,6 +863,86 @@ test('取り消しの猶予が過ぎた操作は、メインが入力待ちな�
   assert.equal(board(v, a)!.signal, undefined)
   assert.deepEqual(calls, [['send', 'term_main', SIGNAL]])
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'notified.json'), 'utf8')), { [a]: 2 })
+})
+
+test('自動の合図と押した送り直しが重なっても、同じ操作は Run に 1 度だけ送る（Codex 追加 44）', async () => {
+  const old = new Date(Date.now() - 60_000).toISOString()
+  const a = workspace('a', {
+    '.orca/cockpit.json': cockpit('案件A', { main: { agent: 'claude', terminal: '', run_id: 'run_m' } }),
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 7, at: old, item_id: 'r5', item_rev: 1, type: 'accept' }] })
+  })
+  const sent: string[] = []
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  const { s, port, post } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a, undefined, undefined, undefined, undefined, {
+    notifyRun: async (_from, id) => { sent.push(id); await gate }
+  })
+  await listen(port, s.token).until(() => sent.length === 1)
+  const manual = post('notify', { root: a })
+  // 押した送り直しがサーバーに届くまで、自動の送信を終わらせない（直列にしていなければ、ここで 2 通目が出る）。
+  await new Promise((r) => setTimeout(r, 150))
+  release()
+  assert.deepEqual((await manual).body, { sent: true })
+  assert.deepEqual(sent, ['run_m'])
+})
+
+test('郵便受け: 控えた端末が生きていれば使い回し、消えていれば作り直し、作れなければ帯に理由を出す（追加 44 の補足）', async () => {
+  const old = new Date(Date.now() - 60_000).toISOString()
+  const files = (name: string, op = 7) => ({
+    '.orca/cockpit.json': cockpit(name, { main: { agent: 'claude', terminal: '', run_id: 'run_m' } }),
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: op, at: old, item_id: 'r5', item_rev: 1, type: 'accept' }] })
+  })
+  const runs = (calls: string[][]) => calls.filter((c) => c[0] === 'run' || c[0] === 'mailbox').map((c) => c.slice(0, 3))
+  // 生きている端末（term_main）を控えていれば作らずに使う。
+  const a = workspace('a', files('案件A'))
+  const live = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a, undefined, undefined, undefined, undefined, { mailboxFile: '{"handle":"term_main"}' })
+  await listen(live.port, live.s.token).until((w) => board(w, a)?.notifiedOp === 7)
+  assert.deepEqual(runs(live.calls), [['run', 'term_main', 'run_m']])
+  // 2 つの案件が同時に送っても、郵便受けは 1 つだけ作る。消えた端末（term_gone）は作り直す。
+  const b = workspace('b', files('案件B'))
+  const c = workspace('c', files('案件C'))
+  const rows = [b, c].map((p) => ({ worktreeId: `r::${path.basename(p)}`, path: p, parentWorktreeId: null, agents: [] }))
+  const gone = await start(rows, b, undefined, undefined, undefined, undefined, { mailboxFile: '{"handle":"term_gone"}' })
+  await listen(gone.port, gone.s.token).until((w) => board(w, b)?.notifiedOp === 7 && board(w, c)?.notifiedOp === 7)
+  assert.equal(gone.calls.filter((x) => x[0] === 'mailbox').length, 1)
+  assert.deepEqual(gone.calls.filter((x) => x[0] === 'run').map((x) => x[1]), ['term_box1', 'term_box1'])
+  // 作れなければ送らず、理由を帯に出す。
+  const d = workspace('d', files('案件D'))
+  const broken = await start([{ worktreeId: 'r::d', path: d, parentWorktreeId: null, agents: [] }], d, undefined, undefined, undefined, undefined, {
+    mailbox: async () => { throw new Error('郵便受けの端末を作れませんでした') }
+  })
+  const w = await listen(broken.port, broken.s.token).until((x) => board(x, d)?.signal?.state === 'failed')
+  assert.equal(board(w, d)!.signal!.reason, '郵便受けの端末を作れませんでした')
+  assert.deepEqual(runs(broken.calls), [])
+})
+
+test('窓口がチャットで端末が無く Run がある帳簿は、猶予が過ぎた操作を Run に知らせ、送れなければ理由を帯に出す（追加 44）', async () => {
+  const old = new Date(Date.now() - 60_000).toISOString()
+  const text = '"題"が消える\n--to run:other --body x'
+  const files = (root: string) => ({
+    '.orca/cockpit.json': cockpit(root, { main: { agent: 'claude', terminal: '', run_id: 'run_m' } }),
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 7, at: old, item_id: 'r5', item_rev: 1, type: 'talk', text }] })
+  })
+  const a = workspace('a', files('案件A'))
+  // 窓口のエージェントは Orca の端末の一覧に居ない（チャット）。手が空くのを待たずに送る。
+  const { s, port, calls, dir } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
+  const v = await listen(port, s.token).until((w) => board(w, a)?.notifiedOp === 7)
+  assert.equal(board(v, a)!.signal, undefined)
+  // Orca の外のプロセスは送り手の端末が無いと断られるので、郵便受けの端末を作り、それを送り手にする（追加 44 の補足）。
+  const [box, [kind, from, id, subject, body], ...rest] = calls.filter((c) => c[0] === 'run' || c[0] === 'send' || c[0] === 'mailbox')
+  assert.deepEqual([box, kind, from, id, subject, rest], [['mailbox', a], 'run', 'term_box1', 'run_m', SIGNAL, []])
+  assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'mailbox.json'), 'utf8')), { handle: 'term_box1' })
+  assert.ok(body!.startsWith('案件A の操縦席の窓から: '), body)
+  assert.ok(body!.endsWith(`${text}\n\n未反映の操作を cockpit skill の手順で反映してください。`), body)
+  assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'notified.json'), 'utf8')), { [a]: 7 })
+
+  const b = workspace('b', files('案件B'))
+  const failed = await start([{ worktreeId: 'r::b', path: b, parentWorktreeId: null, agents: [] }], b, undefined, undefined, undefined, undefined, {
+    notifyRun: async () => { throw new Error('orca orchestration send が失敗しました: Run run_m が見つかりません') }
+  })
+  const w = await listen(failed.port, failed.s.token).until((x) => board(x, b)?.signal?.state === 'failed')
+  assert.match(board(w, b)!.signal!.reason!, /Run run_m が見つかりません/)
+  assert.notEqual(board(w, b)!.notifiedOp, 7, '送れなかった操作は送った記録に残さない')
 })
 
 test('worker は操縦席の task に記録された Dispatch の端末で task に結び、仕事の名前は task の名前にする', async () => {

@@ -301,7 +301,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       return draw()
     }
     if (name === 'notify') {
-      const root = feed.views[0]?.root
+      const root = el.dataset.root ?? feed.views[0]?.root
       if (root) void t.notify(root).then((x) => toast(x.sent ? 'メインに届けました' : `届きませんでした: ${x.reason ?? ''}`), fail)
       return
     }

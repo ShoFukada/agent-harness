@@ -193,6 +193,19 @@ test('対応済み: 確認の返答が無いまま閉じた見てに札を付け
   assert.match(text(h), /担当が完了 11\/21\(土\) 09:30・確認の返答なし/)
 })
 
+test('窓口に届かなかった操作は、どの案件を開いていても上の帯に案件の名前と理由を出し、その案件に送り直せる（追加 44）', () => {
+  const views = sample(NOW).map((w): CockpitView => ({ state: 'ok', root: `/ws/${w.dir}`, cockpit: parseCockpit(JSON.stringify(w.cockpit)), log: structuredClone(w.log), archive: [], figures: {}, errors: [], workers: [], notifiedOp: 0 }))
+  const aobaRoot = views.find((v) => v.cockpit!.workspace.name.startsWith('青葉'))!.root!
+  const harness = views.find((v) => v.cockpit!.workspace.name === '社内ハーネス')!
+  harness.signal = { state: 'failed', reason: 'Run run_m が見つかりません' }
+  const h = renderWindow({ boards: boardsOf(views, NOW), focused: aobaRoot, unseen: [], errors: [] }, newUi(), NOW, (s) => s)
+  const errs = h.slice(h.indexOf('<div class="werrs"'), h.indexOf('</div></div>', h.indexOf('<div class="werrs"')))
+  assert.match(text(errs), /社内ハーネス のメインに、押した操作が届いていません（Run run_m が見つかりません）。 もう一度送る/)
+  assert.match(errs, new RegExp(`data-act="notify" data-root="${harness.root}"`))
+  harness.signal = undefined
+  assert.doesNotMatch(renderWindow({ boards: boardsOf(views, NOW), focused: aobaRoot, unseen: [], errors: [] }, newUi(), NOW, (s) => s), /class="werrs"/)
+})
+
 test('案件のサイドバー: 名前の順に並べ、私の番の件数は語つきで 0 件は出さず、選んだ案件を描く。Orca の前面は語で示し、合わせるボタンは前面と違うときだけ押せる（追加 34）', () => {
   const views = sample(NOW).map((w): CockpitView => ({ state: 'ok', root: `/ws/${w.dir}`, cockpit: parseCockpit(JSON.stringify(w.cockpit)), log: structuredClone(w.log), archive: [], figures: {}, errors: [], workers: [], notifiedOp: 0 }))
   const aobaRoot = views.find((v) => v.cockpit!.workspace.name.startsWith('青葉'))!.root!

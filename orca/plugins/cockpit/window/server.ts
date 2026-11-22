@@ -17,7 +17,7 @@ import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
-import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
+import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAtomic, writeNotified, type Files } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
 const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts'])
@@ -50,6 +50,7 @@ export function automationFact(id: string, a: AutomationRow | undefined, cached:
 }
 /** 端末の一覧を読む上限。上限まで返ったら一覧が切れているかもしれないので、無い handle を「閉じた」と言い切らない。 */
 export const TERMINAL_LIMIT = 500
+export const MAILBOX_TITLE = '操縦席｜郵便受け'
 
 export type Orca = {
   ps(): Promise<PsRow[]>
@@ -77,6 +78,10 @@ export type Orca = {
   /** 端末の今の画面の行（terminal read --screen）。AskUserQuestion の問いは画面にしか無い。 */
   screen?(terminal: string): Promise<string[]>
   send(terminal: string, text: string): Promise<void>
+  /** 窓口の Run に orchestration の知らせを送る（orchestration send --from <郵便受け> --to run:<id>）。 */
+  notifyRun?(from: string, runId: string, subject: string, body: string): Promise<void>
+  /** 窓の郵便受け（AI を動かさない端末）をその worktree に作り、handle を返す。 */
+  mailbox?(root: string): Promise<string>
   activate(root: string): Promise<void>
   switchTerminal(terminal: string): Promise<void>
   openFile(root: string, abs: string, line?: number): Promise<void>
@@ -85,9 +90,10 @@ export type Orca = {
 }
 
 export function orcaCli(bin = 'orca'): Orca {
-  const run = (args: string[]) =>
-    new Promise<Record<string, unknown>>((resolve, reject) =>
-      execFile(bin, [...args, '--json'], { timeout: 15_000, maxBuffer: 64 << 20 }, (err, out) => {
+  // input は標準入力に渡す（深田さんの書いた文を引数にせず --body-file - で渡し、引用符・改行・「--」で始まる文でも壊さない）。
+  const run = (args: string[], input?: string) =>
+    new Promise<Record<string, unknown>>((resolve, reject) => {
+      const child = execFile(bin, [...args, '--json'], { timeout: 15_000, maxBuffer: 64 << 20 }, (err, out) => {
         let json: { ok?: boolean; result?: Record<string, unknown>; error?: { message?: string; code?: string } } | undefined
         try {
           json = JSON.parse(out)
@@ -97,7 +103,12 @@ export function orcaCli(bin = 'orca'): Orca {
         if (err || json?.ok === false) return reject(Object.assign(new Error(json?.error?.message ?? err?.message ?? 'orca が失敗しました'), { code: json?.error?.code }))
         resolve(json?.result ?? {})
       })
-    )
+      if (input !== undefined) {
+        // 子が本文を読む前に終わると EPIPE が stdin に出て、拾わなければ窓のプロセスごと落ちる。失敗の理由は上の終わりの知らせが返す。
+        child.stdin?.on('error', () => {})
+        child.stdin?.end(input)
+      }
+    })
   return {
     ps: async () =>
       ((await run(['worktree', 'ps', '--limit', '500'])).worktrees as PsRow[]).map((r) => ({
@@ -167,6 +178,13 @@ export function orcaCli(bin = 'orca'): Orca {
       ),
     screen: async (terminal) => (((await run(['terminal', 'read', '--terminal', terminal, '--screen'])).terminal as { tail?: string[] } | undefined)?.tail ?? []),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
+    notifyRun: async (from, runId, subject, body) => void (await run(['orchestration', 'send', '--from', from, '--to', `run:${runId}`, '--type', 'status', '--subject', subject, '--body-file', '-'], body)),
+    mailbox: async (root) => {
+      const r = await run(['terminal', 'create', '--worktree', `path:${root}`, '--title', MAILBOX_TITLE, '--command', 'tail -f /dev/null'])
+      const handle = (r.terminal as { handle?: string } | undefined)?.handle
+      if (!handle) throw new Error('郵便受けの端末を作れませんでした')
+      return handle
+    },
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
     switchTerminal: async (terminal) => void (await run(['terminal', 'switch', '--terminal', terminal])),
     openFile: async (root, abs, line) =>
@@ -197,6 +215,8 @@ type Ws = {
   timer?: ReturnType<typeof setTimeout>
   signal?: CockpitView['signal']
   signalTimer?: ReturnType<typeof setTimeout>
+  /** 送っている最中の合図（notify を案件ごとに 1 つずつにする）。 */
+  sending?: Promise<unknown>
 }
 
 type Focus = { path?: string; agents_at?: number }
@@ -416,16 +436,19 @@ export function createServer(opts: Options) {
   async function autoSignal(ws: Ws): Promise<void> {
     clearTimeout(ws.signalTimer)
     const c = ws.files.cockpit
-    if (!c || chatMain(c)) return void (ws.signal = undefined)
+    if (!c || (chatMain(c) && !(c.main?.run_id && canRun))) return void (ws.signal = undefined)
     const plan = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), Date.now(), (o) => mine.has(`${ws.root}#${o.op_id}`))
     if (plan.nextAt !== undefined)
       ws.signalTimer = setTimeout(() => void autoSignal(ws).then(broadcast, (e) => console.error(e)), plan.nextAt - Date.now() + 50)
     if (!plan.due.length) return void (ws.signal = undefined)
-    if (Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
-    const main = agentsOf(ws.root, ws.files).main
-    if (!main) return void (ws.signal = { state: 'failed', reason: 'メインのエージェントが見つかりません' })
-    if (main.state === 'working') return void (ws.signal = { state: 'waiting' })
-    const r = await notify(ws)
+    // Run に送る知らせは Orca が窓口の手が空いたときに届けるので、端末の窓口のときだけ手が空くのを待つ。
+    if (!chatMain(c)) {
+      if (Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
+      const main = agentsOf(ws.root, ws.files).main
+      if (!main) return void (ws.signal = { state: 'failed', reason: 'メインのエージェントが見つかりません' })
+      if (main.state === 'working') return void (ws.signal = { state: 'waiting' })
+    }
+    const r = await notify(ws, Date.now())
     ws.signal = r.sent ? undefined : { state: 'failed', reason: r.reason }
   }
 
@@ -685,10 +708,45 @@ export function createServer(opts: Options) {
     return { sent: true }
   }
 
-  async function notify(ws: Ws): Promise<NotifyResult> {
-    const r = await notifyMain(ws.files.cockpit, ws.files.log, send)
-    if (r.lastOp !== undefined) await writeNotified(opts.dir, ws.root, r.lastOp)
-    return r.sent ? { sent: true } : { sent: false, reason: r.reason }
+  /**
+   * 郵便受けから窓口の Run に送る（窓から Orca に知らせる口はここ 1 か所）。窓は Orca の外のプロセスなので、送り手の端末が無いと
+   * Orca が断る（no_active_sender_terminal）。チャットの窓口の名は送り手に使えない（session_caller_chat_not_declarable）。
+   */
+  let boxing: Promise<string> | undefined
+  function mailbox(root: string): Promise<string> {
+    const file = path.join(opts.dir, 'mailbox.json')
+    // 同時に送る案件どうしが郵便受けを 2 つ作らないよう、作るのは 1 つずつにする。
+    return (boxing ??= (async () => {
+      const saved = await fsp.readFile(file, 'utf8').then((t) => (JSON.parse(t) as { handle?: string }).handle, () => undefined)
+      if (saved && (await orca.terminals()).some((t) => t.handle === saved)) return saved
+      const handle = await orca.mailbox!(root)
+      await writeAtomic(file, JSON.stringify({ handle }) + '\n')
+      return handle
+    })().finally(() => (boxing = undefined)))
+  }
+  const canRun = !!(orca.notifyRun && orca.mailbox)
+  const sendRun = (root: string) => async (runId: string, subject: string, body: string): Promise<NotifyResult> => {
+    await orca.notifyRun!(await mailbox(root), runId, subject, body)
+    return { sent: true }
+  }
+
+  /**
+   * now は送る時機を決める時刻。押して送り直すときは Infinity（猶予中の操作も送る）。
+   * 自動と押した送り直しが重なっても同じ操作を 2 度送らないよう、案件ごとに 1 つずつ送り、送る直前に送った位置を読み直す。
+   */
+  function notify(ws: Ws, now = Infinity): Promise<NotifyResult> {
+    const run = async (): Promise<NotifyResult> => {
+      const c = ws.files.cockpit
+      if (!c) return { sent: false, reason: 'cockpit.json に main がありません' }
+      const { due } = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), now, (o) => mine.has(`${ws.root}#${o.op_id}`))
+      if (!due.length) return { sent: true }
+      const r = await notifyMain(c, due, send, canRun ? sendRun(ws.root) : undefined)
+      if (r.lastOp !== undefined) await writeNotified(opts.dir, ws.root, r.lastOp)
+      return r.sent ? { sent: true } : { sent: false, reason: r.reason }
+    }
+    const p = (ws.sending ?? Promise.resolve()).then(run, run)
+    ws.sending = p.catch(() => {})
+    return p
   }
 
   /** 質問のタブの端末（題で探す）。閉じていれば理由。 */

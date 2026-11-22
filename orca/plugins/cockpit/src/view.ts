@@ -676,7 +676,7 @@ function handoffHtml(shown: Board[], now: number): string {
 
 function signalHtml(v: CockpitView | undefined): string {
   if (!v?.cockpit) return ''
-  if (chatMain(v.cockpit)) return ''
+  if (chatMain(v.cockpit) && !v.cockpit.main?.run_id) return ''
   if (v.signal?.state === 'failed') return `<button class="flag err" type="button" data-act="notify">メインに届いていません（${esc(v.signal.reason ?? '')}）。もう一度送る</button>`
   if (v.signal?.state === 'waiting') return '<span class="flag">メインの手が空いたら届けます</span>'
   return ''

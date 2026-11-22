@@ -174,7 +174,8 @@ test('Orca の下の帯に、前面の案件の私の番を出す。期限が 24
 })
 
 test('メインの端末がワークスペースに無ければ送らず、理由を返す', async () => {
-  const root = workspace({ '.orca/cockpit.json': withMain('term_gone') })
+  // 送るのは送った位置より後の操作だけなので、未反映の操作を 1 つ置く。
+  const root = workspace({ '.orca/cockpit.json': withMain('term_gone'), '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 9, at: new Date().toISOString(), item_id: 'r5', item_rev: 1, type: 'accept' }] }) })
   const h = host(root)
   const w = await mountWorker(main, { host: h })
   const res = await w.request('cockpit.notify')

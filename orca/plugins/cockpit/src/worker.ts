@@ -182,13 +182,18 @@ async function autoSignal(): Promise<void> {
   const main = st.agents.find((a) => a.terminalId === st.cockpit?.main?.terminal)
   if (!main) return void (st.signal = { state: 'failed', reason: 'メインのエージェントが見つかりません' })
   if (main.state === 'working') return void (st.signal = { state: 'waiting' })
-  const r = await notify()
+  const r = await notify(Date.now())
   st.signal = r.sent ? undefined : { state: 'failed', reason: r.reason }
 }
 
-async function notify(): Promise<NotifyResult> {
+/** now は送る時機を決める時刻。押して送り直すときは Infinity（猶予中の操作も送る）。 */
+async function notify(now = Infinity): Promise<NotifyResult> {
   const st = s
-  const result = await notifyMain(st.cockpit, st.log, async (terminal, text) => {
+  if (!st.root || !st.cockpit) return { sent: false, reason: 'cockpit.json に main がありません' }
+  const root = st.root
+  const { due } = signalPlan(st.cockpit, st.log, await readNotified(cockpitDir(), root), now, (o) => mine.has(`${root}#${o.op_id}`))
+  if (!due.length) return { sent: true }
+  const result = await notifyMain(st.cockpit, due, async (terminal, text) => {
     const ctx = await orca.host.call('workspace.readContext')
     if (!ctx?.terminals.some((t) => t.id === terminal)) return { sent: false, reason: 'メインの端末が見つかりません' }
     const { accepted } = await orca.host.call('terminal.sendText', { terminalId: terminal, text, enter: true })

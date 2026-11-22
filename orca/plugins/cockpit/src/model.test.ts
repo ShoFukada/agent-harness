@@ -5,7 +5,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { draftFormat, escapeAskSections, latestAnswer, missingFields, unanswered, nextOp, overlay, parseCockpit, shownTask, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
-import { appendOp, SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
+import { appendOp, notifyMain, readNotified, SIGNAL, signalPlan, signalText, splitLine, writeAtomic, writeNotified } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
@@ -160,6 +160,10 @@ test('合図の対象: 自分が書いた操作は 10 秒、ほかの画面の�
   const plan = signalPlan(c, log, 0, NOW, (o) => o.op_id !== 5)
   assert.deepEqual(plan.due.map((o) => o.op_id), [2])
   assert.equal(plan.nextAt, Date.parse(at(12)) + 30_000)
+  // 送った位置は 1 つの数なので、猶予中の操作（5）より後の操作（6）は先に送らない。猶予中の操作の本文も送らない（Codex 追加 44）。
+  const later = { ops: [...log.ops, { op_id: 6, at: at(12), item_id: 'd21', item_rev: 1, type: 'talk', text: 'まだ取り消すかも' }] as Op[] }
+  assert.deepEqual(signalPlan(c, later, 0, NOW, (o) => o.op_id !== 5).due.map((o) => o.op_id), [2])
+  assert.deepEqual(signalPlan(c, later, 0, Infinity, (o) => o.op_id !== 5).due.map((o) => o.op_id), [2, 5, 6])
 })
 
 test('合図の対象: 「これで決める」（ask_decide）とその取り消しは、窓口の本線に合図を送らない（返しは hook が窓口の Run に知らせる）', () => {
@@ -179,6 +183,38 @@ test('合図の 1 行に、担当と話すと別の答えのカードと本文�
   assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'talk' })]), `${SIGNAL}（担当と話す d21）`)
   assert.equal(signalText([op({ op_id: 1, item_id: '', type: 'repeat' })]), `${SIGNAL}（前にも言った）`)
   assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'decide', option_id: 'other', text: '図は\n描き足す' })]), `${SIGNAL}（別の答え d21: 図は 描き足す）`)
+})
+
+test('送った位置は、案件どうしが同時に書いても両方残る（1 つのファイルに持つため。Codex 追加 44）', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'cockpit-notified-'))
+  await Promise.all([writeNotified(dir, '/ws/a', 7), writeNotified(dir, '/ws/b', 9), writeNotified(dir, '/ws/c', 3)])
+  assert.deepEqual(await Promise.all(['/ws/a', '/ws/b', '/ws/c'].map((r) => readNotified(dir, r))), [7, 9, 3])
+})
+
+test('合図の送り先（追加 44）: 端末があれば端末に 1 行、無くて Run があれば Run に知らせ（本文の頭に案件と操作、書いた文は全文）、どちらも無ければ送らない', async () => {
+  const c = aoba()
+  const text = '"引用"と\n改行\n--to run:other --body x'
+  const log: UserLog = { ops: [op({ op_id: 901, item_id: 'd21', type: 'talk', text })] }
+  const sent: string[][] = []
+  const send = async (t: string, x: string) => (sent.push(['term', t, x]), { sent: true })
+  const sendRun = async (id: string, subject: string, body: string) => (sent.push(['run', id, subject, body]), { sent: true })
+  c.main = { agent: 'claude', terminal: 'term_main', run_id: 'run_1' }
+  assert.deepEqual(await notifyMain(c, log.ops, send, sendRun), { sent: true, lastOp: 901 })
+  assert.deepEqual(sent.pop(), ['term', 'term_main', signalText(log.ops)])
+  c.main = { agent: 'claude', terminal: '', run_id: 'run_1' }
+  assert.deepEqual(await notifyMain(c, log.ops, send, sendRun), { sent: true, lastOp: 901 })
+  const [kind, id, subject, body] = sent.pop()!
+  assert.deepEqual([kind, id, subject], ['run', 'run_1', SIGNAL])
+  assert.ok(body!.startsWith(`${c.workspace.name} の操縦席の窓から: ${SIGNAL}（直してほしい d21: `), body)
+  assert.ok(body!.includes(`書いた文（全文）:\n${text}`), body)
+  // Run に送る道具の無いところ（パネル）と、端末も Run も無い帳簿は送らない。
+  assert.deepEqual(await notifyMain(c, log.ops, send), { sent: false, reason: 'cockpit.json に main がありません' })
+  c.main = { agent: 'claude', terminal: '' }
+  assert.deepEqual(await notifyMain(c, log.ops, send, sendRun), { sent: false, reason: 'cockpit.json に main がありません' })
+  assert.deepEqual(sent, [])
+  // 送れなかった理由はそのまま返す（窓の上の帯に出す）。
+  c.main = { agent: 'claude', terminal: '', run_id: 'run_1' }
+  assert.deepEqual(await notifyMain(c, log.ops, send, async () => { throw new Error('Run が見つかりません') }), { sent: false, reason: 'Run が見つかりません' })
 })
 
 test('同じ瞬間に同じファイルを何度書いても、一時ファイルが取り違えられず全部書ける', async () => {
