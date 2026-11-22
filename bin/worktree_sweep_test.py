@@ -43,6 +43,18 @@ elif key == "worktree rm":
     print(json.dumps({"ok": True, "result": {}}))
 ''' % sys.executable
 
+# 偽の gh。gh pr list --state merged --head <branch> に、ORCA_FAKE の prs.json（ブランチ → PR の一覧）を返す。
+FAKE_GH = r'''#!%s
+import json, os, sys
+d = os.environ["ORCA_FAKE"]
+a = sys.argv[1:]
+with open(os.path.join(d, "gh-calls"), "a") as fh:
+    fh.write(" ".join(a) + "\n")
+p = os.path.join(d, "prs.json")
+prs = json.load(open(p)) if os.path.exists(p) else {}
+print(json.dumps(prs.get(a[a.index("--head") + 1], [])))
+''' % sys.executable
+
 
 def git(cwd, *args):
     r = subprocess.run(["git", "-C", cwd] + list(args), capture_output=True, text=True)
@@ -57,9 +69,11 @@ class WorktreeSweepTest(unittest.TestCase):
         self.bin = os.path.join(self.tmp, "bin")
         os.makedirs(self.fake)
         os.makedirs(self.bin)
-        with open(os.path.join(self.bin, "orca"), "w") as fh:
-            fh.write(FAKE_ORCA)
-        os.chmod(os.path.join(self.bin, "orca"), 0o755)
+        for name, body in (("orca", FAKE_ORCA), ("gh", FAKE_GH)):
+            with open(os.path.join(self.bin, name), "w") as fh:
+                fh.write(body)
+            os.chmod(os.path.join(self.bin, name), 0o755)
+        self.prs = {}
         self.under = os.path.join(self.tmp, "workspaces")
         self.root = os.path.join(self.tmp, "repo")
         os.makedirs(self.root)
@@ -104,6 +118,8 @@ class WorktreeSweepTest(unittest.TestCase):
             if data is not None:
                 with open(os.path.join(self.fake, name), "w") as fh:
                     json.dump(data, fh)
+        with open(os.path.join(self.fake, "prs.json"), "w") as fh:
+            json.dump(self.prs, fh)
         env = dict(os.environ, PATH=self.bin + ":/usr/bin:/bin", ORCA_FAKE=self.fake, ORCA_CLI_COMMAND="orca",
                    WORKTREE_SWEEP_HOME=os.path.join(self.tmp, "home"))
         r = subprocess.run([sys.executable, SCRIPT, "--under", self.under] + list(args), env=env, capture_output=True, text=True)
@@ -173,6 +189,44 @@ class WorktreeSweepTest(unittest.TestCase):
         out = self.run_sweep("--apply")
         self.assertEqual(self.kind(out, squashed), "判断が要る")
         self.assertIn("trunk に無い commit 2 件", out)
+        self.assertEqual(self.removed(), [])
+
+    def squash_merged(self, name, **kw):
+        """name のブランチを 2 commit 積んで trunk に squash でマージし、その PR（head は今の HEAD）をマージ済みとして置く。
+        終わった Dispatch の記録は無い（担当の居場所や手で立てた worktree）。"""
+        path = self.worktree(name, finished=False, **kw)
+        self.commit(path, name + "-b.txt", "b")
+        self.commit(path, name + "-c.txt", "c")
+        git(self.root, "merge", "-q", "--squash", name)
+        git(self.root, "commit", "-q", "-m", "squash " + name)
+        self.prs[name] = [{"number": 7, "headRefOid": git(path, "rev-parse", "HEAD")}]
+        return path
+
+    def test_squash_merged_pr_without_a_dispatch_record_is_removed(self):
+        squashed = self.squash_merged("squashed")
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [squashed])
+        self.assertIn("消した: %s（squashed）" % squashed, out)
+        with open(os.path.join(self.fake, "gh-calls")) as fh:
+            self.assertIn("pr list --state merged --head squashed", fh.read())
+
+    def test_squash_merged_pr_with_commits_after_the_merge_is_kept(self):
+        later = self.squash_merged("later", idle=30)
+        self.commit(later, "d.txt", "d")
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.kind(out, later), "判断が要る")
+        self.assertIn("PR #7 はマージ済みだが、マージのあとに積んだ commit がある", out)
+        self.assertEqual(self.removed(), [])
+
+    def test_squash_merged_pr_with_uncommitted_changes_or_a_working_agent_is_kept(self):
+        dirty = self.squash_merged("dirty", idle=30)
+        with open(os.path.join(dirty, "dirty-b.txt"), "w") as fh:
+            fh.write("changed")
+        busy = self.squash_merged("busy", agents=[{"state": "working"}])
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.kind(out, dirty), "判断が要る")
+        self.assertIn("未 commit のファイル 1 件", out)
+        self.assertEqual(self.kind(out, busy), "触らない")
         self.assertEqual(self.removed(), [])
 
     def test_fast_forwarded_branch_is_removed(self):

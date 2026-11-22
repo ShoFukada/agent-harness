@@ -132,12 +132,13 @@ def cache(path, rel):
 
 
 def inspect(row, root):
-    """未 commit・default に無い commit・固有のデータなど、残っている理由の一覧を返す。
+    """残っている理由を (未 commit・固有のデータなど worktree の中の理由, default に入っていない理由) に分けて返す。
+    後者はブランチの PR がマージ済みと分かれば取り消せる（squash でマージした commit は default の祖先にならない）。
     ルートから写された CLAUDE.local.md なども未追跡のファイルとして数える（確かめたあとに人が保存しうるので、無人では消さない）。"""
     path, reasons = row["path"], []
     st = git(path, "status", "--porcelain", "-z", "--branch", "--untracked-files=all")
     if st.returncode != 0:
-        return [failed(st, "status")]
+        return [failed(st, "status")], []
     dirty = 0
     for line in entries(st.stdout):
         rel = line[3:]
@@ -157,7 +158,7 @@ def inspect(row, root):
     # matching にするのは、未追跡のディレクトリの中の無視されたファイル（config/.env）が config/ に畳まれないようにするため。
     ig = git(path, "status", "--porcelain", "-z", "--ignored=matching", "--untracked-files=all")
     if ig.returncode != 0:
-        return reasons + [failed(ig, "status --ignored")]
+        return reasons + [failed(ig, "status --ignored")], []
     ignored = [l[3:] for l in entries(ig.stdout) if l.startswith("!! ")]
     dirs = [d for d in ignored if d.endswith("/") and os.path.basename(d.rstrip("/")) not in REGEN and not cache(path, d.rstrip("/"))]
     own = [f for f in ignored if not f.endswith("/") and os.path.basename(f) != ".DS_Store" and not cache(path, f)
@@ -169,7 +170,7 @@ def inspect(row, root):
     r = git(path, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
     base = r.stdout.strip()[len("refs/remotes/origin/"):] if r.returncode == 0 and r.stdout.startswith("refs/remotes/origin/") else ""
     if not base:
-        return reasons + ["default ブランチを決められない（origin/HEAD が無い）"]
+        return reasons, ["default ブランチを決められない（origin/HEAD が無い）"]
     # ローカルの default と origin の default のどちらか一方に全部入っていれば入っている扱いにする（PR でマージして pull 前の場合）。
     # 2 つに分かれて入っているものは、どちらにもそろっていないので入っていない扱い。タグと取り違えないよう完全な ref で比べる。
     # git cherry はマージコミットを並べないので、比較先から届かないマージコミット（競合の解決などを含みうる）は別に数える。
@@ -179,19 +180,43 @@ def inspect(row, root):
             continue
         c, m = git(path, "cherry", "-v", upstream, "HEAD"), git(path, "rev-list", "--merges", upstream + "..HEAD")
         if c.returncode != 0 or m.returncode != 0:
-            return reasons + [failed(c if c.returncode else m, "cherry")]
+            return reasons, [failed(c if c.returncode else m, "cherry")]
         plus, merges = [l[2:] for l in c.stdout.splitlines() if not l.startswith("- ")], m.stdout.split()
         if found is None or not (plus or merges):
             found = (plus, merges)
     if found is None:
-        return reasons + ["%s と比べられない（ローカルにも origin にも無い）" % base]
-    plus, merges = found
+        return reasons, ["%s と比べられない（ローカルにも origin にも無い）" % base]
+    plus, merges, unmerged = found + ([],)
     if plus:
-        reasons.append("%s に無い commit %d 件（%s%s。squash で入れたものもここに出る）" % (
+        unmerged.append("%s に無い commit %d 件（%s%s。squash で入れたものもここに出る）" % (
             base, len(plus), "、".join(c[:7] + c[40:][:40] for c in plus[:3]), "、ほか" if len(plus) > 3 else ""))
     if merges:
-        reasons.append("%s に無いマージコミット %d 件（%s）" % (base, len(merges), "、".join(c[:7] for c in merges[:3])))
-    return reasons
+        unmerged.append("%s に無いマージコミット %d 件（%s）" % (base, len(merges), "、".join(c[:7] for c in merges[:3])))
+    return reasons, unmerged
+
+
+def merged_pr(path, branch):
+    """branch の PR がマージ済みなら (その PR, None)。マージのあとに commit を積んでいれば (None, 理由)、PR が無ければ (None, None)。
+    gh は worktree の remote からリポジトリを決める。PR の head の SHA と今の HEAD が同じときだけマージ済みと見なす
+    （同じ名前のブランチを使い回した PR や、別の fork の PR に当てないため）。gh を読めなければ (None, 理由)。"""
+    try:
+        r = subprocess.run(["gh", "pr", "list", "--state", "merged", "--head", branch, "--json", "number,headRefOid", "--limit", "20"],
+                           cwd=path, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, "gh で PR を確かめられない（%s）" % str(e)[:120]
+    try:
+        prs = json.loads(r.stdout) if r.returncode == 0 else None
+    except ValueError:
+        prs = None
+    if not isinstance(prs, list):
+        return None, "gh で PR を確かめられない（%s）" % (" ".join((r.stderr or r.stdout or "出力なし").split())[:120])
+    head = git(path, "rev-parse", "HEAD").stdout.strip()
+    hit = next((p for p in prs if isinstance(p, dict) and head and p.get("headRefOid") == head), None)
+    if hit or not prs:
+        return hit, None
+    p = prs[0]
+    return None, "PR #%s はマージ済みだが、マージのあとに積んだ commit がある（PR の head %s・今の HEAD %s）" % (
+        p.get("number"), str(p.get("headRefOid"))[:7], head[:7])
 
 
 def same_branch_count(path, branch):
@@ -210,7 +235,8 @@ def idle_ms(row, now):
 
 def classify(rows, under, dispatches, plugins, now, only=None):
     """Orca が under の下に作った worktree を (分類, 行, 理由) に分ける。only を渡すとそのパスだけを調べる。
-    自動で消すのは、その worktree を使った worker・担当が終わった記録があり、取り込み済みで、固有のデータが無いものだけ。"""
+    自動で消すのは、その worktree を使った worker・担当が終わった記録があり、取り込み済みで、固有のデータが無いものと、
+    ブランチの PR がマージ済みでそのあとに commit を積んでおらず、固有のデータが無いもの（終わった記録は問わない）だけ。"""
     under = real(under) + "/"
     live, finished = dispatches or (None, None)
     roots = {r.get("repoId"): r["path"] for r in rows if r.get("isMainWorktree") and r.get("path")}
@@ -243,18 +269,25 @@ def classify(rows, under, dispatches, plugins, now, only=None):
             # 担当のチャットや人が開いた会話は Orca が閉じないので、開いている間は使っている途中と見なし、人に決めさせる対象にも出さない。
             out.append((KEEP, r, ["エージェントの会話が開いている"]))
             continue
-        reasons = inspect(r, roots.get(r.get("repoId")))
+        reasons, unmerged = inspect(r, roots.get(r.get("repoId")))
         twins = same_branch_count(r["path"], branch) if branch else 1
         if seen[("path", path)] > 1 or seen[("branch", r.get("repoId"), branch)] > 1 or twins != 1:
             reasons.insert(0, "同じリポジトリに同じブランチかパスの worktree が 2 つ以上ある、または git の一覧を読めない（取り違えを避けて消さない）")
-            out.append((DECIDE, r, reasons))
+            out.append((DECIDE, r, reasons + unmerged))
             continue
         if live is None or plugins is None:
-            out.append((KEEP, r, ["Orca の dispatch かプラグインの一覧を読めず、使われていないと確かめられない"] + reasons))
+            out.append((KEEP, r, ["Orca の dispatch かプラグインの一覧を読めず、使われていないと確かめられない"] + reasons + unmerged))
             continue
-        if not forms & finished:
+        pr = None
+        if branch and not reasons and (unmerged or not forms & finished):
+            # squash でマージした PR のブランチは default の祖先にならず、担当の居場所や手で立てた worktree には終わった記録も無い。
+            # PR がマージ済みで、そのあとに何も積んでいなければ、そのどちらが無くても片付けてよい。
+            pr, why = merged_pr(r["path"], branch)
+            unmerged = [] if pr else unmerged + ([why] if why else [])
+        if not pr and not forms & finished:
             # 人が Orca で作ったばかりの worktree などは、取り込み済みに見えても worker の後片付けではないので消さない。
             reasons.insert(0, "この worktree を使った worker・担当が終わった記録が無い")
+        reasons += unmerged
         if not reasons and not (isinstance(r.get("createdAt"), int) and now - r["createdAt"] >= IDLE_MS):
             # 終わった記録はパスで当てるので、片付けたあとに同じパスで作り直した worktree にも当たる。
             # Orca は dispatch の時刻を launchd から読める形で出さないので、作って 24 時間たつまでは消さない。
