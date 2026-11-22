@@ -308,6 +308,8 @@ body { margin:0; }
 .ck.win .flags { padding-bottom:10px; }
 .ck.win .flags .err { color:var(--hot); font-weight:600; }
 .ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
+.ck.win .wsince { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); }
+.ck.win .wsince b { font-weight:600; color:var(--ink); margin-right:8px; }
 .ck.win .wnotes { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
 .ck.win .wmain { display:flex; flex:1; min-height:0; position:relative; }
 .ck.win .wcol { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; }
@@ -388,6 +390,9 @@ body { margin:0; }
 .ck.win .tag.wait { color:var(--ink2); }
 .ck.win .tag.talk { color:var(--focus); font-weight:600; }
 .ck.win .tag.miss { color:var(--hot); }
+/* 状態の印は押せる語（青の文字・下線）と見分けるよう、薄い地の小さな札にする（Neon 24）。 */
+.ck.win .tag.new { color:var(--focus); background:var(--run-bg); border-radius:4px; padding:0 5px; font-weight:600; }
+.ck.win .tn .tag.new { margin-left:8px; }
 
 /* 詳細（要対応・対応済みの右） */
 /* 縦の flex にして、操作の帯をいつも詳細の下端に置く（短い詳細で本文のすぐ下に上がらないように。初見 2 巡目 4）。 */

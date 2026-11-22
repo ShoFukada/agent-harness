@@ -21,7 +21,7 @@ import { sendFromMailbox, type MailOrca } from './mail.ts'
 import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readAskTabs, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAskTab, writeNotified, type Files, type SendRun } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
-const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts', 'src/markdown.ts'])
+const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts', 'src/markdown.ts', 'src/since.ts'])
 /** カードの詳細に出す、相談で決まったことの件数（window-view.ts の consultHtml と同じ）。 */
 const SHOWN_DECISIONS = 3
 /** 窓に送る、質問 1 つの控えの節の数と 1 節の字数（長い答えを毎回の配信に載せない）。 */

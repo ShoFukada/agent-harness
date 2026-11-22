@@ -6,6 +6,7 @@ import {
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 import { markdown } from './markdown.ts'
+import { MARK_LABEL, type Mark, type Since } from './since.ts'
 import type { AutomationFact, RulingHit } from './protocol.ts'
 
 type Svg = (raw: string) => string
@@ -58,6 +59,8 @@ const kindName = ({ card: c, idle }: { card: Card; idle?: { check?: string } }) 
   c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : c.id.startsWith(IDLE_ID) ? (idle?.check ? '確認日' : '放置') : KIND_LABEL[c.kind]
 const leadWord = (r: Row, closed: boolean) => (closed || r.status !== 'mine' ? kindName(r) : actionVerb(r.card, r.agent?.ask?.kind))
 const tag = (text: string, cls = '') => `<span class="tag${cls ? ` ${cls}` : ''}">${esc(text)}</span>`
+/** 前に見たときから出た・変わった行の印（追加 24）。 */
+const markTag = (m: Mark | undefined) => (m ? tag(MARK_LABEL[m], 'new') : '')
 
 /** 行の札。協議中と修正待ち。相談は見出しで別に数えるので札を付けない（初見 12）。 */
 function tags(r: Row): string {
@@ -86,7 +89,7 @@ const outcome = (how: string | undefined) => {
   return w === '決定' ? '' : w
 }
 
-function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed = false): string {
+function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed = false, mark?: Mark): string {
   const c = r.card
   const t = taskOf(b, r)
   // 返した答えは 1 行で切り、全文は詳細で読む（長い別の回答で行が伸びないように）。
@@ -98,7 +101,7 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
   const sub = r.agent?.ask?.from ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.waiting_on && `待ち ${t.task.waiting_on}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
-    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
+    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${markTag(mark)}${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
     <span class="du${closed ? ' cl' : ''}">${right}${closed || !rowIdHtml(r) ? '' : `${right ? '' : '<span aria-hidden="true">&nbsp;</span>'}${rowIdHtml(r)}`}</span></button>`
 }
 
@@ -127,7 +130,7 @@ function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
   const groups = todoGroups(b)
   const reps = vrows(b, b.d.reports)
   const list = groups.length
-    ? groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>`).join('')
+    ? groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now, false, ui.since?.rows[keyOf(r)])).join('')}</div></section>`).join('')
     : '<div class="calm"><b>要対応 0 件</b></div>'
   const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">報告（参照のみ）${reps.length} 件</div><div class="rows">${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>` : ''
   const order = todoOrder(b)
@@ -511,7 +514,7 @@ function checkOnHtml(t: TaskView, now: number): string {
   return tokyoDay(now) >= day ? `<b class="chk">確認日 ${esc(fmtDate(day))}</b>` : `<span class="chk">確認日 ${esc(fmtDate(day))}</span>`
 }
 
-function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined, now: number): string {
+function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined, now: number, mark?: Mark): string {
   const st = stateOf(t, todo.get(t.task.id) ?? [])
   const reply = st !== 'ok' && replyWait(todo.get(t.task.id) ?? [])
   const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r)}を開く</button>`).join('')
@@ -520,7 +523,7 @@ function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
   return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${reply ? 'stop' : st}">${reply ? REPLY_LABEL : TSTATE[st]}</span>
-    <span class="tn"><span>${esc(t.task.title)}${checkOnHtml(t, now)}</span>${t.task.goal?.trim() ? `<span class="nx gl" title="${esc(t.task.goal.trim())}">${esc(t.task.goal.trim())}</span>` : ''}${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
+    <span class="tn"><span>${esc(t.task.title)}${markTag(mark)}${checkOnHtml(t, now)}</span>${t.task.goal?.trim() ? `<span class="nx gl" title="${esc(t.task.goal.trim())}">${esc(t.task.goal.trim())}</span>` : ''}${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
     <span class="wk">${chips}</span></div>`
 }
 
@@ -540,7 +543,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now:
   // 選べるタスクが無い仕事は右に詳細を出せないので、協議のボタンを箱の中に置く。
   const talk = groups.length ? '' : `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(j.id)}">${j.owner ? '担当と協議' : '窓口と協議'}</button></div>`
   const inner = open
-    ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task, now)).join('')}`).join('')
+    ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task, now, ui.since?.tasks[t.task.id])).join('')}`).join('')
       + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '') + talk
     : ''
   // 協議は右の詳細から。
@@ -786,7 +789,7 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
     // 仕事の一覧を先に、見張る（経路と届いた連絡）は最後に置く。空の置き場所は出さない。
     + FORM_ORDER.filter((f) => f !== 'watch' && filled(f)).map((f) => sec(f)).join('')
     + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo, now)).join('')}</section>` : '')
-    + (loose.length ? `<section class="fsec"><h3><span>仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(t, todo, ui.task, now)).join('')}</div></div></section>` : '')
+    + (loose.length ? `<section class="fsec"><h3><span>仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(t, todo, ui.task, now, ui.since?.tasks[t.task.id])).join('')}</div></div></section>` : '')
     + (filled('watch') ? sec('watch', watchExtra) : '')
     + noTaskRequests(b, ui)
     + (done.length ? `<button type="button" class="wmore" data-toggle="done" aria-expanded="${!!ui.open.done}">${ui.open.done ? '完了した仕事を閉じる' : `完了した仕事 ${done.length} 件を表示`}</button>${ui.open.done ? done.map((j) => streamBox(b, j, ui, todo, now)).join('') : ''}` : '')
@@ -816,6 +819,16 @@ function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {
   const cur = vrows(b, b.d.settled).find((r) => keyOf(r) === ui.doneSel)
   return `<div class="wpane" aria-label="対応済み"><p class="mut">直近 14 日・新しい順</p>${list || '<div class="calm"><b>対応済み 0 件</b></div>'}</div>
     <aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, undefined, true) : ''}</aside>`
+}
+
+/**
+ * 上の帯「HH:MM 以降 済 n 件・新しい要対応 n 件・更新 n 件」（追加 24）。HH:MM は窓を前に見た（後ろに回した）時刻。
+ * 済はその後に済んだカードとタスク、新しい要対応はその後に出た要対応、更新は版の上がった要対応の行。0 の語は出さず、全部 0 なら帯を出さない（R91）。
+ */
+export function sinceHtml(s: Since | undefined, root: string, now: number): string {
+  if (!s || s.root !== root) return ''
+  const parts = [s.done && `済 ${s.done} 件`, s.fresh && `新しい要対応 ${s.fresh} 件`, s.updated && `更新 ${s.updated} 件`].filter(Boolean)
+  return parts.length ? `<div class="wsince" role="status"><b>${esc(nearDate(new Date(s.at).toISOString(), now))} 以降</b>${esc(parts.join('・'))}</div>` : ''
 }
 
 export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
@@ -848,6 +861,6 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
         ${orcaBtns}${theme}</div></div>
     <div class="wmain">${open ? `${casesSide(m, b, orcaBtns)}<button class="wscrim" type="button" data-side="close" aria-label="案件の一覧を閉じる"></button>` : ''}<div class="wcol">
     ${hard.length || unsent.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}${unsent}</div>` : ''}
-    ${choresHtml(b.d.gaps, soft.length, 'wnotes')}
+    ${sinceHtml(ui.since, b.root, now)}${choresHtml(b.d.gaps, soft.length, 'wnotes')}
     <main class="wbody split">${body}</main></div></div>${toastsHtml(ui, now, b.root)}</div>`
 }

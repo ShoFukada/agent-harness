@@ -3,6 +3,7 @@ import { DRAFT_FORMATS, draftFormat, FORMAT_LABEL, OTHER, UNDO_GRACE_MS, type As
 import { morph } from './morph.ts'
 import type { AskDecideResult, AskInput, AskResult, ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, RulingHit, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
+import { FRESH_WAIT_MS, seenTracker } from './since.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
@@ -115,6 +116,32 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   } catch {
     ui.sideOpen = true
   }
+  // 前に見たときの控え（追加 24）。読めない・書けないブラウザ（保存できない・壊れた）では印と帯を出さないだけ。
+  const seen = seenTracker({
+    get: (k) => {
+      try {
+        return localStorage.getItem(k)
+      } catch {
+        return null
+      }
+    },
+    set: (k, v) => localStorage.setItem(k, v)
+  }, win && document.hasFocus(), Date.now())
+  if (win) {
+    const front = () => {
+      seen.focus(Date.now())
+      draw()
+      setTimeout(draw, FRESH_WAIT_MS)
+    }
+    const back = (hidden: boolean) => {
+      seen.blur(hidden)
+      draw()
+    }
+    addEventListener('focus', front)
+    addEventListener('blur', () => back(false))
+    addEventListener('pagehide', () => back(true))
+    document.addEventListener('visibilitychange', () => (document.hidden ? back(true) : document.hasFocus() && front()))
+  }
   const applyTheme = () => (ui.dark = ui.theme === 'dark' || (ui.theme === 'auto' && dark.matches))
   applyTheme()
   dark.addEventListener('change', () => {
@@ -150,6 +177,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     if (win) {
       const b = boardOf(m, ui.filter)
       shownRoot = b?.root
+      ui.since = b ? seen.since(b, now) : undefined
       // 答えが控えに届いた質問は、待つ表示をやめる（送った時点より答えの節が増えた）。送った案件の控えで見る。
       for (const [k, w] of Object.entries(ui.askWait))
         if (w.ask && !w.error && (feed.views.find((v) => v.root === w.root)?.asks ?? []).some((a) => a.id === w.ask && a.answers > w.answers)) delete ui.askWait[k]
@@ -663,6 +691,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
 
   return {
     receive(next: Feed): void {
+      // 繋がらないときの描き直しは、前の配信の同じ一覧で来る。新しい配信のときだけ印を付ける。
+      if (next.views !== feed.views) seen.feed()
       feed = next
     },
     draw,

@@ -1,6 +1,7 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
 import { actionVerb, CONTEXT_FIELDS, COUNTED, COWORK_ID, IDLE_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
+import type { Since } from './since.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
   type Bucket, type Derived, type Gap, type JobView, type OrcaFacts, type OwnerRef, type Row
@@ -57,6 +58,8 @@ export type Ui = {
   askWait: Record<string, AskWait>
   /** この窓で聞いた質問（<root>#<質問 id>。全体の上で開いて出す。前の質問は畳む）。 */
   askMine: Record<string, boolean>
+  /** 窓を前に見たときからの変化（追加 24）。描くたびに controller がブラウザの控えから作る。控えが無ければ無い。 */
+  since?: Since
 }
 export type AskWait = { root: string; at: number; q: string; ask?: string; answers: number; error?: string }
 /** 票の中身を描くのに要る、その案件の図。 */
