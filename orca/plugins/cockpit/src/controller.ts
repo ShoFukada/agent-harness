@@ -521,7 +521,10 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     } else if (d.orca === 'sync') {
       if (feed.views.some((v) => v.root === feed.focused && v.cockpit)) ui.filter = feed.focused
     }
-    else if (d.tab !== undefined) ui.tab = d.tab as Tab
+    else if (d.tab !== undefined) {
+      ui.tab = d.tab as Tab
+      if (d.task) ui.task = d.task
+    }
     else if (d.toggle !== undefined) ui.open[d.toggle] = el.getAttribute('aria-expanded') !== 'true'
     else if (d.task !== undefined) ui.task = d.task
     else if (d.jump !== undefined) {

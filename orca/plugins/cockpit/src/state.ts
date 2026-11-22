@@ -1,8 +1,8 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, COWORK_ID, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
-  type AskMark, type AskThread, type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type StreamForm, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
+  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, taskSig, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
+  type AskMark, type AskThread, type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type StreamForm, type Task, type TaskSeen, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
 
@@ -93,7 +93,7 @@ export const isHot = (due: string | undefined, now: number) => !!due && !Number.
  * terminals は Orca にある端末の handle（読めていなければ無い。カードの相談のタブの生死に使う）。terminalsPartial は一覧が上限で切れているかもしれない印で、
  * そのときは一覧に無い handle を「閉じた」と言い切らない（一覧にある handle は生きていると使える）。
  */
-export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean; questions?: QuestionFact[] }
+export type OrcaFacts = { workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; ownersStale?: boolean; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean; questions?: QuestionFact[] }
 
 /** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
 export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
@@ -120,6 +120,8 @@ export type Row = CardView & {
   owner: OwnerRef
   stream?: Stream
   agent?: AgentRow
+  /** 線を越えて動いていないタスクの行（追加 35）の手がかり。 */
+  idle?: IdleTask
 }
 
 export type TaskView = TaskShown & { task: Task; settledAt?: number }
@@ -172,7 +174,7 @@ export type RequestView = {
   /** 済の条件ごとに証拠があるか。 */
   covered: boolean[]
 }
-export type DeriveOpts = { utterances?: Utterance[]; returned?: string[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[]; marks?: ReturnMark[]; asks?: AskThread[]; askMarks?: AskMark[]; root?: string }
+export type DeriveOpts = { utterances?: Utterance[]; returned?: string[]; firstSeen?: Record<string, string>; taskSeen?: TaskSeen; rulings?: Ruling[]; consults?: ConsultMemo[]; marks?: ReturnMark[]; asks?: AskThread[]; askMarks?: AskMark[]; root?: string }
 /** 帳簿の不備を窓口に直させる猶予。過ぎても欠けたままなら、窓の要対応の上に「抜けている」として出す（R47）。 */
 export const GAP_GRACE_MS = 30 * 60_000
 
@@ -202,6 +204,8 @@ export type Derived = {
   requests: RequestView[]
   /** 猶予の 30 分を過ぎても直っていない帳簿の不備。窓の要対応の上に出す。 */
   gaps: Gap[]
+  /** 線を越えて動いていないタスク（R170）。 */
+  idle: IdleTask[]
 }
 
 const RANK: Record<CardKind, number> = { stuck: 0, permit: 1, decide: 2, send: 3, review: 4, consult: 5, inbox: 6, talk: 7, report: 8 }
@@ -430,7 +434,13 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const fromDispatch = dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])), dismissed)
   const found = [...mine, ...[...fromAgents, ...questionRows(c, root, facts, now)].filter((r) => !dismissed.has(`${r.card.id}@${r.card.rev}`)), ...fromDispatch]
   const cowork = coworkRows(c, root, facts, found, rows)
-  const queue = [...found.filter((r) => !cowork.absorbed.has(r)), ...cowork.rows].sort(byUrgency)
+  const idle = idleTasks(c, tasks, facts, opts.taskSeen, now)
+  const idleRows = idle.map((x): Row => {
+    const t = tasks.get(x.task)!.task
+    const card: Card = { id: `${IDLE_ID}${t.id}`, rev: Date.parse(x.since), kind: 'talk', state: 'open', stream: t.stream, tasks: [t.id], since: x.since, title: `「${t.title}」が${x.hours}時間動いていない`, next: t.next }
+    return { card, status: 'mine', pending: false, root, ws: c.workspace.name, owner: ownerOf(c, { stream: t.stream }, facts), stream: c.streams.find((s) => s.id === t.stream), idle: x }
+  })
+  const queue = [...found.filter((r) => !cowork.absorbed.has(r)), ...cowork.rows, ...idleRows].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
   for (const r of queue) counts[r.card.kind]++
   const total = COUNTED.reduce((n, k) => n + counts[k], 0)
@@ -444,7 +454,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const reqGaps = requests.filter((r) => r.missing.length).map((r): Gap => ({ kind: 'request', id: r.req.id, title: r.req.title, missing: r.missing, since: r.req.at }))
 
   return {
-    views, queue, counts, total, tasks, closed, settled, incomplete, unsorted, requests,
+    views, queue, counts, total, tasks, closed, settled, incomplete, unsorted, requests, idle,
     talking: queue.filter((r) => r.talking),
     fixing: rows.filter((r) => r.status === 'fixing').sort(byUrgency),
     waiting: rows.filter((r) => r.status === 'waiting').sort((a, b) => timeOf(a.card.awaiting?.since) - timeOf(b.card.awaiting?.since)),
@@ -520,6 +530,50 @@ export function returnedUtterances(c: Cockpit, rulings: Ruling[], memos: Consult
   const rets = [...memos.flatMap((m) => m.returns), ...asks.flatMap((a) => a.returns)]
   const ids = (xs: unknown) => (Array.isArray(xs) ? xs.map((x) => x?.utterance).filter((x): x is string => typeof x === 'string') : [])
   return [...new Set(rets.flatMap((r) => [...(inRulings.has(r.return_id) ? ids(r.decisions) : []), ...(inRequests.has(r.return_id) ? ids(r.requests) : [])]))]
+}
+
+/** 案件の名前が「顧客｜案件」の形か（R165）。全角の｜でちょうど 2 つに分かれ、前後の空白を外して両方が空でないこと。 */
+export const workspaceNameOk = (name: string) => {
+  const parts = name.trim().split('｜')
+  return parts.length === 2 && parts.every((p) => p.trim() !== '')
+}
+
+/** 放置の線（R169・R170）。worker も担当も動いていない作業中は 2 時間、未着手・待機は 24 時間。 */
+export const IDLE_HOURS: Partial<Record<TaskState, number>> = { run: 2, idle: 24, wait: 24 }
+/** 線を越えたタスク。since は最後に動いた時刻で、from はその出どころ（帳簿の更新・済んだことの記録・worker の最後の動き）。 */
+export type IdleTask = { task: string; since: string; hours: number; line: number; from: string; worker: string }
+
+/**
+ * 線を越えて動いていないタスク（R170）。待つ相手（waiting_on）のあるタスクと、確認日（check_on）の前のタスクは拾わない。
+ * 作業中は、worker が動いている・担当が作業中のものと、Orca を読めていない（動いているか分からない）ものを除く。
+ * 一緒に作る仕事で担当がターンを終えたものは、返事待ちの行（R128）が出るので除く。未着手・待機は帳簿のままのもの（worker の取り込み待ちは checks.intake）。
+ */
+export function idleTasks(c: Cockpit, tasks: Map<string, TaskView>, facts: OrcaFacts | undefined, seen: TaskSeen | undefined, now: number): IdleTask[] {
+  const today = localDay(now)
+  return [...tasks.values()].flatMap((t): IdleTask[] => {
+    const task = t.task
+    const line = IDLE_HOURS[t.state]
+    if (!line || t.why !== 'record' || task.waiting_on?.trim() || (task.check_on && today < task.check_on)) return []
+    const owner = ownerOf(c, { stream: task.stream }, facts)
+    if (t.state === 'run') {
+      // Orca を読めていない（窓は端末の一覧が無い・hook の CLI は facts が無い）か、チャットの担当の様子を読めていないと、動いているか分からないので保留する。
+      if (!facts?.terminals || (task.worker && !facts.dispatches) || (owner.how === 'chat' && (!facts.owners || facts.ownersStale)) || owner.state === 'working') return []
+      if (owner.state === 'done' && c.streams.find((s) => s.id === task.stream)?.form === 'cowork') return []
+    }
+    // 窓が覚えた印と今の中身が違えば、まだ覚えていない変化なので今動いたとみなす（常駐のプロセスが止まっていても誤って出さない）。
+    const mark = seen?.[task.id]
+    const marks: [number, string][] = [
+      [mark?.sig === taskSig(task) ? Date.parse(mark.at) : now, '帳簿の更新'],
+      [Math.max(0, ...(task.done ?? []).map((d) => (typeof d === 'string' ? 0 : timeOf(d.at)))), '済んだことの記録'],
+      [timeOf(task.waiting_since), '帳簿の更新'],
+      [t.settledAt ?? 0, 'worker の最後の動き']
+    ]
+    const [at, from] = marks.reduce((a, b) => (b[0] > a[0] ? b : a))
+    if (now - at < line * 3_600_000) return []
+    const worker = task.worker ? (t.state === 'run' ? 'worker の記録はあるが Orca に動きなし' : 'worker の記録あり') : 'worker なし'
+    const who = owner.how === 'main' ? '担当は立てていない（窓口が受け持つ）' : `担当「${owner.title}」は${owner.state === 'working' ? '作業中' : owner.state === 'done' ? '待機' : owner.state ? '止まっている' : '状態不明'}`
+    return [{ task: task.id, since: new Date(at).toISOString(), hours: Math.floor((now - at) / 3_600_000), line, from, worker: `${worker}・${who}` }]
+  })
 }
 
 /** 仕事ごとの今。済んだ仕事は後ろに回す。メインの書いた要約は使わず、タスクとカードから決める。 */
@@ -609,6 +663,8 @@ export type StateReport = {
     /** 進行中のタスクが無く、push の許すも開いていない（hook が git を見て、残りがあれば push を聞かせる）。 */
     push_check: boolean
     plugin: string | null
+    /** 「顧客｜案件」の形になっていない案件の名前（workspace.name、R165）。形が合っていれば null。hook が窓口に直させる。 */
+    workspace_name: string | null
     /** 読めていない経路。 */
     routes: string[]
     /** サイドバーで切れる長さの仕事・担当・タスクの名前（NAME_MAX を超える）。 */
@@ -621,6 +677,8 @@ export type StateReport = {
     unsorted: string[]
     /** 今の Dispatch が済んで Orca のタスクも終わったのに、手書きの state が run のままのタスク。 */
     stale_tasks: string[]
+    /** 線を越えて動いていないタスク（R170）。hook は「task@since」ごとに最初の 1 回だけ窓口に流す（since は動くたびに変わる）。 */
+    idle_tasks: { task: string; since: string; hours: number }[]
     /** 仕事（streams）に入っていない、済んでいないタスク。 */
     loose_tasks: string[]
     /** 5 段（STAGES）のどれにも寄せられない工程名の、済んでいないタスク（「t12（作る）」の形）。 */
@@ -837,6 +895,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       missing_workers: tasks.filter((t) => t.why === 'missing').map((t) => t.task.id),
       push_check: !tasks.some((t) => t.state === 'run') && !pushOpen,
       plugin: plugin ?? null,
+      workspace_name: typeof c.workspace.name !== 'string' ? '（名前が無い）' : workspaceNameOk(c.workspace.name) ? null : c.workspace.name,
       routes: (c.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x),
       // 頭の語（一緒に｜・任せる｜・作業｜ など。R146）も含めて数える。サイドバーに出るのはその名前のため。
       long_names: [
@@ -847,6 +906,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       incomplete_cards: d.incomplete.map((g) => ({ id: g.id, missing: missingFields(c.cards.find((x) => x.id === g.id)!).map((m) => m.key) })),
       incomplete_requests: d.requests.filter((r) => r.missing.length).map((r) => ({ id: r.req.id, missing: r.missing })),
       unsorted: d.unsorted.map((g) => g.id),
+      idle_tasks: d.idle.map((x) => ({ task: x.task, since: x.since, hours: x.hours })),
       stale_tasks: tasks.filter((t) => t.task.state === 'run' && t.why === 'intake' && facts?.dispatches?.[currentDispatch(t.task, facts) ?? '']?.taskStatus === 'completed').map((t) => t.task.id),
       loose_tasks: live.filter((t) => !c.streams.some((s) => s.id === t.stream)).map((t) => t.id),
       unknown_phase: live.filter((t) => !stageOf(t.phase)).map((t) => `${t.id}（${t.phase}）`),

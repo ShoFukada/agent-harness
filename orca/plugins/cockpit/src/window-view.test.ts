@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { answerParts, parseCockpit, STAGES, stageOf, type DraftFormat } from './model.ts'
+import { answerParts, parseCockpit, STAGES, stageOf, taskSig, type DraftFormat } from './model.ts'
 import type { ClipResult, CockpitView } from './protocol.ts'
 import { copyDraft, copyMessage, copyTarget } from './controller.ts'
 import { boardsOf, dropRulings, newUi, render, rowId, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
@@ -676,4 +676,22 @@ test('要対応の行の ID（追加 40）: 各行の右の列の下に、質問
   const done = page(aoba(), { tab: 'done' })
   assert.doesNotMatch(done.slice(done.indexOf('class="wpane"')), /class="cid"/)
   assert.match(CSS, /\.ck \.cid \{[^}]*user-select:text/)
+})
+
+test('放置の行（追加 35）: 要対応に「確認」の 1 行で何時間動いていないかを出し、詳細に最後の動き・worker と担当の今・帳簿の次と、タスクの詳細を開くボタン', () => {
+  const m = aoba((v) => {
+    const s = v.cockpit!.streams[0]!.id
+    v.cockpit!.tasks.push({ id: 'k9', stream: s, phase: '作成', title: '帳票を作る', state: 'run', next: '帳票の列を決める' })
+    v.taskSeen = { k9: { sig: taskSig(v.cockpit!.tasks.at(-1)!), at: new Date(NOW - 3 * 3_600_000).toISOString() } }
+    v.terminals = []
+  })
+  const h = page(m, { sel: '/ws/aoba##idle:k9' })
+  assert.match(h, /data-sel="\/ws\/aoba##idle:k9"[\s\S]*?<span class="kd[^"]*">確認<\/span>[\s\S]*?「帳票を作る」が3時間動いていない/)
+  const det = text(h.slice(h.indexOf('aria-label="詳細"')))
+  assert.match(det, /最後の動き .*（帳簿の更新）。作業中のまま2時間を超えたので出しています/)
+  assert.match(det, /worker・担当 worker なし/)
+  assert.match(det, /次にやること 帳票の列を決める/)
+  assert.match(det, /対応のしかた 「担当と話す」で止まっている理由を聞き/)
+  assert.match(h, /data-tab="whole" data-task="k9">タスクの詳細を開く/)
+  assert.match(h, /data-sel="\/ws\/aoba##idle:k9"[\s\S]*?<span class="cid">番号<span class="cv">k9<\/span>/, '放置の行の番号はタスクの id')
 })

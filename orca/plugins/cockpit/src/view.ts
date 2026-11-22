@@ -1,5 +1,5 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { actionVerb, chatMain, CONTEXT_FIELDS, COUNTED, COWORK_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
+import { actionVerb, chatMain, CONTEXT_FIELDS, COUNTED, COWORK_ID, IDLE_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -67,8 +67,8 @@ export function boardsOf(views: CockpitView[], now: number): Board[] {
   return views
     .filter((v): v is CockpitView & { root: string; cockpit: NonNullable<CockpitView['cockpit']> } => !!v.root && !!v.cockpit)
     .map((v) => {
-      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, current: v.current, terminals: v.terminals, terminalsPartial: v.terminalsPartial, questions: v.questions }
-      return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now, { utterances: v.utterances, returned: v.returned, firstSeen: v.firstSeen }) }
+      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, ownersStale: v.ownersStale, current: v.current, terminals: v.terminals, terminalsPartial: v.terminalsPartial, questions: v.questions }
+      return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now, { utterances: v.utterances, returned: v.returned, firstSeen: v.firstSeen, taskSeen: v.taskSeen }) }
     })
 }
 
@@ -433,6 +433,7 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   // orchestration の question の行は、聞かれた側（窓口か担当）を開く。
   const whose = c.id.startsWith('#ask:') || c.id.startsWith(COWORK_ID) ? (r.owner.how === 'main' ? '窓口の' : '担当の') : ''
   if (r.agent) btns = [b('focus', `${whose}${r.agent.chat ? 'チャット' : '端末'}を開く`, 'pri'), ...dismiss]
+  else if (c.id.startsWith(IDLE_ID)) btns = [talk(r.owner.how === 'main' ? '窓口と話す' : '担当と話す'), ...(win ? [`<button class="btn" type="button" data-tab="whole" data-task="${esc(c.tasks?.[0] ?? '')}">タスクの詳細を開く</button>`] : [])]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返信不要'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
     case 'send': btns = otherOpen ? fix : [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), ...fix, b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break

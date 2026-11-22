@@ -1,4 +1,4 @@
-import type { AskAnswer, AskThread, Card, Cockpit, ConsultMemo, DraftCheck, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
+import type { AskAnswer, AskThread, Card, Cockpit, ConsultMemo, DraftCheck, DraftFormat, Handoff, OpType, TaskSeen, UserLog, Utterance } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -96,6 +96,8 @@ export type CockpitView = {
   dispatches?: Record<string, DispatchFact | null>
   /** 担当の今（session で引く）。パネルは持たない。 */
   owners?: OwnerLive[]
+  /** 担当の今を最後の読み直しで読めなかった（owners は前の値か空）。放置の判定がチャットの担当のタスクを保留する。 */
+  ownersStale?: boolean
   /** メインに合図を送ったときの、最後の op_id。 */
   notifiedOp: number
   /** 自動の合図が届いていないとき。waiting: メインが作業中なので一区切りを待っている。failed: 送れなかった。 */
@@ -106,6 +108,8 @@ export type CockpitView = {
   utterances?: Utterance[]
   /** 相談・質問の返しで反映された発言の id（仕分け済みとみなす）。判断の記録は窓に送らないので常駐のプロセスが決める。 */
   returned?: string[]
+  /** 済んでいないタスクの中身が最後に変わった時刻（放置の検出の起点）。 */
+  taskSeen?: TaskSeen
   /** at の無い開いたカードを最初に見つけた時刻。 */
   firstSeen?: Record<string, string>
   /** タスクの id → 今の Dispatch（Run の続きをたどった先）。パネルは持たない。 */

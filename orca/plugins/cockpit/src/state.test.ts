@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit, requestCards, stageOf, type Card, type Cockpit } from './model.ts'
-import type { AgentRow, QuestionFact } from './protocol.ts'
-import { bucketOf, byUrgency, coworkSessions, derive, lastParagraph, lookupTerms, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, type Row } from './state.ts'
+import { parseCockpit, requestCards, stageOf, taskSig, type Card, type Cockpit, type TaskSeen } from './model.ts'
+import type { AgentRow, OwnerLive, QuestionFact } from './protocol.ts'
+import { bucketOf, byUrgency, coworkSessions, derive, lastParagraph, lookupTerms, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
 import { chatHandles, liveChats } from '../window/orca-state.ts'
 import { orcaFacts } from '../window/state.ts'
@@ -650,4 +650,94 @@ test('Orca の名前（R146）: 仕事と担当は頭に形（一緒に｜・任
   w.cockpit.tasks.push({ id: 't9', stream: 's9', phase: '実装', title: 'x', state: 'run' })
   assert.equal([...streamName(w.cockpit.streams.at(-1)!)].length, NAME_MAX + 1)
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.long_names, [`s9（${NAME_MAX + 1} 字）`])
+})
+
+test('案件の名前の形（R165）: 全角の｜でちょうど 2 つに分かれ、両方が空でない名前だけを通し、外れた名前を checks.workspace_name に名指しする', () => {
+  assert.deepEqual(
+    ['青葉物流｜配車アプリ', ' 社内 ｜ ハーネス ', 'dev-standards', '社内|ハーネス', '社内｜', '｜ハーネス', '社内｜ ', 'A｜B｜C', ''].map(workspaceNameOk),
+    [true, true, false, false, false, false, false, false, false]
+  )
+  const w = ws(0)
+  w.cockpit.workspace.name = '青葉物流｜配車アプリ'
+  assert.equal(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, null)
+  w.cockpit.workspace.name = 'dev-standards'
+  assert.equal(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, 'dev-standards')
+  // 名前の欄が無くても検査で落ちず、無いことを名指しする（Codex 4）。
+  delete (w.cockpit.workspace as { name?: string }).name
+  assert.equal(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.workspace_name, '（名前が無い）')
+})
+
+test('放置の検出（R170）: worker も担当も動いていない作業中は 2 時間、未着手・待機は 24 時間で 1 行。待つ相手・確認日の前は拾わず、checks は動くたびに起点が変わる', async () => {
+  const w = ws(0)
+  const s = w.cockpit.streams[0]!.id
+  w.cockpit.owners = []
+  w.cockpit.tasks = [
+    { id: 'k1', stream: s, phase: '作成', title: '一覧を作る', state: 'run' },
+    { id: 'k2', stream: s, phase: '調査', title: '前提を調べる', state: 'idle' },
+    { id: 'k3', stream: s, phase: '確認', title: '先方の返事を待つ', state: 'wait', waiting_on: '森さん' },
+    { id: 'k4', stream: s, phase: '確認', title: '来週見直す', state: 'wait', check_on: '2026-11-30' }
+  ]
+  const at = (min: number) => new Date(NOW - min * 60_000).toISOString()
+  const seen = (mins: Record<string, number>): TaskSeen => Object.fromEntries(w.cockpit.tasks.map((t) => [t.id, { sig: taskSig(t), at: at(mins[t.id] ?? 0) }]))
+  const facts = { workers: [], terminals: [] as string[] }
+  const idle = (mins: Record<string, number>, f: typeof facts | undefined) => derive(w.cockpit, w.log, [], '/a', f, NOW, { taskSeen: seen(mins) }).idle.map((x) => x.task)
+  assert.deepEqual(idle({ k1: 119, k2: 1439, k3: 9999, k4: 9999 }, facts), [])
+  assert.deepEqual(idle({ k1: 120, k2: 1440, k3: 9999, k4: 9999 }, facts), ['k1', 'k2'])
+  // Orca を読めていないと、作業中が動いているか分からないので拾わない（未着手は拾う）。窓は端末の一覧が無いことで分かる。
+  assert.deepEqual(idle({ k1: 300, k2: 1440 }, undefined), ['k2'])
+  assert.deepEqual(idle({ k1: 300, k2: 1440 }, { workers: [] } as unknown as typeof facts), ['k2'])
+  // チャットの担当が結ばれた作業中は、担当の様子（agent list）を読めていなければ保留し、読めて作業中でなければ拾う。
+  w.cockpit.owners = [{ id: 'o1', title: '一覧の担当', stream: s, session: 'sess-1' }]
+  assert.deepEqual(idle({ k1: 300, k2: 1440 }, facts), ['k2'])
+  assert.deepEqual(idle({ k1: 300, k2: 1440 }, { ...facts, owners: [{ session: 'sess-1', kind: 'chat', state: 'working' }] } as typeof facts), ['k2'])
+  assert.deepEqual(idle({ k1: 300, k2: 1440 }, { ...facts, owners: [{ session: 'sess-1', kind: 'chat', state: 'done' }] } as typeof facts), ['k1', 'k2'])
+  // 窓で agent list だけを読めなかった回は、前の値（初回は空）が残っていても保留する（Codex 2 巡目）。
+  assert.deepEqual(idle({ k1: 300, k2: 1440 }, { ...facts, owners: [], ownersStale: true } as typeof facts), ['k2'])
+  // hook の CLI（orcaFacts）も担当の様子を読み、読めなければ無いまま渡す（窓と同じ判定にするため。Codex 1）。
+  const cli = (agents?: () => Promise<OwnerLive[]>) => orcaFacts('/ws', w.cockpit, async () => [], async () => [], async () => null, undefined, undefined, undefined, agents).then((x) => x.facts!)
+  const live: OwnerLive[] = [{ session: 'sess-1', kind: 'chat', state: 'working' }]
+  assert.deepEqual((await cli(async () => live)).owners, live)
+  assert.equal((await cli(async () => { throw new Error('orca が無い') })).owners, undefined)
+  assert.deepEqual(idle({ k1: 300, k2: 1440 }, (await cli(async () => live)) as typeof facts), ['k2'])
+  w.cockpit.owners = []
+  const d = derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen({ k1: 150 }) })
+  const row = d.queue.find((r) => r.card.id === '#idle:k1')!
+  assert.equal(row.card.title, '「一覧を作る」が2時間動いていない')
+  assert.equal(row.idle!.from, '帳簿の更新')
+  assert.equal(d.total, derive(w.cockpit, w.log, [], '/a', facts, NOW).total, '件数（5 種類）には数えない')
+  // 窓が覚えた印と中身が違う（まだ覚えていない変化）なら、今動いたとみなす。
+  const changed = seen({ k1: 300 })
+  w.cockpit.tasks[0]!.next = '並べ替えを足す'
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: changed }).idle.map((x) => x.task), [])
+  // checks は「task@since」で 1 回だけ流す前提: 同じあいだは since が変わらず、動いたあとまた越えると since が変わる。
+  const r1 = report(w.cockpit, w.log, [], facts, 'ok', NOW, undefined, { taskSeen: seen({ k1: 130 }) }).checks.idle_tasks
+  const r2 = report(w.cockpit, w.log, [], facts, 'ok', NOW + 30 * 60_000, undefined, { taskSeen: seen({ k1: 130 }) }).checks.idle_tasks
+  assert.deepEqual(r1.map((x) => `${x.task}@${x.since}`), r2.map((x) => `${x.task}@${x.since}`))
+  const r3 = report(w.cockpit, w.log, [], facts, 'ok', NOW, undefined, { taskSeen: seen({ k1: 125 }) }).checks.idle_tasks
+  assert.notEqual(r3[0]!.since, r1[0]!.since)
+})
+
+test('放置の検出の起点: 常駐のプロセスがタスクの中身の変わった時刻を taskseen.json に覚え、変わらなければ書き換えず、済んだタスクは消す', async () => {
+  const { loadFiles, recordTaskSeen, emptyFiles } = await import('./store.ts')
+  const root = mkdtempSync(path.join(os.tmpdir(), 'cockpit-seen-'))
+  mkdirSync(path.join(root, '.orca', 'cockpit'), { recursive: true })
+  const w = ws(0)
+  w.cockpit.tasks = [{ id: 'k1', stream: w.cockpit.streams[0]!.id, phase: '作成', title: 'a', state: 'run' }, { id: 'k2', stream: w.cockpit.streams[0]!.id, phase: '作成', title: 'b', state: 'ok' }]
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(w.cockpit))
+  let files = await loadFiles(root, emptyFiles())
+  files.taskSeen = await recordTaskSeen(root, files, NOW)
+  assert.deepEqual(Object.keys(files.taskSeen), ['k1'])
+  assert.equal(files.taskSeen.k1!.at, new Date(NOW).toISOString())
+  files = await loadFiles(root, files)
+  assert.equal((await recordTaskSeen(root, files, NOW + 60_000)).k1!.at, new Date(NOW).toISOString(), '中身が同じなら起点を動かさない')
+  w.cockpit.tasks[0]!.phase = '確認'
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(w.cockpit))
+  files = await loadFiles(root, files)
+  assert.equal((await recordTaskSeen(root, files, NOW + 60_000)).k1!.at, new Date(NOW + 60_000).toISOString())
+  assert.equal(JSON.parse(readFileSync(path.join(root, '.orca', 'cockpit', 'taskseen.json'), 'utf8')).k1.at, new Date(NOW + 60_000).toISOString())
+  // 時刻の読めない項目は捨てて初めて見たものとして記録し直す（判定全体が例外で止まらない。Codex 3）。
+  writeFileSync(path.join(root, '.orca', 'cockpit', 'taskseen.json'), JSON.stringify({ k1: { sig: taskSig(w.cockpit.tasks[0]!), at: 'broken' } }))
+  files = await loadFiles(root, files)
+  assert.deepEqual(files.taskSeen, {})
+  assert.equal((await recordTaskSeen(root, files, NOW + 120_000)).k1!.at, new Date(NOW + 120_000).toISOString())
 })

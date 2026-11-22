@@ -22,6 +22,7 @@ export const KIND_LABEL: Record<CardKind, string> = {
 export function actionVerb(c: Pick<Card, 'kind' | 'manual'> & { id?: string }, ask?: 'question' | 'permit'): string {
   if (c.kind === 'stuck') return ask === 'question' ? '答える' : ask === 'permit' ? '許可' : '再開'
   if (c.id?.startsWith(COWORK_ID)) return ask === 'question' ? '答える' : '確認'
+  if (c.id?.startsWith(IDLE_ID)) return '確認'
   if (c.kind === 'permit' && c.manual) return '対応'
   return ACTION_VERB[c.kind]
 }
@@ -42,6 +43,8 @@ export type Task = {
   state: TaskState
   /** wait で外の相手（顧客・他社）を待つときの相手。 */
   waiting_on?: string
+  /** 確認日（YYYY-MM-DD）。その日までは放置の検出で拾わない（欄の検査と日付が来たときの扱いは追加 31）。 */
+  check_on?: string
   waiting_since?: string
   goal?: string
   next?: string
@@ -57,6 +60,10 @@ export type Task = {
   reviewed_for?: string[]
 }
 export type TaskWorker = { task_id: string; run_id?: string; dispatch_id?: string }
+/** タスク id → 中身の印と、その印になった時刻（taskseen.json）。 */
+export type TaskSeen = Record<string, { sig: string; at: string }>
+/** 放置の検出で「動いた」とみなす欄。窓口が状態・工程・次・待つ相手・worker・済んだことを書き換えたら変わる。 */
+export const taskSig = (t: Task) => JSON.stringify([t.state, t.phase, t.next ?? '', t.waiting_on ?? '', t.check_on ?? '', t.worker?.task_id ?? '', t.done?.length ?? 0])
 /** 仕事の形（R51）。delegate: 任せる・cowork: 一緒に作る・watch: 見張る。タスクは仕事の形を引き継ぐ。 */
 export type StreamForm = 'delegate' | 'cowork' | 'watch'
 export const FORMS: StreamForm[] = ['cowork', 'delegate', 'watch']
@@ -377,6 +384,8 @@ export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk'
 export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide']
 /** 一緒に作る仕事の行の id の頭（R145）。帳簿のカードではなく、担当のチャットの Orca の様子から作る（state.ts の coworkRows）。 */
 export const COWORK_ID = '#cowork:'
+/** 線を越えて動いていないタスクの行の id の頭（追加 35）。 */
+export const IDLE_ID = '#idle:'
 /** Orca から作った詰まりの行の id（帳簿に無い）。 */
 export const isSynthetic = (id: string) => id.startsWith('#agent:') || id.startsWith('#dispatch:') || id.startsWith('#ask:')
 /** 「済ませた」で隠せる詰まり。版（止まった時刻）が取れないもの（0）は、次の停止と見分けられないので隠させない。 */

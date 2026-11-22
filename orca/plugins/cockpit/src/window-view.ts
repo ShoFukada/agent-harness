@@ -1,5 +1,5 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
-import { actionVerb, COUNTED, COWORK_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
+import { actionVerb, COUNTED, COWORK_ID, IDLE_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, stripHtml, toastsHtml, rowIdHtml,
@@ -53,7 +53,7 @@ export const doneFold = (c: Card) => `done:${c.stream || '-'}`
 export const doneOrder = (b: Board | undefined): string[] => (b ? closedGroups(b).flatMap(([, xs]) => xs.map(keyOf)) : [])
 
 /** 種類は語だけで示す（記号を並べない。R101）。要対応の行は深田さんがすることの語（R115）、対応済みの行は種類の名前。 */
-const kindName = (c: Card) => (c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : KIND_LABEL[c.kind])
+const kindName = (c: Card) => (c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : c.id.startsWith(IDLE_ID) ? '放置' : KIND_LABEL[c.kind])
 const leadWord = (r: Row, closed: boolean) => (closed || r.status !== 'mine' ? kindName(r.card) : actionVerb(r.card, r.agent?.ask?.kind))
 const tag = (text: string, cls = '') => `<span class="tag${cls ? ` ${cls}` : ''}">${esc(text)}</span>`
 
@@ -92,8 +92,8 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
     ? `${outcome(r.how) ? `<span class="how" title="${esc(r.how ?? '')}">${esc(outcome(r.how))}</span>` : ''}<span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
     : r.agent?.ask && c.since ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
   // 番号はどの行でも右の列の 2 段目に置く（時刻の無い行で、時刻の位置に番号だけが来ないように。Neon・初見の目）。
-  // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。
-  const sub = r.agent?.ask?.from ?? t?.task.title
+  // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。動いていないタスクは、題にタスク名があるので止まっている手がかり。
+  const sub = r.agent?.ask?.from ?? r.idle?.worker ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
@@ -213,6 +213,15 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
     case 'inbox':
       return [fld('届いた連絡', esc([c.from?.who, c.from?.via, c.from?.at && fmtDate(c.from.at)].filter(Boolean).join('　'))), fld('聞かれていること', esc(c.asked)), fld('振り分け', esc(c.routed))].join('')
     case 'talk':
+      if (r.idle) {
+        const st = r.v?.cockpit?.tasks.find((t) => t.id === r.idle!.task)?.state
+        return [
+          fld('最後の動き', esc(`${fmtDate(r.idle.since)}（${r.idle.from}）。${st ? `${TSTATE[st]}のまま` : ''}${r.idle.line}時間を超えたので出しています`)),
+          fld('worker・担当', esc(r.idle.worker)),
+          fld('次にやること', esc(c.next)),
+          fld('対応のしかた', esc(`「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で止まっている理由を聞き、続けるか止めるかを伝えます。帳簿のタスクが動けば、この行は消えます。`))
+        ].join('')
+      }
       return [c.last ? fld('最後のやり取り', `<div class="quote">${esc(c.last.text)}</div>`) : '', fld('次', esc(c.next))].join('')
   }
 }
@@ -551,7 +560,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const owner = b.d.jobs.find((j) => j.id === task.stream)?.owner
   // 済んだカードは表示の 14 日を過ぎても対応済みのタブで開く（settled は期間外も持つ）。
   const listed = new Set([...todoOrder(b), ...b.d.reports.map(keyOf), ...b.d.settled.map(keyOf)])
-  const cards = [...b.d.views.map((v) => ({ ...v, root: b.root })), ...b.d.queue.filter((r) => isSynthetic(r.card.id))].filter((v) => v.card.tasks?.includes(task.id))
+  const cards = [...b.d.views.map((v) => ({ ...v, root: b.root })), ...b.d.queue.filter((r) => isSynthetic(r.card.id) || r.card.id.startsWith(IDLE_ID))].filter((v) => v.card.tasks?.includes(task.id))
   // 頼んでいることは済んでいないカードだけ（済んだものは「出した指示」で返答を読める）。
   const asking = cards.filter((v) => v.status !== 'closed')
   const cardLine = (v: (typeof cards)[number]) => {

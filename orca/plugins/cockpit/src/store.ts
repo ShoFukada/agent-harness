@@ -3,7 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   dismissable, isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  ASK_ID, isAskItem, latestAnswer, RETURN_ID, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
+  ASK_ID, isAskItem, latestAnswer, RETURN_ID, taskSig, type TaskSeen, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -32,6 +32,8 @@ export type Files = {
   utterances: Utterance[]
   /** at の無い開いたカードを、窓の常駐のプロセスが最初に見つけた時刻（.orca/cockpit/firstseen.json）。抜けの 30 分を数える。 */
   firstSeen: Record<string, string>
+  /** 済んでいないタスクの中身が最後に変わった時刻（.orca/cockpit/taskseen.json）。放置の検出の起点に使う。 */
+  taskSeen: TaskSeen
   /** 判断の記録（.orca/cockpit/rulings.jsonl）の id と affects。見直していないタスクの検査に使う。 */
   rulings: Ruling[]
   /** カードの相談のメモ（.orca/consult/*.md）と、その中の窓口への返し。 */
@@ -43,7 +45,7 @@ export type Files = {
   askMarks: AskMark[]
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [], consults: [], marks: [], asks: [], askMarks: [] })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, taskSeen: {}, rulings: [], consults: [], marks: [], asks: [], askMarks: [] })
 
 /** ファイルの生の欄（cards・asks）。読めなければ無い（python の read_json の既定と同じ）。 */
 function rawList(text: string | undefined, key: 'cards' | 'asks'): unknown {
@@ -265,7 +267,7 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
   const next: Files = {
     cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff,
-    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings, consults: prev.consults, marks: [], asks: prev.asks, askMarks: []
+    utterances: prev.utterances, firstSeen: prev.firstSeen, taskSeen: prev.taskSeen, rulings: prev.rulings, consults: prev.consults, marks: [], asks: prev.asks, askMarks: []
   }
   const asked: AskMark[][] = [[], []]
   const marks: ReturnMark[][] = [[], []]
@@ -311,6 +313,9 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   await one('cockpit/firstseen.json', '', (text) => {
     const v: unknown = text === undefined ? {} : JSON.parse(text)
     next.firstSeen = typeof v === 'object' && v !== null && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, t]) => typeof t === 'string')) as Record<string, string> : {}
+  })
+  await one('cockpit/taskseen.json', '', (text) => {
+    next.taskSeen = text === undefined ? {} : parseTaskSeen(JSON.parse(text))
   })
   const figures: Record<string, string> = {}
   const refs = [...(next.cockpit?.cards ?? []), ...next.archive]
@@ -544,5 +549,26 @@ export async function recordFirstSeen(root: string, files: Files, now: number): 
   const next = Object.fromEntries(open.map((c) => [c.id, files.firstSeen[c.id] ?? new Date(now).toISOString()]))
   const same = Object.keys(next).length === Object.keys(files.firstSeen).length && Object.entries(next).every(([k, v]) => files.firstSeen[k] === v)
   if (!same) await writeAtomic(path.join(root, '.orca', 'cockpit', 'firstseen.json'), JSON.stringify(next, null, 1) + '\n')
+  return next
+}
+
+const parseTaskSeen = (v: unknown): TaskSeen =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+    ? Object.fromEntries(Object.entries(v).filter((e): e is [string, { sig: string; at: string }] => typeof e[1]?.sig === 'string' && typeof e[1]?.at === 'string' && Number.isFinite(Date.parse(e[1].at))))
+    : {}
+
+/**
+ * 済んでいないタスクの中身が変わった時刻を .orca/cockpit/taskseen.json に覚える（窓の常駐のプロセスだけが呼ぶ）。帳簿のタスクに更新の時刻が無いため。
+ * 初めて見たタスクは今の時刻にする（入れた直後に古いタスクを全部放置と出さない）。済んだタスクの分は消す。変わりが無ければ書かない。
+ */
+export async function recordTaskSeen(root: string, files: Files, now: number): Promise<TaskSeen> {
+  const live = (files.cockpit?.tasks ?? []).filter((t) => t.state !== 'ok')
+  const next: TaskSeen = Object.fromEntries(live.map((t) => {
+    const sig = taskSig(t)
+    const old = files.taskSeen[t.id]
+    return [t.id, old?.sig === sig ? old : { sig, at: new Date(now).toISOString() }]
+  }))
+  const same = Object.keys(next).length === Object.keys(files.taskSeen).length && Object.entries(next).every(([k, v]) => files.taskSeen[k] === v)
+  if (!same) await writeAtomic(path.join(root, '.orca', 'cockpit', 'taskseen.json'), JSON.stringify(next, null, 1) + '\n')
   return next
 }
