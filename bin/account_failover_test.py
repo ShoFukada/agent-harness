@@ -52,6 +52,8 @@ elif cmd == "account select":
                 t["recordedPaneKey"] = "%s:%s" % (t["tabId"], t["leafId"])
                 t["tabId"] = t["leafId"] = "pty:" + t["ptyId"]
     terms = [t for t in terms if not os.path.exists(os.path.join(d, "close-" + t["handle"]))]
+    if os.path.exists(os.path.join(d, "appear.json")):  # Orca が別の枠に開き直す端末
+        terms += load("appear.json")
     save("terminals.json", terms)
     if os.path.exists(os.path.join(d, "workers-after.json")):
         save("workers.json", load("workers-after.json"))
@@ -124,6 +126,10 @@ elif cmd == "orchestration worker-start" and os.path.exists(os.path.join(d, "sta
     print(json.dumps({"ok": False, "error": {"code": "consumer_fenced", "message": "This caller is not bound to Run run_1."}}))
 elif cmd == "orchestration worker-start":
     ok({"state": "ready", "dispatchId": "ctx_re", "taskId": a[a.index("--task") + 1]})
+elif cmd == "terminal close":
+    h = a[a.index("--terminal") + 1]
+    save("terminals.json", [t for t in load("terminals.json") if t["handle"] != h])
+    ok({"closed": True})
 elif cmd == "terminal send":
     h, text = a[a.index("--terminal") + 1], a[a.index("--text") + 1]
     screens = load("screens.json")
@@ -799,6 +805,106 @@ class AccountFailoverTest(unittest.TestCase):
         self.finished_worker(record=False, head={"tail": ["claude '/orca-agent-view' --settings '{\"fastMode\":false}'"]})
         self.run_failover()
         self.assertEqual(self.sends(), [])
+
+    def seat_session(self, sid, session, cwd, pid=1, entrypoint="cli"):
+        """Claude Code が席の置き場所に書く、動いている claude の記録（sessions/<pid>.json）。切り替えのあとに起きたことにする。"""
+        path = os.path.join(self.tmp, "seat-" + sid[:8], "sessions")
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, "%d.json" % pid), "w") as fh:
+            json.dump({"pid": pid, "sessionId": session, "cwd": cwd, "startedAt": now_ms() + MIN, "kind": "interactive",
+                       "entrypoint": entrypoint}, fh)
+
+    # 本物（11/22）: Orca が打った起動の行は、折り返した会話 id が行の頭に重なって残り、--resume の後ろに会話 id が無い。
+    def garbled_head(self, session):
+        return {"tail": ["", "'%s'o/Library/Application Support/orca/claude-agent-view/64e2/orca-agent-view' '--effort' 'medium' '--resume'" % session]}
+
+    def test_switch_relaunches_a_finished_worker_whose_launch_line_is_garbled(self):
+        # 本物（11/22 の max-win-notify-first）: 起動の行から会話 id を読めず、worker の設定なしで残った。席の claude の記録から会話 id を取る。
+        self.finished_worker()
+        self.put("heads.json", {"t1": {"tail": ["❯"]}, "t1-new": self.garbled_head(S1)})
+        self.seat_session(B, S1, "/w/t1")
+        self.seat_session(B, S2, "/w/other", pid=2)
+        self.seat_session(B, S2, "/w/t1", pid=3, entrypoint="orca")  # 同じ worktree のチャットは数えない
+        self.run_failover()
+        self.assertEqual(self.texts(), ["/exit --enter --wait-submit 10", "env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
+                                        % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1)])
+
+    def test_switch_does_not_guess_the_conversation_of_a_finished_worker(self):
+        # 同じ worktree で切り替えのあとに起きた claude が 2 つあり、どちらの会話か決まらない。
+        self.finished_worker()
+        self.put("heads.json", {"t1": {"tail": ["❯"]}, "t1-new": self.garbled_head(S1)})
+        self.seat_session(B, S1, "/w/t1")
+        self.seat_session(B, S2, "/w/t1", pid=2)
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+        self.assertIn("会話 id を起動の行からも席の claude の記録からも読めず", self.notes()[0])
+
+    def lost_with_coordinator_racing(self, relaunched_by_coordinator, reopened_elsewhere):
+        """切り替えで worker t1（Task task_1・会話 S1）を失う。Orca は同じ枠（t1-new）か別の枠（n1）に worker の設定なしで起こし直し、
+        起動の行は崩れている。relaunched_by_coordinator なら、launchd が調べる前に coordinator が同じ worktree に w1 を立て直している。"""
+        self.terminals([terminal("t1", "❯")])
+        self.agents([claude_agent("t1")])
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.seat_home(B, hasSeenAutoDefaultNudge=True)
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1", "t1")], sessions={"ctx_1": S1}, settings=WORKER_SETTINGS,
+                     live=[("ctx_8", "w1", "t1")] if relaunched_by_coordinator else ())
+        self.lose_on_switch()
+        with open(os.path.join(self.fake, "workers.json")) as fh:
+            before = [w for w in json.load(fh) if w["dispatchId"] == "ctx_1"]  # w1 は切り替えのあとに立つ
+        self.put("workers.json", before)
+        new = "n1" if reopened_elsewhere else "t1-new"
+        if reopened_elsewhere:
+            open(os.path.join(self.fake, "close-t1"), "w").close()
+            self.restart([])
+            self.put("appear.json", [terminal("n1", wt="t1")] + ([terminal("w1", wt="t1")] if relaunched_by_coordinator else []))
+        else:
+            self.restart(["t1"])
+        self.put("heads.json", {"t1": {"tail": ["claude --model opus --settings " + WORKER_SETTINGS]}, new: self.garbled_head(S1),
+                                "w1": launch_head(S1, WORKER_SETTINGS)})
+        self.seat_session(B, S1, "/w/t1")
+        return new
+
+    def test_switch_closes_orcas_restart_when_the_coordinator_already_started_a_worker(self):
+        # 本物（11/22 12:22 の single-source-a・ext-period-decided-sql）: coordinator が 26〜56 秒で立て直し、
+        # Orca が同じ枠に起こし直した端末が worker の設定なしで同じ worktree に残った。
+        self.lost_with_coordinator_racing(True, False)
+        self.run_failover()
+        self.assertIn("terminal close --terminal t1-new", self.calls())
+        self.assertEqual(self.sends(), [])
+        self.assertFalse(any(c.startswith("orchestration worker-start") for c in self.calls()))
+        self.assertIn("Orca が起こし直した t1-new は worker の設定なしで動くので閉じた", self.notes()[0])
+        self.assertEqual(self.history()[-1]["closed"], ["t1-new"])
+
+    def test_switch_closes_orcas_restart_in_another_pane_when_the_coordinator_already_started_a_worker(self):
+        # 本物（11/22 12:22 の cockpit-v3）: Orca は別の枠（term_88cf3315）に開き直し、担当が手で閉じた。
+        self.lost_with_coordinator_racing(True, True)
+        self.run_failover()
+        self.assertEqual([c for c in self.calls() if c.startswith("terminal close")], ["terminal close --terminal n1"])
+        self.assertEqual(self.sends(), [])
+        self.assertNotIn("起動し直した先が分からない端末", self.notes()[0])
+
+    def test_switch_relaunches_a_lost_worker_reopened_in_another_pane(self):
+        # coordinator が立て直していなければ、別の枠の起こし直しを worker の設定で起こし直してから結び直す。
+        self.lost_with_coordinator_racing(False, True)
+        self.run_failover()
+        acts = [c for c in self.calls() if c.startswith(("terminal send", "terminal close", "orchestration worker-start"))]
+        self.assertEqual(acts, ["terminal send --terminal n1 --text /exit --enter --wait-submit 10",
+                                "terminal send --terminal n1 --text env CLAUDE_CONFIG_DIR=%s claude --model opus --settings %s --resume %s --enter"
+                                % (os.path.join(self.tmp, "seat-" + B[:8]), WORKER_SETTINGS, S1),
+                                "orchestration worker-start --task task_1 --terminal n1 --from coord_1 --run run_1"])
+
+    def test_after_switch_closes_orcas_restart_left_beside_a_rebuilt_worker(self):
+        self.terminals([terminal("t1-new", tab="tab-t1", wt="t1"), terminal("w1", wt="t1")])
+        self.agents([claude_agent("t1-new", tab="tab-t1"), claude_agent("w1", state="working")])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1-new", "t1")], live=[("ctx_8", "w1", "t1")])
+        self.put("heads.json", {"t1-new": launch_head(S1)})
+        r = self.run_after("--dry-run")
+        self.assertIn("Orca が起こし直した t1-new は worker の設定なしで動くので閉じる", r.stdout)
+        self.assertFalse(any(c.startswith("terminal close") for c in self.calls()))
+        r = self.run_after()
+        self.assertIn("terminal close --terminal t1-new", self.calls())
+        self.assertIn("task_1（ctx_1）: 同じ worktree で worker（ctx_8）が動いている。その worker で立て直したなら何もしない。"
+                      "別の仕事なら、この Task は orca-launch で立て直す。Orca が起こし直した t1-new は worker の設定なしで動くので閉じた", r.stdout)
 
     def stale_terminal(self, preview=LIMIT_LINE, record=False):
         """切り替えで Orca が起動し直さなかった端末 t4（既定は元の席の上限で止まっている）を作って切り替える。record は orca-launch の記録。"""

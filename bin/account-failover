@@ -13,6 +13,7 @@ Orca は起動し直すとき古い端末を閉じるので、そこで動いて
 （Task が failed・blocked なら `--retry-of <dispatch>` を付ける）で結び直せる。
 Orca が起こし直した claude は orca-launch が付けた --settings（worker の設定）を落とすので、worker の端末（Task を終えて待っている worker も）では、
 結び直す前と続きを頼む前に claude を終えて、同じ会話を worker の設定で起こし直す。設定は orca-launch の記録か、切り替える前の起動の行から控える。
+同じ worktree で coordinator がもう worker を立て直していれば、Orca の起こし直し（worker の設定なし）は閉じる。
 Orca は結び直しを送り主の決まる Run の coordinator にしか許さないので、launchd からは `--from <coordinator の handle>` を付けて打つ
 （coordinator が上限で止まっていても進む）。結び直せなかったものと手で切り替えたあとは、coordinator が `account-failover --after-switch` を打つ。
 """
@@ -243,15 +244,17 @@ def worker_rows():
     raise RuntimeError("orca orchestration worker-list が 2000 件を超えたので、失った worker を調べきれない")
 
 
-def lost_workers(since, terms, agents, moved=None):
+def lost_workers(since, terms, agents, moved=None, appeared=None, seat=None):
     """since（ms）より後に Orca が端末を閉じて失った worker の Dispatch（worktree ごとに最後の 1 件）と、Orca が起こし直した端末。
     起こし直した端末は、切り替えで確かめた対応（moved）か、同じ枠に開いた端末か、同じ worktree で失った worker の会話を `--resume` で
-    開き直した端末。どれでもなく同じ worktree に Claude がいるときは、切り替える前からいた別の Claude と見分けられないので候補（maybe）として出すだけにする。
+    開き直した端末か、切り替えのあとに同じ worktree で開いた Dispatch の無い Claude の端末（appeared。1 つに決まるときだけ）。
+    どれでもなく同じ worktree に Claude がいるときは、切り替える前からいた別の Claude と見分けられないので候補（maybe）として出すだけにする。
     枠で当たっても、会話 id が読めて食い違えば当てない。失ったあとに同じ Task が別の Dispatch で動いたか、起こし直した端末で
     失った Dispatch の続き（followUpOf）か結び直し（retryOf）が動いていれば、結び直し済みとして飛ばす（skip）。
-    同じ worktree で別の worker が今動いていれば、結び直すと 2 つが同じファイルを触るので結び直さない。
+    同じ worktree で別の worker が今動いていれば、結び直すと 2 つが同じファイルを触るので結び直さず、Orca が起こし直したと確かめた端末は
+    worker の設定なしで同じ worktree に残るので閉じる印（close）を付ける。seat は seat_sessions() の結果（起動の行から会話 id を読めないときに使う）。
     ([{"dispatch", "task", "run", "old", "worktree", "at", "new"(結び直す端末 or None), "retry"(--retry-of に渡す Dispatch or None),
-       "why"(結び直さない理由), "skip"(結び直し済みの印)}], 詳細を読めなかった Dispatch)。"""
+       "why"(結び直さない理由), "skip"(結び直し済みの印), "close"(閉じる端末 or None)}], 詳細を読めなかった Dispatch)。"""
     rows = worker_rows()
     busy = {w["terminal"] for w in rows if w.get("outcome") == "in_progress" and w.get("terminal")}
     # 担当のチャット（structworker_）は同じ worktree にいても、同じファイルを触る worker に数えない。
@@ -276,7 +279,7 @@ def lost_workers(since, terms, agents, moved=None):
         done.add(wt)
         old = d.get("assigneeHandle")
         x = {"dispatch": d["id"], "task": d.get("taskId"), "run": d.get("runId"), "old": old, "worktree": wt, "at": at,
-             "new": None, "retry": None, "why": None, "skip": None, "relaunch": None}
+             "new": None, "retry": None, "why": None, "skip": None, "relaunch": None, "close": None}
         out.append(x)
         # 失ったあとに立った Dispatch（rows は新しい順）。端末ごとに一番新しいもの。
         later = rows[:i]
@@ -306,7 +309,14 @@ def lost_workers(since, terms, agents, moved=None):
             if fresh(launched_line(same["handle"], launched), sid) or (lost_id and sid and sid != lost_id):
                 same = None  # 同じ枠で、別の会話か新しい会話の claude が動いている
         if not same and lost_id:
-            same = resumed(lost_id, wt, old, terms, launched)
+            same = resumed(lost_id, wt, old, terms, launched, busy)
+        if not same and appeared:
+            # 本物（11/22 の term_88cf3315）: Orca は別の枠に開き直し、起動の行は崩れて会話 id が読めなかった。
+            near = [t for t in terms if t.get("connected") and t.get("worktreeId") == wt and t["handle"] in appeared
+                    and t.get("agentIdentity") == "claude" and t["handle"] not in busy and t["handle"] not in hosted
+                    and launched_session(t["handle"], launched) in (None, lost_id)
+                    and not (launched_line(t["handle"], launched) and fresh(launched_line(t["handle"], launched), None))]
+            same = near[0] if len(near) == 1 else None
         on = [y for y in reversed(later) if y.get("terminal") == same["handle"]] if same else []
         if on:
             link, unknown = follow_up(x["dispatch"], on)
@@ -324,12 +334,15 @@ def lost_workers(since, terms, agents, moved=None):
                  and (not lost_id or launched_session(t["handle"], launched) in (None, lost_id))]
         if others:
             restarted = [same] if same else maybe
+            if same and not settings_file(launched_line(same["handle"], launched)):
+                # 本物（11/22 12:22）: Orca の起こし直しを見る前に、coordinator が worker の設定で立て直していた。
+                x["close"], restarted = same, []
             x["why"] = "同じ worktree で worker（%s）が動いている。%s" % (", ".join(others), (
                 "Orca が起こし直した %s は閉じるか確かめる" % ", ".join(t["handle"] for t in restarted) if restarted else
                 "その worker で立て直したなら何もしない。別の仕事なら、この Task は orca-launch で立て直す"))
         elif same:
             x["new"] = same
-            x["relaunch"], x["why"] = worker_settings(r, x, lost_id, launched)
+            x["relaunch"], x["why"] = worker_settings(r, x, lost_id, launched, seat)
         elif maybe:
             x["why"] = "Orca が同じ worktree の別の端末で起こし直したらしい（%s）が、失った worker の会話か確かめられない。確かめてから打つ: %s" % (
                 ", ".join(label(t) for t in maybe), " / ".join(rebind_command(dict(x, new=t)) for t in maybe))
@@ -371,10 +384,33 @@ def lost_session(shown):
     return sid if sid and re.fullmatch(UUID, sid) else None
 
 
-def worker_settings(shown, x, lost_id, cache):
+def seat_sessions(home, since):
+    """席の置き場所の sessions/<pid>.json（Claude Code が動いている claude ごとに書く）から、since（ms）より後に端末で起きた claude の
+    作業場所 → 会話 id の集合。Orca が起こし直した claude の起動の行は出力で崩れて会話 id を読めないことがあるので、その代わりに使う
+    （本物 11/22: `'<会話 id>'o/Library/…/orca-agent-view' '--effort' 'medium' '--resume'`）。チャット（entrypoint が orca）は入れない。"""
+    out = {}
+    for path in glob.glob(os.path.join(home or os.path.expanduser("~/.claude"), "sessions", "*.json")):
+        s = sw.load(path, None)
+        if not isinstance(s, dict) or s.get("entrypoint") != "cli" or (s.get("startedAt") or 0) < since:
+            continue
+        sid = str(s.get("sessionId") or "")
+        if s.get("cwd") and re.fullmatch(UUID, sid):
+            out.setdefault(os.path.realpath(s["cwd"]), set()).add(sid)
+    return out
+
+
+def seat_session(seat, t):
+    """端末の worktree で切り替えのあとに起きた claude の会話 id（1 つに決まるときだけ）。"""
+    got = (seat or {}).get(os.path.realpath(str(t.get("worktreePath") or "/"))) or set()
+    return next(iter(got)) if len(got) == 1 else None
+
+
+def worker_settings(shown, x, lost_id, cache, seat=None):
     """Orca が起こし直した claude は --settings を落とす（sandbox と deny が外れる）。失った worker が worker の設定で動いていたのに、
     起こし直した claude に --settings が無ければ、設定を付けて起こし直す引数 {"model", "settings", "session"} を返す。
-    (起こし直す引数 or None, 確かめられない理由 or None)。worker の設定は終わりの案内の --settings、無ければ orca-launch の既定。"""
+    (起こし直す引数 or None, 確かめられない理由 or None)。worker の設定は終わりの案内の --settings、無ければ orca-launch の既定。
+    起動の行を読めなくても、切り替えのあとにその worktree で起きた claude が失った会話だけなら（seat）、Orca の起こし直し
+    （--settings を付けない）と見なし、x に trusted の印を立てる。"""
     new = x["new"]
     hint = lost_line(shown)
     info = launch_info(new["handle"], cache)
@@ -386,16 +422,18 @@ def worker_settings(shown, x, lost_id, cache):
         return None, "Orca が起こし直した %s の claude は、誰かがもう終えて起こし直していて、その引数を出力から読めない。" \
                      "worker の設定（--settings）で起こし直してあるか確かめてから打つ: %s" % (new["handle"], rebind_command(x))
     if not line:
-        return None, "Orca が起こし直した %s の claude の起動の行を読めず、worker の設定（--settings）で動いているか確かめられない。" \
-                     "claude を終えて --settings 付きで起こし直してから結び直す" % new["handle"]
-    if settings_file(line):
+        if not (lost_id and seat_session(seat, new) == lost_id):
+            return None, "Orca が起こし直した %s の claude の起動の行を読めず、worker の設定（--settings）で動いているか確かめられない。" \
+                         "claude を終えて --settings 付きで起こし直してから結び直す" % new["handle"]
+        x["trusted"] = True
+    elif settings_file(line):
         return None, None
     rec = sw.worker_launches().get(x["old"]) or {}
     settings = rec.get("settings") or settings_file(hint) or os.environ.get("ORCA_WORKER_SETTINGS")
     if not settings:
         return None, "Orca が起こし直した %s の claude に --settings が無いが、worker の設定のファイルが分からない" \
                      "（orca-launch の記録・切り替える前の起動の行・終わりの案内に --settings が無く、$ORCA_WORKER_SETTINGS も無い）" % new["handle"]
-    session = arg(line, "--resume") or lost_id
+    session = arg(line or "", "--resume") or lost_id
     if not session:
         return None, "Orca が起こし直した %s の claude に --settings が無いが、会話 id が分からず起こし直せない" % new["handle"]
     return {"model": rec.get("model") or arg(hint, "--model") or "opus", "settings": os.path.expanduser(settings), "session": session}, None
@@ -418,22 +456,51 @@ def capture_settings(restart):
     return out
 
 
-def idle_worker_relaunch(new, rec):
+def idle_worker_relaunch(new, rec, seat=None):
     """Task を持たずに待っていた worker（Task を終えて開いたままの端末）を、Orca が --settings 無しで起こし直したときの起こし直す引数。
-    (失った worker と同じ形の x or None, 起こし直せない理由 or None)。起動の行に --settings があれば何もしない。"""
+    (失った worker と同じ形の x or None, 起こし直せない理由 or None)。起動の行に --settings があれば何もしない。
+    会話 id は起動の行から読み、読めなければ切り替えのあとにその worktree で起きた claude の記録（seat）から取る（x に trusted の印）。"""
     cache = {}
     line = launched_line(new["handle"], cache)
     if line and settings_file(line):
         return None, None
-    session = launched_session(new["handle"], cache)
+    session, trusted = launched_session(new["handle"], cache), False
+    if not session and not (line and fresh(line, None)):
+        session, trusted = seat_session(seat, new), True
     if not session:
-        return None, "Orca が起こし直した %s の claude の会話 id を起動の行から読めず、worker の設定（--settings）を付けて起こし直せない" % new["handle"]
-    return {"new": new, "relaunch": {"model": rec.get("model") or "opus", "settings": rec["settings"], "session": session}}, None
+        return None, "Orca が起こし直した %s の claude の会話 id を起動の行からも席の claude の記録からも読めず、" \
+                     "worker の設定（--settings）を付けて起こし直せない" % new["handle"]
+    return {"new": new, "trusted": trusted,
+            "relaunch": {"model": rec.get("model") or "opus", "settings": rec["settings"], "session": session}}, None
 
 
-def resumed(lost_id, wt, old, terms, launched):
-    """同じ worktree で、失った worker の会話を `claude --resume <会話 id>` で開き直した端末（1 つに決まるときだけ）。"""
-    hits = [t for t in terms if t.get("connected") and t.get("worktreeId") == wt and t["handle"] != old
+def close_restarts(lost, dry_run=False):
+    """失った worker の worktree で別の worker が動いているのに、Orca が worker の設定なしで起こし直した端末（close の印）が残っていれば閉じ、
+    結果を why に足す。入力待ちでない端末は閉じない（人が使い始めたかもしれない）。閉じた端末の handle の集合を返す。
+    会話は Claude の会話記録に残るので、閉じても失わない。"""
+    closed = set()
+    for x in lost:
+        h = (x.get("close") or {}).get("handle")
+        if not h:
+            continue
+        if dry_run:
+            x["why"] += "。Orca が起こし直した %s は worker の設定なしで動くので閉じる" % h
+            continue
+        why = stuck(h, 15000)
+        if why is None and sw.orca("terminal", "close", "--terminal", h)[0] is None:
+            why = "terminal close が失敗した"
+        if why is not None:
+            x["why"] += "。Orca が起こし直した %s（worker の設定なし）を閉じられなかった（%s）。閉じるか確かめる" % (h, why or "入力待ちにならない")
+            continue
+        x["why"] += "。Orca が起こし直した %s は worker の設定なしで動くので閉じた" % h
+        closed.add(h)
+    return closed
+
+
+def resumed(lost_id, wt, old, terms, launched, busy):
+    """同じ worktree で、失った worker の会話を `claude --resume <会話 id>` で開き直した端末（1 つに決まるときだけ）。
+    Dispatch が動いている端末は入れない（本物 11/22: coordinator が同じ会話を `orca-launch -- --resume` で新しい worker に立て直した）。"""
+    hits = [t for t in terms if t.get("connected") and t.get("worktreeId") == wt and t["handle"] != old and t["handle"] not in busy
             and t.get("agentIdentity") == "claude" and launched_session(t["handle"], launched) == lost_id]
     return hits[0] if len(hits) == 1 else None
 
@@ -1260,13 +1327,23 @@ def after_select(plan, restart, targets, terms, chats, now, home, before):
     確かめられないか起こし直せなければ、sandbox の外で作業を続けさせないよう続きを頼まない。held は切り替える前に worker が動いていた端末
     （読めなければ None で、どの端末にも続きを頼まない）。"""
     held, known = before["held"], before["known"]
+    pre = {t.get("handle") for t in terms}
     moved, kept, terms = wait_restarted(restart, RESTART_WAIT_S) if restart else ({}, [], terms)
-    lost, unread = [], []
+    seat = seat_sessions(home, now)
+    lost, unread, closed = [], [], set()
     if restart:
+        # 切り替えのあとに開いた端末のうち、同じ枠に起こし直したと分かったもの以外（Orca が別の枠に開き直したものの候補）。
+        appeared = {t.get("handle") for t in terms if t.get("handle") not in pre} - {t["handle"] for t in moved.values()}
         try:
-            lost, unread = lost_workers(now - MIN, terms, (sw.orca("agent", "list")[0] or {}).get("agents") or [], moved)
+            lost, unread = lost_workers(now - MIN, terms, (sw.orca("agent", "list")[0] or {}).get("agents") or [], moved, appeared, seat)
         except RuntimeError as e:
             unread = ["一覧（%s）" % e]
+        closed = close_restarts(lost)
+        for x in lost:  # 別の枠に開き直した端末も、起こし直した先として扱う
+            found = x["new"] or x["close"]
+            if found and x["old"] not in moved and any(t["handle"] == x["old"] for t in restart):
+                moved[x["old"]] = found
+        kept = [t for t in kept if t["handle"] not in moved]
     checked = {x["old"]: x for x in lost if x["new"] and not x["why"]}
     # 一覧を読んでから切り替えるまでに始まった Dispatch も、切り替えのあとに失ったと分かれば worker の端末に数える。
     # Task を終えて開いたまま待っていた worker は Dispatch を持たないので、切り替える前に控えた worker の設定（known）で数える。
@@ -1275,7 +1352,7 @@ def after_select(plan, restart, targets, terms, chats, now, home, before):
     for t in restart:
         new = moved.get(t["handle"])
         x = checked.get(t["handle"])
-        if not new or (workers is not None and t["handle"] not in workers):
+        if not new or new["handle"] in closed or (workers is not None and t["handle"] not in workers):
             continue
         mine = [y for y in lost if y["old"] == t["handle"]]
         if held is None:
@@ -1286,12 +1363,12 @@ def after_select(plan, restart, targets, terms, chats, now, home, before):
                 why = next((y["why"] for y in mine if y["why"]), None) or "失った Dispatch を確かめられない"
                 unsafe[new["handle"]] = "worker の端末だが、worker の設定（--settings）で動いているか確かめられない（%s）" % why
                 continue
-            x, why = idle_worker_relaunch(new, known[t["handle"]])
+            x, why = idle_worker_relaunch(new, known[t["handle"]], seat)
             if why:
                 unsafe[new["handle"]] = "worker の端末だが、" + why
                 continue
         if x and x["relaunch"]:
-            why = relaunch(x, home)
+            why = relaunch(x, home, trusted=bool(x.get("trusted")))
             if why:
                 unsafe[new["handle"]] = "worker の設定（--settings）を付けて起こし直せなかった（%s）" % why
                 continue
@@ -1321,7 +1398,7 @@ def after_select(plan, restart, targets, terms, chats, now, home, before):
     failed, screens = {}, {}
     for t in restart:
         new = moved.get(t["handle"])
-        if not new:
+        if not new or new["handle"] in closed:
             continue
         if new["handle"] in unsafe:
             failed[label(t)] = "続きを頼んでいない。" + unsafe[new["handle"]]
@@ -1345,7 +1422,7 @@ def after_select(plan, restart, targets, terms, chats, now, home, before):
                 lost=[dict(task=x["task"], dispatch=x["dispatch"], run=x["run"], old=x["old"],
                            new=(x["new"] or {}).get("handle"), retry=x["retry"], why=x["why"], skip=x["skip"],
                            relaunch=x["relaunch"] and relaunch_command(x, home)) for x in lost],
-                rebound=[x["task"] for x in rebound], rebind_failed=rebind_failed, unread=unread)
+                rebound=[x["task"] for x in rebound], rebind_failed=rebind_failed, unread=unread, closed=sorted(closed))
     plan.pop("nudge")
     log(dict(event="switched", **plan))
     if stayed:  # 次の回から、手が空いたら今の席で起こし直す（resettle）
@@ -1402,6 +1479,7 @@ def after_switch(a):
         if why:
             screens[t["handle"]] = (label(t), why)
     lost, unread = lost_workers(now - a.since_min * MIN, terms, agents)
+    close_restarts(lost, a.dry_run)
     home, mine = None, False
     done, left = [], ["%s: 詳細を読めず、失ったかどうか確かめていない" % u for u in unread]
     skipped = ["%s（%s）: %s" % (x["task"], x["dispatch"], x["skip"]) for x in lost if x["skip"]]
