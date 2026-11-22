@@ -57,7 +57,7 @@ const direct = (f: DraftFormat, text: string) =>
   })
 
 const PB = 'cockpit-test'
-const CHAT_HTML = `<meta charset="utf-8"><p>森さん<br />
+const CHAT_HTML = `<meta charset="utf-8"><p>田中さん<br />
 林さん</p>
 <p>ご確認ありがとうございます。次の2点を直しました。</p>
 <ul>
@@ -66,7 +66,7 @@ const CHAT_HTML = `<meta charset="utf-8"><p>森さん<br />
 </ul>
 <p>よろしくお願いいたします。</p>
 `
-const MAIL_BODY = DRAFTS.mail.text.slice(DRAFTS.mail.text.indexOf('森様'))
+const MAIL_BODY = DRAFTS.mail.text.slice(DRAFTS.mail.text.indexOf('田中様'))
 
 test('コピーの書式: 見本の宛先は経路とリンクから Slack・Teams・メールに決まる', () => {
   assert.deepEqual(Object.values(DRAFTS).map(draftFormat), ['slack', 'teams', 'mail'])
@@ -104,7 +104,7 @@ test('コピーの書式: 見てのカードの見本（追加 25）は、押し
   assert.deepEqual(got, {
     slack: { name: PB, text: REVIEW_SAMPLE.text, html: null },
     teams: { name: PB, text: REVIEW_SAMPLE.text, html: CHAT_HTML },
-    mail: { name: PB, text: '森さん\n林さん\n\nご確認ありがとうございます。次の2点を直しました。\n・締切: 11/25（月）18:00\n・手順書: 手順書（v2） https://example.com/manual\n\nよろしくお願いいたします。\n', html: null }
+    mail: { name: PB, text: '田中さん\n林さん\n\nご確認ありがとうございます。次の2点を直しました。\n・締切: 11/25（月）18:00\n・手順書: 手順書（v2） https://example.com/manual\n\nよろしくお願いいたします。\n', html: null }
   })
 })
 

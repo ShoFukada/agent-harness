@@ -5,14 +5,14 @@ import { markdown } from './markdown.ts'
 test('答えの Markdown（R167）: 見出し・表・太字・箇条書き・番号付き・引用・区切り線・コードを描く', () => {
   const h = markdown([
     '## 結論', '入口は **1 つ** にする。', '', '### 比べた案', '| 案 | 手間 |', '|---|:--:|', '| A | 小さい |', '| B \\| C | 大きい |', '',
-    '- 一覧を直す', '- 帳簿を直す', '1. 先に調べる', '2. 次に作る', '> 森さんの発言', '---', '`cockpit-write` で書く', '```', 'const x = 1 < 2', '```'
+    '- 一覧を直す', '- 帳簿を直す', '1. 先に調べる', '2. 次に作る', '> 田中さんの発言', '---', '`cockpit-write` で書く', '```', 'const x = 1 < 2', '```'
   ].join('\n'))
   assert.match(h, /<h5 class="mdh">結論<\/h5>/)
   assert.match(h, /<h6 class="mdh">比べた案<\/h6>/)
   assert.match(h, /<p>入口は <strong>1 つ<\/strong> にする。<\/p>/)
   assert.match(h, /<div class="mdtbl"><table><thead><tr><th>案<\/th><th>手間<\/th><\/tr><\/thead><tbody><tr><td>A<\/td><td>小さい<\/td><\/tr><tr><td>B \| C<\/td><td>大きい<\/td><\/tr><\/tbody><\/table><\/div>/)
   assert.match(h, /<ul><li>一覧を直す<\/li><li>帳簿を直す<\/li><\/ul><ol><li>先に調べる<\/li><li>次に作る<\/li><\/ol>/)
-  assert.match(h, /<blockquote><p>森さんの発言<\/p><\/blockquote><hr>/)
+  assert.match(h, /<blockquote><p>田中さんの発言<\/p><\/blockquote><hr>/)
   assert.match(h, /<span class="code">cockpit-write<\/span> で書く/)
   assert.match(h, /<pre class="mdpre"><code>const x = 1 &#60; 2<\/code><\/pre>/)
   assert.doesNotMatch(h, /##|\*\*|\|---/)

@@ -53,7 +53,7 @@ test('案件で絞ると、その案件の票だけになり、右に案件の�
   assert.ok(!h.includes('data-strip="/ws/konan'))
   assert.match(t, /あと 2 日 定例/)
   assert.match(t, /配車画面の改修 私待ち 1 件/)
-  assert.match(t, /外部 API の繋ぎ込み 森さんの返事待ち/)
+  assert.match(t, /外部 API の繋ぎ込み 田中さんの返事待ち/)
 })
 
 test('決める: 何のため → これは何か → なぜ今 → 選択肢 → 返事が無いとき → 決めるための情報の残り → 話す相手。おすすめを選んだ状態で開き「おすすめで決める」、選び直すと「この案で決める」', () => {
@@ -178,7 +178,7 @@ test('種類ごとの返答（R115）: 承認に当たるボタンと「直し�
 
 test('送る前は宛先と改行を保った本文を出す。詰まりは理由と「答えれば進むか」', () => {
   const t = html(model(), { ...newUi(), sel: '/ws/aoba#d22' })
-  assert.match(t, /<div class="msg">@森 @林\nお疲れさまです。/)
+  assert.match(t, /<div class="msg">@田中 @佐藤\nお疲れさまです。/)
   const k = text(html(model(), { ...newUi(), sel: '/ws/konan#k9' }))
   assert.match(k, /私が答えれば進むか 進む。stg の DB の鍵を入れ直してよいかを答える/)
 })
@@ -191,7 +191,7 @@ test('右の列: 直し待ち・顧客待ち（催促の日を過ぎたら朱）
   const t = text(h)
   assert.match(t, /修正待ち 1/)
   assert.match(t, /顧客待ち 1/)
-  assert.match(h, /class="r sp hot"><span class="pt">森さん<\/span><span class="pt">.* から<\/span><span class="pt">催促の日を過ぎた<\/span>/)
+  assert.match(h, /class="r sp hot"><span class="pt">田中さん<\/span><span class="pt">.* から<\/span><span class="pt">催促の日を過ぎた<\/span>/)
   assert.ok(!/class="r[^"]*">[^<]*・/.test(h), '補足を「・」で繋がない')
   assert.match(t, /片付いた 2/)
   assert.match(t, /受け取り待ち 承認/)

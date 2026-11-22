@@ -75,7 +75,7 @@ test('案件の今: 仕事ごとに 私待ち・止まっている・作業中�
   const w = ws(0)
   const d = derive(w.cockpit, w.log, [], '/a', undefined, NOW)
   assert.deepEqual(d.jobs.map((j) => [j.title, j.state]), [['配車画面の改修', 'mine'], ['AWS 構成案', 'mine'], ['定例と議事録', 'mine'], ['外部 API の繋ぎ込み', 'customer']])
-  assert.equal(d.jobs[3]!.label, '森さんの返事待ち')
+  assert.equal(d.jobs[3]!.label, '田中さんの返事待ち')
   assert.equal(d.jobs[0]!.next, 'レビューの指摘を直して stg に出す')
 })
 
@@ -145,7 +145,7 @@ test('hook が読む検査: 一時フォルダのままの成果物と、どの�
       { id: 'a3', rev: 1, kind: 'review', title: 'a3', state: 'open', stream: 's1', href: 'https://claude.ai/artifact/abc' },
       { id: 'a4', rev: 1, kind: 'review', title: 'a4', state: 'done', stream: 's1', href: '/tmp/old.html' },
       // 送ったあと顧客の返事を待つカードが指すタスクは、外の相手を待っているので名指ししない
-      { id: 'w1', rev: 1, kind: 'send', title: 'w1', state: 'waiting', stream: 's1', tasks: ['t6'], awaiting: { who: '森さん', what: '回答', since: '2026-11-20T10:00:00+09:00' } },
+      { id: 'w1', rev: 1, kind: 'send', title: 'w1', state: 'waiting', stream: 's1', tasks: ['t6'], awaiting: { who: '田中さん', what: '回答', since: '2026-11-20T10:00:00+09:00' } },
       // 担当と話し始めたカードも私の番に残る（R46）ので、それが指すタスクは名指ししない
       { id: 'd2', rev: 1, kind: 'decide', title: 'd2', state: 'open', stream: 's1', tasks: ['t7'] }
     ]
@@ -700,10 +700,10 @@ test('案件の名前の形（R165・R181）: 全角の｜でちょうど 2 つ�
 })
 
 test('待ちの語（追加 42）: 相手が人や相手方の名前だけなら「〜の返事待ち」、出来事・作業は「〜を待つ」（動詞で終われば「〜のを待つ」）', () => {
-  assert.equal(waitLabel('森さん'), '森さんの返事待ち')
+  assert.equal(waitLabel('田中さん'), '田中さんの返事待ち')
   assert.equal(waitLabel('先方'), '先方の返事待ち')
   assert.equal(waitLabel('岩田さん（日程案への返事と認証情報）'), '岩田さんの返事待ち（日程案への返事と認証情報）')
-  assert.equal(waitLabel('BW の担当'), 'BW の担当の返事待ち')
+  assert.equal(waitLabel('A 社の担当'), 'A 社の担当の返事待ち')
   assert.equal(waitLabel('次に上限に当たったときの本物の席の切り替え'), '次に上限に当たったときの本物の席の切り替えを待つ')
   assert.equal(waitLabel('深田さんのスマホでの Orca Mobile の撮影'), '深田さんのスマホでの Orca Mobile の撮影を待つ')
   assert.equal(waitLabel('深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめる（r67 の3）'), '深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめるのを待つ（r67 の3）')
@@ -741,7 +741,7 @@ test('確認日（R142・R171）: 日付が来た済んでいないタスクは�
   w.cockpit.owners = []
   const today = tokyoDay(NOW)
   w.cockpit.tasks = [
-    { id: 'k1', stream: s, phase: '確認', title: '先方の返事を確かめる', state: 'wait', waiting_on: '森さん', check_on: today },
+    { id: 'k1', stream: s, phase: '確認', title: '先方の返事を確かめる', state: 'wait', waiting_on: '田中さん', check_on: today },
     { id: 'k2', stream: s, phase: '確認', title: '来週見直す', state: 'wait', check_on: '2026-11-30' },
     { id: 'k3', stream: s, phase: '確認', title: '済んだもの', state: 'ok', check_on: today }
   ]
@@ -789,7 +789,7 @@ test('放置の検出（R170）: worker も担当も動いていない作業中�
   w.cockpit.tasks = [
     { id: 'k1', stream: s, phase: '作成', title: '一覧を作る', state: 'run' },
     { id: 'k2', stream: s, phase: '調査', title: '前提を調べる', state: 'idle' },
-    { id: 'k3', stream: s, phase: '確認', title: '先方の返事を待つ', state: 'wait', waiting_on: '森さん' },
+    { id: 'k3', stream: s, phase: '確認', title: '先方の返事を待つ', state: 'wait', waiting_on: '田中さん' },
     { id: 'k4', stream: s, phase: '確認', title: '来週見直す', state: 'wait', check_on: '2026-11-30' }
   ]
   const at = (min: number) => new Date(NOW - min * 60_000).toISOString()

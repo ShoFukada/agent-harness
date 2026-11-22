@@ -45,7 +45,7 @@ test('A006: 要素に「Teams の見張り」を持つ v40 へのこれでよい
   assert.match(r.errors.join('\n'), /カード v40: 「これでよい」の op 40 を取り込む前に、要素 3 の行き先/)
   assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW).checks.unmapped_elements, [{ card: 'v40', missing: [3] }])
   // 行き先を書いて片付けるのと op の取り込みは 1 回で書ける。行き先は承認した版の中身に入らないので rev は 1 のまま。
-  const mapped: Card = { ...v40, state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T10:20:00+09:00', element_map: [...v40.element_map!, { n: 3, skip: 'BW の Slack から始めると決めた（d64）。Teams は別の依頼にする' }] }
+  const mapped: Card = { ...v40, state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T10:20:00+09:00', element_map: [...v40.element_map!, { n: 3, skip: '顧客の Slack から始めると決めた（d64）。Teams は別の依頼にする' }] }
   const ok = applyChange(c, { cards: [mapped], applied_ops: [40] }, [], log)
   assert.deepEqual(ok.errors, [])
   assert.deepEqual(applyChange(c, { cards: [{ ...v40, element_map: mapped.element_map }] }, [], log).errors, [], '開いたまま行き先だけ書くのも rev は 1 のまま')

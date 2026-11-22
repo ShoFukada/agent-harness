@@ -607,7 +607,7 @@ export function idleTasks(c: Cockpit, tasks: Map<string, TaskView>, facts: OrcaF
 
 /**
  * タスクの待ち（waiting_on）の語（追加 42）。帳簿の waiting_on は自由な文で、相手の種類の欄が無いので語で見分ける。
- * 人や相手方の名前だけ（「森さん」「先方」「BW の担当」など。括弧の中は見ない）なら「〜の返事待ち」、
+ * 人や相手方の名前だけ（「田中さん」「先方」「A 社の担当」など。括弧の中は見ない）なら「〜の返事待ち」、
  * 出来事・作業・時間（「深田さんのスマホでの撮影」「次に上限に当たったときの席の切り替え」）は「〜を待つ」。動詞で終われば「〜のを待つ」。
  */
 export function waitLabel(on: string): string {

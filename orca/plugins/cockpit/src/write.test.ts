@@ -310,7 +310,7 @@ test('書く道具: カードとタスクの人が読む欄の柔らかい言い
   const err = applyChange(c, { cards: [soft] }).errors.join('\n')
   assert.match(err, /カード d21: 柔らかい言い回し purpose「かも」・last\.text「ておきました」・options\[0\]\.label「ですね」/)
   // 相手と深田さんの言葉（draft の本文・quote・深田さんの last）は原文のまま書ける。
-  const quoted = { ...card(c, 'd21'), rev: 2, quote: '任せてもいいかも', draft: { to: '森さん', text: '送っておきましたね', format: 'mail' as const }, last: { text: '決める感じですね', by: '私' } }
+  const quoted = { ...card(c, 'd21'), rev: 2, quote: '任せてもいいかも', draft: { to: '田中さん', text: '送っておきましたね', format: 'mail' as const }, last: { text: '決める感じですね', by: '私' } }
   assert.ok(applyChange(c, { cards: [quoted] }, [], undefined, { d21: { format: 'mail', violations: [] } }).next)
   // 元からある文の書き戻し（片付けるだけ）は止めない。
   const old = aoba()
@@ -449,9 +449,9 @@ test('状況の文（status、R188）: 仕事とタスクに書け、文字列�
   const c = aoba()
   const s1 = structuredClone(c.streams[0]!)
   const t1 = structuredClone(c.tasks.find((x) => x.id === 't1')!)
-  const ok = applyChange(c, { streams: [{ ...s1, status: 'stg に出した。森さんの返事を待っている' }], tasks: [{ ...t1, status: '並べ替えは済み。絞り込みを作っている' }] })
+  const ok = applyChange(c, { streams: [{ ...s1, status: 'stg に出した。田中さんの返事を待っている' }], tasks: [{ ...t1, status: '並べ替えは済み。絞り込みを作っている' }] })
   assert.deepEqual(ok.errors, [])
-  assert.equal(ok.next!.streams[0]!.status, 'stg に出した。森さんの返事を待っている')
+  assert.equal(ok.next!.streams[0]!.status, 'stg に出した。田中さんの返事を待っている')
   assert.equal(ok.next!.tasks.find((x) => x.id === 't1')!.status, '並べ替えは済み。絞り込みを作っている')
   const long = 'あ'.repeat(STATUS_MAX + 1)
   assert.match(applyChange(c, { streams: [{ ...s1, status: long }] }).errors.join('\n'), new RegExp(`仕事 ${s1.id}: status は ${STATUS_MAX} 字まで（今 ${STATUS_MAX + 1} 字）`))
@@ -552,13 +552,13 @@ test('待ちの書き方（追加 48・R193）: idle は waiting_on が要り、
   // 4. 日付・期間だけ（全角・単位の前の空白も。Codex 48 必須 3）
   for (const w of ['12月', '12 月', '１２月', '12/4', '2026-12-04', '2026-12', '12月4日以降', '12月中旬', '来週', '来週末', '月末まで', '年明け'])
     assert.match(put(c, [{ id: 't90', state: 'wait', waiting_on: w }]).join(), /waiting_on: 日付・期間だけ/, w)
-  for (const w of ['12/4 の定例で森さんが決める', '12 月の定例で森さんが決める'])
+  for (const w of ['12/4 の定例で田中さんが決める', '12 月の定例で田中さんが決める'])
     assert.deepEqual(put(c, [{ id: 't90', state: 'wait', waiting_on: w, check_on: '2026-12-04' }]), [], w)
   // 3. 待つタスクの waiting_on・next・status の先送り。run のタスクは見ない
-  assert.match(put(c, [{ id: 't90', state: 'wait', waiting_on: '森さんの回答', next: '落ち着いてから進める' }]).join(), /タスク t90\.next: 都合での先送り「落ち着いてから」/)
+  assert.match(put(c, [{ id: 't90', state: 'wait', waiting_on: '田中さんの回答', next: '落ち着いてから進める' }]).join(), /タスク t90\.next: 都合での先送り「落ち着いてから」/)
   assert.deepEqual(put(c, [{ id: 't90', state: 'run', next: '落ち着いてから進める' }]), [])
   // 検査の結果が無い・検査できないときは通さない（fail closed）
-  const ch = { tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '森さんの回答' }] }
+  const ch = { tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '田中さんの回答' }] }
   assert.match(applyChange(c, ch).errors.join(), /t90\.waiting_on: 都合での先送りかを確かめられない（先送りの検査をしていない）/)
   assert.match(applyChange(c, ch, [], { ops: [] }, {}, { 't90.waiting_on': { error: 'CLI が無い' } }).errors.join(), /確かめられない（CLI が無い）/)
 })
@@ -573,7 +573,7 @@ test('待ちの書き方（追加 48）: 元の行にそのままある値は断
   assert.deepEqual(put(c, [{ ...row('t91'), title: '題だけ直す' }]), [])
   assert.deepEqual(put(c, [{ ...row('t92'), title: '題だけ直す' }]), [])
   assert.match(put(c, [{ ...row('t92'), next: 'まだ落ち着いてから' }]).join(), /t92\.next: 都合での先送り/)
-  assert.match(put(c, [{ ...row('t93'), state: 'wait', waiting_on: '森さんの回答' }]).join(), /t93\.next: 都合での先送り/)
+  assert.match(put(c, [{ ...row('t93'), state: 'wait', waiting_on: '田中さんの回答' }]).join(), /t93\.next: 都合での先送り/)
   // wait から idle に変えたら、持ち越した waiting_on も idle の決まりで見る（Codex 48 必須 1）。
   c.tasks.push({ id: 't94', stream: 's1', phase: '作成', title: '待ち', state: 'wait', waiting_on: '' }, { id: 't95', stream: 's1', phase: '作成', title: '待ち', state: 'wait', waiting_on: 't99' })
   assert.match(put(c, [{ ...row('t94'), state: 'idle' }]).join(), /タスク t94: idle は空き枠が無いあいだの順番待ちだけ/)
@@ -588,7 +588,7 @@ test('cockpit-write（追加 48）: 待つタスクの文を defer-guard.py（�
   // 本物と同じ入口（--text の文。当たれば標準出力に当たりを出して 1）。
   writeFileSync(guard, '#!/bin/sh\ncase "$2" in *落ち着いてから*) echo 落ち着いてから; exit 1 ;; *壊れた*) exit 3 ;; esac\nexit 0\n')
   chmodSync(guard, 0o755)
-  const task = (next: string) => ({ tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '森さんの回答', next }] })
+  const task = (next: string) => ({ tasks: [{ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '田中さんの回答', next }] })
   assert.match((await write(root, task('落ち着いてから進める'), false, {}, { bin: guard })).errors.join(), /t90\.next: 都合での先送り「落ち着いてから」/)
   assert.match((await write(root, task('壊れた'), false, {}, { bin: guard })).errors.join(), /t90\.next: 都合での先送りかを確かめられない（先送りの検査（.*）が 3 で終わった/)
   assert.match((await write(root, task('x'), false, {}, { bin: path.join(root, 'missing') })).errors.join(), /確かめられない（先送りの検査（.*）を起動できない/)
@@ -612,11 +612,11 @@ test('cockpit-write init（追加 48）: 初めて作る帳簿のタスクも、
   const base = freshLedger()
   const withTask = (t: Partial<Task>) => ({ ...base, tasks: [...base.tasks, { id: 't90', stream: 's1', phase: '作成', title: 'x', ...t }] })
   assert.match((await init(root, withTask({ state: 'idle' }), true, { bin: guard })).join(), /タスク t90: idle は空き枠/)
-  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '森さんの回答', next: '落ち着いてから進める' }), true, { bin: guard })).join(), /t90\.next: 都合での先送り/)
-  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '森さんの回答' }), true, { bin: path.join(root, 'missing') })).join(), /確かめられない/)
-  assert.deepEqual(await init(root, withTask({ state: 'wait', waiting_on: '森さんの回答' }), true, { bin: guard }), [])
+  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '田中さんの回答', next: '落ち着いてから進める' }), true, { bin: guard })).join(), /t90\.next: 都合での先送り/)
+  assert.match((await init(root, withTask({ state: 'wait', waiting_on: '田中さんの回答' }), true, { bin: path.join(root, 'missing') })).join(), /確かめられない/)
+  assert.deepEqual(await init(root, withTask({ state: 'wait', waiting_on: '田中さんの回答' }), true, { bin: guard }), [])
   // 同じ id の行が重なると、先の行が後の行の検査結果で通ってしまうので、重なりごと断る（Codex 48 の 2 巡目）。
-  const twice = withTask({ state: 'wait', waiting_on: '森さんの回答', next: '落ち着いてから進める' })
-  twice.tasks.push({ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '森さんの回答', next: '承認を確かめる' })
+  const twice = withTask({ state: 'wait', waiting_on: '田中さんの回答', next: '落ち着いてから進める' })
+  twice.tasks.push({ id: 't90', stream: 's1', phase: '作成', title: 'x', state: 'wait', waiting_on: '田中さんの回答', next: '承認を確かめる' })
   assert.match((await init(root, twice, true, { bin: guard })).join(), /tasks に同じ id の行が重なっている: t90/)
 })

@@ -24,7 +24,7 @@ export const ASK_SCREEN = [
   ' ❯ 1. キャッシュを入れて直す',
   '      地図のタイルを 1 日分ためる（stg で 2 日）',
   '   2. 調査報告だけにする',
-  '      原因と直し方の見積もりを森さんに出す',
+  '      原因と直し方の見積もりを田中さんに出す',
   '   3. Type something.',
   '────────────────────────────────────────',
   '   4. Chat about this',
@@ -44,7 +44,7 @@ export function sampleInbox(now: number): InboxMessage[] {
   })
   return [
     q('msg_q1', 'ctx_aoba_list', 'run_aoba', 12, '一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか', ['配送日の降順にする', '登録順のままにする']),
-    q('msg_q2', 'ctx_aws_fig', 'run_aws', 45, '構成図は PowerPoint と draw.io のどちらで描きますか（森さんが直すのは PowerPoint）', ['PowerPoint', 'draw.io']),
+    q('msg_q2', 'ctx_aws_fig', 'run_aws', 45, '構成図は PowerPoint と draw.io のどちらで描きますか（田中さんが直すのは PowerPoint）', ['PowerPoint', 'draw.io']),
     q('msg_q3', 'ctx_aoba_list', 'run_aoba', 120, '絞り込みの地区は、営業所の区分でよいですか', []),
     { id: 'msg_r3', type: 'status', from_handle: 'run:run_aoba', to_handle: 'dispatch:ctx_aoba_list', thread_id: 'msg_q3', subject: 'Re: Question', body: '営業所の区分で', created_at: at(118) },
     q('msg_q4', 'ctx_other', 'run_other', 50, 'ほかの案件の問い', [])
@@ -128,16 +128,16 @@ export function writeAskSample(root: string, now = Date.now()): void {
   mkdirSync(path.join(root, '.orca', 'consult'), { recursive: true })
   writeFileSync(path.join(root, '.orca', 'cockpit', 'rulings.jsonl'), [
     { id: 'R31', at: at(900), kind: 'decision', text: '配車画面の一覧は、配送日の降順を既定の並びにする', quote: '一覧は配送日が新しい順でいい', dec: 'd12' },
-    { id: 'R32', at: at(600), kind: 'constraint', text: '森さんに送る文面は、送る前に深田さんが見る（送信前のカードにする）', quote: '先方に出すものは必ず見せて' },
+    { id: 'R32', at: at(600), kind: 'constraint', text: '田中さんに送る文面は、送る前に深田さんが見る（送信前のカードにする）', quote: '先方に出すものは必ず見せて' },
     { id: 'R33', at: at(300), kind: 'decision', text: 'AWS 構成案の本番の図は、社内向けの入口を描き足さず本文で説明する', quote: '図はこのままでいい、本文で書いて', dec: 'd21' }
   ].map((x) => JSON.stringify(x)).join('\n') + '\n')
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.md'), `# ${askTitle('青葉物流 配車アプリ', 'ask1')}\n- 写した窓口の会話: s1（窓口の会話 ${hhmm(now - 40 * 60_000)} 時点）\n\n`
-    + `### 質問 ${hhmm(now - 35 * 60_000)}（u-41）\n定例の前に、森さんに先に送っておくべきものはある？\n\n`
+    + `### 質問 ${hhmm(now - 35 * 60_000)}（u-41）\n定例の前に、田中さんに先に送っておくべきものはある？\n\n`
     + `### 答え ${hhmm(now - 34 * 60_000)}\n窓口の会話 ${hhmm(now - 40 * 60_000)} 時点（それより後に決まったことは知らない）\n## 結論\n**2 つ**あります。どちらも定例の前日までに送ります。\n\n| 送るもの | 置き場所 | 状態 |\n|---|---|---|\n| 構成案 | Drive（[構成案](https://example.com/aws-plan)） | 本文は済、図の確認待ち |\n| 議事録の共有のお願い | 送信前のカード | 期限切れのまま |\n\n### 次の手\n1. 構成案の図を \`t2\` で直す\n2. 議事録のカードを送る\n\n`)
-  writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.returns.jsonl'), JSON.stringify({ return_id: 'ask1-1', rulings_seen: 'R33', decisions: [{ text: '構成案は定例の前日までに森さんへ共有する', quote: 'じゃあ構成案は前日までに送っておいて', utterance: 'u-42' }], requests: [], open: [], affects: [], ask: 'ask1' }) + '\n')
+  writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.returns.jsonl'), JSON.stringify({ return_id: 'ask1-1', rulings_seen: 'R33', decisions: [{ text: '構成案は定例の前日までに田中さんへ共有する', quote: 'じゃあ構成案は前日までに送っておいて', utterance: 'u-42' }], requests: [], open: [], affects: [], ask: 'ask1' }) + '\n')
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask2.md'), `# ${askTitle('青葉物流 配車アプリ', 'ask2')}\n- カード: d21\n- 写した窓口の会話: s1（窓口の会話 ${hhmm(now - 20 * 60_000)} 時点）\n\n`
-    + `### 質問 ${hhmm(now - 15 * 60_000)}（u-44）\n社内向けの入口を図に描かないと、森さんは困る？\n\n`
-    + `### 答え ${hhmm(now - 14 * 60_000)}\n窓口の会話 ${hhmm(now - 20 * 60_000)} 時点（それより後に決まったことは知らない）\n困らない見込みです。森さんが図で確かめたいのは本番の経路だけで、社内向けの入口は運用の説明で足ります（11/19 の定例の発言）。\n\n`)
+    + `### 質問 ${hhmm(now - 15 * 60_000)}（u-44）\n社内向けの入口を図に描かないと、田中さんは困る？\n\n`
+    + `### 答え ${hhmm(now - 14 * 60_000)}\n窓口の会話 ${hhmm(now - 20 * 60_000)} 時点（それより後に決まったことは知らない）\n困らない見込みです。田中さんが図で確かめたいのは本番の経路だけで、社内向けの入口は運用の説明で足ります（11/19 の定例の発言）。\n\n`)
 }
 
 /**
@@ -171,12 +171,12 @@ if (import.meta.main) {
   // 状況の文（status、R188）の見本。s2 は上限に近い長さ（3 行に収まるかを見る）。s3・s4 は書いていない仕事の見本。
   const said: [string, string][] = [
     ['s1', '一覧の並べ替えは stg に出した。地図の遅さは原因を調べていて、直し方を深田さんに決めてもらうのを待っている。'],
-    ['s2', '構成図の下書きは Drive に置いた。本番の入口を図に描き足すかを深田さんに決めてもらい、決まったら説明の本文を仕上げて、来週の定例の前日までに森さんへ送る。費用の見積もりは本文の最後に付ける。']
+    ['s2', '構成図の下書きは Drive に置いた。本番の入口を図に描き足すかを深田さんに決めてもらい、決まったら説明の本文を仕上げて、来週の定例の前日までに田中さんへ送る。費用の見積もりは本文の最後に付ける。']
   ]
   for (const [id, status] of said) (aoba.streams.find((x) => x.id === id) as { status?: string }).status = status
-  const tsaid: [string, string][] = [['t1', '並べ替えは済み。絞り込みを作っていて、明日 stg に出す。'], ['t3', '森さんに利用上限を聞いている。返事が来たら繋ぎ込みの見積もりを出す。']]
+  const tsaid: [string, string][] = [['t1', '並べ替えは済み。絞り込みを作っていて、明日 stg に出す。'], ['t3', '田中さんに利用上限を聞いている。返事が来たら繋ぎ込みの見積もりを出す。']]
   for (const [id, status] of tsaid) (aoba.tasks.find((x) => x.id === id) as { status?: string }).status = status
-  // 確認日の見本（R142・R171）: 森さんの返事を待つタスクは今日が確認日（要対応に 1 行）、構成案の図は 2 日後。
+  // 確認日の見本（R142・R171）: 田中さんの返事を待つタスクは今日が確認日（要対応に 1 行）、構成案の図は 2 日後。
   const day = (d: number) => new Date(Date.now() + d * 86_400_000).toLocaleDateString('sv-SE')
   aoba.tasks.find((x) => x.id === 't3')!.check_on = day(0)
   aoba.tasks.find((x) => x.id === 't2')!.check_on = day(2)

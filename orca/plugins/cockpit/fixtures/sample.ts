@@ -31,7 +31,7 @@ export function sample(now = Date.now()): SampleWs[] {
     tasks: [
       { id: 't1', stream: 's1', phase: '実装', title: '一覧の並べ替えと絞り込み', state: 'run', next: 'レビューの指摘を直して stg に出す', worker: { task_id: 'task_aoba_list', dispatch_id: 'ctx_aoba_list' } },
       { id: 't2', stream: 's2', phase: '設計', title: '構成案の図と本文', state: 'wait', next: '入口の描き方を決めてから送る版を作る' },
-      { id: 't3', stream: 's3', phase: '設計', title: '利用上限の確認', state: 'wait', waiting_on: '森さん', waiting_since: iso(now - 50 * H), next: '回答が来たら繋ぎ込みの見積もり' },
+      { id: 't3', stream: 's3', phase: '設計', title: '利用上限の確認', state: 'wait', waiting_on: '田中さん', waiting_since: iso(now - 50 * H), next: '回答が来たら繋ぎ込みの見積もり' },
       { id: 't4', stream: 's4', phase: '要件', title: '議事録の取りまとめ', state: 'ok' }
     ],
     owners: [
@@ -58,7 +58,7 @@ export function sample(now = Date.now()): SampleWs[] {
         ],
         fallback: '決まるまで、送る版は今の図のまま作っておきます',
         figure: '.orca/cockpit/figures/entry.svg',
-        background: { text: '森さんから「社内の人はどこから入るのか」と聞かれ、表だけでは伝わりにくいと分かった。', quote: '社内の人はどこから入る想定ですか？', date: iso(now - 30 * H) },
+        background: { text: '田中さんから「社内の人はどこから入るのか」と聞かれ、表だけでは伝わりにくいと分かった。', quote: '社内の人はどこから入る想定ですか？', date: iso(now - 30 * H) },
         links: [{ label: '構成案（Drive）', href: 'https://docs.google.com/presentation/d/example-aoba' }]
       },
       {
@@ -67,15 +67,15 @@ export function sample(now = Date.now()): SampleWs[] {
         purpose: '前回の定例で決めたことを、次の定例の前にそろえる',
         fallback: '今日中に返事が無ければ、定例の冒頭で口頭で確かめる',
         draft: {
-          to: '森さん・林さん（Slack #aoba-dev の 11/19 のスレッド）', via: 'Slack',
-          text: '@森 @林\nお疲れさまです。先日の定例の議事録の件、お手すきの際に共有いただけますと幸いです。\n次回の定例の前に、決めたことを一度そろえておきたいと考えています。',
+          to: '田中さん・林さん（Slack #aoba-dev の 11/19 のスレッド）', via: 'Slack',
+          text: '@田中 @佐藤\nお疲れさまです。先日の定例の議事録の件、お手すきの際に共有いただけますと幸いです。\n次回の定例の前に、決めたことを一度そろえておきたいと考えています。',
           href: 'https://example.slack.com/archives/C000AOBA/p1700000000'
         }
       },
       {
         id: 'r5', rev: 1, kind: 'review', state: 'open', at: iso(now - 3 * H), due: iso(today(now, 18) + 24 * H), stream: 's1',
         title: '配車画面の一覧（並べ替えと絞り込み）',
-        purpose: '一覧の改修を stg に出し、森さんの受入に回せる',
+        purpose: '一覧の改修を stg に出し、田中さんの受入に回せる',
         fallback: '明日の定例までに返事が無ければ、stg に出したまま定例で見てもらう',
         request: '一覧で配送日と地区で並べ替え・絞り込みできるようにしてほしい。件数が多い日でも重くならないように',
         look_for: ['配送日の降順が既定になっている', '地区の絞り込みを外すと全件に戻る', '500 件の日でも 1 秒以内に出る'],
@@ -85,7 +85,7 @@ export function sample(now = Date.now()): SampleWs[] {
       {
         id: 'i3', rev: 1, kind: 'inbox', state: 'open', at: iso(now - 40 * 60_000), stream: 's1',
         title: '地図の表示が遅いという報告',
-        from: { who: '森さん', via: 'Slack #aoba-dev', at: iso(now - 45 * 60_000), href: 'https://example.slack.com/archives/C000AOBA/p1700000100' },
+        from: { who: '田中さん', via: 'Slack #aoba-dev', at: iso(now - 45 * 60_000), href: 'https://example.slack.com/archives/C000AOBA/p1700000100' },
         asked: '朝の時間帯に地図が出るまで 10 秒かかる。直るか',
         routed: '担当「配車画面の改修」が調べ始めた。返事は要る（担当が下書きを作る）',
         reply: 'needed'
@@ -94,17 +94,17 @@ export function sample(now = Date.now()): SampleWs[] {
         id: 'c4', rev: 3, kind: 'talk', state: 'open', at: iso(now - 20 * H), stream: 's2',
         title: 'AWS アカウントの分け方（1 つか、分けるか）',
         purpose: '構成案の前提（アカウントの数）を決め、見積もりを出せる',
-        why: '森さんの回答が明日の午前に来るので、その前に考えをそろえたい',
+        why: '田中さんの回答が明日の午前に来るので、その前に考えをそろえたい',
         fallback: '話せないまま回答が来たら、担当の今の考えで進めて構成案に書く',
         quote: 'アカウントは本番と検証で分けたほうがいいですか？',
-        last: { text: '森さんに送った内容で、あとは回答次第で決める感じにしよう。', at: iso(now - 19 * H), by: '私' },
-        next: '森さんの回答（明日の午前）を待つ'
+        last: { text: '田中さんに送った内容で、あとは回答次第で決める感じにしよう。', at: iso(now - 19 * H), by: '私' },
+        next: '田中さんの回答（明日の午前）を待つ'
       },
       {
         id: 'w1', rev: 2, kind: 'send', state: 'waiting', at: iso(now - 60 * H), stream: 's3',
         title: '外部 API の利用上限を問い合わせた',
-        draft: { to: '森さん（メール）', text: '外部 API の 1 日あたりの上限を教えてください。' },
-        awaiting: { who: '森さん', what: '外部 API の利用上限の回答', since: iso(now - 50 * H), resumes: '外部 API の繋ぎ込みの見積もり', remind_at: iso(now - 4 * H) }
+        draft: { to: '田中さん（メール）', text: '外部 API の 1 日あたりの上限を教えてください。' },
+        awaiting: { who: '田中さん', what: '外部 API の利用上限の回答', since: iso(now - 50 * H), resumes: '外部 API の繋ぎ込みの見積もり', remind_at: iso(now - 4 * H) }
       },
       {
         id: 'd19', rev: 1, kind: 'decide', state: 'done', at: iso(now - 30 * H), stream: 's4',

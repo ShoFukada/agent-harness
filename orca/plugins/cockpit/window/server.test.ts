@@ -1224,7 +1224,7 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   assert.deepEqual(lines(aoba), [
     ['キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', 'worker（朝の地図の遅さの調査）があなたに聞いている'],
     ['一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか', 'worker（一覧の並べ替えと絞り込み）が窓口に聞いたが、まだ答えが無い'],
-    ['構成図は PowerPoint と draw.io のどちらで描きますか（森さんが直すのは PowerPoint）', 'worker（AWS 構成案）が担当に聞いたが、まだ答えが無い']
+    ['構成図は PowerPoint と draw.io のどちらで描きますか（田中さんが直すのは PowerPoint）', 'worker（AWS 構成案）が担当に聞いたが、まだ答えが無い']
   ])
   // 押すと宛先を前に出す: 地図の worker は自分の端末、窓口宛ては窓口の端末、担当宛ては担当のチャットのある worktree。
   const row = (t: string) => todoGroups(aoba).flatMap(([, xs]) => xs).find((r) => r.card.title.includes(t))!

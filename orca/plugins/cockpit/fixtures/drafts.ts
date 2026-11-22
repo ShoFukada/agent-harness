@@ -1,7 +1,7 @@
 // 送る文面の見本（箇条書き・強調・リンク・改行を含む）。コピーの書式のテストと、貼った見た目を確かめるときに使う。架空の宛先。
 import type { Draft } from '../src/model.ts'
 
-const chat = `森さん
+const chat = `田中さん
 林さん
 
 ご確認ありがとうございます。次の2点を直しました。
@@ -12,13 +12,13 @@ const chat = `森さん
 `
 
 export const DRAFTS: Record<'slack' | 'teams' | 'mail', Draft> = {
-  slack: { to: '森さん・林さん', via: 'Slack #aoba-dev', text: chat, href: 'https://example.slack.com/archives/C000AOBA/p1700000100' },
-  teams: { to: '森さん・林さん', via: 'Teams のチャット', text: chat, href: 'https://teams.microsoft.com/l/message/19:x/1700000100' },
+  slack: { to: '田中さん・林さん', via: 'Slack #aoba-dev', text: chat, href: 'https://example.slack.com/archives/C000AOBA/p1700000100' },
+  teams: { to: '田中さん・林さん', via: 'Teams のチャット', text: chat, href: 'https://teams.microsoft.com/l/message/19:x/1700000100' },
   mail: {
-    to: '森様', via: 'メール', href: 'https://mail.google.com/mail/u/0/#inbox/abc',
+    to: '田中様', via: 'メール', href: 'https://mail.google.com/mail/u/0/#inbox/abc',
     text: `件名: 【ご確認】手順書の修正について
 
-森様
+田中様
 
 いつもお世話になっております。
 次の2点を修正しました。
@@ -34,7 +34,7 @@ export const DRAFTS: Record<'slack' | 'teams' | 'mail', Draft> = {
 export const REVIEW_SAMPLE: Draft = { to: '見本（Slack・Teams・メールに貼って確かめる）', text: chat }
 
 /**
- * 書式の検査の実例（R161・R162）。旧 m1 は BW の送る前のカードで、Slack 宛てなのにメールの書式（■・「・」）で書かれ、そのまま Slack に下書き保存されたもの。
+ * 書式の検査の実例（R161・R162）。旧 m1 は顧客への送る前のカードで、Slack 宛てなのにメールの書式（■・「・」）で書かれ、そのまま Slack に下書き保存されたもの。
  * 直した m1 は書き直した後の版の頭、s163〜s165 は nix-darwin の操縦席で 3 つの宛先に貼って確かめた本文。顧客の値（人名・ID・アカウント番号・費用）は伏せた。
  */
 const M1_ROUTE = { to: '先方の担当（システム部）', via: 'Slack #ex-先方の導入プロジェクトのスレッド（下書き保存済み）', href: 'https://example.slack.com/archives/C000BW/p1795000000000000' }

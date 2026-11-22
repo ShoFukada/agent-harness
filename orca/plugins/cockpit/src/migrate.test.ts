@@ -22,7 +22,7 @@ const v1 = (): V1 => ({
   requests: [{ id: 'r1', at: '2026-11-20', title: '一覧を直して', quote: '一覧で並べ替えたい', state: 'open', tasks: ['t1'], deliverables: [{ id: 'pr', label: 'PR', href: 'https://github.com/example/a/pull/1', look_for: ['並べ替え'] }] }],
   items: [
     { id: 'd1', rev: 1, kind: 'dec', title: '図を描き足すか', state: 'open', related: [{ task: 't1', effect: '図が決まる' }], why: '明日送る', context: { what: 'w' }, options: [{ id: 'a', label: 'A' }] },
-    { id: 'd2', rev: 2, kind: 'dec', title: '返信を送る', state: 'open', draft: { to: '森さん', text: '本文' }, options: [{ id: 'posted', label: '投稿した' }] },
+    { id: 'd2', rev: 2, kind: 'dec', title: '返信を送る', state: 'open', draft: { to: '田中さん', text: '本文' }, options: [{ id: 'posted', label: '投稿した' }] },
     { id: 'd3', rev: 1, kind: 'dec', topic: 'push', title: 'main を push する', why: '直しが入る', state: 'done', resolved_by: 'main', resolved_at: '2026-11-20T10:00:00Z' },
     { id: 'q1', rev: 1, kind: 'ask', title: '上限を聞く', quote: '上限はいくつですか', state: 'open' },
     { id: 'v1', rev: 1, kind: 'rev', title: '一覧の PR', state: 'open', request: 'r1', deliverable: 'pr' },
