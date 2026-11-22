@@ -302,8 +302,9 @@ def lost_workers(since, terms, agents, moved=None, appeared=None, seat=None):
                     and launched_session(t["handle"], launched) in (None, lost_id) and (launch_info(t["handle"], launched) or {}).get("orca")]
             same = near[0] if len(near) == 1 else None
         # 同じ Task を別の端末で出し直したか終わったあとも、Orca の起こし直しが worker の設定なしで残っていれば閉じる。
+        # 最後に起きた claude が Orca の開き直し（そのあと終わった跡も別の起動も無い）のときだけ。人が始めた会話は閉じない。
         leftover = lambda t: t if t and t["handle"] not in busy and t["handle"] not in hosted \
-            and not settings_file(launched_line(t["handle"], launched)) else None
+            and (launch_info(t["handle"], launched) or {}).get("orca") else None
         again = next((y["dispatchId"] for y in later if y.get("taskId") == x["task"]), None)
         if again:
             x["skip"] = "結び直し済み（%s）" % again  # 終わったあとも含む
@@ -526,16 +527,20 @@ def launch_info(handle, cache):
                 last, exited, orca = None, True, False
             elif LAUNCH.match(l) and "Resume this session with:" not in prev:
                 last, exited, orca = l, False, orca_resume(l)
-            elif orca_resume(l):
-                orca = True  # 崩れて claude が行の頭に残らなかった Orca の行（本物 11/22）
+            elif orca_resume(l) and not exited:
+                orca = True  # 崩れて claude が行の頭に残らなかった Orca の行（本物 11/22）。終わったあとの出力では拾わない
             prev = l if l.strip() else prev
         cache[handle] = None if t.get("truncated") or t.get("limited") else {"line": last, "exited": exited, "orca": orca}
     return cache[handle]
 
 
+ORCA_RESUME = re.compile(r"/orca-agent-view'.*'--resume'")
+
+
 def orca_resume(line):
-    """Orca が会話を開き直すときに打った行か（崩れていても `orca-agent-view` と `--resume` は残る）。"""
-    return "orca-agent-view" in line and "--resume" in line
+    """Orca が会話を開き直すときに打った行か。Orca は引数を引用符で囲むので、崩れていても `/orca-agent-view'` と `'--resume'` が残る
+    （会話の中で人が打った語には当てない）。"""
+    return bool(ORCA_RESUME.search(line))
 
 
 def launched_line(handle, cache):
@@ -1497,10 +1502,13 @@ def after_switch(a):
         if why:
             screens[t["handle"]] = (label(t), why)
     lost, unread = lost_workers(now - a.since_min * MIN, terms, agents)
-    close_restarts(lost, a.dry_run)
+    closed = close_restarts(lost, a.dry_run)
     home, mine = None, False
     done, left = [], ["%s: 詳細を読めず、失ったかどうか確かめていない" % u for u in unread]
-    skipped = ["%s（%s）: %s" % (x["task"], x["dispatch"], x["skip"]) for x in lost if x["skip"]]
+    # 結び直し済みでも、Orca の起こし直しを閉じられなければ残りに数える（設定なしの端末が残る）。
+    stuck_open = [x for x in lost if x["skip"] and x["close"] and x["close"]["handle"] not in closed and not a.dry_run]
+    left += ["%s（%s）: %s" % (x["task"], x["dispatch"], x["skip"]) for x in stuck_open]
+    skipped = ["%s（%s）: %s" % (x["task"], x["dispatch"], x["skip"]) for x in lost if x["skip"] and x not in stuck_open]
     for x in lost:
         if x["skip"]:
             continue

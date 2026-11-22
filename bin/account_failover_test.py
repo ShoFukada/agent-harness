@@ -912,6 +912,38 @@ class AccountFailoverTest(unittest.TestCase):
         self.assertIn("結び直さない worker task_1: 結び直し済み（ctx_8）。Orca が起こし直した t1-new は worker の設定なしで動くので閉じた",
                       self.notes()[0])
 
+    def test_switch_does_not_close_a_conversation_a_person_started_in_orcas_restart(self):
+        # 同じ Task を出し直したあと、人が Orca の起こし直しの端末で claude を終えて別の会話を始めた（起動の行は崩れて拾えない）。
+        self.lost_with_coordinator_racing(True, False)
+        with open(os.path.join(self.fake, "workers-after.json")) as fh:
+            rows = json.load(fh)
+        self.put("workers-after.json", [dict(w, taskId="task_1") if w["dispatchId"] == "ctx_8" else w for w in rows])
+        self.put("heads.json", {"t1": {"tail": ["claude --model opus --settings " + WORKER_SETTINGS]}, "t1-new": {
+            "tail": self.garbled_head(S1)["tail"] + ["Resume this session with:", "claude --resume " + S1, "clenv '…",
+                                                     "❯ orca-agent-view と '--resume' の関係を調べて"]}})
+        self.run_failover()
+        self.assertFalse(any(c.startswith("terminal close") for c in self.calls()))
+
+    def test_switch_does_not_take_a_persons_words_for_orcas_restart(self):
+        self.finished_worker()
+        self.put("heads.json", {"t1": {"tail": ["❯"]}, "t1-new": {"tail": ["", "❯ orca-agent-view と --resume の関係を調べて"]}})
+        self.seat_session(B, S2, "/w/t1")
+        self.run_failover()
+        self.assertEqual(self.sends(), [])
+
+    def test_after_switch_fails_when_orcas_restart_beside_a_redispatched_task_stays_open(self):
+        self.terminals([terminal("t1-new", tab="tab-t1", wt="t1"), terminal("w1", wt="t1")])
+        self.agents([claude_agent("t1-new", tab="tab-t1"), claude_agent("w1", state="working")])
+        self.workers(lost=[("ctx_1", "task_1", "t1", "tab-t1:leaf-t1-new", "t1")], live=[("ctx_8", "w1", "t1")])
+        with open(os.path.join(self.fake, "workers.json")) as fh:
+            self.put("workers.json", [dict(w, taskId="task_1") if w["dispatchId"] == "ctx_8" else w for w in json.load(fh)])
+        self.put("heads.json", {"t1-new": launch_head(S1)})
+        self.put("screens.json", {"t1-new": AUTO_MODE_SCREEN})
+        r = self.run_after()
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(any(c.startswith("terminal close") for c in self.calls()))
+        self.assertIn("結び直していない worker task_1（ctx_1）: 結び直し済み（ctx_8）。Orca が起こし直した t1-new（worker の設定なし）を閉じられなかった", r.stdout)
+
     def test_switch_relaunches_a_lost_worker_reopened_in_another_pane(self):
         # coordinator が立て直していなければ、別の枠の起こし直しを worker の設定で起こし直してから結び直す。
         self.lost_with_coordinator_racing(False, True)
