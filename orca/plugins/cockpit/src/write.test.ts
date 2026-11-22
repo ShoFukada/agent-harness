@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
+import { FAKE_LINT, FIXED_M1, OLD_M1, REAL_SENDS } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
 import { migrate, write } from '../window/write.ts'
 import { parseCockpit, type Card, type Cockpit, type Request } from './model.ts'
-import { applyChange, migrateV3 } from './write.ts'
+import { applyChange, draftsToLint, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
@@ -165,7 +166,7 @@ test('書く道具: 入れ子の知らない欄と、形の違うタスクの欄
   assert.match(applyChange(c, { tasks: [{ ...c.tasks[0]!, owner: 'o1' } as never] }).errors.join('\n'), /タスク t1: 書けない欄 owner/)
   const d = card(c, 'd21')
   assert.match(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', cc: 'c' } as never }] }).errors.join('\n'), /カード d21: 書けない欄 draft.cc/)
-  assert.deepEqual(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', format: 'teams' } }] }).errors, [])
+  assert.deepEqual(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', format: 'teams' } }] }, [], undefined, { d21: { format: 'teams', violations: [] } }).errors, [])
   assert.match(applyChange(c, { cards: [{ ...d, rev: 2, draft: { to: 'a', text: 'b', format: 'line' } as never }] }).errors.join('\n'), /カード d21: draft の形が違う/)
   assert.match(applyChange(c, { cards: [{ ...d, rev: 2, options: [{ id: 'a', label: 'A', recomended: true } as never] }] }).errors.join('\n'), /options\[0\]\.recomended/)
   assert.match(applyChange(c, { requests: [{ id: 'q1', at: '', title: 't', utterances: [{ id: 'u1', quote: '' }], kind: 'work', done_when: ['a'], evidence: [{ when: 1, kind: 'pr', ref: 'x', note: 'y' } as never] }] }, utter).errors.join('\n'), /依頼 q1: 書けない欄 evidence\[0\]\.note/)
@@ -291,8 +292,8 @@ test('書く道具: カードとタスクの人が読む欄の柔らかい言い
   const err = applyChange(c, { cards: [soft] }).errors.join('\n')
   assert.match(err, /カード d21: 柔らかい言い回し purpose「かも」・last\.text「ておきました」・options\[0\]\.label「ですね」/)
   // 相手と深田さんの言葉（draft の本文・quote・深田さんの last）は原文のまま書ける。
-  const quoted = { ...card(c, 'd21'), rev: 2, quote: '任せてもいいかも', draft: { to: '森さん', text: '送っておきましたね' }, last: { text: '決める感じですね', by: '私' } }
-  assert.ok(applyChange(c, { cards: [quoted] }).next)
+  const quoted = { ...card(c, 'd21'), rev: 2, quote: '任せてもいいかも', draft: { to: '森さん', text: '送っておきましたね', format: 'mail' as const }, last: { text: '決める感じですね', by: '私' } }
+  assert.ok(applyChange(c, { cards: [quoted] }, [], undefined, { d21: { format: 'mail', violations: [] } }).next)
   // 元からある文の書き戻し（片付けるだけ）は止めない。
   const old = aoba()
   old.cards.find((x) => x.id === 'd21')!.purpose = '図を足すかも'
@@ -312,4 +313,87 @@ test('書く道具: カードとタスクの人が読む欄の柔らかい言い
   assert.match(applyChange(c, { cards: [{ ...card(c, 'd21'), rev: 2, purpose: '延期かも、先方に確かめる' }] }).errors.join('\n'), /purpose「かも」/)
   const task = { ...c.tasks[0]!, next: '直しちゃいます', done: [{ text: '出しておきました', at: '2026-11-21T09:00:00+09:00' }] }
   assert.match(applyChange(c, { tasks: [task] }).errors.join('\n'), /タスク t1: 柔らかい言い回し next「しちゃ」・done\[0\]\.text「ておきました」/)
+})
+
+const lintDir = mkdtempSync(path.join(tmpdir(), 'cockpit-write-lint-'))
+const FAKE = path.join(lintDir, 'draft-format-lint')
+writeFileSync(FAKE, FAKE_LINT)
+chmodSync(FAKE, 0o755)
+const ok = (format: 'slack' | 'teams' | 'mail') => ({ format, violations: [] })
+/** 見本の青葉物流に、送る前のカード（m1）を足した帳簿。draft は旧 m1（format の無い、メールの書式の Slack 宛て）。 */
+const withOldM1 = (): Cockpit => {
+  const c = aoba()
+  c.cards.push({ ...card(c, 'd22'), id: 'm1', rev: 2, draft: structuredClone(OLD_M1) })
+  return c
+}
+
+test('書く道具（R161・R162）: 新しい・開き直した・本文か宛先を変えた送る文面は、draft.format が要り、宛先（via・href）と合い、書式の検査を通ったものだけを書く', () => {
+  const c = aoba()
+  const m1 = (draft: Card['draft']): Card => ({ ...card(c, 'd22'), id: 'm1', rev: 1, draft })
+  // format が無い: via から推した候補を添えて断る。
+  assert.deepEqual(applyChange(c, { cards: [m1(OLD_M1)] }).errors, ['カード m1: draft.format が無い。draft.format を slack・teams・mail のどれかで書く（via から推した候補: slack）'])
+  assert.match(applyChange(c, { cards: [m1({ to: 'a', href: 'https://acme.slack.com/x', text: 't' })] }).errors[0]!, /（href から推した候補: slack）/)
+  assert.match(applyChange(c, { cards: [m1({ to: 'a', via: 'LINE', text: 't' })] }).errors[0]!, /のどれかで書く$/)
+  // 宛先と食い違う: format が mail で via が Slack。
+  assert.deepEqual(applyChange(c, { cards: [m1({ ...OLD_M1, format: 'mail' })] }, [], undefined, { m1: ok('mail') }).errors,
+    ['カード m1: draft.format は mail だが、宛先（via・href）は slack。宛先に合わせて format か via・href を修正する'])
+  // 書式の違反: カード・行番号・規則・該当の行・直し方を名指しする。
+  const bad = { m1: { format: 'slack' as const, violations: [4, 5].map((line) => ({ line, rule: 'bullet-symbol', text: OLD_M1.text.split('\n')[line - 1]!, fix: '箇条書きは「- 」にする' })) } }
+  assert.deepEqual(applyChange(c, { cards: [m1({ ...OLD_M1, format: 'slack' })] }, [], undefined, bad).errors,
+    ['カード m1: Slackの書式に合わない行 4 行目「■ 必要なクォータ」・5 行目「・① Global cross-region model inference t…」（bullet-symbol: 箇条書きは「- 」にする）。宛先の書式（dev-standards の message-formats.md）に修正する'])
+  // 検査していない・検査できない（CLI が無い）は書かない。
+  assert.match(applyChange(c, { cards: [m1(FIXED_M1)] }).errors[0]!, /カード m1: 文面の書式を検査していない/)
+  assert.match(applyChange(c, { cards: [m1(FIXED_M1)] }, [], undefined, { m1: { format: 'slack', error: '書式の検査（/x）を起動できない: ENOENT' } }).errors[0]!, /起動できない: ENOENT。書式を確認できないので書かない/)
+  assert.ok(applyChange(c, { cards: [m1(FIXED_M1)] }, [], undefined, { m1: ok('slack') }).next)
+  // 推せない経路（LINE・GitHub の Issue）は format をそのまま使う。
+  assert.ok(applyChange(c, { cards: [m1({ to: 'a', via: 'LINE', text: 't', format: 'slack' })] }, [], undefined, { m1: ok('slack') }).next)
+  assert.ok(applyChange(c, { cards: [m1({ to: 'a', href: 'https://github.com/o/r/issues/1', text: 't', format: 'mail' })] }, [], undefined, { m1: ok('mail') }).next)
+  // 見て（review）の draft も同じく検査する。
+  const r5 = { ...card(c, 'r5'), rev: 2, draft: { to: '見本', text: 'x' } }
+  assert.match(applyChange(c, { cards: [r5] }).errors.join('\n'), /カード r5: draft.format が無い/)
+  assert.ok(applyChange(c, { cards: [{ ...r5, draft: { ...r5.draft, format: 'teams' as const } }] }, [], undefined, { r5: ok('teams') }).next)
+})
+
+test('書く道具（R161・R162）: 返しの反映・片付け・ほかの欄だけの書き換えは、前からある文面（旧 m1）を検査しない', () => {
+  const c = withOldM1()
+  const m1 = card(c, 'm1')
+  // 返しの反映だけ（rev を上げない）
+  assert.deepEqual(applyChange(c, { cards: [{ ...m1, from_returns: ['m1-1'], held_returns: ['m1-2'] }] }).errors, [])
+  // 片付け
+  assert.deepEqual(applyChange(c, { cards: [{ ...m1, state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T10:00:00+09:00' }] }).errors, [])
+  // 題だけ直す（文面の本文と宛先は同じ）
+  assert.deepEqual(applyChange(c, { cards: [{ ...m1, rev: 3, title: '議事録の共有を依頼する' }] }).errors, [])
+  // 片付けたカードを開き直す・本文を変える・宛先を変えるときは検査する。
+  const closed = withOldM1()
+  closed.cards.find((x) => x.id === 'm1')!.state = 'done'
+  assert.match(applyChange(closed, { cards: [{ ...m1, rev: 3 }] }).errors.join('\n'), /カード m1: draft.format が無い/)
+  assert.match(applyChange(c, { cards: [{ ...m1, rev: 3, draft: { ...m1.draft!, text: `${m1.draft!.text}\n追記` } }] }).errors.join('\n'), /draft.format が無い/)
+  assert.match(applyChange(c, { cards: [{ ...m1, rev: 3, draft: { ...m1.draft!, href: 'https://acme.slack.com/y' } }] }).errors.join('\n'), /draft.format が無い/)
+  // 検査に渡す文面は変更の中身だけで決める（帳簿のロックの外で検査するため）。開いていて format が書式の名前の draft だけ。変更の形がどんなでも落ちない。
+  const closedM1 = { ...m1, id: 'm4', state: 'done' as const, draft: FIXED_M1 }
+  assert.deepEqual(draftsToLint({ cards: [m1, { ...m1, id: 'm2', draft: FIXED_M1 }, closedM1] }), [{ id: 'm2', to: 'slack', text: FIXED_M1.text }])
+  assert.deepEqual(draftsToLint({ cards: [{ ...m1, draft: { ...OLD_M1, format: 'slack' } }, { ...m1, rev: 3, draft: FIXED_M1 }] }), [{ id: 'm1', to: 'slack', text: FIXED_M1.text }], '同じ id は後の行（書く行）だけ')
+  for (const x of [null, 3, { cards: 'x' }, { cards: [null, { id: 1 }, { id: 'z', state: 'open', draft: 'x' }] }]) assert.deepEqual(draftsToLint(x), [])
+  // 検査しない文面（返しの反映だけ）は、検査できなかった結果を渡されても止めない。
+  const fmt = withOldM1()
+  fmt.cards.find((x) => x.id === 'm1')!.draft!.format = 'slack'
+  assert.deepEqual(applyChange(fmt, { cards: [{ ...card(fmt, 'm1'), from_returns: ['m1-1'] }] }, [], undefined, { m1: { format: 'slack', error: 'CLI が無い' } }).errors, [])
+})
+
+test('cockpit-write（R161・R162）: 書く前に CLI で検査する。旧 m1 は行を名指しして断り、実例（直した m1・s163〜s165）は通す。CLI が無ければ文面を含む変更だけを断る（fail closed）', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-write-lint-ws-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(withOldM1()))
+  const c = withOldM1()
+  const m1 = card(c, 'm1')
+  const fake = { bin: FAKE }
+  const old = await write(root, { cards: [{ ...m1, rev: 3, draft: { ...OLD_M1, format: 'slack' } }] }, true, fake)
+  assert.equal(old.errors.length, 1)
+  assert.match(old.errors[0]!, /^カード m1: Slackの書式に合わない行 4 行目「■ 必要なクォータ」・5 行目「・① .*」・6 行目「・② .*」・7 行目「・対象は 3 アカウント.*」（bullet-symbol: /)
+  const real = [{ ...m1, rev: 3, draft: FIXED_M1 }, ...Object.entries(REAL_SENDS).map(([id, d]) => ({ ...card(c, 'd22'), id, rev: 1, draft: d }))]
+  assert.deepEqual((await write(root, { cards: real }, true, fake)).errors, [])
+  const none = { bin: path.join(lintDir, 'none') }
+  assert.match((await write(root, { cards: [{ ...m1, rev: 3, draft: FIXED_M1 }] }, true, none)).errors[0]!, /カード m1: 書式の検査（.*none）を起動できない: .*ENOENT.*。書式を確認できないので書かない/)
+  assert.deepEqual((await write(root, { cards: [{ ...m1, from_returns: ['m1-1'] }] }, true, none)).errors, [], '返しの反映は CLI が無くても書ける')
+  assert.deepEqual((await write(root, { applied_ops: [] }, true, none)).errors, [])
 })

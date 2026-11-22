@@ -1,5 +1,5 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { actionVerb, chatMain, CONTEXT_FIELDS, COUNTED, COWORK_ID, dismissable, DRAFT_FORMATS, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
+import { actionVerb, chatMain, CONTEXT_FIELDS, COUNTED, COWORK_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -308,7 +308,7 @@ function detailsHtml(r: Row, ui: Ui, svg: (raw: string) => string, figures: Reco
   return `<details class="more" data-fold="${esc(key)}"${ui.open[key] ? ' open' : ''}><summary>詳細（判断材料・出典）</summary><div>${parts.join('')}</div></details>`
 }
 
-function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, figures: Record<string, string>): string {
+function bodyHtml(r: VRow, ui: Ui, now: number, svg: (raw: string) => string, figures: Record<string, string>): string {
   const c = r.card
   const parts: string[] = []
   // 何のためも、ほかの欄と同じ小見出しと値の形にする（Neon 初見 2 巡目の任意）。
@@ -323,7 +323,7 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
       if (c.quote) parts.push(fld('相手の発言', `<div class="quote">${esc(c.quote)}</div>`))
       if (c.why) parts.push(fld('なぜ今', rich(c.why, c.repo)))
       if (c.draft)
-        parts.push(`<div class="fld"><span class="lb">送る前の文面</span><div class="msg-to"><span class="sp">${sp([`宛先 <b>${esc(c.draft.to)}</b>`, c.draft.via && esc(c.draft.via)])}</span></div><div class="msg">${esc(c.draft.text)}</div></div>`)
+        parts.push(`<div class="fld"><span class="lb">送る前の文面</span><div class="msg-to"><span class="sp">${sp([`宛先 <b>${esc(c.draft.to)}</b>`, c.draft.via && esc(c.draft.via)])}</span></div><div class="msg">${esc(c.draft.text)}</div></div>`, lintHtml(r))
       parts.push(optionsHtml(r, ui))
       break
     case 'decide':
@@ -387,12 +387,23 @@ function bodyHtml(r: Row, ui: Ui, now: number, svg: (raw: string) => string, fig
  * 見てのカードの、宛先ごとの書式でコピーする見本（追加 25）。貼って崩れないかを深田さんが確かめるためのもので、
  * 変換は送る前のコピーと同じ clip-draft を使う（controller.ts の copyas）。
  */
-export function sampleHtml(r: Row): string {
+export function sampleHtml(r: VRow): string {
   const d = r.card.draft
   if (r.card.kind !== 'review' || !d) return ''
   const k = esc(keyOf(r))
   const btns = DRAFT_FORMATS.map((f) => `<button class="btn" type="button" data-act="copyas" data-format="${f}" data-key="${k}">${FORMAT_LABEL[f]}の書式でコピー</button>`).join('')
-  return `<div class="fld"><span class="lb">コピーの見本（元の文）</span><div class="msg-to"><span class="sp">${sp([`宛先 <b>${esc(d.to)}</b>`, d.via && esc(d.via)])}</span></div><div class="msg">${esc(d.text)}</div><div class="links">${btns}</div></div>`
+  return `<div class="fld"><span class="lb">コピーの見本（元の文）</span><div class="msg-to"><span class="sp">${sp([`宛先 <b>${esc(d.to)}</b>`, d.via && esc(d.via)])}</span></div><div class="msg">${esc(d.text)}</div>${lintHtml(r)}<div class="links">${btns}</div></div>`
+}
+
+/** 文面の書式の確認で止めた理由（違反の行と直し方・確認できない理由）。コピーのボタンと同じ所に出す（controller.ts の copyBlock と同じ結果を見る）。 */
+export function lintHtml(r: VRow): string {
+  const d = r.card.draft
+  const f = d && draftFormat(d)
+  const chk = f ? r.v?.drafts?.[r.card.id] : undefined
+  if (!f || !chk || chk.format !== f) return ''
+  const box = (head: string, rows: string[]) => `<div class="notes warn" role="status"><b>${head}</b>${rows.map((x) => `<div>${x}</div>`).join('')}</div>`
+  if ('error' in chk) return box('書式の確認（確認できないのでコピーしない）', [esc(chk.error)])
+  return chk.violations.length ? box(`書式の確認（${FORMAT_LABEL[f]}の書式に合わない行があるのでコピーしない）`, chk.violations.map((v) => `${v.line} 行目「${esc(v.text)}」: ${esc(v.fix)}（${esc(v.rule)}）`)) : ''
 }
 
 /** 送る前の「送った」のボタンの名前（コピーのあとの知らせもこれを案内する）。 */

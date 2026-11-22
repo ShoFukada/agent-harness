@@ -2,7 +2,8 @@ import { constants as fsConstants, promises as fsp } from 'node:fs'
 import path from 'node:path'
 import { parseCockpit, parseUserLog, VERSION, type Cockpit, type UserLog } from '../src/model.ts'
 import { lockCockpit, parseUtterances, readInOrca, writeAtomic } from '../src/store.ts'
-import { applyChange, migrateV3, type MigrateV3, type WriteResult } from '../src/write.ts'
+import { checkDrafts, type LintOpts } from '../src/lint.ts'
+import { applyChange, draftsToLint, migrateV3, type MigrateV3, type WriteResult } from '../src/write.ts'
 import { orcaCli } from './server.ts'
 
 async function readLedger(root: string): Promise<{ raw: Cockpit; log: UserLog; utterances: ReturnType<typeof parseUtterances> }> {
@@ -18,15 +19,17 @@ async function readLedger(root: string): Promise<{ raw: Cockpit; log: UserLog; u
 
 const save = (root: string, c: Cockpit) => writeAtomic(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(c, null, 2) + '\n')
 
-/** 変更を検査して書く。check なら書かない。書いた中身が読み込みで新しい形の誤りを出すなら書かない。 */
-export async function write(root: string, change: unknown, check = false): Promise<WriteResult> {
+/** 変更を検査して書く。check なら書かない。書いた中身が読み込みで新しい形の誤りを出すなら書かない。lintOpts は書式の検査の CLI の差し替え（試験用）。 */
+export async function write(root: string, change: unknown, check = false, lintOpts: LintOpts = {}): Promise<WriteResult> {
+  // 送る文面の書式の検査（dev-standards の draft-format-lint）はロックの外で済ませる。ロックは 10 秒で外れるので、中で CLI を待つと並んだ書き込みを古い中身で上書きしうる。
+  const lint = await checkDrafts(draftsToLint(change), lintOpts)
   // 検査だけ（--dry-run）はロックファイルも作らない（実データの .orca に何も書かずに通せるように）。
   const release = check ? async () => {} : await lockCockpit(root)
   try {
     const { raw, log, utterances } = await readLedger(root)
     const before: string[] = []
     parseCockpit(JSON.stringify(raw), before)
-    const r = applyChange(raw, change, utterances, log)
+    const r = applyChange(raw, change, utterances, log, lint)
     if (!r.next) return r
     const after: string[] = []
     parseCockpit(JSON.stringify(r.next), after)

@@ -1,8 +1,8 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
-  type AskRecord, type Card, type Cockpit, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
+  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
+  type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 
 /**
@@ -130,6 +130,56 @@ function softError(name: string, row: object, old: object | undefined, spec: Key
   return hits.length ? `${name}: 柔らかい言い回し ${hits.join('・')}。業務文書の語調（体言止め・短い動詞）に直す（R84）` : undefined
 }
 
+/**
+ * 書式を検査する文面か: 開いたカードの draft のうち、新しい・開き直した・本文か宛先（format・via・href）を変えたもの。
+ * 返しの反映や片付けだけの書き戻しは、前からある文面（format の無い版や、決まりより前の書き方）でも止めない。
+ */
+function draftTouched(x: Record<string, unknown>, prev: Card | undefined): boolean {
+  if (x.state !== 'open' || !isObj(x.draft)) return false
+  if (!prev || prev.state !== 'open' || !prev.draft) return true
+  const d = x.draft
+  return (['text', 'format', 'via', 'href'] as const).some((k) => d[k] !== prev.draft![k])
+}
+
+/**
+ * 書く前に書式の検査（draft-format-lint）に渡す文面: 変更のカードのうち、開いていて format が書式の名前の draft。帳簿を読まずに決める
+ * （検査を帳簿のロックの外で済ませるため）。前と同じ文面も渡すが、applyChange は検査する文面（draftTouched）の結果だけを見る。
+ * 変更の形は検査の前なので、どんな値でも落ちない。
+ */
+export function draftsToLint(change: unknown): { id: string; to: DraftFormat; text: string }[] {
+  const cards = isObj(change) && Array.isArray(change.cards) ? change.cards : []
+  // 同じ id の行が並べば、書くのは後の行（upsert）なので、後の行の文面だけを検査する。
+  const last = new Map(cards.filter((x: unknown) => isObj(x) && typeof x.id === 'string').map((x: Record<string, unknown>) => [x.id as string, x]))
+  return [...last.values()].flatMap((x) => {
+    if (x.state !== 'open' || !isObj(x.draft)) return []
+    const d = x.draft
+    return typeof d.text === 'string' && DRAFT_FORMATS.includes(d.format as DraftFormat) ? [{ id: x.id as string, to: d.format as DraftFormat, text: d.text }] : []
+  })
+}
+
+const QUOTE_MAX = 40
+const clip = (s: string) => (s.length > QUOTE_MAX ? `${s.slice(0, QUOTE_MAX)}…` : s)
+
+/** 検査する文面の format・宛先との食い違い・書式の違反。check は書く道具が CLI で検査した結果（無ければ検査できなかったとして断る）。 */
+function draftErrors(x: Card, prev: Card | undefined, check: DraftCheck | undefined): string[] {
+  if (!x.draft || !draftTouched(x as unknown as Record<string, unknown>, prev)) return []
+  const d = x.draft
+  const route = draftRoute(d)
+  if (!d.format) {
+    const hint = route ? `（${draftRoute({ via: d.via }) ? 'via' : 'href'} から推した候補: ${route}）` : ''
+    return [`カード ${x.id}: draft.format が無い。draft.format を ${DRAFT_FORMATS.join('・')} のどれかで書く${hint}`]
+  }
+  // 書式の名前でない format は形の検査（badFields）が断る。
+  if (!DRAFT_FORMATS.includes(d.format)) return []
+  if (route && route !== d.format) return [`カード ${x.id}: draft.format は ${d.format} だが、宛先（via・href）は ${route}。宛先に合わせて format か via・href を修正する`]
+  if (!check || check.format !== d.format) return [`カード ${x.id}: 文面の書式を検査していない（書く道具の検査を通して書く）`]
+  if ('error' in check) return [`カード ${x.id}: ${check.error}。書式を確認できないので書かない（draft-format-lint を入れるか、COCKPIT_DRAFT_LINT で場所を指す）`]
+  if (!check.violations.length) return []
+  const rules = [...new Map(check.violations.map((v) => [v.rule, v.fix])).entries()]
+  const hits = rules.map(([rule, fix]) => `${check.violations.filter((v) => v.rule === rule).map((v) => `${v.line} 行目「${clip(v.text)}」`).join('・')}（${rule}: ${fix}）`)
+  return [`カード ${x.id}: ${FORMAT_LABEL[d.format]}の書式に合わない行 ${hits.join('／')}。宛先の書式（dev-standards の message-formats.md）に修正する`]
+}
+
 /** 版 2 の talk と、読み込みで直した consult を同じ中身として比べる（移し替えはディスクの talk を残すため）。 */
 function canon(y: Card): Card {
   const z = structuredClone(y)
@@ -153,8 +203,9 @@ function upsert<T extends { id: string }>(rows: T[], incoming: T[]): T[] {
 /**
  * 変更を検査して、書いたあとの帳簿を返す。形・参照・版・依頼の欄・仕分けの位置のどれかが通らなければ next を返さず、理由を errors に並べる。
  * 必須の欄が欠けた確認依頼は書く（窓には出ず、窓口が 30 分のうちに埋める）が、warnings で名指しする。
+ * lint は draftsToLint の文面を書式の検査にかけた結果（カード id ごと）。検査は入出力の境界（window/write.ts）が行い、ここは結果だけを見る。
  */
-export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }): WriteResult {
+export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }, lint: Record<string, DraftCheck> = {}): WriteResult {
   const errors: string[] = []
   const warnings: string[] = []
   if (!isObj(change)) return { errors: ['変更は JSON のオブジェクトで渡す'], warnings }
@@ -290,6 +341,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     const prev = c.cards.find((y) => y.id === x.id)
     const soft = softError(`カード ${x.id}`, x, prev && canon(prev), CARD_PROSE)
     if (soft) errors.push(soft)
+    errors.push(...draftErrors(x, prev, lint[x.id]))
     const card = upgradeCard(x)
     // 返しの印は読むときは配列なら受ける（python の照合と同じ）が、書くときは return_id の形だけにする。
     const bad = [...badFields(card), ...(['from_returns', 'held_returns'] as const).filter((k) => Array.isArray(card[k]) && !card[k]!.every(returnId))]

@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, test } from 'node:test'
 import { writeSample } from '../fixtures/demo.ts'
+import { FAKE_LINT, OLD_M1 } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
+import { draftLinter } from '../src/lint.ts'
 import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
 import { renderWindow, todoGroups } from '../src/window-view.ts'
 import type { OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
-import { askCli, askNotice, askTitle, createServer, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import { askCli, askNotice, askTitle, createServer, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -66,7 +68,7 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; tailnetHosts?: string[] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; tailnetHosts?: string[]; lint?: Options['lint'] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
@@ -75,7 +77,7 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
   if (more.tabs) fake.orca.tabs = more.tabs
   if (more.chatOpen) fake.orca.chatOpen = more.chatOpen
   if (more.chatLast) fake.orca.chatLast = more.chatLast
-  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts })
+  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts, lint: more.lint })
   servers.push(s)
   const port = await s.listen()
   const origin = `http://127.0.0.1:${port}`
@@ -967,4 +969,20 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   // 許可待ちは道具の欄から（ログ集計の見直し）。
   const harness = m.boards.find((b) => b.root === roots.harness)!
   assert.deepEqual(lines(harness), [['許可: Bash: git push origin feature/log-summary', 'worker（集計の分け方を直す）が許可を求めている']])
+})
+
+test('送る文面の書式の検査（R161・R162）: 状態を作るときに検査し、カードごとの結果を載せる。同じ本文は CLI を呼び直さない', async () => {
+  const bin = path.join(tmp('cockpit-lint-'), 'draft-format-lint')
+  writeFileSync(bin, FAKE_LINT)
+  chmodSync(bin, 0o755)
+  const c = JSON.parse(cockpit('案件A')) as { cards: Record<string, unknown>[] }
+  c.cards.find((x) => x.id === 'd22')!.draft = OLD_M1
+  const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(c) })
+  const rows: PsRow[] = [{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main')] }]
+  const { s, port } = await start(rows, a, undefined, undefined, undefined, undefined, { lint: draftLinter({ bin }) })
+  const v = await listen(port, s.token).until((x) => !!board(x, a)?.drafts)
+  const d22 = board(v, a)!.drafts!.d22!
+  assert.ok('violations' in d22)
+  assert.deepEqual([d22.format, d22.violations.map((x) => x.line)], ['slack', [4, 5, 6, 7]])
+  assert.equal(readFileSync(`${bin}.calls`, 'utf8').split('\n').filter(Boolean).length, 1)
 })

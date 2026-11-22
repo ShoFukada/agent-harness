@@ -1,4 +1,4 @@
-import type { AskAnswer, AskThread, Card, Cockpit, ConsultMemo, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
+import type { AskAnswer, AskThread, Card, Cockpit, ConsultMemo, DraftCheck, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -120,6 +120,8 @@ export type CockpitView = {
   questions?: QuestionFact[]
   /** 窓からの質問（控えの節は新しいものだけに絞る）。パネルは持たない。 */
   asks?: AskThread[]
+  /** 閉じていないカードの文面を宛先の書式で検査した結果（カード id ごと）。コピーは結果の無い・違反のある文面を入れない。 */
+  drafts?: Record<string, DraftCheck>
 }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */

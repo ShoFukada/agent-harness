@@ -2,7 +2,7 @@
 import { actionVerb, COUNTED, COWORK_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, choresHtml, sampleHtml, stripHtml, toastsHtml,
+  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, stripHtml, toastsHtml,
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 import type { RulingHit } from './protocol.ts'
@@ -176,7 +176,7 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
       return [fld('何が変わるか', rich(permitEffect(c), c.repo)), fld('対象', rich(permitTarget(c), c.repo, true)), fld('戻し方', esc(c.undo)), optionsHtml(r, ui)].join('')
     case 'send':
       // 何への返事かを開かずに分かるよう、相手の発言の原文を本文の上に置く（info-needs 3.5）。
-      return fld('相手の発言', c.quote ? `<div class="quote verb">${esc(c.quote)}</div>` : '') + (c.draft ? `<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b>${c.draft.via ? `　経路 ${esc(c.draft.via)}` : ''}</div><div class="msg">${esc(c.draft.text)}</div></div>${optionsHtml(r, ui)}` : optionsHtml(r, ui))
+      return fld('相手の発言', c.quote ? `<div class="quote verb">${esc(c.quote)}</div>` : '') + (c.draft ? `<div class="fld"><span class="lb">送る文面</span><div class="msg-to">宛先 <b>${esc(c.draft.to)}</b>${c.draft.via ? `　経路 ${esc(c.draft.via)}` : ''}</div><div class="msg">${esc(c.draft.text)}</div>${lintHtml(r)}</div>${optionsHtml(r, ui)}` : optionsHtml(r, ui))
     case 'stuck': {
       // 返事待ち・許可待ちは問いの本文と選択肢を先に出す（開かずに答えを決められるように）。読めなければ、読めなかったと書く。
       const a = r.agent

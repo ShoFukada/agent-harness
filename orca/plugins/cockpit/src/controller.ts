@@ -1,5 +1,5 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
-import { DRAFT_FORMATS, draftFormat, FORMAT_LABEL, OTHER, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftFormat, type OpType } from './model.ts'
+import { DRAFT_FORMATS, draftFormat, FORMAT_LABEL, OTHER, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftCheck, type DraftFormat, type OpType } from './model.ts'
 import { morph } from './morph.ts'
 import type { AskDecideResult, AskInput, AskResult, ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, RulingHit, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
@@ -69,6 +69,19 @@ export async function copyDraft(d: Draft | undefined, t: Pick<Transport, 'openUr
   }
   say(copyMessage(await opening, { ...clip, format }))
   return false
+}
+
+/**
+ * コピーしない理由。カードの文面を、カードの書式（見てのボタンもボタンの書式ではなくカードの書式）で検査した結果が無い・検査できない・違反がある
+ * ときは、素の本文も入れない（押し直しても入れない）。書式の決まらない宛先（LINE など）は検査しない。
+ */
+export function copyBlock(d: Draft | undefined, check: DraftCheck | undefined): string | undefined {
+  const f = d && draftFormat(d)
+  if (!f) return undefined
+  if (!check || check.format !== f) return '書式の確認が済んでいないので、コピーしていません。少し待ってからもう一度押してください'
+  if ('error' in check) return `書式を確認できないので、コピーしていません: ${check.error}`
+  if (check.violations.length) return `${FORMAT_LABEL[f]}の書式に合わない行が ${check.violations.length} 件あるので、コピーしていません。カードの「書式の確認」を担当に伝えて修正を依頼してください`
+  return undefined
 }
 
 /** コピーする文面。見ての見本（追加 25）は押した宛先の書式で入れ、スレッドは開かない。送る前のコピーは draft のまま。 */
@@ -226,6 +239,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   const plainNext = new Set<string>()
   async function copy(r: VRow, format?: DraftFormat): Promise<void> {
     if (copying) return toast('前のコピーが終わるまで待ってから押してください')
+    const blocked = copyBlock(r.card.draft, r.v?.drafts?.[r.card.id])
+    if (blocked) return toast(blocked)
     copying = true
     const k = format ? `${keyOf(r)}:${format}` : keyOf(r)
     try {

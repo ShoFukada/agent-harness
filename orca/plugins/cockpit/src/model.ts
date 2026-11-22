@@ -99,6 +99,10 @@ export type DraftFormat = 'slack' | 'teams' | 'mail'
 export const DRAFT_FORMATS: DraftFormat[] = ['slack', 'teams', 'mail']
 export const FORMAT_LABEL: Record<DraftFormat, string> = { slack: 'Slack', teams: 'Teams', mail: 'メール' }
 export type Draft = { to: string; via?: string; text: string; href?: string; format?: DraftFormat }
+/** 書式の検査（dev-standards の draft-format-lint）が返す違反の 1 件。 */
+export type LintViolation = { line: number; rule: string; text: string; fix: string }
+/** カードの文面を format の書式で検査した結果。error は検査の CLI を起動できなかった・出力が読めなかった理由（fail closed で扱う）。 */
+export type DraftCheck = { format: DraftFormat; violations: LintViolation[] } | { format: DraftFormat; error: string }
 
 /** 元のスレッドのホスト（そのサブドメインも）→ 書式。部分一致にすると mailchimp.com のような別のサービスをメールと取り違える。 */
 const FORMAT_HOSTS: [string, DraftFormat][] = [
@@ -106,9 +110,14 @@ const FORMAT_HOSTS: [string, DraftFormat][] = [
   ['mail.google.com', 'mail'], ['outlook.office.com', 'mail'], ['outlook.office365.com', 'mail'], ['outlook.live.com', 'mail']
 ]
 
-/** 貼る先の書式。format が無ければ経路（via）、それでも決まらなければ元のスレッドのリンクから決める。決まらなければ素の文字列で写す。 */
-export function draftFormat(d: Draft): DraftFormat | undefined {
-  if (d.format) return d.format
+/** 貼る先の書式。format が無ければ経路から推す。決まらなければ素の文字列で写す。 */
+export const draftFormat = (d: Draft): DraftFormat | undefined => d.format ?? draftRoute(d)
+
+/**
+ * 経路（via、優先）と元のスレッドのリンク（href、補完）だけから推した宛先。format は見ない（書く道具が format と食い違うかを照合する）。
+ * 推せない経路（LINE・GitHub の Issue など）は undefined。
+ */
+export function draftRoute(d: Pick<Draft, 'via' | 'href'>): DraftFormat | undefined {
   const via = d.via ?? ''
   if (/slack/i.test(via)) return 'slack'
   if (/teams/i.test(via)) return 'teams'

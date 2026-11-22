@@ -79,7 +79,9 @@
 
 押すとまず素の文字列を入れてスレッドを開き始め（ブラウザとOrcaが押した操作の中でしか許さないため）、書式の決まる宛先はそのあと `clip-draft` が書式つきで上書きします。決まらない宛先（LINEなど）は素の文字列のままです。`clip-draft` が失敗したときはクリップボードの中身を確かめられない（空にしてから書くため）ので、知らせに理由を出し、もう一度押すと素の文字列だけを入れ直します。書式に変換している間は次のコピーを受けません。見本の文面は `fixtures/drafts.ts`、中身の固定は `src/clip.test.ts`。
 
-見て（`review`）のカードに `draft`（`{ to, via?, text }`）を持たせると、詳細に「コピーの見本」と「Slackの書式でコピー」「Teamsの書式でコピー」「メールの書式でコピー」の 3 つのボタンが出ます。貼った先で崩れないかを確かめるためのもので、押したボタンの書式で同じ `clip-draft` を通します（`format` と `href` は見ず、スレッドは開きません）。見てのカードの成果物は `href` か `draft.text` のどちらかで足ります。
+コピーの前に、本文を宛先の書式で検査します（書く道具と同じ dev-standards の `draft-format-lint`。`src/lint.ts`）。窓の常駐のプロセスとパネルのworkerが、状態を作るときに閉じていないカードの文面を検査して `drafts`（カードid → 書式と違反）に載せ、結果は書式と本文の組みで覚えます（同じ文面にはCLIを呼び直さない。検査できなかった結果は1分で捨てる）。違反のある文面・検査の結果が無い文面・検査できなかった文面は、ボタンを押しても素の本文を含めて何も入れず、知らせに理由を出します（押し直しても入れない）。違反はカードの文面の下に「書式の確認」として、行番号・該当の行・直し方・規則を出します。書式の決まらない宛先（LINEなど）は検査しません。
+
+見て（`review`）のカードに `draft`（`{ to, via?, text, format }`）を持たせると、詳細に「コピーの見本」と「Slackの書式でコピー」「Teamsの書式でコピー」「メールの書式でコピー」の3つのボタンが出ます。貼った先で崩れないかを確かめるためのもので、押したボタンの書式で同じ `clip-draft` を通します（`href` は見ず、スレッドは開きません）。書式の検査は、押したボタンの書式ではなくカードの書式（`format`、無ければ `via`・`href` から推したもの）で行います（メールの書式で写すときにMarkdownの記号を外すのは `clip-draft` の役目）。見てのカードの成果物は `href` か `draft.text` のどちらかで足ります。
 
 手作業を頼む「許す」は `manual: { "where": "どこで", "command": "打つコマンド", "steps": ["手順"], "check": "済ませたあと窓口が確かめること" }` を書きます。
 
@@ -178,6 +180,11 @@ bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write �
 - `asks` は窓からの質問の返しを反映した印（`{ id: "ask3", card?, task?, memo?, from_returns: ["ask3-1"], held_returns: [], notify: [{ return_id, task?, message_id? }] }`）を質問 id ごとに足すか置き換える。返しの id はその質問のもの（`ask3-<数>`）だけを受ける
 - 検査: 欄の形・参照（仕事・タスク・担当・依頼の id）・`rev`（開いたカードの中身を変えたら 1 上げる。片付けるだけ・要素の行き先を書くだけなら据え置き）・依頼の欄・仕分けの位置・要素の行き先。通らなければ書かずに理由を返す
 - 語調: カードとタスクの人が読む欄（title・purpose・why・next・`last.text`・`look_for`・`options` の label と body・タスクの `done` など）に柔らかい言い回し（ておきました・ですね・ますね・ですよね・かも・しちゃ・ちゃいました・ちゃった）があれば、欄と語を名指しして断る（R84）。draft・quote・request・reason・`background.quote`・深田さんの `last`（by が 私）と、元の行にそのままある文は見ない
+- 送る文面の書式（R161・R162）: 開いたカードの `draft`（送る前・決める・見てを問わない）のうち、新しい・開き直した・本文か宛先（`format`・`via`・`href`）を変えたものは、次を通したものだけを書く。返しの反映（`from_returns`・`held_returns`）・片付け・ほかの欄だけの書き換えは、前からある文面（`format` の無い版や決まりより前の書き方）でも止めない
+  - `draft.format`（`slack`・`teams`・`mail`）が要る。無ければ、`via`・`href` から推した候補を添えて断る
+  - `via`（優先）と `href`（補完）から推した宛先と `format` が食い違えば断る（`format` が `mail` で `via` が Slack など）。推せない経路（LINE・GitHub の Issue など）は `format` をそのまま使う
+  - 本文を dev-standards の `draft-format-lint --json`（既定は `~/.claude/plugins/marketplaces/medurance-dev-standards/scripts/draft-format-lint`、`COCKPIT_DRAFT_LINT` で差し替え）で `format` の書式として検査し、違反があればカード・行番号・規則・該当の行・直し方を名指しして断る。決まりと規則は dev-standards（`rules/docs/message-formats.md`）だけが持つ
+  - CLI が無い・起動できない・出力が読めないときは、その文面を含む変更を断る（fail closed）。検査は `window/write.ts` が行い、`applyChange` には結果を渡す
 - 必須の欄が欠けたカードは書くが、注意で名指しする（窓には出ない）
 - migrate-v3: 開いた `talk` を `consult` に、`created_at` を `at` に写し、worker に `run_id` を補う。今ある依頼に `legacy` を付け、タスクとカードが全部済で深田さんの返答が残るものだけ済にし、ほかは窓口が仕分ける一覧に出す。閉じたカードの `resolved_at` を補い（`resolved_at_inferred`）、深田さんの操作の無いまま閉じた見てに `closed_without_review` を付ける。元は `cockpit.v2.json` に控える
 - 台帳の取り込み: 取り込む依頼を `{ "requests": [...] }` の変更にして、`--dry-run` で通ることを確かめてから書く。既存の依頼と同じ件はその id で置き換え、`legacy` を外して `utterances` か `source`・`done_when` を足す
@@ -193,6 +200,7 @@ bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write �
 | `src/view.ts` | パネルの描画（表示の状態から HTML を作る。DOM に触らない）と、窓と共有する部品 |
 | `src/window-view.ts` | 窓の 3 タブ（要対応・全体・対応済み）の描画 |
 | `src/write.ts`・`window/write.ts`・`bin/cockpit-write` | 帳簿を書く道具と、版 3 への移し替え（migrate-v3） |
+| `src/lint.ts` | 送る文面の書式の検査（dev-standards の `draft-format-lint` を呼ぶ）。書く道具・窓の常駐プロセス・パネルの worker が使う |
 | `src/style.ts` | CSS（明暗のトークン、container query で 1440・760 未満・520 未満を切り替える） |
 | `src/controller.ts` | クリックやキーボード入力を操作につなぐ。パネルと窓のページが共有する |
 | `src/worker.ts` | パネルの worker。前面のワークスペースのファイルを見張ってパネルに送り、下の帯を更新し、前面が変わるたびに `focus.json` を書く |

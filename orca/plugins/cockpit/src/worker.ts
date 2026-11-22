@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { clipDraft, isDraftFormat } from './clip.ts'
+import { draftLinter } from './lint.ts'
 import { chatMain, COUNTED, overlay } from './model.ts'
 import type { AgentRow, CockpitView, NotifyResult, TalkResult } from './protocol.ts'
 import { countsText, derive, isHot, ownerName, ownerOf } from './state.ts'
@@ -49,13 +50,18 @@ async function load(): Promise<void> {
 }
 
 
+const lint = draftLinter()
+
 async function view(): Promise<CockpitView> {
-  const main = s.cockpit?.main?.terminal
+  // 表示する帳簿と検査する文面を同じ時点のものにする（await の間に監視が帳簿を差し替えても、古い本文に新しい本文の結果を付けない）。
+  const cockpit = s.cockpit
+  const drafts = lint(cockpit?.cards ?? [])
+  const main = cockpit?.main?.terminal
   // Orca は undefined を含む値を JSON として受け付けないので、JSON にしたときの形に揃える。
   return structuredJson({
     state: !s.root ? 'no-workspace' : s.missing ? 'missing' : 'ok',
     root: s.root,
-    cockpit: s.cockpit,
+    cockpit,
     log: s.log,
     archive: s.archive,
     figures: s.figures,
@@ -63,7 +69,8 @@ async function view(): Promise<CockpitView> {
     workers: s.agents.filter((a) => a.terminalId !== main),
     notifiedOp: s.root ? await readNotified(cockpitDir(), s.root) : 0,
     signal: s.signal,
-    handoff: s.handoff
+    handoff: s.handoff,
+    drafts: await drafts
   })
 }
 

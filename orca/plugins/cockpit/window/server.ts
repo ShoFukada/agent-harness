@@ -10,6 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ASK_ID, askItem, chatMain, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
+import { draftLinter } from '../src/lint.ts'
 import type { Ask, AskDecideResult, AskResult, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
 import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances } from '../src/state.ts'
 import {
@@ -197,7 +198,7 @@ export type AskCmd = (root: string, id: string, o: { card?: string; task?: strin
  * clip はテストで差し替える（既定は clip-draft を呼ぶ）。tailnetHosts は tailscale serve が HTTPS で渡す Host（例: mac.tail1234.ts.net）で、
  * その Host と Origin（https://<Host>）も許す。待ち受けは 127.0.0.1 のまま（serve が Mac の中から繋ぐ）。
  */
-export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft; consult?: Consult; ask?: AskCmd; tailnetHosts?: string[] }
+export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft; lint?: ReturnType<typeof draftLinter>; consult?: Consult; ask?: AskCmd; tailnetHosts?: string[] }
 
 /** COCKPIT_TAILNET_HOSTS（カンマ区切り）を読む。ホスト名[:ポート] の形でないものは捨てて理由を出す（ワイルドカードや URL を許す一覧に入れない）。 */
 export function parseTailnetHosts(v: string | undefined): string[] {
@@ -310,9 +311,12 @@ export function createServer(opts: Options) {
   const agentsOf = (root: string, files: Files) => orcaAgents(root, ps, terms, files.cockpit, facts.get(root), currents.get(root), failures)
   const workersOf = (root: string, files: Files) => agentsOf(root, files).workers
 
+  const lint = opts.lint ?? draftLinter()
   async function cockpitView(root: string | undefined, slim = false): Promise<CockpitView> {
     const ws = root ? wss.get(root) : undefined
     const files = ws?.files ?? emptyFiles()
+    // 検査する文面は、送る帳簿と同じ時点のもの（lint は呼んだその場で文面を取り出す）。
+    const drafts = lint(files.cockpit?.cards ?? [])
     const since = Date.now() - CLOSED_DAYS * 86_400_000
     // 依頼の今は証拠の「これでよい」が指すカードの版と、依頼に結ばれたカードで決めるので、表示の期間を過ぎても送る（CLI と窓で食い違わないように）。
     const proof = files.cockpit ? requestCards(files.cockpit, files.log) : new Set<string>()
@@ -334,7 +338,7 @@ export function createServer(opts: Options) {
       returned: files.cockpit ? returnedUtterances(files.cockpit, files.rulings, files.consults, files.asks) : undefined,
       terminals: lastRefresh && !orcaError ? [...terms.values(), ...chats] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
       consults: consultsFor(files.consults, cockpit, archive), questions: root ? questionsBy.get(root) : undefined,
-      asks: slimAsks(files.asks)
+      asks: slimAsks(files.asks), drafts: await drafts
     }
   }
 
