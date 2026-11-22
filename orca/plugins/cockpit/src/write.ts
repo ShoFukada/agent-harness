@@ -1,7 +1,7 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WATCH_SHAPE, WORKER_SHAPE,
+  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WATCH_SHAPE, WORKER_SHAPE,
   type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 
@@ -58,7 +58,7 @@ const REQUEST_KEYS: Keys = {
   top: ['id', 'deliverables', ...Object.keys(REQUEST_SHAPE)],
   nested: { utterances: ['id', 'quote'], evidence: ['when', 'kind', 'ref', 'card', 'rev'], source: ['session', 'at', 'quote'] }
 }
-const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'sources', 'form', 'watch'], nested: { watch: ['automation', 'targets', 'to'] } }
+const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'status', 'sources', 'form', 'watch'], nested: { watch: ['automation', 'targets', 'to'] } }
 const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'state'], nested: {} }
 const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through'], nested: {} }
 const ASK_KEYS: Keys = { top: ['id', 'card', 'task', 'memo', 'from_returns', 'held_returns', 'notify'], nested: { notify: ['return_id', 'task', 'message_id'] } }
@@ -103,7 +103,10 @@ const CARD_PROSE: Keys = {
     background: ['text'], elements: ['text'], manual: ['steps', 'check']
   }
 }
-const TASK_PROSE: Keys = { top: ['title', 'goal', 'next', 'done'], nested: { done: ['text'] } }
+const TASK_PROSE: Keys = { top: ['title', 'goal', 'status', 'next', 'done'], nested: { done: ['text'] } }
+/** status が長すぎるときの断りの文。窓では切らないので、書き直してもらう。 */
+const statusError = (who: string, v: unknown) =>
+  typeof v === 'string' && [...v.trim()].length > STATUS_MAX ? `${who}: status は ${STATUS_MAX} 字まで（今 ${[...v.trim()].length} 字）。窓では切らずに出すので、今どうなっていて次に何を待つかに絞って書き直す` : undefined
 const USER_BY = new Set(['私', '深田', 'user'])
 
 function prose(row: object, spec: Keys): Map<string, string> {
@@ -250,8 +253,10 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
 
   for (const s of ch.streams ?? []) {
     if (typeof s.title !== 'string' || !s.title.trim()) errors.push(`仕事 ${s.id}: title が無い`)
-    if ((s.summary !== undefined && typeof s.summary !== 'string') || (s.sources !== undefined && !(Array.isArray(s.sources) && s.sources.every((x) => typeof x === 'string'))))
-      errors.push(`仕事 ${s.id}: summary は文字列、sources は文字列の配列`)
+    if ((s.summary !== undefined && typeof s.summary !== 'string') || (s.status !== undefined && typeof s.status !== 'string') || (s.sources !== undefined && !(Array.isArray(s.sources) && s.sources.every((x) => typeof x === 'string'))))
+      errors.push(`仕事 ${s.id}: summary・status は文字列、sources は文字列の配列`)
+    const long = statusError(`仕事 ${s.id}`, s.status)
+    if (long) errors.push(long)
     if (s.form !== undefined && !FORMS.includes(s.form as StreamForm)) errors.push(`仕事 ${s.id}: form は ${FORMS.join('・')} のどれか`)
     if (s.form === undefined) warnings.push(`仕事 ${s.id}: form（delegate・cowork・watch）が無い`)
     if (s.form === 'watch' ? !WATCH_SHAPE(s.watch) : s.watch !== undefined)
@@ -270,6 +275,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (!has(streams, t.stream)) errors.push(`タスク ${t.id}: 仕事 ${t.stream} が無い`)
     const soft = softError(`タスク ${t.id}`, t, old, TASK_PROSE)
     if (soft) errors.push(soft)
+    const long = statusError(`タスク ${t.id}`, t.status)
+    if (long) errors.push(long)
     const rec = t as unknown as Record<string, unknown>
     // null は、その行に元から null で書かれていた欄だけ書き戻してよい（読み込みは null の欄を無いものとして読む）。
     const was = old as unknown as Record<string, unknown> | undefined

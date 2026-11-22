@@ -80,20 +80,44 @@ test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中�
   assert.doesNotMatch(t, /未完了の依頼/)
 })
 
-test('全体の仕事の行（追加 38）: 題・概要・状況。概要は summary があるときだけ、状況は状態の語・worker の今・次にやることの 1 文', () => {
+test('全体の仕事の行（追加 38・R188）: 題・概要・状況。状況は状態の語のあとに窓口の書いた status を切らずに出し、next は出さない。タスクの行と詳細も概要（goal）と状況（status）', () => {
+  const status = '一覧の並べ替えは stg に出した。森さんが画面を見て返事をくれるのを待っている。返事が来たら本番に出す日を決める。'
   const m = aoba((v) => {
     v.cockpit!.streams[0]!.summary = '配車画面の一覧を探しやすくする'
+    v.cockpit!.streams[0]!.status = status
+    const t1 = v.cockpit!.tasks.find((x) => x.id === 't1')!
+    t1.goal = '配車の一覧で探す手間を減らす'
+    t1.status = '並べ替えは済み。絞り込みを作っている'
     v.workers = [{ terminalId: 'term_w', title: '一覧の改修（worker）', agent: 'claude', state: 'working', since: NOW, task: 't1', where: 'テストを直している' }]
   })
-  const h = page(m, { tab: 'whole' })
-  const s0 = m.boards[0]!.v.cockpit!.streams[0]!
+  const h = page(m, { tab: 'whole', task: 't1' })
+  const c = m.boards[0]!.v.cockpit!
+  const s0 = c.streams[0]!
   const box = (id: string) => h.slice(h.indexOf(`data-toggle="s:${id}"`), h.indexOf('</div>', h.indexOf(`data-toggle="s:${id}"`)))
-  assert.match(text(box(s0.id)), /概要 配車画面の一覧を探しやすくする 状況 \S+/)
-  assert.match(text(box(s0.id)), /状況 .*。次は/)
-  // summary の無い仕事は概要の段を出さない。
-  const other = m.boards[0]!.v.cockpit!.streams.find((x) => !x.summary)!
+  // 状態の語（作業中・worker の今）を先に、状況の文は次の行に全文（切らない）。
+  assert.match(box(s0.id), new RegExp(`<span class="pst [^"]+">[^<]+</span>(<span>・[^<]+</span>)?<span class="said">${status}</span>`))
+  assert.match(box(s0.id), /class="sx sum" title="配車画面の一覧を探しやすくする">/)
+  // next は一覧に出さない（帳簿の next は作業の手順で、初見で読めない羅列になりうる。R187）。
+  const next = c.tasks.find((x) => x.stream === s0.id && x.next)?.next
+  if (next) assert.ok(!text(box(s0.id)).includes(next))
+  assert.doesNotMatch(text(box(s0.id)), /次は/)
+  // status の無い仕事は状態の語だけ。
+  const other = c.streams.find((x) => !x.status && !x.summary)!
   assert.doesNotMatch(text(box(other.id)), /概要/)
-  assert.match(text(box(other.id)), /状況/)
+  assert.doesNotMatch(box(other.id), /class="said"/)
+  // タスクの行: 題・概要（goal、2 行で畳み全文は title）・状況（status）。詳細には状況と、別に次にやること。
+  const row = h.slice(h.indexOf('data-task="t1"'), h.indexOf('</button>', h.indexOf('data-task="t1"')))
+  assert.match(row, /<span class="nx gl" title="配車の一覧で探す手間を減らす">配車の一覧で探す手間を減らす<\/span><span class="nx">並べ替えは済み。絞り込みを作っている<\/span>/)
+  const side = text(h.slice(h.indexOf('aria-label="タスクの詳細"')))
+  assert.ok(side.includes('状況 並べ替えは済み。絞り込みを作っている'), side)
+  assert.ok(side.includes('次にやること レビューの指摘を直して stg に出す'), side)
+  // status の無いタスクは待つ相手だけを出し、next は出さない。
+  const t2 = c.tasks.find((x) => x.id !== 't1' && x.next && !x.waiting_on && x.state !== 'ok')
+  if (t2) {
+    const open = page(m, { tab: 'whole', open: { [`s:${t2.stream}`]: true } })
+    const r2 = open.slice(open.indexOf(`data-task="${t2.id}"`), open.indexOf('</button>', open.indexOf(`data-task="${t2.id}"`)))
+    assert.ok(!text(r2).includes(t2.next!), r2)
+  }
 })
 
 test('全体: タスクを押すと右に詳細（工程・状態・goal・next・done・worker・結ばれたカード・依頼の原文と済の条件・出した指示）を出し、その箱を開く', () => {

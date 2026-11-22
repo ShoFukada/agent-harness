@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import { FAKE_LINT, FIXED_M1, OLD_M1, REAL_SENDS } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
 import { migrate, write } from '../window/write.ts'
-import { parseCockpit, type Card, type Cockpit, type Request } from './model.ts'
+import { parseCockpit, STATUS_MAX, type Card, type Cockpit, type Request } from './model.ts'
 import { applyChange, draftsToLint, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -425,4 +425,24 @@ test('見張る仕事の watch と確認日の欄（追加 31）: 書ける欄�
   assert.match(problems.join('\n'), /k13/)
   assert.match(problems.join('\n'), /仕事 v1 の watch は見張る仕事（form: watch）だけが持つ/)
   assert.match(problems.join('\n'), /仕事 v2 の watch の形が違う/)
+})
+
+test('状況の文（status、R188）: 仕事とタスクに書け、文字列で STATUS_MAX 字まで。超えたら切らずに断り、柔らかい言い回しも断る', () => {
+  const c = aoba()
+  const s1 = structuredClone(c.streams[0]!)
+  const t1 = structuredClone(c.tasks.find((x) => x.id === 't1')!)
+  const ok = applyChange(c, { streams: [{ ...s1, status: 'stg に出した。森さんの返事を待っている' }], tasks: [{ ...t1, status: '並べ替えは済み。絞り込みを作っている' }] })
+  assert.deepEqual(ok.errors, [])
+  assert.equal(ok.next!.streams[0]!.status, 'stg に出した。森さんの返事を待っている')
+  assert.equal(ok.next!.tasks.find((x) => x.id === 't1')!.status, '並べ替えは済み。絞り込みを作っている')
+  const long = 'あ'.repeat(STATUS_MAX + 1)
+  assert.match(applyChange(c, { streams: [{ ...s1, status: long }] }).errors.join('\n'), new RegExp(`仕事 ${s1.id}: status は ${STATUS_MAX} 字まで（今 ${STATUS_MAX + 1} 字）`))
+  assert.match(applyChange(c, { tasks: [{ ...t1, status: long }] }).errors.join('\n'), new RegExp(`タスク t1: status は ${STATUS_MAX} 字まで`))
+  assert.deepEqual(applyChange(c, { tasks: [{ ...t1, status: 'あ'.repeat(STATUS_MAX) }] }).errors, [])
+  // 字はサロゲートも 1 字に数える（😀 は 2 つの UTF-16 の単位）。
+  assert.deepEqual(applyChange(c, { tasks: [{ ...t1, status: '😀'.repeat(STATUS_MAX) }] }).errors, [])
+  assert.match(applyChange(c, { tasks: [{ ...t1, status: '😀'.repeat(STATUS_MAX + 1) }] }).errors.join('\n'), /status は/)
+  assert.match(applyChange(c, { streams: [{ ...s1, status: 3 as unknown as string }] }).errors.join('\n'), /summary・status は文字列/)
+  assert.match(applyChange(c, { tasks: [{ ...t1, status: 3 as unknown as string }] }).errors.join('\n'), /status の形が違う/)
+  assert.match(applyChange(c, { tasks: [{ ...t1, status: '直しておきました' }] }).errors.join('\n'), /status「ておきました」/)
 })

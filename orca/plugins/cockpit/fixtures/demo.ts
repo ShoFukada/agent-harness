@@ -168,6 +168,14 @@ if (import.meta.main) {
   aoba.streams.find((x) => x.id === 's3')!.title = 'CrowdStrike の検知ルールの見直しと保守契約の更新に向けた事前の確認'
   aoba.tasks.find((x) => x.id === 't3')!.waiting_on = '岩田さん（日程案への返事と認証情報）'
   for (const [id, summary] of [['s1', '配車画面の一覧と地図の遅さを直し、stg で見てもらう'], ['s2', 'AWS の構成図と説明の本文を作り、定例で説明する']]) aoba.streams.find((x) => x.id === id)!.summary = summary
+  // 状況の文（status、R188）の見本。s2 は上限に近い長さ（3 行に収まるかを見る）。s3・s4 は書いていない仕事の見本。
+  const said: [string, string][] = [
+    ['s1', '一覧の並べ替えは stg に出した。地図の遅さは原因を調べていて、直し方を深田さんに決めてもらうのを待っている。'],
+    ['s2', '構成図の下書きは Drive に置いた。本番の入口を図に描き足すかを深田さんに決めてもらい、決まったら説明の本文を仕上げて、来週の定例の前日までに森さんへ送る。費用の見積もりは本文の最後に付ける。']
+  ]
+  for (const [id, status] of said) (aoba.streams.find((x) => x.id === id) as { status?: string }).status = status
+  const tsaid: [string, string][] = [['t1', '並べ替えは済み。絞り込みを作っていて、明日 stg に出す。'], ['t3', '森さんに利用上限を聞いている。返事が来たら繋ぎ込みの見積もりを出す。']]
+  for (const [id, status] of tsaid) (aoba.tasks.find((x) => x.id === id) as { status?: string }).status = status
   // 確認日の見本（R142・R171）: 森さんの返事を待つタスクは今日が確認日（要対応に 1 行）、構成案の図は 2 日後。
   const day = (d: number) => new Date(Date.now() + d * 86_400_000).toLocaleDateString('sv-SE')
   aoba.tasks.find((x) => x.id === 't3')!.check_on = day(0)

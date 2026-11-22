@@ -476,7 +476,8 @@ body { margin:0; }
 .ck.win .st .sx { grid-column:1 / -1; display:grid; grid-template-columns:2.6em minmax(0,1fr); gap:8px; align-items:baseline; font-size:var(--fs-s); line-height:1.55; }
 .ck.win .st .sx > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 .ck.win .st .sx > .sv { color:var(--ink); }
-.ck.win .st .sx.sum > .sv { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+.ck.win .st .sx.sum > .sv { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; }
+.ck.win .st .sx .said { display:block; overflow-wrap:anywhere; }
 /* 題は切らずに折り返す（長い題が数文字で切れた・待ちの文に場所を取られて消えた。追加 38・42）。 */
 .ck.win .st .t .nm { min-width:0; overflow-wrap:anywhere; }
 .ck.win .st .right { display:flex; align-items:center; gap:10px; }
@@ -523,7 +524,8 @@ body { margin:0; }
 .ck.win b.chk { color:var(--ink); }
 .ck.win .cardrow .kd small, .ck.win .task .id { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
 .ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
-.ck.win .task .nx { color:var(--ink2); font-size:var(--fs-xs); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+.ck.win .task .nx { color:var(--ink2); font-size:var(--fs-xs); overflow-wrap:anywhere; }
+.ck.win .task .nx.gl { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 .ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 /* 状態の印は押せる見た目にしない（枠を付けない）。枠を持つのは押せるもの（.act と仕事のカードへ移る .kc）だけ。 */
 .ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:0; padding:0; background:none; color:var(--ink2); white-space:nowrap; }

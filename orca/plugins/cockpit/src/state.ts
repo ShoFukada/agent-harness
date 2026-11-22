@@ -708,6 +708,8 @@ export type StateReport = {
     plugin: string | null
     /** 「顧客｜案件」の形になっていない案件の名前（workspace.name、R165）と、窓口に流す 1 文。形が合っていれば null。hook は message をそのまま流す。 */
     workspace_name: { name: string; message: string } | null
+    /** 済んでいない仕事・タスクで、状況の文（status、R188）が無いものの id。窓の一覧は status が無いと状態の語だけを出す。見張る仕事は除く（状況は Bot の前回の結果を窓が Orca から読む）。 */
+    status_missing: string[]
     /** 読めていない経路。 */
     routes: string[]
     /** サイドバーで切れる長さの仕事・担当・タスクの名前（NAME_MAX を超える）。 */
@@ -947,6 +949,10 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       push_delegated: !tasks.some((t) => t.state === 'run') && pushDelegated,
       plugin: plugin ?? null,
       workspace_name: workspaceNameCheck(c.workspace.name),
+      status_missing: [
+        ...c.streams.filter((x) => x.form !== 'watch' && !x.status?.trim() && d.jobs.find((j) => j.id === x.id)?.state !== 'done').map((x) => x.id),
+        ...tasks.filter((t) => t.state !== 'ok' && !t.task.status?.trim()).map((t) => t.task.id)
+      ],
       routes: (c.routes ?? []).map((r) => routeProblem(r, now)).filter((x): x is string => !!x),
       // 頭の語（一緒に｜・任せる｜・作業｜ など。R146）も含めて数える。サイドバーに出るのはその名前のため。
       long_names: [

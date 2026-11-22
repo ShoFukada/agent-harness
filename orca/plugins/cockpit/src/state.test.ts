@@ -652,6 +652,31 @@ test('Orca の名前（R146）: 仕事と担当は頭に形（一緒に｜・任
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW).checks.long_names, [`s9（${NAME_MAX + 1} 字）`])
 })
 
+test('checks.status_missing（R188）: 済んでいない仕事・タスクで状況の文（status）が無いものの id を出す。済んだものと書いたものは出さない', () => {
+  const w = ws(0)
+  const c = w.cockpit
+  const open = c.tasks.filter((t) => t.state !== 'ok').map((t) => t.id)
+  const missing = () => report(c, w.log, [], undefined, 'skipped', NOW).checks.status_missing
+  const before = missing()
+  for (const id of open) assert.ok(before.includes(id), id)
+  for (const t of c.tasks.filter((x) => x.state === 'ok')) assert.ok(!before.includes(t.id), t.id)
+  for (const x of [...c.streams, ...c.tasks]) x.status = '今どうなっていて次に何を待つか'
+  assert.deepEqual(missing(), [])
+  c.streams[0]!.status = '  '
+  assert.deepEqual(missing(), [c.streams[0]!.id])
+  // 見張る仕事は出さない（状況は Bot の前回の結果を窓が Orca から読む）。
+  c.streams[0]!.form = 'watch'
+  assert.deepEqual(missing(), [])
+  // 文字列でない status は読み込みで外し、ほかの仕事の報告は止めない（Codex）。
+  const problems: string[] = []
+  const raw = JSON.parse(JSON.stringify(c))
+  raw.streams[1].status = 3
+  const parsed = parseCockpit(JSON.stringify(raw), problems)
+  assert.equal(parsed.streams[1]!.status, undefined)
+  assert.ok(problems.some((p) => p.includes(`仕事 ${raw.streams[1].id} の status が文字列でない`)), problems.join('\n'))
+  assert.deepEqual(report(parsed, w.log, [], undefined, 'skipped', NOW).checks.status_missing, [raw.streams[1].id])
+})
+
 test('案件の名前の形（R165・R181）: 全角の｜でちょうど 2 つに分かれ、両方が空でない名前だけを通し、外れた名前と窓口に流す 1 文を checks.workspace_name に出す。形の言い方は state.ts の 1 か所', () => {
   assert.deepEqual(
     ['青葉物流｜配車アプリ', ' 社内 ｜ ハーネス ', 'dev-standards', '社内|ハーネス', '社内｜', '｜ハーネス', '社内｜ ', 'A｜B｜C', ''].map(workspaceNameOk),

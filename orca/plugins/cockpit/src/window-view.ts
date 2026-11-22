@@ -514,11 +514,12 @@ function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined
   const st = stateOf(t, todo.get(t.task.id) ?? [])
   const reply = st !== 'ok' && replyWait(todo.get(t.task.id) ?? [])
   const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r)}を開く</button>`).join('')
-  const sub = t.task.waiting_on ? `待ち: ${t.task.waiting_on}` : t.task.next ? `次: ${t.task.next}` : ''
+  // 状況の文（status、R188）が無ければ、待つ相手だけを出す。next（作業の手順）は詳細の「次にやること」で読む。
+  const sub = t.task.status?.trim() || (t.task.waiting_on ? `待ち: ${t.task.waiting_on}` : '')
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
   return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${reply ? 'stop' : st}">${reply ? REPLY_LABEL : TSTATE[st]}</span>
-    <span class="tn"><span>${esc(t.task.title)}${checkOnHtml(t, now)}</span>${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
+    <span class="tn"><span>${esc(t.task.title)}${checkOnHtml(t, now)}</span>${t.task.goal?.trim() ? `<span class="nx gl" title="${esc(t.task.goal.trim())}">${esc(t.task.goal.trim())}</span>` : ''}${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
     <span class="wk">${chips}</span></div>`
 }
 
@@ -547,15 +548,17 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now:
   // タスクが全部済んだ仕事は、右を「全工程 完了」にし、要対応などの状態は状況の行に出す（右の欄に工程と状態の文が混ざっていた。初見）。
   const allDone = ts.length > 0 && ts.every((t) => t.state === 'ok')
   const live = [working && `worker ${working} 件作業中`, halted && `worker ${halted} 件停止`, late && `放置のタスク ${late} 件`, due && `確認日の来たタスク ${due} 件`, allDone && j.state !== 'done' && 'タスクはすべて完了'].filter(Boolean).join('・')
-  const status = `<span class="pst ${j.state}${j.reply ? ' reply' : ''}">${esc(label)}</span>${live ? `<span>・${esc(live)}</span>` : ''}${j.next && j.state !== 'done' ? `<span>。次は${mono(note(j.next))}</span>` : ''}`
-  const line = (lb: string, body: string, cls = '') => `<span class="sx${cls}"><span class="lb">${lb}</span><span class="sv">${body}</span></span>`
+  // 状況は状態の語（窓が決める）のあとに、窓口が書いた状況の文（status、R188）を並べる。next（作業の手順）は出さない。
+  const said = s?.status?.trim()
+  const status = `<span class="pst ${j.state}${j.reply ? ' reply' : ''}">${esc(label)}</span>${live ? `<span>・${esc(live)}</span>` : ''}${said ? `<span class="said">${mono(note(said))}</span>` : ''}`
+  const line = (lb: string, body: string, cls = '', full = '') => `<span class="sx${cls}"${full ? ` title="${esc(full)}"` : ''}><span class="lb">${lb}</span><span class="sv">${body}</span></span>`
   // 担当は、その仕事に結ばれた閉じていない担当を全部（1 人だけ出すと、ほかの担当の仕事まで 1 人のものに見える。追加 42）。
   const all = (b.v.cockpit!.owners ?? []).filter((o) => o.stream === j.id && o.state !== 'done').map((o) => o.title)
   const owners = all.length === 1 && all[0] === j.title ? [] : all
   return `<div class="st f-${s?.form ?? 'none'}"><div class="sh">
     <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="nm">${esc(j.title)}</span></button>
     <span class="right"><span class="prog">${allDone && s?.form !== 'watch' ? '<span class="pbar">全工程 完了</span>' : phaseBar(ts, s?.form, j.state)}</span></span>
-    ${s?.summary?.trim() ? line('概要', esc(s.summary.trim()), ' sum') : ''}${line('状況', status)}${owners.length ? `<span class="meta">担当: ${esc(owners.join('・'))}</span>` : ''}</div>
+    ${s?.summary?.trim() ? line('概要', esc(s.summary.trim()), ' sum', s.summary.trim()) : ''}${line('状況', status)}${owners.length ? `<span class="meta">担当: ${esc(owners.join('・'))}</span>` : ''}</div>
     ${open ? `<div class="inner${ts.some((t) => replyWait(todo.get(t.task.id) ?? [])) ? ' wide' : ''}">${inner || '<span class="mut">なし</span>'}</div>` : ''}</div>`
 }
 
@@ -618,6 +621,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const srcs = (task.sources ?? []).filter((x) => /^(https?:\/\/|\/|~\/)/.test(x))
   const first = [
     fld('何のため', note(task.goal)),
+    fld('状況', task.status?.trim() ? mono(note(task.status.trim())) : ''),
     conds ? fld('済の条件', conds) : '',
     fld(task.waiting_on ? '待っているもの' : '次にやること', now ? mono(note(now)) : ''),
     fld('依頼していること', asking.map(cardLine).join('')),

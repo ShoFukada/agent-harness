@@ -47,6 +47,8 @@ export type Task = {
   check_on?: string
   waiting_since?: string
   goal?: string
+  /** 仕事の status と同じ（R188）。 */
+  status?: string
   next?: string
   done?: DoneEntry[]
   sources?: string[]
@@ -74,7 +76,10 @@ export const FORM_LABEL: Record<StreamForm, string> = { delegate: '任せる', c
  */
 export type StreamWatch = { automation: string; targets: string[]; to: string }
 /** 仕事（大タスク）。担当のチャットは仕事ごとに 1 つまで。watch は form が watch の仕事だけが持ち、その仕事には要る。 */
-export type Stream = { id: string; title: string; summary?: string; sources?: string[]; form?: StreamForm; watch?: StreamWatch }
+/** status: 今どうなっていて次に何を待つかを、初見で分かる文で（R188）。状態の語（作業中など）は窓が前に付けるので書かない。 */
+export type Stream = { id: string; title: string; summary?: string; status?: string; sources?: string[]; form?: StreamForm; watch?: StreamWatch }
+/** status の上限の字数。窓の全体のタブの仕事の行で 3 行に収まる長さ（幅 1280 で案件の一覧を開いた形が 1 行 34 字）。超えたら書く道具が断る（窓では切らない）。 */
+export const STATUS_MAX = 100
 
 /**
  * 仕事の担当。仕事が終わるまで残る、話し相手のエージェント（Orca のチャットか端末）。
@@ -538,7 +543,7 @@ export function upgradeCard(c: Card): Card {
 
 /** タスクの省略できる欄の形（id・title・phase・state・worker は parseCockpit が先に断る）。 */
 export const TASK_SHAPE: Record<string, Shape> = {
-  stream: str, next: str, goal: str, waiting_on: str, waiting_since: str, check_on: DAY, sources: strs, reviewed_for: strs,
+  stream: str, next: str, goal: str, status: str, waiting_on: str, waiting_since: str, check_on: DAY, sources: strs, reviewed_for: strs,
   done: list((d) => str(d) || obj(['text'], ['at'])(d)),
   repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str))
 }
@@ -606,6 +611,12 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
       problems.push(`cockpit.json の仕事 ${String(st.id)} の form（${String(st.form)}）が不正なので、形が書かれていない仕事として出しています`)
       delete st.form
     }
+  for (const st of v.streams as Record<string, unknown>[])
+    for (const k of ['summary', 'status'] as const)
+      if (isObj(st) && st[k] != null && typeof st[k] !== 'string') {
+        problems.push(`cockpit.json の仕事 ${String(st.id)} の ${k} が文字列でないので、その欄を外して読んでいます`)
+        delete st[k]
+      }
   for (const st of v.streams as Record<string, unknown>[])
     if (isObj(st) && st.watch !== undefined && (st.form !== 'watch' || !WATCH_SHAPE(st.watch))) {
       problems.push(`cockpit.json の仕事 ${String(st.id)} の watch ${st.form !== 'watch' ? 'は見張る仕事（form: watch）だけが持つ' : 'の形が違う（{ automation, targets, to }）'}ので、その欄を外して読んでいます`)
