@@ -89,7 +89,7 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提とし�
    ```sh
    git clone https://github.com/<owner>/agent-harness ~/.config/agent-harness
    ```
-2. `orca-launch` を PATH に通し、worker に付ける Claude Code 設定のパスを `ORCA_WORKER_SETTINGS` に入れる（無ければ設定を付けずに起動する）
+2. `orca-launch` を PATH に通し、worker に付ける Claude Code 設定のパスを `ORCA_WORKER_SETTINGS` に入れる（無ければ設定を付けずに起動する）。どの worker にも渡す決まりの文言を `~/.config/nix-darwin/claude/skills/worktree-flow/references/worker-rules.md` に置く（orca-launch が brief の先頭に足す。無ければ立てずに断る）
    ```sh
    ln -s ~/.config/agent-harness/bin/orca-launch ~/.local/bin/orca-launch
    export ORCA_WORKER_SETTINGS=~/.claude/settings.worker.json
@@ -321,7 +321,7 @@ Dispatch の開いている担当のチャットは、Orca が新しい席へ移
 | 場所 | 中身 |
 |---|---|
 | `orca/plugins/cockpit/` | Orca のプラグイン（パネルと worker）と、窓の常駐プロセス（`window/server.ts`）。使い方と仕組みは同じ場所の README、画面が満たす条件は `docs/user-stories.md` |
-| `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認画面の検出と名指し（どの席で何の画面か）・Task の受け渡し・サイドバーの表示名と状態）とそのテスト |
+| `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動（端末の作成・確認画面の検出と名指し（どの席で何の画面か）・Task の受け渡し・サイドバーの表示名と状態と親・上限を超える名前を断る・どの worker にも渡す決まりを brief の先頭に足す）とそのテスト |
 | `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録先は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものの書き出し先は窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
 | `bin/account-failover`・`bin/account_failover_test.py` | 利用枠の上限での席の切り替えとそのテスト。記録先は stallwatch と同じ `STALLWATCH_HOME`（`failover-state.json`・`failover.json`・`failover-history.jsonl`） |
 | `bin/orca-watch`・`bin/orca_watch_test.py` | Orca本体が人のいないあいだに落ちたときの起動し直しとそのテスト。記録先はstallwatchと同じ `STALLWATCH_HOME`（`orca-watch-state.json`・`orca-watch.json`・`orca-watch.pause`） |

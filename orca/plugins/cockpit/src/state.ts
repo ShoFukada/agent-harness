@@ -139,7 +139,7 @@ export const REPLY_LABEL = '返事待ち（あなた）'
  */
 export type OrcaStatus = 'todo' | 'in-progress' | 'in-review' | 'completed'
 export const ORCA_STATUS: Record<JobState, OrcaStatus> = { mine: 'in-review', stopped: 'in-progress', working: 'in-progress', customer: 'in-progress', idle: 'todo', done: 'completed' }
-/** サイドバーは 20 文字ほどで切れる。仕事の名前はこれ以内にし、何の仕事かを先頭に置く。 */
+/** サイドバーは 20 文字ほどで切れる。仕事の名前はこれ以内にし、何の仕事かを先頭に置く。bin/orca-launch がこの行と WORKER_HEAD の行を文字列で読むので、1 行の形を変えない。 */
 export const NAME_MAX = 20
 /**
  * Orca のタブと worktree の名前の頭（R146）。仕事の形を付けて成果物の名前を続ける。見張るは R146 に無いので、ほかと同じ形で「見張る」を頭にする。

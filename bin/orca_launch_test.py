@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """orca-launch のテスト。orca は ORCA_CLI_COMMAND で偽物に差し替え、呼ばれた引数を記録する。"""
 
+import importlib.util
+from importlib.machinery import SourceFileLoader
 import json
 import os
 import subprocess
@@ -10,6 +12,11 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LAUNCH = os.path.join(HERE, "orca-launch")
+_loader = SourceFileLoader("orca_launch", LAUNCH)
+ol = importlib.util.module_from_spec(importlib.util.spec_from_loader("orca_launch", _loader))
+_loader.exec_module(ol)
+HEAD, NAME_MAX = ol.name_rule()
+RULES = "## どの worker にも渡す決まり\n- 操縦席を書かない\n- 途中経過を送らない"
 
 FAKE = r'''#!/usr/bin/env python3
 import json, os, sys
@@ -18,7 +25,7 @@ with open(os.environ["FAKE_LOG"], "a") as fh:
     fh.write(json.dumps(args) + "\n")
 def out(result): print(json.dumps({"ok": True, "result": result}))
 if args[:2] == ["worktree", "show"]:
-    out({"worktree": {"path": os.environ["FAKE_WT"], "id": "r::wt"}})
+    out({"worktree": {"path": os.environ["FAKE_WT"], "id": "r::wt", "parentWorktreeId": os.environ.get("FAKE_PARENT")}})
 elif args[:2] == ["worktree", "set"]:
     out({})
 elif args[:2] == ["terminal", "create"]:
@@ -60,12 +67,16 @@ class LaunchTest(unittest.TestCase):
         self.spec = os.path.join(self.tmp, "brief.md")
         with open(self.spec, "w") as fh:
             fh.write("brief")
+        self.rules = os.path.join(self.tmp, ".config", "nix-darwin", "claude", "skills", "worktree-flow", "references", "worker-rules.md")
+        os.makedirs(os.path.dirname(self.rules))
+        with open(self.rules, "w") as fh:
+            fh.write(RULES + "\n")
         self.env = {**{k: v for k, v in os.environ.items() if k != "ORCA_WORKTREE_ID"}, "ORCA_CLI_COMMAND": fake, "FAKE_LOG": self.log, "FAKE_WT": self.wt,
                     "CLAUDE_CONFIG_DIR": self.cfg, "ORCA_WORKER_SETTINGS": "/s/worker.json",
-                    "STALLWATCH_HOME": os.path.join(self.tmp, "stallwatch")}
+                    "STALLWATCH_HOME": os.path.join(self.tmp, "stallwatch"), "HOME": self.tmp}
 
-    def run_launch(self, *extra, **env):
-        return subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--title", "t",
+    def run_launch(self, *extra, title="t", **env):
+        return subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--title", title,
                                "--spec-file", self.spec, *extra], capture_output=True, text=True,
                               env={**self.env, **env})
 
@@ -86,24 +97,82 @@ class LaunchTest(unittest.TestCase):
         self.assertIn("--model opus --settings /s/worker.json", cmd)
         start = next(x for x in self.calls() if x[:2] == ["orchestration", "worker-start"])
         self.assertEqual(start[start.index("--terminal") + 1], "term_x")
-        self.assertEqual(start[start.index("--spec-file") + 1], self.spec)
+        self.assertEqual(self.spec_text(), RULES + "\n\nbrief\n")
         self.assertIn("--keep-open", start)
         self.assertEqual(create[create.index("--title") + 1], "作業｜t")
         (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
         self.assertEqual(setw[setw.index("--display-name") + 1], "作業｜t")
-        self.assertNotIn("サイドバーで切れる", r.stderr)
         self.assertEqual(setw[setw.index("--workspace-status") + 1], "in-progress")
         self.assertEqual(json.loads(r.stdout)["dispatchId"], "ctx_1")
 
-    def test_long_name_is_kept_and_warned(self):
-        # 頭の「作業｜」も含めて 20 字を超えたら、切らずに出して標準エラーに書く（R146）。
-        title = "あ" * 18
-        r = subprocess.run([sys.executable, LAUNCH, "--worktree", "path:" + self.wt, "--title", title, "--spec-file", self.spec],
-                           capture_output=True, text=True, env=self.env)
+    def test_name_over_the_limit_is_refused_before_anything_starts(self):
+        # 頭の「作業｜」も含めて上限を超えたら、何も起こさずに断る（R146・R181）。上限ちょうどは通す。
+        title = "あ" * (NAME_MAX - len(HEAD))
+        r = self.run_launch(title=title)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("名前「%s｜%s」が %d 字で、上限の %d 字を超える" % (HEAD, title, NAME_MAX + 1, NAME_MAX), r.stderr)
+        self.assertFalse(os.path.exists(self.log), "orca を 1 回も呼ばない")
+        r = self.run_launch(title=title[1:])
         self.assertEqual(r.returncode, 0, r.stderr)
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
-        self.assertEqual(create[create.index("--title") + 1], "作業｜" + title)
-        self.assertIn("名前「作業｜%s」が 21 字で、サイドバーで切れる（20 字まで）" % title, r.stderr)
+        self.assertEqual(create[create.index("--title") + 1], "%s｜%s" % (HEAD, title[1:]))
+
+    def test_worktree_without_parent_hangs_under_the_launcher(self):
+        # 担当が --title で立てる worker: 作ったときに親が付かなかった worktree は、立てる人の作業場所の子にする。
+        r = self.run_launch(ORCA_WORKTREE_ID="r::lead")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
+        self.assertEqual(setw[setw.index("--parent-worktree") + 1], "id:r::lead")
+
+    def test_worktree_parent_recorded_at_creation_is_kept(self):
+        r = self.run_launch(ORCA_WORKTREE_ID="r::lead", FAKE_PARENT="r::other")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
+        self.assertNotIn("--parent-worktree", setw)
+
+    def test_worktree_without_parent_or_launcher_is_named(self):
+        r = self.run_launch()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
+        self.assertNotIn("--parent-worktree", setw)
+        self.assertIn("親を付けていない", r.stderr)
+
+    def test_rules_are_added_once(self):
+        # 渡した brief（先頭に決まりが入ったもの）で打ち直しても、決まりは 1 回だけ。
+        with open(self.spec, "w") as fh:
+            fh.write(RULES + "\n\nbrief\n")
+        r = self.run_launch()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.spec_text().count(RULES), 1)
+        self.assertEqual(self.spec_text(), RULES + "\n\nbrief\n")
+
+    def test_cockpit_name_over_the_limit_asks_orca_nothing(self):
+        # 担当のいるタスクでも、担当の worktree を Orca に問い合わせる前に断る（Codex 高）。
+        root = self.cockpit([{"id": "o1", "title": "x", "stream": "s1", "session": "sess_lead", "state": "open"}])
+        with open(os.path.join(root, ".orca", "cockpit.json")) as fh:
+            c = json.load(fh)
+        c["tasks"][0]["title"] = "あ" * NAME_MAX
+        with open(os.path.join(root, ".orca", "cockpit.json"), "w") as fh:
+            json.dump(c, fh)
+        r = self.run_cockpit(root)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("cockpit-write で直す", r.stderr)
+        self.assertFalse(os.path.exists(self.log), "orca を 1 回も呼ばない")
+
+    def test_blank_rules_refuse(self):
+        with open(self.rules, "w") as fh:
+            fh.write(" \n\n")
+        r = self.run_launch()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("決まり", r.stderr)
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_missing_rules_refuses(self):
+        os.remove(self.rules)
+        r = self.run_launch()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("worker に渡す決まり", r.stderr)
+        self.assertFalse(os.path.exists(self.log))
 
     def test_follows_the_seat_orca_has_selected(self):
         # account-failover が席を切り替えたあと、元の席に残った担当（CLAUDE_CONFIG_DIR は古い席）から立てても、新しい席で起動する。
@@ -133,6 +202,10 @@ class LaunchTest(unittest.TestCase):
         self.assertIn("agent-trust-workspace", r.stderr)
         # やり直しのコマンドに、呼んだときの --run と --keep-open が残る
         self.assertIn("--terminal term_x --keep-open --run run_9", r.stderr)
+        # やり直しのコマンドが渡す brief は、決まりを先頭に 1 回だけ足したもの
+        retry = r.stderr.split("--spec-file ", 1)[1].split(" ", 1)[0]
+        with open(retry) as fh:
+            self.assertEqual(fh.read(), RULES + "\n\nbrief\n")
         self.assertFalse(any(x[:2] == ["orchestration", "worker-start"] for x in self.calls()))
 
     def test_blocked_prompt_names_the_seat_and_the_screen(self):
@@ -190,9 +263,9 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(setw[setw.index("--parent-worktree") + 1], "id:repo::/lead")
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
         self.assertEqual(create[create.index("--title") + 1], "作業｜窓の版 3")
-        with open(self.log + ".spec") as fh:
-            spec = fh.read()
-        self.assertTrue(spec.startswith("brief"))
+        spec = self.spec_text()
+        self.assertTrue(spec.startswith(RULES + "\n\nbrief\n\n## 済の条件"))
+        self.assertEqual(spec.count(RULES), 1)
         self.assertIn("- r30#1: LIMIT が 3 行の上限の文言に当たる", spec)
         self.assertNotIn("r31", spec)
         with open(os.path.join(root, ".orca", "cockpit.json")) as fh:
