@@ -3,7 +3,8 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { actionVerb, parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
-import { boardsOf, linkKind, newUi, preface, render, rich, talkMessage, tighten, type Model, type Ui } from './view.ts'
+import { actsHtml, boardsOf, linkKind, newUi, preface, render, rich, talkMessage, tighten, type Model, type Ui } from './view.ts'
+import { CSS } from './style.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const svg = (s: string) => s
@@ -230,13 +231,24 @@ test('ファイルの文字列は HTML として解釈しない。URL と #123 �
   assert.equal(linkKind('docs/設計.md:12'), 'ファイル')
 })
 
-test('「元に戻す」は知らせと別に、操作ごとに積んで残りの秒を数える（続けて決めても前の操作を戻せる）', () => {
-  const u = (opId: number, text: string, s: number) => ({ root: '/ws/aoba', opId, itemId: 'd21', rev: 1, text, until: NOW + s * 1000 })
-  const ui = { ...newUi(), toast: { text: '本文をコピーしました', until: NOW + 5000 }, undos: [u(2, '決めました「x」', 4), u(3, '承りました「y」', 9), u(4, '古い', -1)] }
-  const h = html(model(), ui)
-  assert.match(text(h), /本文をコピーしました 決めました「x」。担当に届けます 元に戻す（4） 承りました「y」。担当に届けます 元に戻す（9）/)
-  assert.ok(!h.includes('古い'))
-  assert.match(h, /data-act="undo" data-op="2" data-root="\/ws\/aoba"/)
+test('通知（追加 33）: 積み上げず 1 つだけ。知らせがあれば知らせ、無ければ最後の操作の取り消し。「元に戻す」に数は付けず、届け先は担当か窓口。前の操作はカードから戻す', () => {
+  const u = (opId: number, label: string, s: number, to = '担当') => ({ root: '/ws/aoba', opId, itemId: 'd21', rev: 1, label, title: `題${opId}`, to, until: NOW + s * 1000 })
+  const withMsg = html(model(), { ...newUi(), toast: { text: '本文をコピーしました', until: NOW + 5000 }, undos: [u(2, '決めました', 4)] })
+  assert.equal((withMsg.match(/class="toast[ "]/g) ?? []).length, 1)
+  assert.match(text(withMsg), /本文をコピーしました/)
+  const h = html(model(), { ...newUi(), undos: [u(2, '決めました', 4), u(3, '承認しました', 9, '窓口'), u(4, '古い', -1)] })
+  assert.equal((h.match(/class="toast[ "]/g) ?? []).length, 1)
+  assert.match(text(h), /承認しました 「題3 」。窓口に届けます 前の1件は各カードの「この操作を元に戻す」で戻せます 元に戻す/)
+  assert.doesNotMatch(h, /元に戻す（/)
+  assert.ok(!h.includes('題2') && !h.includes('古い'))
+  assert.match(h, /data-act="undo" data-op="3" data-root="\/ws\/aoba"/)
+  assert.match(CSS, /\.ck \.toasts \{[^}]*left:16px/)
+  assert.match(CSS, /max-width:900px\) \{\n  \.ck\.win \.toasts, \.ck\.win\.side-open \.toasts \{ --tl:16px; --td:0px/)
+  // 前の操作（通知に出ない opId 2）は、そのカードの操作の帯から戻せる。版が変わったカードには出さない。
+  const r = boardsOf(views(), NOW)[0]!.d.queue.find((x) => x.card.id === 'd21')!
+  const ui = { ...newUi(), undos: [{ ...u(2, '決めました', 4), root: r.root, rev: r.card.rev }, u(3, '承認しました', 9)] }
+  assert.match(actsHtml(r, ui), /data-act="undo" data-op="2" data-root="[^"]+" title="決めました">この操作を元に戻す/)
+  assert.doesNotMatch(actsHtml(r, { ...ui, undos: [{ ...ui.undos[0]!, rev: r.card.rev + 1 }] }), /data-act="undo"/)
 })
 
 test('担当に貼る書き出しは、カードの id・種類・題・何のため', () => {

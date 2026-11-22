@@ -33,9 +33,8 @@ export type Ui = {
   /** 右の列の畳み（名前 → 開いているか）。 */
   open: Record<string, boolean>
   toast?: { text: string; until: number }
-  /** 直前の操作の取り消し（10 秒）。 */
-  /** 取り消せる操作。続けて決めても前の操作を猶予の間は戻せるよう、操作ごとに持つ。 */
-  undos: { root: string; opId: number; itemId: string; rev: number; text: string; until: number }[]
+  /** 取り消せる操作（10 秒）。続けて決めても前の操作を猶予の間は戻せるよう、操作ごとに持つ。label は「送信済みにしました」など、to は届け先（担当・窓口）。 */
+  undos: { root: string; opId: number; itemId: string; rev: number; label: string; title: string; to: string; until: number }[]
   /** 狭い幅で出す側（私の番か、案件の今と待ち）。広い幅では両方出す。 */
   pane?: 'queue' | 'side'
   /** 窓のタブ（要対応・全体・対応済み）。 */
@@ -449,6 +448,9 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   // 片付いた・顧客待ちの票には、片付ける操作を出さない（開いて読み返すだけ）。
   if (r.status === 'closed' || r.status === 'waiting') btns = btns.filter((x) => x.includes('data-act="url"'))
   if (r.status !== 'mine' && c.kind !== 'talk') btns = btns.filter((x) => !x.includes('data-act="talk"')).concat(talk('協議を続ける'))
+  // 期限切れの undo は controller の tick が ui.undos から外すので、ここでは until を見ない。
+  const u = ui.undos.find((x) => x.root === r.root && x.itemId === c.id && x.rev === c.rev)
+  if (u) btns = [`<button class="btn" type="button" data-act="undo" data-op="${u.opId}" data-root="${esc(u.root)}" title="${esc(u.label)}">この操作を元に戻す</button>`, ...btns]
   const hint = c.options?.length && !otherOpen && btns.some((x) => x.includes('data-act="decide"')) ? `<span class="hint"><kbd>1</kbd>〜<kbd>${Math.min(9, c.options.length)}</kbd> で選び <kbd>Enter</kbd></span>` : ''
   return `<div class="acts">${btns.join('')}${hint}</div>`
 }
@@ -626,14 +628,22 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
     </main>${toast}</div>`
 }
 
-/** root を渡すと、その案件の取り消しだけを出す（窓は 1 案件を描くので、別の案件の操作を取り消させない）。 */
+/**
+ * 知らせがあればそれを、無ければ最後の操作の取り消しを出す（操作すると controller の act が知らせを消すので、知らせが最新）。
+ * root を渡すと、その案件の取り消しだけを出す（窓は 1 案件を描くので、別の案件の操作を取り消させない）。
+ */
 export function toastsHtml(ui: Ui, now: number, root?: string): string {
-  const msg = ui.toast && ui.toast.until > now ? `<div class="toast" role="status"><span>${esc(ui.toast.text)}</span></div>` : ''
-  const undo = ui.undos
-    .filter((u) => u.until > now && (!root || u.root === root))
-    .map((u) => `<div class="toast undo" role="status"><span>${esc(u.text)}。担当に届けます</span><button type="button" data-act="undo" data-op="${u.opId}" data-root="${esc(u.root)}">元に戻す（${Math.max(1, Math.ceil((u.until - now) / 1000))}）</button></div>`)
-    .join('')
-  return msg || undo ? `<div class="toasts">${msg}${undo}</div>` : ''
+  const undos = ui.undos.filter((u) => u.until > now && (!root || u.root === root))
+  const undo = undos.at(-1)
+  const more = undos.length - 1
+  const cut = undo?.label.indexOf('「') ?? -1
+  const [verb, opt] = undo && cut > 0 ? [undo.label.slice(0, cut), undo.label.slice(cut)] : [undo?.label ?? '', '']
+  const html = ui.toast && ui.toast.until > now
+    ? `<div class="toast" role="status"><span class="tx" title="${esc(ui.toast.text)}">${esc(ui.toast.text)}</span></div>`
+    : undo
+      ? `<div class="toast undo" role="status"><span class="tm" title="${esc(`${undo.label}「${undo.title}」。${undo.to}に届けます${more ? `。前の${more}件は各カードの「この操作を元に戻す」で戻せます` : ''}`)}"><span class="tv">${esc(verb)}</span>${opt ? `<span>${esc(opt)}</span>` : ''}<span class="tt">「${esc(undo.title)}</span><span>」。${esc(undo.to)}に届けます</span></span>${more ? `<span class="more">前の${more}件は各カードの「この操作を元に戻す」で戻せます</span>` : ''}<button type="button" data-act="undo" data-op="${undo.opId}" data-root="${esc(undo.root)}">元に戻す</button></div>`
+      : ''
+  return html && `<div class="toasts">${html}</div>`
 }
 
 /** 狭い幅で、私の番と「案件の今・待ち」を切り替える。広い幅では CSS で隠す。 */

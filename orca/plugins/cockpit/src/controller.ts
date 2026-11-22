@@ -212,7 +212,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       if (type !== 'revert') advance(k)
       replace(res.view)
       ui.toast = undefined
-      ui.undos.push({ root: r.root, opId: op.op_id, itemId: r.card.id, rev: r.card.rev, text: `${label}「${r.card.title}」`, until: Date.now() + UNDO_GRACE_MS })
+      ui.undos.push({ root: r.root, opId: op.op_id, itemId: r.card.id, rev: r.card.rev, label, title: r.card.title, to: r.owner.how === 'main' ? '窓口' : '担当', until: Date.now() + UNDO_GRACE_MS })
       tick()
     } catch (e) {
       fail(e)
@@ -272,7 +272,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     if (o) return act('decide', r, { option_id: o.id }, `${r.card.kind === 'permit' ? '許可しました' : '決めました'}「${o.label}」`)
   }
 
-  const LABEL: Partial<Record<OpType, string>> = { accept: '承認しました', sent: '送信済みとして記録しました', skip: '見送りました', delegate: '許可し、以後は一任しました', ack: '既読にしました' }
+  const LABEL: Partial<Record<OpType, string>> = { accept: '承認しました', sent: '送信済みにしました', skip: '見送りました', delegate: '許可し、以後は一任しました', ack: '既読にしました' }
 
   function onAct(name: string, r: VRow | undefined, el: HTMLElement): void {
     if (name === 'undo') {
@@ -322,9 +322,9 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
         return
       }
       case 'revert': return void act('revert', r, { target: Number(el.dataset.target) }, '戻すよう依頼しました')
-      case 'dismiss': return void act('dismiss', r, {}, '対応済みとして記録しました')
+      case 'dismiss': return void act('dismiss', r, {}, '対応済みにしました')
       case 'accept': case 'sent': case 'skip': case 'delegate': case 'ack':
-        return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許可しました' : r.card.manual && name === 'sent' ? '対応済みとして記録しました' : LABEL[name]!)
+        return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許可しました' : r.card.manual && name === 'sent' ? '対応済みにしました' : LABEL[name]!)
     }
   }
 

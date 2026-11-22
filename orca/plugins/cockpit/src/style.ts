@@ -246,10 +246,26 @@ body { margin:0; }
 .ck .chores b, .ck.win .wnotes b { font-weight:600; margin-right:8px; }
 .ck .chores .by, .ck.win .wnotes .by { margin-left:12px; }
 .ck .errs div { background:var(--hot-bg); color:var(--hot); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); font-weight:600; }
-.ck .toasts { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:10; width:max-content; max-width:min(640px, calc(100vw - 24px)); display:grid; gap:6px; }
+.ck .toasts { position:fixed; left:16px; bottom:calc(10px + env(safe-area-inset-bottom, 0px)); z-index:10; width:max-content; max-width:min(440px, calc(100vw - 32px)); }
 .ck .toast {
-  display:flex; align-items:center; gap:12px; background:var(--ink); color:var(--surface); border-radius:10px; padding:10px 14px; font-size:var(--fs-s); box-shadow:0 8px 28px rgba(0,0,0,.25); }
-.ck .toast button { border:1px solid currentColor; background:none; color:inherit; border-radius:6px; padding:2px 10px; font-weight:600; }
+  display:flex; flex-wrap:wrap; align-items:center; gap:2px 10px; background:var(--ink); color:var(--surface); border-radius:8px; padding:6px 10px; font-size:var(--fs-xs); box-shadow:0 6px 20px rgba(0,0,0,.22); }
+.ck .toast .tm { display:flex; flex:1 1 0; min-width:0; overflow:hidden; white-space:nowrap; }
+.ck .toast .tm > span { flex:0 1 auto; min-width:2em; overflow:hidden; text-overflow:ellipsis; }
+/* 動詞と届け先は縮めず、題を先に縮める。 */
+.ck .toast .tm > .tt { flex-shrink:1000; min-width:4em; }
+.ck .toast .tm > .tv { flex:none; }
+.ck .toast .tx { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.ck .toast .more { order:3; flex-basis:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.8; }
+.ck .toast .tm > span:last-child { flex:none; min-width:0; }
+.ck .toast button { flex:none; border:1px solid currentColor; background:none; color:inherit; border-radius:6px; padding:1px 8px; font-weight:600; font-size:var(--fs-xs); }
+.ck.win .toasts { --tl:16px; --td:max(420px, 44vw); left:var(--tl); bottom:max(16px, env(safe-area-inset-bottom, 0px)); max-width:min(560px, calc(100vw - var(--tl) - var(--td) - 16px)); }
+.ck.win.side-open .toasts { --tl:236px; }
+@media (max-width:1100px) { .ck.win .toasts { --td:380px; } }
+/* 狭い窓とパネルでは画面の下に出し、出ているあいだは下に貼り付く操作の帯の下に 2 行の通知が収まる余白を足して、そこに置く（入力欄と帯のボタンに掛けない）。 */
+.ck:not(.win):has(.toasts) .strip .acts { padding-bottom:calc(76px + env(safe-area-inset-bottom, 0px)); }
+@media (max-width:900px) {
+  .ck.win .toasts, .ck.win.side-open .toasts { --tl:16px; --td:0px; bottom:calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .ck.win:has(.toasts) .dbtn { padding-bottom:calc(70px + env(safe-area-inset-bottom, 0px)); } }
 @media (prefers-reduced-motion:no-preference) {
   .ck .strip { transition:box-shadow .15s ease; }
   .ck .toast { animation:ck-up .18s ease-out; }

@@ -178,7 +178,7 @@ test('案件のサイドバー: 名前の順に並べ、私の番の件数は語
   const noCockpit = renderWindow({ ...m, focused: '/ws/elsewhere' }, { ...newUi(), filter: harness }, NOW, (s) => s)
   assert.match(noCockpit, /data-orca="sync" disabled>/)
   // 別の案件で押した「送信済み」の取り消しは、この案件を描いているあいだ出さない（Codex 重大 2）。
-  const undos = [{ root: aobaRoot, opId: 7, itemId: 's1', rev: 1, text: '送信済みとして記録しました「議事録」', until: NOW + 5000 }]
+  const undos = [{ root: aobaRoot, opId: 7, itemId: 's1', rev: 1, label: '送信済みにしました', title: '議事録', to: '担当', until: NOW + 5000 }]
   assert.match(renderWindow(m, { ...newUi(), undos }, NOW, (s) => s), /data-act="undo" data-op="7"/)
   assert.doesNotMatch(renderWindow(m, { ...newUi(), undos, filter: harness }, NOW, (s) => s), /data-act="undo"/)
 })
