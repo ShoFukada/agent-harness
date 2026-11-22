@@ -9,6 +9,8 @@ import { parseCockpit, requestCards, stageOf, type Card, type Cockpit } from './
 import type { AgentRow, QuestionFact } from './protocol.ts'
 import { bucketOf, byUrgency, derive, lookupTerms, matchRulings, NAME_MAX, ORCA_STATUS, report, routeProblem, unreflectedReturns, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
+import { chatHandles, liveChats } from '../window/orca-state.ts'
+import { orcaFacts } from '../window/state.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const ws = (n: number) => {
@@ -248,6 +250,36 @@ test('タスクの今の Dispatch は Run の続きをたどった先（current�
   assert.deepEqual(r.checks.no_form.sort(), ['s2', 's3', 's4'])
   // 続きを引けていない（current に無い）run_id だけの記録は、Orca に見つからない扱い。
   assert.equal(report(c, w.log, [], { workers: [], dispatches: {} }, 'ok', NOW).tasks.find((t) => t.id === 't1')!.from, 'missing')
+})
+
+test('カードの相談がチャット（orca_session_id:…）でも、開いているあいだ話し中、閉じたら外す。片付いたカードに残るチャットを stale_consults に出す（追加 30）', async () => {
+  const w = ws(0)
+  const talk = (op_id: number, item_id: string, item_rev: number, terminal: string) => ({ op_id, at: '2026-11-21T09:50:00+09:00', item_id, item_rev, type: 'talk' as const, terminal })
+  const log = { ops: [...w.log.ops, talk(5, 'd22', 2, 'orca_session_id:c22'), talk(6, 'd19', 1, 'orca_session_id:c19'), talk(7, 'd21', 1, 'term_c21')] }
+  const asked: string[] = []
+  const open = (alive: string[], broken: string[] = []) => async (h: string) => {
+    asked.push(h)
+    if (broken.includes(h)) throw new Error('orca が失敗しました')
+    return alive.includes(h)
+  }
+  const factsOf = async (alive: string[], broken: string[] = []) =>
+    (await orcaFacts('/ws', w.cockpit, async () => [], async () => [{ handle: 'term_c21', tabId: 't', leafId: 'c21' }], async () => null, undefined, undefined, { handles: chatHandles(log.ops), open: open(alive, broken) })).facts
+  const live = report(w.cockpit, log, [], await factsOf(['orca_session_id:c22', 'orca_session_id:c19']), 'ok', NOW)
+  assert.deepEqual(live.talking.map((x) => [x.id, x.with]), [['d22', 'カードの相談'], ['d21', 'カードの相談']])
+  assert.deepEqual(live.checks.stale_consults, [{ id: 'd19', terminal: 'orca_session_id:c19' }])
+  const closed = report(w.cockpit, log, [], await factsOf([]), 'ok', NOW)
+  assert.deepEqual(closed.talking.map((x) => x.id), ['d21'], 'チャットが閉じたら話し中を外す。端末の相談は今どおり')
+  assert.deepEqual(closed.checks.stale_consults, [])
+  // 確かめられなかったチャットは閉じたと言い切らない。
+  const unknown = report(w.cockpit, log, [], await factsOf([], ['orca_session_id:c22']), 'ok', NOW)
+  assert.deepEqual(unknown.talking.map((x) => x.id), ['d22', 'd21'])
+  // 閉じたと分かったチャットは問い合わせ直さない。
+  const gone = new Set<string>()
+  asked.length = 0
+  assert.deepEqual(await liveChats(['orca_session_id:c22', 'orca_session_id:c19'], open(['orca_session_id:c22']), gone), ['orca_session_id:c22'])
+  assert.deepEqual(await liveChats(['orca_session_id:c22', 'orca_session_id:c19'], open(['orca_session_id:c22']), gone), ['orca_session_id:c22'])
+  assert.deepEqual(asked, ['orca_session_id:c22', 'orca_session_id:c19', 'orca_session_id:c22'])
+  assert.deepEqual(chatHandles([{ type: 'talk', terminal: 'term_x' }, { type: 'talk', terminal: 'orca_session_id:a' }, { type: 'talk', terminal: 'orca_session_id:a' }, { type: 'decide' }]), ['orca_session_id:a'])
 })
 
 test('担当と話すを押したカードは私の番に残り、hook の talking に話し相手と押した時刻が出る', () => {

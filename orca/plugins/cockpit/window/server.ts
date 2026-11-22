@@ -14,8 +14,7 @@ import type { Ask, AskDecideResult, AskResult, ClipResult, CockpitView, Dispatch
 import { agentTitle, matchRulings, ownerOf } from '../src/state.ts'
 import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
-  type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow
-} from './orca-state.ts'
+  type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readNotified, recordFirstSeen, signalPlan, splitLine, writeNotified, type Files } from '../src/store.ts'
 
@@ -56,6 +55,8 @@ export type Orca = {
   inbox?(): Promise<InboxMessage[]>
   /** worktree のタブ（題と、その中の端末の handle）。窓からの質問のタブを題で探す（題は --title で付けたまま残る）。 */
   tabs?(root: string): Promise<{ title: string; handles: string[] }[]>
+  /** チャットが Orca に開いているか（orca agent show の result.places が空でない）。無い session は false、読めなければ投げる。 */
+  chatOpen?(handle: string): Promise<boolean>
   /** 端末の今の画面の行（terminal read --screen）。AskUserQuestion の問いは画面にしか無い。 */
   screen?(terminal: string): Promise<string[]>
   send(terminal: string, text: string): Promise<void>
@@ -131,6 +132,14 @@ export function orcaCli(bin = 'orca'): Orca {
       const r = await run(['terminal', 'list', '--worktree', `path:${root}`, '--include-visual-layouts'])
       return tabsOf(r.visualLayouts, root)
     },
+    chatOpen: (handle) =>
+      run(['agent', 'show', handle]).then(
+        (r) => Array.isArray(r.places) && r.places.length > 0,
+        (e: Error & { code?: string }) => {
+          if (e.code === 'agent_unknown') return false
+          throw e
+        }
+      ),
     screen: async (terminal) => (((await run(['terminal', 'read', '--terminal', terminal, '--screen'])).terminal as { tail?: string[] } | undefined)?.tail ?? []),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
     activate: async (root) => void (await run(['worktree', 'activate', '--worktree', `path:${root}`])),
@@ -246,6 +255,9 @@ export function createServer(opts: Options) {
   const wss = new Map<string, Ws>()
   let ps: PsRow[] = []
   let terms = new Map<string, string>()
+  /** 開いているチャットの相談の handle と、閉じたと分かったもの（閉じたものは問い合わせ直さない）。 */
+  let chats = new Set<string>()
+  const closedChats = new Set<string>()
   let owners: OwnerLive[] = []
   /** orca agent list を読めなかった。チャットが「無い」と言い切らないために持つ。 */
   let ownersStale = false
@@ -316,7 +328,7 @@ export function createServer(opts: Options) {
       notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen,
-      terminals: lastRefresh && !orcaError ? [...terms.values()] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
+      terminals: lastRefresh && !orcaError ? [...terms.values(), ...chats] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
       consults: consultsFor(files.consults, cockpit, archive), questions: root ? questionsBy.get(root) : undefined,
       asks: slimAsks(files.asks)
     }
@@ -451,6 +463,7 @@ export function createServer(opts: Options) {
         ownersStale = !ags
         ps = rowsNow
         terms = new Map(tl.map((t) => [`${t.tabId}:${t.leafId}`, t.handle]))
+        chats = new Set(await liveChats([...new Set([...chats, ...chatHandles([...wss.values()].flatMap((ws) => ws.files.log.ops))])], orca.chatOpen, closedChats))
         // 失敗の理由と答えの無い question は inbox にしかない。読めなければ前のまま（失敗の理由は文から推す）。
         const inbox = await orca.inbox?.().catch((e: Error) => void console.error(`inbox: ${e.message}`))
         if (inbox) {
@@ -613,7 +626,7 @@ export function createServer(opts: Options) {
     return handle ? { handle } : closed
   }
 
-  const liveTerminal = (t: string | null | undefined): t is string => !!t && [...terms.values()].includes(t)
+  const liveTerminal = (t: string | null | undefined): t is string => !!t && (t.startsWith(CHAT_HANDLE) ? chats.has(t) : [...terms.values()].includes(t))
   const wsName = (p: string) => `ワークスペース「${path.basename(p)}」`
 
   type Target = { terminal: string; how: string } | { worktree: string; how: string; tab?: string } | { how: string; reason: string }
@@ -717,7 +730,11 @@ export function createServer(opts: Options) {
           note = `相談のタブを開けませんでした（${(e as Error).message}）`
         }
         if (handle) {
-          // 立てたタブを端末の一覧に入れる（入るまでは協議中の印が外れて見える）。
+          // 立てたタブを端末の一覧に入れる（入るまでは協議中の印が外れて見える）。チャットは consult が開いたばかりなので開いているとして持つ。
+          if (handle.startsWith(CHAT_HANDLE)) {
+            closedChats.delete(handle)
+            chats.add(handle)
+          }
           await refreshOrca()
           // タブは開いたので、記録できなくても窓口には回さない（版が変わったなど。開いたタブはそのまま使える）。
           return markConsult(ws, c, card, b.item_rev, handle).then(

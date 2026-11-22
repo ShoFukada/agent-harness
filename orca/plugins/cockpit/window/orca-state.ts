@@ -34,6 +34,29 @@ export type InboxMessage = {
   id?: string; type?: string; payload?: string | null; created_at?: string
   from_handle?: string | null; to_handle?: string | null; thread_id?: string | null; subject?: string | null; body?: string | null
 }
+/** consult --card が Orca のチャット画面で立てた相談の handle の頭（端末の handle は term_…）。 */
+export const CHAT_HANDLE = 'orca_session_id:'
+
+/** 協議の記録（talk の op）に残ったチャットの相談の handle。 */
+export const chatHandles = (ops: { type: string; terminal?: string | null }[]) =>
+  [...new Set(ops.filter((o) => o.type === 'talk' && o.terminal?.startsWith(CHAT_HANDLE)).map((o) => o.terminal!))]
+
+/**
+ * チャットの相談のうち、Orca に開いているもの（orca agent show の result.places が空でない。consult の live_chats と同じ判定）。
+ * 閉じたと分かったものは closed に入れて次から問い合わせない（閉じたチャットは開き直らない）。確かめられなかったものは閉じたと言い切らず、開いているとして返す。
+ */
+export async function liveChats(handles: string[], open: ((handle: string) => Promise<boolean>) | undefined, closed = new Set<string>()): Promise<string[]> {
+  if (!open) return []
+  const out: string[] = []
+  for (const h of handles) {
+    if (closed.has(h)) continue
+    const live = await open(h).catch(() => true)
+    if (live) out.push(h)
+    else closed.add(h)
+  }
+  return out
+}
+
 export function failuresOf(messages: InboxMessage[]): Record<string, Failure> {
   const out: Record<string, Failure> = {}
   for (const m of messages) {

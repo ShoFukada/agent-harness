@@ -66,13 +66,14 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; tailnetHosts?: string[] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; tailnetHosts?: string[] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
   if (focusPath) setFocus(focusPath)
   const fake = fakeOrca(rows, plugins, owners, shows, showDelay, more.terms)
   if (more.tabs) fake.orca.tabs = more.tabs
+  if (more.chatOpen) fake.orca.chatOpen = more.chatOpen
   const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts })
   servers.push(s)
   const port = await s.listen()
@@ -363,6 +364,18 @@ test('担当と協議: 担当のいないカードはカードの相談のタブ
   assert.equal((await post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body.how, '配車画面の改修の端末')
   assert.equal((await post('talk', { root: a, stream: 's4' })).body.how, '窓口の端末')
   assert.deepEqual(asked.length, 4)
+})
+
+test('担当と協議: consult がチャットで相談を立てたら（handle が orca_session_id:…）、チャットが開いているあいだ話し中を保つ（追加 30）', async () => {
+  const { a, rows } = workspaces()
+  const consult: Consult = async () => 'orca_session_id:c22'
+  const { s, port, post } = await start(rows, a, undefined, undefined, undefined, undefined, { consult, chatOpen: async (h) => h === 'orca_session_id:c22' })
+  const ev = listen(port, s.token)
+  await ev.until(ready)
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '相談のタブ' })
+  assert.deepEqual(talkOps(a), [['d22', 'talk', 'orca_session_id:c22']])
+  const w = await ev.until((v) => !!board(v, a)?.terminals?.includes('orca_session_id:c22'))
+  assert.equal(board(w, a)?.terminals?.includes('term_main'), true, '端末の handle は今どおり')
 })
 
 test('担当と協議: 最初の連打でも記録は 1 つ。相談に回すときも、consult が失敗して窓口に回すときも（Codex 2 回目 中 1・2）', async () => {
