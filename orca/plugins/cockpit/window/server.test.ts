@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -10,7 +10,7 @@ import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
 import { renderWindow, todoGroups } from '../src/window-view.ts'
 import type { OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
-import { createServer, stopReason, type Consult, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import { askCli, askNotice, askTitle, createServer, stopReason, tabsOf, type AskCmd, type Consult, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -66,13 +66,14 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs'] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
   if (focusPath) setFocus(focusPath)
   const fake = fakeOrca(rows, plugins, owners, shows, showDelay, more.terms)
-  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult })
+  if (more.tabs) fake.orca.tabs = more.tabs
+  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask })
   servers.push(s)
   const port = await s.listen()
   const origin = `http://127.0.0.1:${port}`
@@ -368,6 +369,182 @@ test('相談のメモは送るカードのものだけを、表示に使う欄�
   const { s, port } = await start(rows, a)
   const w = await listen(port, s.token).until((v) => ready(v) && !!board(v, a)?.consults)
   assert.deepEqual(board(w, a)!.consults, [{ card: 'd22', path: path.join(a, '.orca/consult/d22.md'), returns: [{ return_id: 'd22-1', choice: 'send', decisions: [{ text: '送る' }] }] }])
+})
+
+/**
+ * consult --ask の代わり。控えの頭を書き（consult と同じ形）、呼ばれた (id・結び先・質問) を残す。fail なら理由で落ちる。
+ * 立てるのに wait ミリ秒かかる（同時の 2 問が同じ id を採らないことを見る）。
+ */
+function fakeAsk(fail?: string, wait = 0) {
+  const asked: [string, string, string | undefined, string | undefined, string | undefined][] = []
+  const ask: AskCmd = async (root, id, o) => {
+    asked.push([path.basename(root), id, o.card, o.task, o.question])
+    await new Promise((r) => setTimeout(r, wait))
+    if (fail) throw new Error(fail)
+    const memo = path.join(root, '.orca/consult', `ask-${id}.md`)
+    mkdirSync(path.dirname(memo), { recursive: true })
+    try {
+      readFileSync(memo)
+    } catch {
+      writeFileSync(memo, `# ${askTitle('案件A', id)}\n${o.card ? `- カード: ${o.card}\n` : ''}${o.task ? `- タスク: ${o.task}\n` : ''}- 写した窓口の会話: s1（窓口の会話 09:05 時点）\n\n`)
+    }
+    return `term_${id}`
+  }
+  return { ask, asked }
+}
+
+test('窓から質問する: 新しい質問は質問 id を 1 つずつ採って consult --ask に結び先と質問を渡し、続きは同じ id で送る。知らない質問・空の質問・知らない結び先は断る', async () => {
+  const { a, rows } = workspaces()
+  const { ask, asked } = fakeAsk(undefined, 30)
+  const { s, port, post } = await start(rows, a, undefined, undefined, undefined, undefined, { ask })
+  const ev = listen(port, s.token)
+  await ev.until(ready)
+  // 同時に押した 2 問は別の id になる（consult が控えを書くまで次の id を採らない）。
+  const [one, two] = await Promise.all([post('ask', { root: a, question: '入口は 1 つ？', card: 'd21' }), post('ask', { root: a, question: '全体の質問', task: 't1' })])
+  assert.deepEqual([one.body, two.body], [{ opened: true, ask: 'ask1' }, { opened: true, ask: 'ask2' }])
+  assert.deepEqual(asked, [[path.basename(a), 'ask1', 'd21', undefined, '入口は 1 つ？'], [path.basename(a), 'ask2', undefined, 't1', '全体の質問']])
+  assert.deepEqual((await post('ask', { root: a, ask: 'ask1', question: '  続き  ', card: 'd22' })).body, { opened: true, ask: 'ask1' })
+  assert.deepEqual(asked.at(-1), [path.basename(a), 'ask1', undefined, undefined, '続き'], '続きは結び先を変えない')
+  assert.equal((await post('ask', { root: a, ask: 'ask9', question: 'x' })).status, 409)
+  assert.equal((await post('ask', { root: a, question: '   ' })).status, 400)
+  assert.equal((await post('ask', { root: a, question: 'x', card: 'zz' })).status, 409)
+  // 控えの頭は送った直後の配信に載る（待つ表示を質問に結ぶ）。
+  const w = await ev.until((v) => (board(v, a)?.asks ?? []).length === 2)
+  assert.deepEqual(board(w, a)!.asks!.map((x) => [x.id, x.card, x.task, x.at, x.answers]), [['ask1', 'd21', undefined, '09:05', 0], ['ask2', undefined, 't1', '09:05', 0]])
+})
+
+test('窓から質問する: 同じ案件を開く 2 つの常駐のプロセスでも、新しい質問の id は重ならない（Codex 重大 4）', async () => {
+  const { a, rows } = workspaces()
+  const one = fakeAsk(undefined, 40)
+  const two = fakeAsk(undefined, 40)
+  const x = await start(rows, a, undefined, undefined, undefined, undefined, { ask: one.ask })
+  const y = await start(rows, a, undefined, undefined, undefined, undefined, { ask: two.ask })
+  await Promise.all([listen(x.port, x.s.token).until(ready), listen(y.port, y.s.token).until(ready)])
+  const got = await Promise.all([x.post('ask', { root: a, question: '一' }), y.post('ask', { root: a, question: '二' })])
+  assert.deepEqual(got.map((r) => r.body.ask).sort(), ['ask1', 'ask2'])
+  assert.deepEqual([...one.asked, ...two.asked].map((q) => q[1]).sort(), ['ask1', 'ask2'])
+})
+
+test('窓から質問する: 前の質問に答えが無いあいだは続きを送らない。質問の中の控えの見出しと同じ形の行は 1 字下げて送る。予約の札は consult が戻ったら消す（Codex 2 回目 重大 1・2・中 1）', async () => {
+  const { a, rows } = workspaces()
+  const dir = path.join(a, '.orca/consult')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(path.join(dir, 'ask-ask1.md'), '# 質問｜案件A｜ask1\n\n### 質問 09:10（u-1）\n入口は？\n\n')
+  // 落ちたプロセスが残した予約の札は、その id を飛ばすだけ。
+  writeFileSync(path.join(dir, '.ask-ask2.reserved'), '')
+  const { ask, asked } = fakeAsk()
+  const { s, port, post } = await start(rows, a, undefined, undefined, undefined, undefined, { ask })
+  await listen(port, s.token).until((v) => (board(v, a)?.asks ?? []).length === 1)
+  assert.deepEqual((await post('ask', { root: a, ask: 'ask1', question: '続き' })).body, { opened: false, ask: 'ask1', reason: '前の質問の答えを待っています。答えが届いてから続けて聞いてください' })
+  assert.equal(asked.length, 0)
+  assert.deepEqual((await post('ask', { root: a, question: 'ログの例:\n### 答え 09:00\nサンプル' })).body, { opened: true, ask: 'ask3' })
+  assert.equal(asked.at(-1)![4], 'ログの例:\n ### 答え 09:00\nサンプル')
+  assert.ok(!existsSync(path.join(dir, '.ask-ask3.reserved')))
+  writeFileSync(path.join(dir, 'ask-ask1.md'), readFileSync(path.join(dir, 'ask-ask1.md'), 'utf8') + '### 答え 09:11\n1 つにする\n\n')
+  assert.deepEqual((await post('ask', { root: a, ask: 'ask1', question: '続き' })).body, { opened: true, ask: 'ask1' })
+})
+
+test('窓から質問する: consult が立てられなければ理由を返す（窓口の会話が分からないなど）。道具が無ければ立てない', async () => {
+  const { a, rows } = workspaces()
+  const { ask } = fakeAsk('窓口の会話が分かりません。窓口が 1 回発言すると直ります')
+  const { s, port, post } = await start(rows, a, undefined, undefined, undefined, undefined, { ask })
+  await listen(port, s.token).until(ready)
+  assert.deepEqual((await post('ask', { root: a, question: 'x' })).body, { opened: false, reason: '窓口の会話が分かりません。窓口が 1 回発言すると直ります' })
+  const bare = await start(rows, a)
+  await listen(bare.port, bare.s.token).until(ready)
+  assert.deepEqual((await bare.post('ask', { root: a, question: 'x' })).body, { opened: false, reason: '質問の道具（consult --ask）が渡されていません' })
+})
+
+test('窓から質問する: consult --ask の引数と、失敗の理由の頭の「consult: 」を外すこと', async () => {
+  const dir = tmp('cockpit-askcli-')
+  const ok = path.join(dir, 'ok')
+  writeFileSync(ok, '#!/bin/sh\nprintf "%s\\n" "$@" > "$(dirname "$0")/args"\necho term_x\necho 立てた >&2\n')
+  const ng = path.join(dir, 'ng')
+  writeFileSync(ng, '#!/bin/sh\necho "consult: 窓口の会話が分かりません" >&2\nexit 1\n')
+  chmodSync(ok, 0o755)
+  chmodSync(ng, 0o755)
+  // 質問が「--help」のようなオプション名でも、argparse が値として受け取れるよう 1 つの引数で渡す（Codex 軽微 1）。
+  assert.equal(await askCli(ok)('/ws/a', 'ask3', { card: 'd21', question: '--help' }), 'term_x')
+  assert.deepEqual(readFileSync(path.join(dir, 'args'), 'utf8').split('\n').slice(0, 6), ['--ask', '/ws/a', 'ask3', '--on-card', 'd21', '--question=--help'])
+  await assert.rejects(askCli(ng)('/ws/a', 'ask3', {}), /^Error: 窓口の会話が分かりません$/)
+})
+
+test('窓から質問する: 判断の記録から撤回されていない判断を語で引いて、原文・番号・日時を返す', async () => {
+  const { a, rows } = workspaces()
+  mkdirSync(path.join(a, '.orca/cockpit'), { recursive: true })
+  writeFileSync(path.join(a, '.orca/cockpit/rulings.jsonl'), [
+    { id: 'R1', at: '2026-11-21T22:48:00+09:00', kind: 'decision', text: '窓から質問する欄は全体のタブの上に置く', quote: '質問する機能は割と良かった' },
+    { id: 'R2', kind: 'decision', text: '質問の欄は置かない' }, { id: 'R3', kind: 'revoke', text: '撤回', supersedes: 'R2' }
+  ].map((x) => JSON.stringify(x)).join('\n') + '\n')
+  const { s, port, post } = await start(rows, a)
+  await listen(port, s.token).until(ready)
+  assert.deepEqual((await post('asklookup', { root: a, q: '質問の欄はどこに置く？' })).body, { hits: [{ id: 'R1', at: '2026-11-21T22:48:00+09:00', kind: 'decision', text: '窓から質問する欄は全体のタブの上に置く', quote: '質問する機能は割と良かった' }] })
+  assert.deepEqual((await post('asklookup', { root: a, q: 'どう？' })).body, { hits: [] })
+})
+
+test('これで決める: op を先に書き、題で探した質問のタブに「返しを書いて（op n）」を送る。タブが無ければ op だけ残し理由を返す。ふつうの操作では受けない', async () => {
+  const { a, rows } = workspaces()
+  const memo = path.join(a, '.orca/consult/ask-ask3.md')
+  mkdirSync(path.dirname(memo), { recursive: true })
+  writeFileSync(memo, '# 質問｜案件A｜ask3\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n')
+  writeFileSync(path.join(a, '.orca/consult/ask-ask4.md'), '# 質問｜案件A｜ask4\n\n### 質問 09:12（u-2）\nまだ答えが無い\n\n')
+  let open = true
+  const tabs: Orca['tabs'] = async (root) => (root === a && open ? [{ title: askTitle('案件A', 'ask3'), handles: ['term_ask3'] }, { title: 'ほか', handles: ['term_x'] }] : [])
+  const { s, port, post, calls } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs })
+  const ev = listen(port, s.token)
+  await ev.until((v) => (board(v, a)?.asks ?? []).length === 2)
+  assert.equal((await post('askdecide', { root: a, ask: 'ask4', answer: { at: '09:12', head: 'x', n: 1 } })).status, 409, '答えの無い質問では決めない')
+  assert.deepEqual(board(await ev.until((v) => !!board(v, a)?.asks?.find((x) => x.id === 'ask3')?.decide), a)!.asks!.find((x) => x.id === 'ask3')!.decide, { at: '09:11', head: '1 つにする', n: 1 }, '決める候補は常駐のプロセスが控えの全文から出す')
+  const r = await post('askdecide', { root: a, ask: 'ask3', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.sent, true)
+  const ops = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8')).ops
+  assert.deepEqual({ ...ops.at(-1), at: undefined }, { op_id: r.body.op, at: undefined, item_id: '#ask:ask3', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  assert.deepEqual(calls.filter((x) => x[0] === 'send'), [['send', 'term_ask3', askNotice(r.body.op)]])
+  // 同じ答えへの 2 回目（連打・2 つの窓）は記録も知らせも足さない（Codex 中 1）。
+  assert.deepEqual((await post('askdecide', { root: a, ask: 'ask3', answer: { at: '09:11', head: '1 つにする', n: 1 } })).body, { op: r.body.op, sent: false, again: true })
+  assert.equal(JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8')).ops.length, ops.length)
+  assert.equal(calls.filter((x) => x[0] === 'send').length, 1)
+  // 画面を開いたあとに続きを聞いていたら、前の答えでは決めない（Codex 重大 3）。
+  writeFileSync(memo, readFileSync(memo, 'utf8') + '### 質問 09:20（u-3）\n図は？\n\n')
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer: { at: '09:11', head: '1 つにする', n: 1 } })).status, 409)
+  // 同じ分に同じ書き出しの答えが続いても、通番で別の答えとして決める（Codex 2 回目 中 4）。
+  writeFileSync(memo, readFileSync(memo, 'utf8') + '### 答え 09:11\n1 つにする\n\n')
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer: { at: '09:11', head: '1 つにする', n: 1 } })).status, 409, '前の答えの通番では決めない')
+  open = false
+  const closed = await post('askdecide', { root: a, ask: 'ask3', answer: { at: '09:11', head: '1 つにする', n: 2 } })
+  assert.deepEqual({ ...closed.body, op: 0 }, { op: 0, sent: false, reason: '写しの会話は閉じています。続けて聞くと、窓口の今の会話から写し直します' })
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer: { at: '', head: 'x', n: 1 } })).status, 400, 'どの答えかの形が違えば書かない')
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer: { at: '09:11', head: 'x' } })).status, 400, '通番が無ければ書かない')
+  assert.equal((await post('op', { root: a, item_id: '#ask:ask3', item_rev: 0, type: 'ask_decide' })).status, 400)
+  assert.deepEqual((await post('asktab', { root: a, ask: 'ask3' })).body, { opened: false, reason: '写しの会話は閉じています。続けて聞くと、窓口の今の会話から写し直します' })
+  open = true
+  assert.deepEqual((await post('asktab', { root: a, ask: 'ask3' })).body, { opened: true })
+  assert.deepEqual(calls.at(-1), ['switch', 'term_ask3'])
+})
+
+test('質問のタブは、root の worktree のタブだけから、繋がっている端末を題で引く（consult の live_thread と同じ読み方）', () => {
+  const layouts = [
+    { worktreePath: '/ws/a', root: { type: 'split', children: [{ tabs: [{ title: '質問｜案件A｜ask1', panes: [{ type: 'terminal', handle: 'term_1' }, { type: 'terminal', handle: 'term_gone', connected: false }] }] }] } },
+    { worktreePath: '/ws/b', tabs: [{ title: '質問｜案件A｜ask1', panes: [{ type: 'terminal', handle: 'term_b' }] }] }
+  ]
+  assert.deepEqual(tabsOf(layouts, '/ws/a'), [{ title: '質問｜案件A｜ask1', handles: ['term_1'] }])
+  assert.deepEqual(askTitle('案件｜A', 'ask2'), '質問｜案件 A｜ask2')
+})
+
+test('窓に送る質問は、控えの新しい節と返しの表示に使う欄に絞る', async () => {
+  const { a, rows } = workspaces()
+  mkdirSync(path.join(a, '.orca/consult'), { recursive: true })
+  const secs = Array.from({ length: 8 }, (_, i) => `### ${i % 2 ? '答え' : '質問'} 09:${String(10 + i)}\n${i === 7 ? 'あ'.repeat(7000) : `本文${i}`}\n\n`).join('')
+  writeFileSync(path.join(a, '.orca/consult/ask-ask1.md'), `# 質問｜案件A｜ask1\n\n${secs}`)
+  writeFileSync(path.join(a, '.orca/consult/ask-ask1.returns.jsonl'), JSON.stringify({ return_id: 'ask1-1', op: 5, decisions: [{ text: '1 つにする', quote: '長い'.repeat(100), utterance: 'u-1' }], requests: [{ quote: 'x' }], open: ['y'] }) + '\n')
+  const { s, port } = await start(rows, a)
+  const w = await listen(port, s.token).until((v) => (board(v, a)?.asks ?? []).length === 1)
+  const x = board(w, a)!.asks![0]!
+  assert.deepEqual(x.entries.map((e) => e.time), ['09:12', '09:13', '09:14', '09:15', '09:16', '09:17'])
+  assert.equal(x.entries.at(-1)!.text.length, 6001)
+  assert.equal(x.answers, 4)
+  assert.deepEqual(x.returns, [{ return_id: 'ask1-1', op: 5, decisions: [{ text: '1 つにする' }] }])
 })
 
 /** 担当 o1 を、worker-start --agent で立てたチャットにする。窓口は受け取りの terminal（structworker_…）を terminal に書いた。 */

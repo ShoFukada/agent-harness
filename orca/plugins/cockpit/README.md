@@ -57,6 +57,15 @@
 
 版 2 の開いた `talk` は、読み込みのときに相談として読みます（論点に `next`、担当の考えに `last`）。「担当と協議」を押したカードは要対応に残り、「協議中」の札が付きます。数える種類なら数えたままです。担当のいない帳簿のカードは、窓が `consult --card <root> <カード id>`（場所は `COCKPIT_CONSULT_CMD`、既定は `~/.config/nix-darwin/claude/bin/consult`）でカードの相談のタブを立て、`talk` の操作の `terminal` にタブの handle を残します。タブが Orca から消えると「協議中」は外れます。consult が失敗したら、理由を知らせて窓口に回します。全体のタブの仕事の協議は相談に分けません。カードの詳細には、相談のメモ（`.orca/consult/<カード id>.md`）へのリンクと、メモの「窓口に返したもの」から決まったことを出します。
 
+### 窓から質問する
+全体のタブの上・カードの詳細・タスクの詳細に質問の欄があります（設計 11 章、R105）。カード・タスクの詳細は、質問が無ければ「このカードについて質問する」などのボタンだけを出します。「送る」を押すと、まず判断の記録（`.orca/cockpit/rulings.jsonl`）から撤回・置き換え（`supersedes` の配列）されていない判断を語の一致で引き（`state.ts` の `matchRulings`。埋め込みや LLM は使わない）、当たれば原文・番号・日時をすぐ出します。「それでも窓口の写しに聞く」か、当たらなかったときは、窓が質問 id（`ask<数>`。控えと返しの記録の最大の数に 1 を足す）を採って `consult --ask <root> <質問 id> [--on-card <カード>] [--on-task <タスク>] --question=<文>` を呼び、窓口の会話を写した相手（窓口の写し）を窓口の worktree のタブに立てます。採った id は consult が戻るまで予約の札（`.orca/consult/.ask-<質問 id>.reserved`）を排他で作って押さえ、同じ案件を開く 2 つの常駐のプロセスが同じ id を採らないようにします。質問の中の、控えの節の見出しと同じ形の行（`### 答え 09:00` など）は 1 字下げて送ります（hook が本文をそのまま控えに書くため）。続きは同じ質問 id で送ります（開いているタブに consult が送る）。前の質問の答えが控えに届くまでは、窓でも常駐のプロセスでも続きを送らせません。
+
+答えは hook が書く控え（`.orca/consult/ask-<質問 id>.md`）から出し、答えの頭に写した窓口の会話の時点を出します。閉じたコードフェンスの中の `### 答え` の行は節にしません。consult が端末を立てられずに頭だけ残した控えは、この窓で待っているもの以外は出しません。返しの記録（`ask-<質問 id>.returns.jsonl`）の決まったことには、帳簿の `asks[]` から「窓口が反映済み」「窓口が保留」「窓口の反映待ち」「担当へ未通知」の札を付けます。
+
+「この答えを窓口に返す」（設計の語では「これで決める」）は、最後の質問より後の答えにだけ出します。押すと先に `ask_decide` の操作（`item_id: "#ask:<質問 id>"`・`item_rev: 0`・`answer: { at, head, n }`。n は控えの中の答えの通番）を書き、題「質問｜<案件名>｜<質問 id>」で探したタブに `【相談の知らせ】返しを書いて（op <op_id>）` を送ります。記録はログのロックの中で控えを読み直し、答えが変わっていれば 409 で断り、同じ答えの取り消されていない記録があれば足さず知らせも送りません。`ask_decide` は返しが届いてから窓口が反映するので、窓口の本線に自動の合図は送りません（`pending_ops` には数えます）。
+
+欄の下書き・当たり・待ちは案件ごと（鍵は `<root>#whole`・`<root>#card:<id>`・`<root>#task:<id>`・`<root>#id:<質問 id>`）に持ち、案件を切り替えても前の案件のものを出しません。窓は質問の道具を常駐の起動（`import.meta.main`）だけで渡し、試験は偽の道具で受けます。
+
 「見て」の「直してほしいことを書く」は、書いた文を本文つきの `talk` の操作（`text` に原文）として記録します。カードは件数から外れて「直し依頼済み（受領待ち）」、窓口が受け取ると「直し待ち」になり、担当が書き換えて `rev` を上げると要対応に戻ります。
 
 送信前の「本文をコピー」「コピーしてスレッドを開く」は、宛先の書式で本文をクリップボードに入れます。書式の変換と書き込みは reply-draft の `clip-draft`（`~/.local/bin/clip-draft`、`COCKPIT_CLIP_DRAFT` で差し替え）に任せ、窓は常駐のプロセス、パネルはworkerから呼びます（`src/clip.ts`）。
@@ -152,7 +161,7 @@
 | `intake` | 発言の仕分けの位置（`through` までの発言は依頼か `none` に結んである） |
 | `applied_ops` | 窓口が反映し終えた操作の `op_id` |
 
-帳簿は Write・Edit で書かず、下の「書く道具」を通します。人の操作は `.orca/cockpit.user.json` に `{ "ops": [{ "op_id": 1, "at": "…", "item_id": "d1", "item_rev": 1, "type": "decide", "option_id": "a" }] }` の形で追記されます。窓と同じ判定済みの状態は `node window/state.ts <ワークスペースの root>` で JSON として読めます。hook と窓口はこの出力の `overview`・`mine`・`jobs`・`tasks`（`from` と今の Dispatch の `dispatch`）・`checks` を読みます。`checks` の版 3 の検査は `incomplete_cards`・`incomplete_requests`・`unsorted`・`stale_tasks`・`loose_tasks`・`unknown_phase`・`no_form`・`unmapped_elements`・`unproven`・`affected_tasks`・`unreflected_returns`（相談のメモにあって判断の記録の `from_return` か帳簿のカードの `from_returns` に無い返しと、カードの `held_returns` に残る返し。`compaction-keep.py unreflected` と同じ判定）・`stale_consults`（カードが片付いたのに Orca に残る相談のタブ）です。
+帳簿は Write・Edit で書かず、下の「書く道具」を通します。人の操作は `.orca/cockpit.user.json` に `{ "ops": [{ "op_id": 1, "at": "…", "item_id": "d1", "item_rev": 1, "type": "decide", "option_id": "a" }] }` の形で追記されます。窓と同じ判定済みの状態は `node window/state.ts <ワークスペースの root>` で JSON として読めます。hook と窓口はこの出力の `overview`・`mine`・`jobs`・`tasks`（`from` と今の Dispatch の `dispatch`）・`checks` を読みます。`checks` の版 3 の検査は `incomplete_cards`・`incomplete_requests`・`unsorted`・`stale_tasks`・`loose_tasks`・`unknown_phase`・`no_form`・`unmapped_elements`・`unproven`・`affected_tasks`・`unreflected_returns`（相談のメモにあって判断の記録の `from_return` か帳簿のカードの `from_returns` に無い返しと、カードの `held_returns` に残る返し。`compaction-keep.py unreflected` と同じ判定）・`stale_consults`（カードが片付いたのに Orca に残る相談のタブ）です。`unreflected_returns` には窓からの質問の分も `ask` 付きで並びます（`{ id: return_id, ask, missing, memo, returns, tasks? }` と、返しの無い「これで決める」 `{ id: null, ask, op, missing: ['返し'], memo }`。`compaction-keep.py unreflected` の `unreflected_asks` と同じ判定）。
 
 ### 書く道具（cockpit-write）
 
@@ -162,7 +171,8 @@ bin/cockpit-write --dry-run <root> < change.json  # 書かずに検査だけ（�
 bin/cockpit-write migrate-v3 [<root>] [--write]   # 版 3 へ移す（--write が無ければ結果を出すだけ）
 ```
 
-- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." } }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換え、`null` で消す（agent・terminal は今の値を保つ）。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
+- 変更は `{ "cards": [...], "tasks": [...], "requests": [...], "streams": [...], "owners": [...], "intake": {...}, "applied_ops": [...], "main": { "run_id": "run_..." }, "asks": [...] }` を id 単位で足すか置き換える。全体を置き換える入口は無い。`main` は窓口の Run（`run_id`）だけを置き換え、`null` で消す（agent・terminal は今の値を保つ）。カードの `from_returns`・`held_returns`（相談の返しの `return_id`）は `rev` を上げずに書ける。依頼の `from_return` も受ける
+- `asks` は窓からの質問の返しを反映した印（`{ id: "ask3", card?, task?, memo?, from_returns: ["ask3-1"], held_returns: [], notify: [{ return_id, task?, message_id? }] }`）を質問 id ごとに足すか置き換える。返しの id はその質問のもの（`ask3-<数>`）だけを受ける
 - 検査: 欄の形・参照（仕事・タスク・担当・依頼の id）・`rev`（開いたカードの中身を変えたら 1 上げる。片付けるだけ・要素の行き先を書くだけなら据え置き）・依頼の欄・仕分けの位置・要素の行き先。通らなければ書かずに理由を返す
 - 語調: カードとタスクの人が読む欄（title・purpose・why・next・`last.text`・`look_for`・`options` の label と body・タスクの `done` など）に柔らかい言い回し（ておきました・ですね・ますね・ですよね・かも・しちゃ・ちゃいました・ちゃった）があれば、欄と語を名指しして断る（R84）。draft・quote・request・reason・`background.quote`・深田さんの `last`（by が 私）と、元の行にそのままある文は見ない
 - 必須の欄が欠けたカードは書くが、注意で名指しする（窓には出ない）

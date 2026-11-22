@@ -25,7 +25,11 @@ const ctl = mount({
   openUrl: (url) => post('/api/openurl', { url }),
   focusAgent: (terminalId, worktree) => post('/api/focus', { terminalId, worktree }),
   talkStream: (root, stream) => post('/api/talk', { root, stream }),
-  clip: (text, format) => post('/api/clip', { text, format })
+  clip: (text, format) => post('/api/clip', { text, format }),
+  ask: (input) => post('/api/ask', input),
+  askLookup: (root, q) => post('/api/asklookup', { root, q }),
+  askDecide: (root, ask, answer) => post('/api/askdecide', { root, ask, answer }),
+  askTab: (root, ask) => post('/api/asktab', { root, ask })
 }, { window: true })
 
 function show(): void {

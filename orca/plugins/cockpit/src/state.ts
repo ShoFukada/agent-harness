@@ -2,7 +2,7 @@
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
   COUNTED, KIND_LABEL, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, worstState,
-  type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
+  type AskMark, type AskThread, type Card, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type Stream, type Task, type TaskShown, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 import type { AgentRow, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
 
@@ -156,7 +156,7 @@ export type RequestView = {
   /** 済の条件ごとに証拠があるか。 */
   covered: boolean[]
 }
-export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[]; marks?: ReturnMark[] }
+export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[]; marks?: ReturnMark[]; asks?: AskThread[]; askMarks?: AskMark[]; root?: string }
 /** 帳簿の不備を窓口に直させる猶予。過ぎても欠けたままなら、窓の要対応の上に「抜けている」として出す（R47）。 */
 export const GAP_GRACE_MS = 30 * 60_000
 
@@ -534,7 +534,7 @@ export type StateReport = {
     /** 判断（rulings.jsonl）の affects に挙がったのに、reviewed_for にその判断の無いタスク（9.5）。 */
     affected_tasks: { ruling: string; task: string }[]
     /** 相談のメモにあって判断の記録か帳簿に入っていない返しと、保留の返し（設計 10.7 の 1）。 */
-    unreflected_returns: Unreflected[]
+    unreflected_returns: (Unreflected | AskUnreflected)[]
     /** カードが片付いたのに Orca に残っている相談のタブ（10.7 の 8）。 */
     stale_consults: { id: string; terminal: string }[]
   }
@@ -545,12 +545,17 @@ export type StateReport = {
 }
 
 export type Unreflected = { id: string; card: unknown; missing: ('判断の記録' | '帳簿' | '保留')[]; memo: string | null }
+/**
+ * 窓からの質問の返しの未反映（compaction-keep.py の unreflected_asks と同じ形）。id のある行は返し、id が null の行は返しの無い「これで決める」。
+ * missing は 判断の記録・帳簿（asks[].from_returns）・保留（asks[].held_returns）・担当への通知（asks[].notify[] の message_id の無い行）・返し。
+ */
+export type AskUnreflected = { id: string | null; ask: string; op?: unknown; missing: string[]; memo: string; returns?: string | null; tasks?: unknown[] }
 
 /**
  * 相談のメモにあって、判断の記録の from_return か帳簿のカード（片付けて移したものも）の from_returns のどちらかに無い返しと、
  * カードの held_returns に残る返し。compaction-keep.py の unreflected と同じ判定・同じ並び（window/state.test.ts で突き合わせる）。
  */
-export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos: ConsultMemo[]): Unreflected[] {
+export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos: ConsultMemo[], asks?: AskSide): (Unreflected | AskUnreflected)[] {
   const inRulings = new Set<unknown>(rulings.map((r) => r.from_return))
   const inLedger = new Set(cards.flatMap((x) => x.from_returns ?? []))
   const held = new Map<unknown, unknown>()
@@ -564,8 +569,111 @@ export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos
   // メモに書き損ねた返しでも、保留にしたものは相談が返し直すまで名指しする。
   const named = new Set(out.map((x) => x.id))
   const rest = [...held].filter(([id]) => !named.has(id as string)).sort(([a], [b]) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
-  return [...out, ...rest.map(([id, card]): Unreflected => ({ id: id as string, card, missing: ['保留'], memo: null }))]
+  return [...out, ...rest.map(([id, card]): Unreflected => ({ id: id as string, card, missing: ['保留'], memo: null })), ...(asks ? unreflectedAsks(asks, inRulings) : [])]
 }
+
+/** 質問の返しの照合に要るもの。root は控えと返しの記録のパスを作るのに使う（python と同じ絶対パス）。 */
+export type AskSide = { root: string; threads: AskThread[]; marks: AskMark[]; log: UserLog; applied: number[] }
+
+const strArr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+
+/** compaction-keep.py の unreflected_asks と同じ判定・同じ並び（src/state.test.ts で突き合わせる）。 */
+export function unreflectedAsks(s: AskSide, inRulings: Set<unknown>): AskUnreflected[] {
+  const memo = (id: string) => `${s.root}/.orca/consult/ask-${id}.md`
+  const asks = new Map<string, AskMark>()
+  for (const a of s.marks) asks.set(a.id, a)
+  const reflected = new Set([...asks.values()].flatMap((a) => strArr(a.from_returns).filter((x) => typeof x === 'string')))
+  const held = new Map<string, string>()
+  for (const a of asks.values()) for (const x of strArr(a.held_returns)) if (typeof x === 'string') held.set(x, a.id)
+  const found = new Map<string, AskUnreflected>()
+  const bound = new Set<string>()
+  for (const t of s.threads)
+    for (const v of t.returns) {
+      const rid = v.return_id
+      if (!(typeof rid === 'string' && RETURN_ID_PY.test(rid))) continue
+      if (v.op !== undefined && v.op !== null) bound.add(`${t.id}\n${pyStr(v.op)}`)
+      const missing = [...(inRulings.has(rid) ? [] : ['判断の記録']), ...(reflected.has(rid) ? [] : ['帳簿'])]
+      const x = found.get(rid) ?? { id: rid, ask: t.id, missing: [], memo: memo(t.id), returns: t.returnsPath }
+      x.missing = missing
+      found.set(rid, x)
+    }
+  for (const [rid, id] of held) {
+    const x = found.get(rid) ?? { id: rid, ask: id, missing: [], memo: memo(id), returns: null }
+    x.missing.push('保留')
+    found.set(rid, x)
+  }
+  // 窓口が担当・worker に伝え損ねた返し（帳簿の notify[] の message_id の有無で見る）。
+  for (const a of asks.values())
+    for (const n of strArr(a.notify) as Record<string, unknown>[]) {
+      if (!(typeof n === 'object' && n !== null && !Array.isArray(n) && typeof n.return_id === 'string' && pyFalsy(n.message_id))) continue
+      const x = found.get(n.return_id) ?? { id: n.return_id, ask: a.id, missing: [], memo: memo(a.id), returns: null }
+      if (!x.missing.includes('担当への通知')) x.missing.push('担当への通知')
+      ;(x.tasks ??= []).push(n.task ?? null)
+      found.set(n.return_id, x)
+    }
+  const out = [...found.values()].filter((x) => x.missing.length)
+  const applied = new Set(s.applied.map(pyStr))
+  const undone = new Set(s.log.ops.filter((o) => o?.type === 'undo').map((o) => pyStr(o.undo_of ?? null)))
+  for (const o of s.log.ops) {
+    if (!(o && o.type === 'ask_decide' && String(o.item_id ?? '').startsWith('#ask:'))) continue
+    const op = pyStr(o.op_id ?? null)
+    const id = o.item_id.slice('#ask:'.length)
+    if (!bound.has(`${id}\n${op}`) && !applied.has(op) && !undone.has(op)) out.push({ id: null, ask: id, op: o.op_id ?? null, missing: ['返し'], memo: memo(id) })
+  }
+  return out
+}
+
+/** python の re.fullmatch(r"[A-Za-z0-9_]+-\d+") と同じ（\d は Unicode の数字）。 */
+const RETURN_ID_PY = /^[A-Za-z0-9_]+-\p{Nd}+$/u
+/** python の str()（None → "None"、真偽 → "True"/"False"）。op の照合で python と同じ文字列にそろえる。 */
+const pyStr = (v: unknown) => (v === null || v === undefined ? 'None' : v === true ? 'True' : v === false ? 'False' : String(v))
+
+/** 引かない種類（撤回そのものと、残す判断の無いカードの記録）。 */
+const NO_LOOKUP = new Set(['revoke', 'none'])
+
+/**
+ * 質問の語の候補: 漢字の続き（3 字以上は 2 字ずつにも割る）・カタカナの続き・英数字の語（2 字以上）・判断の番号（R12）。
+ * ひらがなは助詞や語尾なので語にしない。
+ */
+export function lookupTerms(q: string, split = true): string[] {
+  const out = new Set<string>()
+  for (const m of q.matchAll(/(?<![A-Za-z0-9])R\d+(?![A-Za-z0-9])/gi)) out.add(m[0].toUpperCase())
+  for (const m of q.matchAll(/[\p{Script=Han}々]{2,}/gu)) {
+    out.add(m[0])
+    if (split && m[0].length > 2) for (let i = 0; i + 2 <= m[0].length; i++) out.add(m[0].slice(i, i + 2))
+  }
+  for (const m of q.matchAll(/[\p{Script=Katakana}ー]{2,}/gu)) out.add(m[0])
+  for (const m of q.matchAll(/[A-Za-z0-9][A-Za-z0-9._-]+/g)) if (!/^R\d+$/i.test(m[0])) out.add(m[0].toLowerCase())
+  return [...out]
+}
+
+/**
+ * 判断の記録から、質問の語を含む有効な判断（撤回・置き換えされていないもの）を引く。埋め込みや LLM は使わない（担当の指示）。
+ * 番号を書いた質問はその番号を、それ以外は当たった語が 2 つ以上（語が 1 つしか無い質問は 1 つ）のものを、当たりの多い順・新しい順に max 件。
+ */
+export function matchRulings(rows: Ruling[], q: string, max = 3): Ruling[] {
+  const terms = lookupTerms(q)
+  if (!terms.length) return []
+  const gone = new Set(rows.flatMap((r) => r.supersedes ?? []))
+  const live = rows.filter((r) => r.id && r.text && !gone.has(r.id) && !NO_LOOKUP.has(r.kind ?? ''))
+  const ids = terms.filter((t) => /^R\d+$/.test(t))
+  if (ids.length) return live.filter((r) => ids.includes(r.id)).slice(0, max)
+  // 割った 2 字の語は数えず、質問の語の続きが 1 つなら 1 つ当たればよい。
+  const need = lookupTerms(q, false).length === 1 ? 1 : 2
+  return live
+    .map((r) => {
+      const hay = [r.text, r.quote, r.dec].filter(Boolean).join('\n').toLowerCase()
+      // 2 字に割った語は、元の続きが当たったら重ねて数えない。
+      const hit = terms.filter((t) => hay.includes(t))
+      const score = hit.filter((t) => !hit.some((u) => u !== t && u.length > t.length && u.includes(t))).length
+      return { r, score }
+    })
+    .filter((x) => x.score >= need)
+    .sort((a, b) => b.score - a.score || ruleNum(b.r.id) - ruleNum(a.r.id))
+    .slice(0, max)
+    .map((x) => x.r)
+}
+const ruleNum = (id: string) => Number(/\d+/.exec(id)?.[0] ?? 0)
 
 /** python の `x or 既定値` の偽（None・False・0・空の文字列・空の配列と辞書）。 */
 const pyFalsy = (v: unknown) =>
@@ -649,7 +757,8 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
       affected_tasks: (opts.rulings ?? []).flatMap((ru) => (ru.affects ?? [])
         .filter((id) => c.tasks.some((t) => t.id === id && !t.reviewed_for?.includes(ru.id)))
         .map((task) => ({ ruling: ru.id, task }))),
-      unreflected_returns: unreflectedReturns(opts.marks ?? [...c.cards, ...archive], opts.rulings ?? [], opts.consults ?? []),
+      unreflected_returns: unreflectedReturns(opts.marks ?? [...c.cards, ...archive], opts.rulings ?? [], opts.consults ?? [],
+        opts.root ? { root: opts.root, threads: opts.asks ?? [], marks: opts.askMarks ?? [], log, applied: c.applied_ops ?? [] } : undefined),
       stale_consults: staleConsults(d.views, log, facts?.terminals)
     },
     overview: `全体: ${countsText(d.counts, d.total)}・話し中 ${d.talking.length}・顧客待ち ${d.waiting.length}・動いている worker ${running.length}${names(running.map((t) => t.task.title))}`,

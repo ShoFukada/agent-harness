@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { draftFormat, missingFields, nextOp, overlay, parseCockpit, shownTask, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
+import { draftFormat, escapeAskSections, latestAnswer, missingFields, unanswered, nextOp, overlay, parseCockpit, shownTask, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
 import { appendOp, SIGNAL, signalPlan, signalText, splitLine, writeAtomic } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -162,6 +162,18 @@ test('合図の対象: 自分が書いた操作は 10 秒、ほかの画面の�
   assert.equal(plan.nextAt, Date.parse(at(12)) + 30_000)
 })
 
+test('合図の対象: 「これで決める」（ask_decide）とその取り消しは、窓口の本線に合図を送らない（返しは hook が窓口の Run に知らせる）', () => {
+  const c = aoba()
+  const at = new Date(NOW - 60_000).toISOString()
+  const log = { ops: [
+    { op_id: 2, at, item_id: '#ask:ask3', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つ' } },
+    { op_id: 3, at, item_id: '#ask:ask3', item_rev: 0, type: 'undo', undo_of: 2 },
+    { op_id: 4, at, item_id: '#ask:ask4', item_rev: 0, type: 'ask_decide', answer: { at: '09:12', head: 'x' } },
+    { op_id: 5, at, item_id: 'd21', item_rev: 1, type: 'decide', option_id: 'keep' }
+  ] as Op[] }
+  assert.deepEqual(signalPlan(c, log, 0, NOW, () => true).due.map((o) => o.op_id), [5])
+})
+
 test('合図の 1 行に、担当と話すと別の答えのカードと本文の頭を載せる', () => {
   assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'decide', option_id: 'keep' })]), SIGNAL)
   assert.equal(signalText([op({ op_id: 1, item_id: 'd21', type: 'talk' })]), `${SIGNAL}（担当と話す d21）`)
@@ -228,4 +240,15 @@ test('深田さんの返答で閉じたカードは、選択肢の記録が無�
     { ...base, id: 'v1', kind: 'review' }, { ...base, id: 'p1', kind: 'permit', resolved_text: 'push だけ' }, { ...base, id: 'v2', kind: 'review', resolved_by: 'owner' }
   ] } as Cockpit
   assert.deepEqual(overlay(c, { ops: [] }).map((v) => v.how), ['承認', '許可: push だけ', '担当が完了'])
+})
+
+test('窓から送る質問の中の、控えの節の見出しと同じ形の行だけを 1 字下げる。決める候補は最後の質問より後の答えで、通番を持つ', () => {
+  assert.equal(escapeAskSections('例:\n### 答え 09:00\n### 補足\n本文 ### 質問 09:00'), '例:\n ### 答え 09:00\n### 補足\n本文 ### 質問 09:00')
+  const q = { kind: 'q' as const, time: '09:10', text: 'q' }
+  const a = (time: string, text: string) => ({ kind: 'a' as const, time, text })
+  assert.deepEqual(latestAnswer([q, a('09:11', '**1 つ**にする')]), { at: '09:11', head: '1 つにする', n: 1 })
+  assert.equal(latestAnswer([q, a('09:11', 'x'), q]), undefined)
+  assert.deepEqual(latestAnswer([q, a('09:11', 'x'), q, a('09:11', 'x'), { kind: 'n', time: '09:12', text: '知らせ' }]), { at: '09:11', head: 'x', n: 2 })
+  assert.equal(unanswered([q, a('09:11', 'x'), q, { kind: 'n', time: '09:12', text: '知らせ' }]), true)
+  assert.equal(unanswered([]), false)
 })

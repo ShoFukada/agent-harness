@@ -1,8 +1,8 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  badFields, CARD_SHAPE, returnId, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
-  type Card, type Cockpit, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
+  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, FORMS, INTAKE_SHAPE, missingFields, REQUEST_SHAPE, RUN_ID, TASK_SHAPE, TASK_STATES, timeOf, unmappedElements, upgradeCard, WORKER_SHAPE,
+  type AskRecord, type Card, type Cockpit, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskState, type UserLog, type Utterance
 } from './model.ts'
 
 /**
@@ -19,8 +19,10 @@ export type Change = {
   applied_ops?: number[]
   /** 窓口の Run だけを置き換える（null で消す）。main のほかの欄（agent・terminal）は今の値を保つ。 */
   main?: { run_id: string | null }
+  /** 窓からの質問の返しを反映した印（質問 id ごとの追加と置き換え。cockpit skill の「窓から質問する」）。 */
+  asks?: AskRecord[]
 }
-const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops', 'main']
+const KEYS = ['cards', 'tasks', 'requests', 'streams', 'owners', 'intake', 'applied_ops', 'main', 'asks']
 
 export type WriteResult = { next?: Cockpit; errors: string[]; warnings: string[] }
 
@@ -59,6 +61,20 @@ const REQUEST_KEYS: Keys = {
 const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'sources', 'form'], nested: {} }
 const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'state'], nested: {} }
 const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through'], nested: {} }
+const ASK_KEYS: Keys = { top: ['id', 'card', 'task', 'memo', 'from_returns', 'held_returns', 'notify'], nested: { notify: ['return_id', 'task', 'message_id'] } }
+
+/** asks[] の 1 行の形の誤り。返しの id はその質問のもの（ask3-1）だけを受ける（compaction-keep.py の照合で別の質問の返しと取り違えないため）。 */
+function askErrors(a: Record<string, unknown>): string[] {
+  const id = String(a.id)
+  const own = (v: unknown) => typeof v === 'string' && returnId(v) && v.slice(0, v.lastIndexOf('-')) === id
+  const errs: string[] = []
+  if (!ASK_ID.test(id)) errs.push('id は ask<数>')
+  for (const k of ['card', 'task', 'memo'] as const) if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k])) errs.push(`${k} は文字列`)
+  for (const k of ['from_returns', 'held_returns'] as const) if (a[k] !== undefined && !(Array.isArray(a[k]) && (a[k] as unknown[]).every(own))) errs.push(`${k} は ${id}-<数> の配列`)
+  if (a.notify !== undefined && !(Array.isArray(a.notify) && a.notify.every((n) => isObj(n) && own(n.return_id) && (n.task === undefined || typeof n.task === 'string') && (n.message_id === undefined || (typeof n.message_id === 'string' && n.message_id)))))
+    errs.push(`notify は { return_id: ${id}-<数>, task?, message_id? } の配列`)
+  return errs
+}
 
 function strayKeys(row: object, spec: Keys): string[] {
   const rec = row as Record<string, unknown>
@@ -144,7 +160,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   if (!isObj(change)) return { errors: ['変更は JSON のオブジェクトで渡す'], warnings }
   const extra = Object.keys(change).filter((k) => !KEYS.includes(k))
   if (extra.length) errors.push(`書けない欄: ${extra.join('・')}（書けるのは ${KEYS.join('・')}）`)
-  for (const k of ['cards', 'tasks', 'requests', 'streams', 'owners'])
+  for (const k of ['cards', 'tasks', 'requests', 'streams', 'owners', 'asks'])
     if (change[k] !== undefined && (!Array.isArray(change[k]) || (change[k] as unknown[]).some((x) => !isObj(x) || typeof x.id !== 'string' || !x.id)))
       errors.push(`${k} は id のある行の配列で渡す`)
   if (change.applied_ops !== undefined && !(Array.isArray(change.applied_ops) && change.applied_ops.every((n) => Number.isInteger(n) && n > 0)))
@@ -163,6 +179,11 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       const stray = strayKeys(row, spec).filter((x) => !had.has(x))
       if (stray.length) errors.push(`${name} ${row.id}: 書けない欄 ${stray.join('・')}`)
     }
+  for (const a of ch.asks ?? []) {
+    const stray = strayKeys(a, ASK_KEYS)
+    const errs = [...askErrors(a as unknown as Record<string, unknown>), ...(stray.length ? [`書けない欄 ${stray.join('・')}`] : [])]
+    if (errs.length) errors.push(`質問 ${a.id}: ${errs.join('・')}`)
+  }
   if (ch.intake) {
     const stray = strayKeys(ch.intake, INTAKE_KEYS).filter((x) => !(c.intake && strayKeys(c.intake, INTAKE_KEYS).includes(x)))
     if (stray.length) errors.push(`intake: 書けない欄 ${stray.join('・')}`)
@@ -333,6 +354,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     ...c, streams, tasks, cards, ...(c.owners || ch.owners ? { owners } : {}), ...(c.requests || ch.requests ? { requests } : {}),
     ...(intake ? { intake } : {}),
     ...(ch.main ? { main: withRun(c.main, ch.main.run_id) } : {}),
+    ...(c.asks || ch.asks ? { asks: upsert(c.asks ?? [], ch.asks ?? []) } : {}),
     applied_ops: [...new Set([...(c.applied_ops ?? []), ...(ch.applied_ops ?? [])])]
   }
   // Run だけの main を消したら、空の main を残さない（main の無い帳簿に戻す）。

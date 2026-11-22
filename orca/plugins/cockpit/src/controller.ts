@@ -1,12 +1,12 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
-import { draftFormat, OTHER, UNDO_GRACE_MS, type Draft, type DraftFormat, type OpType } from './model.ts'
+import { draftFormat, OTHER, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftFormat, type OpType } from './model.ts'
 import { morph } from './morph.ts'
-import type { ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, TalkResult } from './protocol.ts'
+import type { AskDecideResult, AskInput, AskResult, ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, RulingHit, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
-import { boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
+import { askPending, boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -20,6 +20,11 @@ export type Transport = {
   talkStream?(root: string, stream: string): Promise<TalkResult>
   /** 送る文面を宛先の書式でクリップボードに入れる（clip-draft を呼ぶ）。 */
   clip(text: string, format: DraftFormat): Promise<ClipResult>
+  /** 窓から質問する（consult --ask）・質問の前に判断の記録を引く・「これで決める」・質問のタブを開く。窓だけが持つ。 */
+  ask?(input: AskInput): Promise<AskResult>
+  askLookup?(root: string, q: string): Promise<{ hits: RulingHit[] }>
+  askDecide?(root: string, ask: string, answer: AskAnswer): Promise<AskDecideResult>
+  askTab?(root: string, ask: string): Promise<OpenResult>
 }
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
 
@@ -123,6 +128,9 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     if (win) {
       const b = boardOf(m)
       shownRoot = b?.root
+      // 答えが控えに届いた質問は、待つ表示をやめる（送った時点より答えの節が増えた）。送った案件の控えで見る。
+      for (const [k, w] of Object.entries(ui.askWait))
+        if (w.ask && !w.error && (feed.views.find((v) => v.root === w.root)?.asks ?? []).some((a) => a.id === w.ask && a.answers > w.answers)) delete ui.askWait[k]
       order = ui.tab === 'done' ? doneOrder(b) : ui.tab === 'whole' ? taskOrder(b) : todoOrder(b)
       // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
       const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
@@ -353,10 +361,125 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
   }
 
+  // ── 窓から質問する ──
+  /** 待っている質問があるあいだだけ、経った秒を 1 秒ごとに描き直す。 */
+  let askTimer: ReturnType<typeof setInterval> | undefined
+  function askTick(): void {
+    if (askTimer) return
+    askTimer = setInterval(() => {
+      if (!Object.values(ui.askWait).some((w) => !w.error)) {
+        clearInterval(askTimer)
+        askTimer = undefined
+      }
+      draw()
+    }, 1000)
+  }
+
+  /** 欄の鍵（<root>#<置き場所>）から、送る案件と送る先（続きの質問 id・結ぶカードかタスク）。 */
+  function askTarget(key: string): { root: string } & Pick<AskInput, 'ask' | 'card' | 'task'> {
+    const root = key.slice(0, key.lastIndexOf('#'))
+    const scope = key.slice(key.lastIndexOf('#') + 1)
+    const [kind, id] = [scope.slice(0, scope.indexOf(':')), scope.slice(scope.indexOf(':') + 1)]
+    return { root, ...(kind === 'id' ? { ask: id } : kind === 'card' ? { card: id } : kind === 'task' ? { task: id } : {}) }
+  }
+
+  /** 判断の記録を引いているあいだの欄（二度押しで写しを 2 つ立てない。Codex 中 1）。 */
+  const askLooking = new Set<string>()
+
+  /** 質問を送る。新しい質問は先に判断の記録を引き、当たれば原文を出して止める（足りなければ「それでも窓口の写しに聞く」で送る）。 */
+  async function askSend(key: string, lookup: boolean): Promise<void> {
+    const { root, ...target } = askTarget(key)
+    // 「それでも窓口の写しに聞く」は引いた文を送る（引いたあとに書き換えた文を、引かずに送らない。Codex 2 回目 中 2）。
+    const q = (lookup ? ui.askDraft[key] ?? '' : ui.askHits[key]?.q ?? ui.askDraft[key] ?? '').trim()
+    const busy = (ui.askWait[key] && !ui.askWait[key]!.error) || (target.ask && askPending(ui, root, target.ask))
+    if (!root || !q || !t.ask || busy || askLooking.has(key)) return
+    askLooking.add(key)
+    try {
+      if (lookup && !target.ask && t.askLookup) {
+        try {
+          const { hits } = await t.askLookup(root, q)
+          // 引いているあいだに欄を書き換えたら、古い文の当たりは出さず、送りもしない。
+          if ((ui.askDraft[key] ?? '').trim() !== q) return
+          if (hits.length) {
+            ui.askHits[key] = { q, hits }
+            return draw()
+          }
+        } catch (e) {
+          // 引けなくても質問はできるので、知らせだけ出して送る。
+          toast(`判断の記録を引けませんでした: ${(e as Error).message}`)
+        }
+      }
+      delete ui.askHits[key]
+      const thread = (feed.views.find((v) => v.root === root)?.asks ?? []).find((a) => a.id === target.ask)
+      ui.askWait[key] = { root, at: Date.now(), q, answers: thread?.answers ?? 0, ...(target.ask && { ask: target.ask }) }
+    } finally {
+      askLooking.delete(key)
+    }
+    askTick()
+    draw()
+    try {
+      const res = await t.ask({ root, question: q, ...target })
+      const w = ui.askWait[key]
+      if (!w) return
+      if (!res.opened) w.error = res.reason ?? '理由が分かりません'
+      else {
+        w.ask = res.ask
+        if (res.ask) ui.askMine[`${root}#${res.ask}`] = true
+        // 送っているあいだに次の文を書いていたら残す。打っていた欄は描き直しで触らない（morph）ので、送れた文はここで消す。
+        if ((ui.askDraft[key] ?? '').trim() === q) delete ui.askDraft[key]
+        const ta = app.querySelector<HTMLTextAreaElement>(`textarea[data-askdraft="${CSS_ESC(key)}"]`)
+        if (ta && ta.value.trim() === q) ta.value = ''
+      }
+    } catch (e) {
+      if (ui.askWait[key]) ui.askWait[key]!.error = (e as Error).message
+    }
+    draw()
+  }
+
+  function onAsk(el: HTMLElement): void {
+    const d = el.dataset
+    const root = shownRoot
+    const key = d.scope ?? ''
+    switch (d.ask) {
+      case 'send': return void askSend(key, true)
+      case 'go': return void askSend(key, false)
+      case 'open':
+        ui.open[`aski:${key}`] = true
+        draw()
+        app.querySelector<HTMLTextAreaElement>(`textarea[data-askdraft="${CSS_ESC(key)}"]`)?.focus()
+        return
+      case 'clear':
+        delete ui.askHits[key]
+        return draw()
+      case 'dismiss':
+        delete ui.askWait[key]
+        return draw()
+      case 'more':
+        ui.open[`askf:${key}`] = !ui.open[`askf:${key}`]
+        draw()
+        if (ui.open[`askf:${key}`]) app.querySelector<HTMLTextAreaElement>(`textarea[data-askdraft="${CSS_ESC(key)}"]`)?.focus()
+        return
+      case 'tab':
+        if (root && d.id && t.askTab) void t.askTab(root, d.id).then((x) => toast(x.opened ? '写しの会話を前に出しました' : x.reason ?? '開けませんでした'), fail)
+        return
+      case 'decide':
+        if (root && d.id && t.askDecide)
+          void t.askDecide(root, d.id, { at: d.at ?? '', head: d.head ?? '', n: Number(d.n) }).then(
+            (x) => toast(x.again ? 'この答えはもう窓口に返すよう頼んでいます' : x.sent ? '窓口に返すよう頼みました' : '記録しました'),
+            fail
+          )
+        return
+    }
+  }
+
   /** 窓だけの操作（タブ・畳み・タスクの詳細・カードへ移る・worker の端末・仕事の担当）。扱ったら true。 */
   function onWindow(el: HTMLElement): boolean {
     const d = el.dataset
     const root = boardOf(model(Date.now()))?.root
+    if (d.ask !== undefined) {
+      onAsk(el)
+      return true
+    }
     if (d.tab !== undefined) ui.tab = d.tab as Tab
     else if (d.toggle !== undefined) ui.open[d.toggle] = el.getAttribute('aria-expanded') !== 'true'
     else if (d.task !== undefined) ui.task = d.task
@@ -382,7 +505,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   app.addEventListener('click', (e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask]')
     if (!el || !app.contains(el)) return
     if (win && onWindow(el)) return
     if (el.dataset.sel !== undefined) return select(el.dataset.sel)
@@ -416,6 +539,14 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }, true)
   app.addEventListener('input', (e) => {
     const el = e.target as HTMLTextAreaElement
+    // 質問の書きかけは覚えるだけ（描き直すと打っている欄の中身を差し替えるため、描き直さない）。
+    const k = el.dataset.askdraft
+    if (k !== undefined) {
+      ui.askDraft[k] = el.value
+      // 空の欄では「送る」を押させない。描き直さずにボタンだけ切り替える（Neon 1 巡目）。
+      const send = el.closest('.askin')?.querySelector<HTMLButtonElement>('button[data-ask="send"]')
+      if (send) send.disabled = !el.value.trim() || !!(ui.askWait[k] && !ui.askWait[k]!.error)
+    }
     if (el.dataset.other) {
       ui.other[el.dataset.other] = el.value
       draw()

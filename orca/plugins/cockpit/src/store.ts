@@ -3,7 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   dismissable, isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  RETURN_ID, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
+  ASK_ID, isAskItem, latestAnswer, RETURN_ID, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -38,19 +38,33 @@ export type Files = {
   consults: ConsultMemo[]
   /** cockpit.json と cockpit.archive.json の生のカードの返しの印（形の崩れたカードも数える）。 */
   marks: ReturnMark[]
+  asks: AskThread[]
+  /** cockpit.json と cockpit.archive.json の生の asks[]（compaction-keep.py の ledger_asks と同じ順）。 */
+  askMarks: AskMark[]
 }
 
-export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [], consults: [], marks: [] })
+export const emptyFiles = (): Files => ({ log: { ops: [] }, archive: [], figures: {}, errors: [], missing: true, utterances: [], firstSeen: {}, rulings: [], consults: [], marks: [], asks: [], askMarks: [] })
 
-/** ファイルの生のカードから返しの印を抜く。読めなければ空（python の read_json の既定と同じ）。 */
-function returnMarks(text: string | undefined): ReturnMark[] {
+/** ファイルの生の欄（cards・asks）。読めなければ無い（python の read_json の既定と同じ）。 */
+function rawList(text: string | undefined, key: 'cards' | 'asks'): unknown {
   let v: unknown
   try {
     v = JSON.parse(text ?? '')
   } catch {
-    return []
+    return undefined
   }
-  const cards = typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as { cards?: unknown }).cards : undefined
+  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>)[key] : undefined
+}
+
+/** ファイルの生の asks[] のうち、id が文字列の行（compaction-keep.py の ledger_asks と同じ）。 */
+function askMarks(text: string | undefined): AskMark[] {
+  const xs = rawList(text, 'asks')
+  return (Array.isArray(xs) ? xs : []).filter((x): x is AskMark => typeof x === 'object' && x !== null && !Array.isArray(x) && typeof (x as AskMark).id === 'string')
+}
+
+/** ファイルの生のカードから返しの印を抜く。読めなければ空（python の read_json の既定と同じ）。 */
+function returnMarks(text: string | undefined): ReturnMark[] {
+  const cards = rawList(text, 'cards')
   return (Array.isArray(cards) ? cards : [])
     .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x))
     .map((x) => ({ id: x.id, ...(Array.isArray(x.from_returns) && { from_returns: x.from_returns }), ...(Array.isArray(x.held_returns) && { held_returns: x.held_returns }) }))
@@ -98,13 +112,94 @@ async function readConsults(root: string): Promise<ConsultMemo[]> {
   return out
 }
 
+const ASK_SECTION = /^### (質問|答え|知らせ) (\d{1,2}:\d{2})(?:（(u-\d+)）)?[ \t]*$/gm
+const ASK_KIND = { 質問: 'q', 答え: 'a', 知らせ: 'n' } as const
+
+/**
+ * 質問と答えの控え（consult --ask が頭を、hook が「### 質問 HH:MM（u-12）」「### 答え HH:MM」「### 知らせ HH:MM」の節を書く）。
+ * 頭の「- カード:」「- タスク:」は compaction-keep.py の ask_binding と同じ形で読む。
+ */
+export function parseAskMemo(raw: string): Pick<AskThread, 'card' | 'task' | 'at' | 'entries'> {
+  const text = raw.replace(/\r\n?/g, '\n')
+  // 閉じていないフェンスは見ない（hook が後に書いた本物の答えまで隠すため）。
+  const fenced: [number, number][] = []
+  for (let m, re = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$/gm; (m = re.exec(text)); ) fenced.push([m.index, m.index + m[0].length])
+  const heads = [...text.matchAll(ASK_SECTION)].filter((m) => !fenced.some(([a, b]) => m.index! > a && m.index! < b))
+  const head = text.slice(0, heads[0]?.index ?? text.length).split('\n###', 1)[0]!
+  const bound = Object.fromEntries([...head.matchAll(/^- (カード|タスク): ([A-Za-z0-9_]+)$/gm)].map((m) => [m[1], m[2]]))
+  const at = /（窓口の会話 ([^）]+) 時点）/.exec(head)?.[1]
+  const entries: AskEntry[] = heads.map((m, i) => ({
+    kind: ASK_KIND[m[1] as keyof typeof ASK_KIND],
+    time: m[2]!,
+    text: text.slice(m.index! + m[0].length, heads[i + 1]?.index ?? text.length).trim(),
+    ...(m[3] && { utterance: m[3] })
+  }))
+  return { ...(bound['カード'] && { card: bound['カード'] }), ...(bound['タスク'] && { task: bound['タスク'] }), ...(at && { at }), entries }
+}
+
+/** 質問の返しの記録の行（compaction-keep.py の read_jsonl と同じく、壊れた行とオブジェクトでない行は飛ばす）。 */
+export function parseAskReturns(text: string): AskReturn[] {
+  const out: AskReturn[] = []
+  for (const line of text.split('\n')) {
+    try {
+      const v = JSON.parse(line) as unknown
+      if (typeof v === 'object' && v !== null && !Array.isArray(v)) out.push(v as AskReturn)
+    } catch {
+      // 書きかけの行。
+    }
+  }
+  return out
+}
+
+/** .orca/consult/ の ask-<id>.md と ask-<id>.returns.jsonl を、質問 id の数の順に読む（compaction-keep.py の ask_ids と同じ）。 */
+export async function readAsks(root: string): Promise<AskThread[]> {
+  const dir = path.join(root, '.orca', 'consult')
+  let names: string[]
+  try {
+    names = await fsp.readdir(dir)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw e
+  }
+  const ids = [...new Set(names.map((n) => /^ask-(ask\d+)\.(?:md|returns\.jsonl)$/.exec(n)?.[1]).filter((x): x is string => !!x && ASK_ID.test(x)))]
+    .sort((a, b) => Number(a.slice(3)) - Number(b.slice(3)))
+  return Promise.all(ids.map(async (id): Promise<AskThread> => {
+    const memo = await readInOrca(root, `.orca/consult/ask-${id}.md`).catch(() => undefined)
+    const rets = await readInOrca(root, `.orca/consult/ask-${id}.returns.jsonl`).catch(() => undefined)
+    const m = parseAskMemo(memo ?? '')
+    const decide = latestAnswer(m.entries)
+    return { id, path: path.join(dir, `ask-${id}.md`), returnsPath: path.join(dir, `ask-${id}.returns.jsonl`), ...m, answers: m.entries.filter((e) => e.kind === 'a').length, ...(decide && { decide }), returns: parseAskReturns(rets ?? '') }
+  }))
+}
+
+/**
+ * 同じ案件を開く 2 つの常駐のプロセスが同じ id を採らない（Codex 重大 4）。古いロックを外す待ち合わせは、2 つが同時に外すと両方が取れるので使わない（Codex 2 回目 重大 2）。
+ * 札は consult が戻ったら release で消す（控えの頭ができていれば次はそれで数える）。落ちて残った札はその id を飛ばすだけ。
+ */
+export async function reserveAskId(root: string): Promise<{ id: string; release: () => Promise<void> }> {
+  const dir = path.join(root, '.orca', 'consult')
+  await fsp.mkdir(dir, { recursive: true })
+  for (;;) {
+    const names = await fsp.readdir(dir)
+    const n = names.reduce((m, x) => Math.max(m, Number(/^\.?ask-ask(\d+)\.(?:md|returns\.jsonl|reserved)$/.exec(x)?.[1] ?? 0)), 0)
+    const id = `ask${n + 1}`
+    const file = path.join(dir, `.ask-${id}.reserved`)
+    try {
+      await (await fsp.open(file, 'wx')).close()
+      return { id, release: () => fsp.rm(file, { force: true }) }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+    }
+  }
+}
+
 /** 判断の記録の 1 行ずつ。壊れた行と id の無い行は飛ばす。 */
 export function parseRulings(text: string): Ruling[] {
   const out: Ruling[] = []
   for (const line of text.split('\n')) {
     if (!line.trim()) continue
     try {
-      const v = JSON.parse(line) as { id?: unknown; affects?: unknown; from_return?: unknown }
+      const v = JSON.parse(line) as Record<string, unknown>
       const from = typeof v.from_return === 'string' ? { from_return: v.from_return } : {}
       // id の無い行も、相談の返しの照合（from_return）には数える（compaction-keep.py の unreflected と同じ）。
       if (typeof v.id !== 'string' || !v.id) {
@@ -112,7 +207,11 @@ export function parseRulings(text: string): Ruling[] {
         continue
       }
       const affects = Array.isArray(v.affects) ? v.affects.filter((x): x is string => typeof x === 'string') : undefined
-      out.push({ id: v.id, ...(affects && { affects }), ...from })
+      // 窓から質問するときに引く本文（窓には送らず、常駐のプロセスが引いた行だけを返す）。
+      const texts = Object.fromEntries((['at', 'kind', 'text', 'quote', 'dec'] as const).filter((k) => typeof v[k] === 'string').map((k) => [k, v[k] as string]))
+      // hook は配列で書く（compaction-keep.py の rule）。手で書いた文字列 1 つも受ける。
+      const sup = Array.isArray(v.supersedes) ? v.supersedes.filter((x): x is string => typeof x === 'string') : typeof v.supersedes === 'string' ? [v.supersedes] : []
+      out.push({ id: v.id, ...(affects && { affects }), ...from, ...texts, ...(sup.length && { supersedes: sup }) })
     } catch {
       // 書きかけの行。
     }
@@ -166,8 +265,9 @@ export async function readInOrca(root: string, rel: string): Promise<string | un
 export async function loadFiles(root: string, prev: Files): Promise<Files> {
   const next: Files = {
     cockpit: prev.cockpit, log: prev.log, archive: prev.archive, figures: {}, errors: [], missing: prev.missing, handoff: prev.handoff,
-    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings, consults: prev.consults, marks: []
+    utterances: prev.utterances, firstSeen: prev.firstSeen, rulings: prev.rulings, consults: prev.consults, marks: [], asks: prev.asks, askMarks: []
   }
+  const asked: AskMark[][] = [[], []]
   const marks: ReturnMark[][] = [[], []]
   /** 読めない・形が違うファイルは、エラーを 1 行残して前回の中身のままにする。 */
   async function one(name: string, label: string, apply: (text: string | undefined) => void): Promise<void> {
@@ -180,6 +280,7 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   await one('cockpit.json', '（前回の表示のまま）', (text) => {
     next.missing = text === undefined
     marks[0] = returnMarks(text)
+    asked[0] = askMarks(text)
     next.cockpit = text === undefined ? undefined : parseCockpit(text, next.errors)
   })
   await one('cockpit.user.json', '', (text) => {
@@ -187,6 +288,7 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
   })
   await one('cockpit.archive.json', '', (text) => {
     marks[1] = returnMarks(text)
+    asked[1] = askMarks(text)
     next.archive = text === undefined ? [] : parseArchive(text, next.errors).cards
   })
   await one('cockpit/handoff.json', '', (text) => {
@@ -199,8 +301,10 @@ export async function loadFiles(root: string, prev: Files): Promise<Files> {
     next.rulings = text === undefined ? [] : parseRulings(text)
   })
   next.marks = marks.flat()
+  next.askMarks = asked.flat()
   try {
     next.consults = await readConsults(root)
+    next.asks = await readAsks(root)
   } catch (e) {
     next.errors.push(`consult を読めません: ${(e as Error).message}`)
   }
@@ -254,6 +358,12 @@ async function write(root: string, _shown: Cockpit | undefined, { root: _root, .
       const last = lastTalk(log, input.item_id, input.item_rev)
       if (last && !last.text?.trim() && last.terminal === input.terminal) return { log }
     }
+    if (input.type === 'ask_decide') {
+      const memo = await readInOrca(root, `.orca/consult/ask-${input.item_id.slice('#ask:'.length)}.md`).catch(() => undefined)
+      const ans = latestAnswer(parseAskMemo(memo ?? '').entries)
+      if (!ans || ans.n !== input.answer?.n || ans.at !== input.answer.at || ans.head !== input.answer.head) throw conflict('答えが変わりました。読み直してからもう一度押してください')
+      if (lastAskDecide(log, input.item_id, input.answer)) return { log }
+    }
     const added = nextOp(log, { at: new Date().toISOString(), ...input })
     log.ops.push(added)
     await writeAtomic(path.join(root, '.orca', 'cockpit.user.json'), JSON.stringify(log, null, 2) + '\n')
@@ -261,6 +371,11 @@ async function write(root: string, _shown: Cockpit | undefined, { root: _root, .
   } finally {
     await release()
   }
+}
+
+export function lastAskDecide(log: UserLog, item: string, answer: AskAnswer): Op | undefined {
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  return log.ops.filter((o) => o.type === 'ask_decide' && o.item_id === item && !undone.has(o.op_id) && o.answer?.n === answer.n && o.answer?.at === answer.at).at(-1)
 }
 
 /** カードのその版への、取り消されていない最新の協議。 */
@@ -287,6 +402,15 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
   // 「前にも言った」はワークスペース全体への合図で、カードを持たない。
   if (input.type === 'repeat') {
     if (input.item_id !== '') throw invalid('「前にも言った」はカードに付けません')
+    return
+  }
+  if (input.type === 'ask_decide' || isAskItem(input.item_id)) {
+    if (input.type === 'undo' && log.ops.some((o) => o.op_id === input.undo_of && o.type === 'ask_decide' && o.item_id === input.item_id)) return
+    if (input.type !== 'ask_decide' || !isAskItem(input.item_id) || input.item_rev !== 0) throw invalid('窓からの質問に返せるのは「これで決める」だけです')
+    const a = input.answer
+    if (!a || typeof a.at !== 'string' || !/^\d{1,2}:\d{2}$/.test(a.at) || typeof a.head !== 'string' || a.head.length > 80 || !Number.isInteger(a.n) || a.n < 1) throw invalid('どの答えで決めるかの形が違います')
+    const bad = textError(input.text)
+    if (bad) throw invalid(bad)
     return
   }
   // Orca から作った詰まりは帳簿に無い。受けるのは「済ませた」（版は止まった時刻）と、その取り消しだけ。
@@ -322,7 +446,7 @@ export const lockCockpit = (root: string) => lock(path.join(root, '.orca', 'cock
  * パネルの worker と窓の常駐のプロセスは別のプロセスなので、同じログへの追記をロックファイルで 1 つずつにする
  * （同時に読んで同じ op_id を付け、後の rename が先の操作を消すのを防ぐ）。落ちたプロセスが残したロックは 10 秒で外す。
  */
-async function lock(file: string): Promise<() => Promise<void>> {
+async function lock(file: string, staleMs = 10_000, waitMs = 3_000): Promise<() => Promise<void>> {
   await fsp.mkdir(path.dirname(file), { recursive: true })
   for (let i = 0; ; i++) {
     try {
@@ -331,8 +455,8 @@ async function lock(file: string): Promise<() => Promise<void>> {
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
       const age = Date.now() - ((await fsp.stat(file).catch(() => null))?.mtimeMs ?? Date.now())
-      if (age > 10_000) await fsp.rm(file, { force: true })
-      else if (i > 150) throw conflict('ほかの画面が記録中です。もう一度押してください')
+      if (age > staleMs) await fsp.rm(file, { force: true })
+      else if (i > waitMs / 20) throw conflict('ほかの画面が記録中です。もう一度押してください')
       else await new Promise((r) => setTimeout(r, 20))
     }
   }
@@ -374,7 +498,8 @@ export function signalPlan(c: Cockpit, log: UserLog, notified: number, now: numb
   const due: Op[] = []
   let nextAt: number | undefined
   for (const o of un) {
-    if (o.op_id <= notified || cancelled.has(o.op_id)) continue
+    // 「これで決める」は返しが届いてから窓口が反映するので、窓口の本線に合図を送らない（返しは hook が窓口の Run に知らせる。R105）。
+    if (o.op_id <= notified || cancelled.has(o.op_id) || o.type === 'ask_decide' || (o.type === 'undo' && un.some((x) => x.op_id === o.undo_of && x.type === 'ask_decide'))) continue
     const at = Date.parse(o.at) + (mine(o) ? UNDO_GRACE_MS : UNDO_GRACE_MS * 3)
     if (at <= now) due.push(o)
     else nextAt = Math.min(nextAt ?? Infinity, at)

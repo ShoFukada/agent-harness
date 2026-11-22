@@ -74,7 +74,8 @@ test('R39 と t50: R39 の affects に挙がった t50 に reviewed_for が無�
   const { c, log } = base()
   c.tasks.push({ id: 't50', stream: 's1', phase: '実装', title: '他の案件の操縦席', state: 'ok' }, { id: 't51', stream: 's1', phase: '実装', title: '移す手順', state: 'ok' })
   const rulings = parseRulings('{"id":"R38","text":"x"}\n{"id":"R39","at":"2026-11-21T19:04:39+09:00","affects":["t50","t51"]}\n{壊れた行\n')
-  assert.deepEqual(rulings, [{ id: 'R38' }, { id: 'R39', affects: ['t50', 't51'] }])
+  // 本文と日時も持つ（窓から質問するときに判断の記録を引くため）。
+  assert.deepEqual(rulings, [{ id: 'R38', text: 'x' }, { id: 'R39', affects: ['t50', 't51'], at: '2026-11-21T19:04:39+09:00' }])
   assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW, undefined, { rulings }).checks.affected_tasks, [{ ruling: 'R39', task: 't50' }, { ruling: 'R39', task: 't51' }])
   c.tasks.find((t) => t.id === 't51')!.reviewed_for = ['R39']
   assert.deepEqual(report(c, log, [], undefined, 'skipped', NOW, undefined, { rulings }).checks.affected_tasks, [{ ruling: 'R39', task: 't50' }])

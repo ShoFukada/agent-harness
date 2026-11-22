@@ -257,7 +257,10 @@ export type Request = {
 /** 発言の仕分けの位置（utterances.jsonl の id）。through までの発言は、依頼に結んだか none に入れてある。 */
 export type Intake = { through?: string; none?: string[]; checked_through?: string }
 /** .orca/cockpit/rulings.jsonl の 1 行のうち、窓が読む欄。affects は範囲を変える判断で見直すタスク（9.5）。 */
-export type Ruling = { id: string; affects?: string[]; from_return?: string }
+export type Ruling = {
+  id: string; affects?: string[]; from_return?: string
+  at?: string; kind?: string; text?: string; quote?: string; dec?: string; supersedes?: string[]
+}
 /**
  * カードの相談が窓口に返したもの（相談のメモの「## 窓口に返したもの」の節の ```json の塊）。窓は読むだけで、反映は窓口が書く道具で行う。
  * card は塊に無ければメモのファイル名。
@@ -270,6 +273,47 @@ export type ConsultReturn = {
 export type ReturnMark = { id: unknown; from_returns?: unknown[]; held_returns?: unknown[] }
 /** 相談のメモ（<root>/.orca/consult/<カード id>.md）。path は絶対パス。 */
 export type ConsultMemo = { card: string; path: string; returns: ConsultReturn[] }
+export const ASK_ID = /^ask\d+$/
+/** 「これで決める」の op の item_id（#ask:<質問 id>）。orchestration の question の行（#ask:msg_…）とは id の形で分ける。 */
+export const askItem = (id: string) => `#ask:${id}`
+export const isAskItem = (id: string) => /^#ask:ask\d+$/.test(id)
+/** 帳簿の asks[] の 1 行（窓口が返しを反映したら書く。cockpit skill の schema.md）。 */
+export type AskRecord = {
+  id: string; card?: string; task?: string; memo?: string
+  from_returns?: string[]; held_returns?: string[]
+  notify?: { return_id: string; task?: string; message_id?: string }[]
+}
+/** 返しの照合に使う、帳簿と移したものの生の asks[]（compaction-keep.py の ledger_asks と同じく、id が文字列の行だけ）。 */
+export type AskMark = { id: string; from_returns?: unknown; held_returns?: unknown; notify?: unknown }
+export type AskReturn = { return_id: string; op?: unknown; decisions?: { text?: string }[] }
+/** 質問と答えの控え（ask-<id>.md）の節。q: 深田さんの質問、a: 答え、n: 窓・窓口からの知らせ。time は HH:MM。 */
+export type AskEntry = { kind: 'q' | 'a' | 'n'; time: string; text: string; utterance?: string }
+/** 窓からの質問 1 つ。path・returnsPath は絶対パス。at は写した窓口の会話の時点（「22:40」）。 */
+export type AskThread = {
+  id: string; path: string; returnsPath: string; card?: string; task?: string; at?: string
+  entries: AskEntry[]; returns: AskReturn[]
+  answers: number
+  decide?: AskAnswer
+}
+/** どの答えで決めたか。n は控えの中の答えの通番（同じ分・同じ書き出しの別の答えと分ける）、head は読むための頭 80 字。 */
+export type AskAnswer = { at: string; head: string; n: number }
+
+export function answerParts(text: string): { at?: string; body: string } {
+  const lines = text.split('\n')
+  const at = /^\s*窓口の会話\s*(.+?)\s*時点/.exec(lines[0] ?? '')?.[1]
+  const rest = (at ? lines.slice(1) : lines).join('\n')
+  const cut = rest.search(/^【窓口への返し】/m)
+  return { ...(at && { at }), body: (cut >= 0 ? rest.slice(0, cut) : rest).replace(/\*\*(.+?)\*\*/g, '$1').trim() }
+}
+export const answerHead = (text: string) => answerParts(text).body.replace(/\s+/g, ' ').slice(0, 80)
+export function latestAnswer(entries: AskEntry[]): AskAnswer | undefined {
+  const lastQ = entries.findLastIndex((e) => e.kind === 'q')
+  const a = entries.slice(lastQ + 1).findLast((e) => e.kind === 'a')
+  return a && { at: a.time, head: answerHead(a.text), n: entries.filter((e) => e.kind === 'a').length }
+}
+export const unanswered = (entries: AskEntry[]) => entries.filter((e) => e.kind !== 'n').at(-1)?.kind === 'q'
+/** 窓から送る質問の中の、控えの節の見出しと同じ形の行（貼ったログの例など）を 1 字下げる。hook は本文をそのまま控えに書くため（Codex 2 回目 重大 1）。 */
+export const escapeAskSections = (q: string) => q.replace(/^(?=### (?:質問|答え|知らせ) \d{1,2}:\d{2})/gm, ' ')
 /** .orca/cockpit/utterances.jsonl の 1 行（hook が書く）。id の無い古い行は仕分けの検査に入れない。 */
 export type Utterance = { id?: string; at: string; prompt?: string }
 
@@ -288,6 +332,7 @@ export type Cockpit = {
   intake?: Intake
   notes_ref?: string
   applied_ops?: number[]
+  asks?: AskRecord[]
 }
 
 /**
@@ -301,8 +346,12 @@ export type Cockpit = {
  * dismiss: Orca から作った詰まり（item_id は「#agent:…」「#dispatch:…」「#ask:…」、item_rev は止まった時刻の ms）の「済ませた」。
  * 帳簿に無い行への返答で、窓口が反映するものは無い（未反映の操作に数えない）。同じ失敗のあいだだけその行を出さない。
  */
-export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss'
-export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss']
+/**
+ * ask_decide: 窓からの質問の「これで決める」。item_id は #ask:<質問 id>、item_rev は 0、answer はどの答えか。窓口はこの op だけでは何もせず、
+ * op にこの op_id を持つ返しが届いたら反映し、同じ書き込みで applied_ops に足す（cockpit skill の ops.md）。
+ */
+export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide'
+export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide']
 /** Orca から作った詰まりの行の id（帳簿に無い）。 */
 export const isSynthetic = (id: string) => id.startsWith('#agent:') || id.startsWith('#dispatch:') || id.startsWith('#ask:')
 /** 「済ませた」で隠せる詰まり。版（止まった時刻）が取れないもの（0）は、次の停止と見分けられないので隠させない。 */
@@ -319,6 +368,7 @@ export type Op = {
   text?: string
   /** talk: 窓が立てた（前に出した）カードの相談のタブの端末の handle。タブが Orca から消えたら話し中の印を外す。 */
   terminal?: string
+  answer?: AskAnswer
 }
 export type UserLog = { ops: Op[] }
 export type Archive = { cards: Card[] }
@@ -513,6 +563,10 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
     const bad = Object.keys(REQUEST_SHAPE).filter((k) => r[k] !== undefined && !REQUEST_SHAPE[k]!(r[k]))
     for (const k of bad) delete r[k]
     if (bad.length) problems.push(`cockpit.json の依頼 ${String(r.id)} の ${bad.join('・')} の形が違うので、その欄を外して読んでいます`)
+  }
+  if (v.asks !== undefined) {
+    if (!Array.isArray(v.asks)) problems.push('cockpit.json の asks が配列ではないので、質問の返しの札を出していません')
+    v.asks = Array.isArray(v.asks) ? (v.asks as unknown[]).filter((x) => isObj(x) && typeof x.id === 'string') : undefined
   }
   if (isObj(v.main) && v.main.run_id !== undefined && !RUN_ID(v.main.run_id)) {
     problems.push(`cockpit.json の main.run_id（${String(v.main.run_id)}）の形が違うので、その欄を外して読んでいます`)

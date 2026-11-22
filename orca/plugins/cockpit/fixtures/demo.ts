@@ -1,9 +1,9 @@
 // 見本のデータ（sample.ts）で窓を手元に立てる。Orca には繋がず、決まった応答を返す偽の Orca を使う。
 // 使い方: COCKPIT_PORT=47299 node --disable-warning=ExperimentalWarning fixtures/demo.ts [置き場所]
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createServer, type Orca, type PsRow } from '../window/server.ts'
+import { askTitle, createServer, type AskCmd, type Orca, type PsRow } from '../window/server.ts'
 import type { InboxMessage } from '../window/orca-state.ts'
 import { sample, UNSEEN } from './sample.ts'
 
@@ -112,13 +112,48 @@ export function writeSample(base: string, now = Date.now()): { roots: Record<str
   return { roots, orca, calls }
 }
 
+const hhmm = (t: number) => new Date(t).toTimeString().slice(0, 5)
+
+/** 窓からの質問の見本: 判断の記録と、答えと返しのある全体の質問・カード d21 の質問（hook が書く控えの形）。 */
+export function writeAskSample(root: string, now = Date.now()): void {
+  const at = (min: number) => new Date(now - min * 60_000).toISOString()
+  mkdirSync(path.join(root, '.orca', 'consult'), { recursive: true })
+  writeFileSync(path.join(root, '.orca', 'cockpit', 'rulings.jsonl'), [
+    { id: 'R31', at: at(900), kind: 'decision', text: '配車画面の一覧は、配送日の降順を既定の並びにする', quote: '一覧は配送日が新しい順でいい', dec: 'd12' },
+    { id: 'R32', at: at(600), kind: 'constraint', text: '森さんに送る文面は、送る前に深田さんが見る（送信前のカードにする）', quote: '先方に出すものは必ず見せて' },
+    { id: 'R33', at: at(300), kind: 'decision', text: 'AWS 構成案の本番の図は、社内向けの入口を描き足さず本文で説明する', quote: '図はこのままでいい、本文で書いて', dec: 'd21' }
+  ].map((x) => JSON.stringify(x)).join('\n') + '\n')
+  writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.md'), `# ${askTitle('青葉物流 配車アプリ', 'ask1')}\n- 写した窓口の会話: s1（窓口の会話 ${hhmm(now - 40 * 60_000)} 時点）\n\n`
+    + `### 質問 ${hhmm(now - 35 * 60_000)}（u-41）\n定例の前に、森さんに先に送っておくべきものはある？\n\n`
+    + `### 答え ${hhmm(now - 34 * 60_000)}\n窓口の会話 ${hhmm(now - 40 * 60_000)} 時点（それより後に決まったことは知らない）\n2 つあります。\n- 構成案（Drive）の共有。定例で説明するので前日までに見てもらう\n- 議事録の共有のお願い。送信前のカードが期限切れのままです\n\n`)
+  writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.returns.jsonl'), JSON.stringify({ return_id: 'ask1-1', rulings_seen: 'R33', decisions: [{ text: '構成案は定例の前日までに森さんへ共有する', quote: 'じゃあ構成案は前日までに送っておいて', utterance: 'u-42' }], requests: [], open: [], affects: [], ask: 'ask1' }) + '\n')
+  writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask2.md'), `# ${askTitle('青葉物流 配車アプリ', 'ask2')}\n- カード: d21\n- 写した窓口の会話: s1（窓口の会話 ${hhmm(now - 20 * 60_000)} 時点）\n\n`
+    + `### 質問 ${hhmm(now - 15 * 60_000)}（u-44）\n社内向けの入口を図に描かないと、森さんは困る？\n\n`
+    + `### 答え ${hhmm(now - 14 * 60_000)}\n窓口の会話 ${hhmm(now - 20 * 60_000)} 時点（それより後に決まったことは知らない）\n困らない見込みです。森さんが図で確かめたいのは本番の経路だけで、社内向けの入口は運用の説明で足ります（11/19 の定例の発言）。\n\n`)
+}
+
+/**
+ * consult --ask の代わり。控えの頭を書き、2 秒後に質問、8 秒後に答えを控えに足す（hook が書く形。1 問目は 7.6 秒の担当の測定に合わせる）。
+ */
+export function demoAsk(): AskCmd {
+  return async (root, id, o) => {
+    const memo = path.join(root, '.orca', 'consult', `ask-${id}.md`)
+    if (!existsSync(memo)) writeFileSync(memo, `# ${askTitle('青葉物流 配車アプリ', id)}\n${o.card ? `- カード: ${o.card}\n` : ''}${o.task ? `- タスク: ${o.task}\n` : ''}- 写した窓口の会話: s1（窓口の会話 ${hhmm(Date.now())} 時点）\n\n`)
+    setTimeout(() => appendFileSync(memo, `### 質問 ${hhmm(Date.now())}（u-50）\n${o.question ?? ''}\n\n`), 2000)
+    setTimeout(() => appendFileSync(memo, `### 答え ${hhmm(Date.now())}\n窓口の会話 ${hhmm(Date.now())} 時点（それより後に決まったことは知らない）\n見本の答えです。\n\n`), 8000)
+    return `term_${id}`
+  }
+}
+
 if (import.meta.main) {
   const base = process.argv[2] ?? mkdtempSync(path.join(tmpdir(), 'cockpit-demo-'))
   const dir = path.join(base, '.app')
   mkdirSync(dir, { recursive: true })
   const { roots, orca, calls } = writeSample(base)
+  writeAskSample(roots.aoba!)
+  orca.tabs = async (root) => (root === roots.aoba ? ['ask1', 'ask2'].map((id) => ({ title: askTitle('青葉物流 配車アプリ', id), handles: [`term_${id}`] })) : [])
   writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: roots.aoba, at: new Date().toISOString() }))
-  const s = createServer({ port: Number(process.env.COCKPIT_PORT ?? 47299), dir, orca })
+  const s = createServer({ port: Number(process.env.COCKPIT_PORT ?? 47299), dir, orca, ask: demoAsk() })
   s.listen().then((p) => console.error(`demo: http://127.0.0.1:${p}  （データ: ${base}）`))
   setInterval(() => calls.length && console.error(JSON.stringify(calls.splice(0))), 1000)
 }

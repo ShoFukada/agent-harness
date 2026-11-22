@@ -1,6 +1,6 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
 import { CONTEXT_FIELDS, COUNTED, KIND_LABEL, OTHER, TEXT_MAX, UNDO_GRACE_MS, chatMain, dismissable, permitEffect, permitTarget, type Card, type CardKind, type Repo } from './model.ts'
-import type { CockpitView, OwnerLive, TalkResult } from './protocol.ts'
+import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
   type Bucket, type Derived, type JobView, type OrcaFacts, type OwnerRef, type Row
@@ -44,10 +44,19 @@ export type Ui = {
   task?: string
   theme: Theme
   dark: boolean
+  /** 窓からの質問の書きかけ（欄の鍵 → 文）。欄の鍵は <root>#whole・<root>#card:<id>・<root>#task:<id>（新しい質問）と <root>#id:<質問 id>（続き）。 */
+  askDraft: Record<string, string>
+  /** 質問の前に判断の記録から引いた行（欄の鍵 → 引いた質問の文と当たり）。 */
+  askHits: Record<string, { q: string; hits: RulingHit[] }>
+  /** 送って答えを待っている質問（欄の鍵 → 送った時刻・文・質問 id・送った時点の答えの数・立てられなかった理由）。 */
+  askWait: Record<string, AskWait>
+  /** この窓で聞いた質問（<root>#<質問 id>。全体の上で開いて出す。前の質問は畳む）。 */
+  askMine: Record<string, boolean>
 }
+export type AskWait = { root: string; at: number; q: string; ask?: string; answers: number; error?: string }
 /** 票の中身を描くのに要る、その案件の図。 */
 export type VRow = Row & { v?: CockpitView }
-export const newUi = (): Ui => ({ picked: {}, other: {}, otherOpen: {}, open: {}, undos: [], theme: 'light', dark: false })
+export const newUi = (): Ui => ({ picked: {}, other: {}, otherOpen: {}, open: {}, undos: [], theme: 'light', dark: false, askDraft: {}, askHits: {}, askWait: {}, askMine: {} })
 
 export const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 export const keyOf = (r: { root: string; card: { id: string } }) => `${r.root}#${r.card.id}`

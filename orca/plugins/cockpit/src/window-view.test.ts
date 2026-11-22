@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { parseCockpit, type DraftFormat } from './model.ts'
+import { answerParts, parseCockpit, type DraftFormat } from './model.ts'
 import type { ClipResult, CockpitView } from './protocol.ts'
 import { copyDraft, copyMessage } from './controller.ts'
 import { boardsOf, dropRulings, newUi, render, SENT_LABEL, tighten, type Model, type Ui } from './view.ts'
@@ -440,4 +440,128 @@ test('初見 2 巡目: タスクのエージェントが停止で要対応に出
 
   // 停止の無いときは帳簿のまま。
   assert.match(page(aoba(), { tab: 'whole', task: 't1' }), /<div class="kl"><span class="tst s-run">作業中<\/span>/)
+})
+
+// ── 窓から質問する（R105・追加 24 の D） ──
+const askMemo = (id: string, over: Partial<NonNullable<CockpitView['asks']>[number]> = {}) => ({
+  id, path: `/ws/aoba/.orca/consult/ask-${id}.md`, returnsPath: `/ws/aoba/.orca/consult/ask-${id}.returns.jsonl`, at: '09:05', answers: 0, entries: [], returns: [], ...over
+})
+
+test('質問: 全体の上・カードの詳細・タスクの詳細に 4 行の入力欄を置き、結んだ質問だけをそれぞれに出す', () => {
+  const m = aoba((v) => {
+    v.asks = [askMemo('ask1', { entries: [{ kind: 'q', time: '09:10', text: '全体の質問' }] }), askMemo('ask2', { card: 'd21', entries: [{ kind: 'q', time: '09:11', text: 'カードの質問' }] }), askMemo('ask3', { task: 't1', entries: [{ kind: 'q', time: '09:12', text: 'タスクの質問' }] })]
+  })
+  const whole = page(m, { tab: 'whole', task: 't1', askMine: { '/ws/aoba#ask1': true } })
+  assert.match(whole, /<textarea id="ask-whole" data-askdraft="\/ws\/aoba#whole" rows="4"/)
+  assert.match(text(whole), /全体の質問/)
+  assert.match(whole, /data-askdraft="\/ws\/aoba#task:t1"/)
+  assert.match(text(whole), /タスクの質問/)
+  assert.doesNotMatch(text(whole), /カードの質問/)
+  const card = page(m, { sel: '/ws/aoba#d21' })
+  assert.match(card, /data-askdraft="\/ws\/aoba#card:d21"/)
+  assert.match(text(card), /カードの質問/)
+  assert.doesNotMatch(text(card), /全体の質問|タスクの質問/)
+  // 質問の無いカード・タスクの詳細は、欄を開くボタンだけ（全体の上の欄と並ばないように）。この窓で聞いていない全体の質問は畳む。
+  const bare = page(m, { sel: '/ws/aoba#r5' })
+  assert.match(bare, /data-ask="open" data-scope="\/ws\/aoba#card:r5">このカードについて質問する</)
+  assert.doesNotMatch(bare, /data-askdraft="\/ws\/aoba#card:r5"/)
+  assert.match(page(m, { tab: 'whole' }), /<details class="cont" data-fold="askold:\/ws\/aoba#whole"><summary>ほかの質問を見る（1 件）/)
+})
+
+test('質問の答え: 頭の時点の行を見出しに移し、末尾の窓口への返しの塊と太字の印を本文から外す。時点の行が無ければ控えの頭の時点を出す', () => {
+  assert.deepEqual(answerParts('窓口の会話 22:40 時点（それより後に決まったことは知らない）\n**1 つ**にする\n\n【窓口への返し】\n```json\n{}\n```'), { at: '22:40', body: '1 つにする' })
+  assert.deepEqual(answerParts('時点の行が無い答え'), { body: '時点の行が無い答え' })
+  const m = aoba((v) => {
+    v.asks = [askMemo('ask1', { answers: 1, entries: [{ kind: 'q', time: '09:10', text: '入口は？' }, { kind: 'a', time: '09:11', text: '1 つにする' }] })]
+  })
+  assert.match(text(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } })), /答え 09:11（窓口の 09:05 までの会話から） 1 つにする/)
+})
+
+test('質問を送ったあと: タブを立てる間と答えを待つ間を秒で出し、1 問目は時間がかかると添える。3 分で止め、立てられなければ理由を出す', () => {
+  const m = aoba((v) => {
+    v.asks = [askMemo('ask1')]
+  })
+  const at = NOW - 4000
+  assert.match(text(page(m, { tab: 'whole', askWait: { '/ws/aoba#whole': { root: '/ws/aoba', at, q: '入口は？', answers: 0 } } })), /送った質問 入口は？ 窓口の写しを立てています（4 秒）/)
+  const wait = text(page(m, { tab: 'whole', askWait: { '/ws/aoba#whole': { root: '/ws/aoba', at, q: '入口は？', ask: 'ask1', answers: 0 } } }))
+  assert.match(wait, /答えを待っています（4 秒） 1 問目は 10 秒ほどかかります/)
+  assert.match(page(m, { tab: 'whole', askWait: { '/ws/aoba#whole': { root: '/ws/aoba', at, q: 'x', ask: 'ask1', answers: 0 } } }), /data-ask="send" data-scope="\/ws\/aoba#whole" disabled/)
+  assert.match(text(page(m, { tab: 'whole', askWait: { '/ws/aoba#whole': { root: '/ws/aoba', at: NOW - 200_000, q: 'x', ask: 'ask1', answers: 0 } } })), /3 分たっても答えが届いていません/)
+  assert.match(text(page(m, { tab: 'whole', askWait: { '/ws/aoba#whole': { root: '/ws/aoba', at, q: 'x', answers: 0, error: '窓口の会話が分かりません' } } })), /窓口の写しを立てられませんでした 窓口の会話が分かりません/)
+})
+
+test('判断の記録の当たり: 原文・番号・日時・種類をすぐ出し、「足りなければ質問する」で質問に回す', () => {
+  const m = aoba()
+  const h = page(m, { tab: 'whole', askHits: { '/ws/aoba#whole': { q: '入口は？', hits: [{ id: 'R12', at: '2026-11-21T22:48:00+09:00', kind: 'decision', text: '入口は 1 つにする', quote: '1 つでいい' }] } } })
+  assert.match(text(h), /判断の記録に当たりました（1 件） 質問はまだ送っていません R12 11\/21\(土\) 22:48・決定 入口は 1 つにする 1 つでいい それでも窓口の写しに聞く/)
+  assert.match(h, /class="btn pri" type="button" data-ask="go" data-scope="\/ws\/aoba#whole"/, "当たっているあいだは「それでも窓口の写しに聞く」を主に")
+  assert.match(h, /class="btn" type="button" data-ask="send" data-scope="\/ws\/aoba#whole"/)
+})
+
+test('返しの札と「これで決める」: 帳簿の asks[] で反映済み・保留・未反映・担当へ未通知を出し、押したあとは返しが届いたかを出す', () => {
+  const m = aoba((v) => {
+    v.cockpit!.asks = [{ id: 'ask1', from_returns: ['ask1-1'], held_returns: ['ask1-2'], notify: [{ return_id: 'ask1-1', task: 't1' }] }]
+    v.asks = [askMemo('ask1', {
+      answers: 1, entries: [{ kind: 'q', time: '09:10', text: '入口は？' }, { kind: 'a', time: '09:11', text: '1 つにする' }], decide: { at: '09:11', head: '1 つにする', n: 1 },
+      returns: [{ return_id: 'ask1-1', decisions: [{ text: '入口は 1 つ' }] }, { return_id: 'ask1-2', decisions: [{ text: '図は描き足さない' }] }, { return_id: 'ask1-3', op: 9, decisions: [] }]
+    })]
+    v.log.ops.push({ op_id: 9, at: '2026-11-21T09:12:00+09:00', item_id: '#ask:ask1', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  })
+  const t = text(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }))
+  assert.match(t, /窓口に返したこと 決まったことなし 窓口の反映待ち 図は描き足さない 窓口が保留 入口は 1 つ 窓口が反映済み 担当へ未通知/)
+  assert.match(t, /答え 09:11 を窓口に返すよう頼みました 11\/21\(土\) 09:12 写しが返しました/)
+  assert.doesNotMatch(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }), /data-ask="decide"/, '同じ答えでもう決めたら、ボタンを出さない')
+  m.boards[0]!.v.log.ops.pop()
+  assert.match(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }), /data-ask="decide" data-id="ask1" data-at="09:11" data-head="1 つにする" data-n="1"/)
+  // 押したが返しがまだ無ければ、返し待ちとだけ出す（知らせが届いたかは窓に分からない）。
+  m.boards[0]!.v.log.ops.push({ op_id: 10, at: '2026-11-21T09:13:00+09:00', item_id: '#ask:ask1', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  assert.match(text(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } })), /答え 09:11 を窓口に返すよう頼みました 11\/21\(土\) 09:13 写しからの返し待ち/)
+})
+
+test('質問の欄は案件ごと: 別の案件の下書き・当たり・待ちを出さない（Codex 重大 2）', () => {
+  const m = aoba((v) => {
+    v.asks = [askMemo('ask1', { entries: [{ kind: 'q', time: '09:10', text: '入口は？' }] })]
+  })
+  const h = page(m, { tab: 'whole', askDraft: { '/ws/other#whole': 'A の下書き' }, askHits: { '/ws/other#whole': { q: 'A', hits: [{ id: 'R1', text: 'A の判断' }] } }, askWait: { '/ws/other#id:ask1': { root: '/ws/other', at: NOW, q: 'A の続き', ask: 'ask1', answers: 0 } }, askMine: { '/ws/other#ask1': true } })
+  assert.doesNotMatch(text(h), /A の下書き|A の判断|A の続き|答えを待っています/)
+  assert.match(h, /data-fold="askold:\/ws\/aoba#whole"/, '別の案件で聞いた ask1 は、この案件の自分の質問として開かない')
+  assert.match(h, /data-ask="send" data-scope="\/ws\/aoba#whole" disabled>送る/, '空の欄では送れない')
+  assert.match(page(m, { tab: 'whole', askDraft: { '/ws/aoba#whole': '入口は？' } }), /data-ask="send" data-scope="\/ws\/aoba#whole">送る/)
+})
+
+test('全体の上はこの窓で聞いた質問そのものを開き、別の窓の新しい質問は畳む（Codex 2 回目 軽微）', () => {
+  const m = aoba((v) => {
+    v.asks = [askMemo('ask1', { entries: [{ kind: 'q', time: '09:10', text: '自分の質問' }] }), askMemo('ask2', { entries: [{ kind: 'q', time: '09:20', text: '別の窓の質問' }] })]
+  })
+  const h = page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } })
+  const open = h.slice(0, h.indexOf('data-fold="askold:'))
+  assert.match(open, /自分の質問/)
+  assert.doesNotMatch(open, /別の窓の質問/)
+})
+
+test('続きの答えを待つあいだ: 前の答えで決めさせず、続けて聞かせない。頭だけの控えは出さない（Codex 重大 3・中 3・中 4）', () => {
+  const qa = [{ kind: 'q' as const, time: '09:10', text: '入口は？' }, { kind: 'a' as const, time: '09:11', text: '1 つにする' }]
+  const m = aoba((v) => {
+    v.asks = [askMemo('ask1', { answers: 1, entries: [...qa, { kind: 'q', time: '09:20', text: '図は？' }] }), askMemo('ask2')]
+  })
+  const mine = { '/ws/aoba#ask1': true, '/ws/aoba#ask2': true }
+  // 窓を開き直して待ちが消えても、控えの最後が質問なら決めさせない。
+  const h = page(m, { tab: 'whole', askMine: mine })
+  assert.doesNotMatch(h, /data-ask="decide"/)
+  assert.ok(h.indexOf('data-fold="asko:') >= 0)
+  // 前の答えで決めた行は、新しい質問の下に出さず、畳んだ前のやり取りの側に置く（初見 2 巡目）。
+  const decided = page(aoba((v) => {
+    v.asks = [askMemo('ask1', { answers: 1, entries: [...qa, { kind: 'q', time: '09:20', text: '図は？' }] })]
+    v.log.ops.push({ op_id: 9, at: '2026-11-21T09:12:00+09:00', item_id: '#ask:ask1', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  }), { tab: 'whole', askMine: mine })
+  const fold = decided.slice(decided.indexOf('data-fold="asko:'), decided.indexOf('</details>', decided.indexOf('data-fold="asko:')))
+  assert.match(fold, /答え 09:11 を窓口に返すよう頼みました/)
+  assert.equal((decided.match(/窓口に返すよう頼みました/g) ?? []).length, 1)
+  assert.doesNotMatch(h, /data-ask="more"/, '開き直した窓でも、控えの最後の質問に答えが無ければ続けて聞かせない（Codex 2 回目 中 1）')
+  assert.match(text(h), /まだ答えが届いていません/)
+  assert.equal((h.match(/<li class="askt">/g) ?? []).length, 1, '節も返しも無い ask2 は出さない')
+  // この窓で答えを待っていれば、続けて聞くを出さず、頭だけの ask2 も待つ表示つきで出す。
+  const w = page(m, { tab: 'whole', askMine: mine, askWait: { '/ws/aoba#id:ask1': { root: '/ws/aoba', at: NOW, q: '図は？', ask: 'ask1', answers: 1 }, '/ws/aoba#whole': { root: '/ws/aoba', at: NOW, q: '別の質問', ask: 'ask2', answers: 0 } } })
+  assert.doesNotMatch(w, /data-ask="more"/)
+  assert.equal((w.match(/<li class="askt">/g) ?? []).length, 2)
 })

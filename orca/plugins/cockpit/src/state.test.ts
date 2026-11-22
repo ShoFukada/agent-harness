@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { parseCockpit, requestCards, stageOf, type Card, type Cockpit } from './model.ts'
 import type { AgentRow, QuestionFact } from './protocol.ts'
-import { bucketOf, byUrgency, derive, NAME_MAX, ORCA_STATUS, report, routeProblem, unreflectedReturns, type Row } from './state.ts'
-import { emptyFiles, loadFiles } from './store.ts'
+import { bucketOf, byUrgency, derive, lookupTerms, matchRulings, NAME_MAX, ORCA_STATUS, report, routeProblem, unreflectedReturns, type Row } from './state.ts'
+import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 const ws = (n: number) => {
@@ -328,6 +328,88 @@ test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結
   const f = await loadFiles(root, emptyFiles())
   const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), py)
+})
+
+/**
+ * 窓からの質問の返しも照合する操縦席（consultRoot に足す）。ask1 は反映済み・帳簿だけ抜け・op に結ばれた返し、ask2 は返しの記録だけで保留、
+ * 移した帳簿の ask3 は返しの記録の無い保留。担当への通知の漏れと、返しの無い・反映した・取り消した「これで決める」。
+ */
+function askRoot(): string {
+  const root = consultRoot()
+  const put = (rel: string, text: string) => writeFileSync(path.join(root, rel), text)
+  const c = JSON.parse(readFileSync(path.join(root, '.orca/cockpit.json'), 'utf8')) as Cockpit
+  c.asks = [
+    { id: 'ask1', card: 'd21', memo: '.orca/consult/ask-ask1.md', from_returns: ['ask1-1'], notify: [{ return_id: 'ask1-1', task: 't1' }, { return_id: 'ask1-3', task: 't2', message_id: 'msg_1' }] },
+    { id: 'ask2', from_returns: [], held_returns: ['ask2-1'] }
+  ]
+  c.applied_ops = [...(c.applied_ops ?? []), 9]
+  put('.orca/cockpit.json', JSON.stringify(c))
+  const archive = JSON.parse(readFileSync(path.join(root, '.orca/cockpit.archive.json'), 'utf8')) as { cards: unknown[] }
+  put('.orca/cockpit.archive.json', JSON.stringify({ ...archive, asks: [{ id: 'ask3', held_returns: ['ask3-9'] }, { title: 'id の無い行' }] }))
+  put('.orca/cockpit/rulings.jsonl', readFileSync(path.join(root, '.orca/cockpit/rulings.jsonl'), 'utf8') + [{ id: 'R5', from_return: 'ask1-1' }, { id: 'R6', from_return: 'ask1-2' }].map((x) => JSON.stringify(x)).join('\n') + '\n')
+  put('.orca/consult/ask-ask1.md', '# 質問｜案件A｜ask1\n- カード: d21\n- 写した窓口の会話: s1（窓口の会話 22:40 時点）\n\n### 質問 22:41（u-3）\n入口はどうする？\n\n### 答え 22:42\n窓口の会話 22:40 時点（それより後に決まったことは知らない）\n1 つにする\n\n')
+  put('.orca/consult/ask-ask1.returns.jsonl', [{ return_id: 'ask1-1' }, { return_id: 'ask1-2' }, { return_id: 'ask1-3', op: 7 }].map((x) => JSON.stringify(x)).join('\n') + '\n')
+  put('.orca/consult/ask-ask2.returns.jsonl', [JSON.stringify({ return_id: 'ask2-1' }), '{ 書きかけ', JSON.stringify({ return_id: 'bad id' }), JSON.stringify(['配列'])].join('\n') + '\n')
+  const op = (op_id: number, ask: string, type = 'ask_decide', undo_of?: number) => ({ op_id, at: '2026-11-21T22:43:00+09:00', item_id: `#ask:${ask}`, item_rev: 0, type, ...(undo_of && { undo_of }), ...(type === 'ask_decide' && { answer: { at: '22:42', head: '1 つにする' } }) })
+  put('.orca/cockpit.user.json', JSON.stringify({ ops: [op(7, 'ask1'), op(8, 'ask2'), op(9, 'ask2'), op(10, 'ask1'), op(11, 'ask1', 'undo', 10)] }))
+  return root
+}
+
+test('質問の返し: 帳簿・判断の記録・保留・担当への通知の漏れと、返しの無い「これで決める」を名指しし、控えを読む', async () => {
+  const root = askRoot()
+  const f = await loadFiles(root, emptyFiles())
+  const side = { root, threads: f.asks, marks: f.askMarks, log: f.log, applied: f.cockpit!.applied_ops ?? [] }
+  const memo = (id: string) => path.join(root, '.orca', 'consult', `ask-${id}.md`)
+  const rets = (id: string) => path.join(root, '.orca', 'consult', `ask-${id}.returns.jsonl`)
+  assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults, side).filter((x) => 'ask' in x), [
+    { id: 'ask1-1', ask: 'ask1', missing: ['担当への通知'], memo: memo('ask1'), returns: rets('ask1'), tasks: ['t1'] },
+    { id: 'ask1-2', ask: 'ask1', missing: ['帳簿'], memo: memo('ask1'), returns: rets('ask1') },
+    { id: 'ask1-3', ask: 'ask1', missing: ['判断の記録', '帳簿'], memo: memo('ask1'), returns: rets('ask1') },
+    { id: 'ask2-1', ask: 'ask2', missing: ['判断の記録', '帳簿', '保留'], memo: memo('ask2'), returns: rets('ask2') },
+    { id: 'ask3-9', ask: 'ask3', missing: ['保留'], memo: memo('ask3'), returns: null },
+    { id: null, ask: 'ask2', op: 8, missing: ['返し'], memo: memo('ask2') }
+  ])
+  const a1 = f.asks.find((a) => a.id === 'ask1')!
+  assert.equal(a1.card, 'd21')
+  assert.equal(a1.at, '22:40')
+  assert.deepEqual(a1.entries.map((e) => [e.kind, e.time, e.utterance]), [['q', '22:41', 'u-3'], ['a', '22:42', undefined]])
+  assert.equal(a1.answers, 1)
+})
+
+test('質問の返し: compaction-keep.py unreflected <root> --json と同じ結果', { skip: !existsSync(KEEP) && 'compaction-keep.py が無い' }, async () => {
+  const root = askRoot()
+  const f = await loadFiles(root, emptyFiles())
+  const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
+  assert.ok(py.some((x: { ask?: string }) => x.ask), 'python が質問の分を出す版であること')
+  assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults, { root, threads: f.asks, marks: f.askMarks, log: f.log, applied: f.cockpit!.applied_ops ?? [] }), py)
+})
+
+test('質問の控え: 閉じたコードフェンスの中の「### 答え」は節にしない。閉じていないフェンスでは後の本物の答えを隠さない（Codex 中 2）', () => {
+  const fenced = parseAskMemo('# 頭\n\n### 質問 09:00（u-1）\nログの例:\n```\n### 答え 09:00\nサンプル\n```\n\n### 答え 09:01\n本物\n')
+  assert.deepEqual(fenced.entries.map((e) => [e.kind, e.time]), [['q', '09:00'], ['a', '09:01']])
+  const open = parseAskMemo('### 質問 09:00\n```\n\n### 答え 09:01\n本物\n')
+  assert.deepEqual(open.entries.map((e) => [e.kind, e.text]), [['q', '```'], ['a', '本物']])
+})
+
+test('判断の記録を語で引く: 撤回・置き換え・残す判断の無い記録は引かず、当たりの多い順・番号の指定', () => {
+  // hook（compaction-keep.py rule）が書く形のまま読む。supersedes は配列（Codex 重大 1）。
+  const rows = parseRulings([
+    { id: 'R1', kind: 'decision', text: '窓から質問する欄は全体のタブの上に置く' },
+    { id: 'R2', kind: 'decision', text: '質問の欄は詳細の下に置く' },
+    { id: 'R3', kind: 'revoke', text: '撤回: 質問の欄は置かない', supersedes: ['R2'] },
+    { id: 'R4', kind: 'none', text: '質問の欄の確認をした' },
+    { id: 'R5', kind: 'constraint', text: '入力欄は 3 行より広くする', quote: '質問の入力欄が狭い' },
+    { id: 'R6', kind: 'permission', text: '本番に入れてよい' },
+    { id: 'R7', kind: 'revoke', text: '本番は待つ', supersedes: ['R6'] }
+  ].map((r) => JSON.stringify(r)).join('\n'))
+  assert.deepEqual(matchRulings(rows, '質問の欄はどこに置くんだっけ').map((r) => r.id), ['R5', 'R1'])
+  assert.deepEqual(matchRulings(rows, '質問の入力欄は？').map((r) => r.id), ['R5'])
+  assert.deepEqual(matchRulings(rows, 'R5 ってなんだっけ').map((r) => r.id), ['R5'])
+  assert.deepEqual(matchRulings(rows, 'これはどう？'), [])
+  assert.deepEqual(matchRulings(rows, 'R6 の本番は？'), [], '撤回した判断は番号でも引かない')
+  assert.deepEqual(matchRulings(rows, '本番に入れてよい？'), [])
+  assert.deepEqual(lookupTerms('HTTP Error404 の扱い'), ['http', 'error404'], '英数字の語の中の R404 は番号にしない')
+  assert.deepEqual(lookupTerms('窓口の会話をStateに'), ['窓口', '会話', 'state'])
 })
 
 test('片付いたものは時刻で新しい順に並べる（操作の UTC の時刻と、窓口が書いた +09:00 の時刻が混ざっても）', () => {

@@ -247,6 +247,24 @@ test('相談の返し: カードの from_returns・held_returns は rev を上�
   assert.deepEqual(problems, [])
 })
 
+test('質問の返し: asks[] を質問 id ごとに足し・置き換え、その質問の返しの id だけを受ける。読み込みは id の無い行を外す', () => {
+  const c = aoba()
+  const row = { id: 'ask3', card: 'd21', memo: '.orca/consult/ask-ask3.md', from_returns: ['ask3-1'], held_returns: [], notify: [{ return_id: 'ask3-1', task: 't1' }] }
+  const r = applyChange(c, { asks: [row] })
+  assert.deepEqual(r.errors, [])
+  assert.deepEqual(r.next!.asks, [row])
+  const sent = applyChange(r.next!, { asks: [{ ...row, notify: [{ return_id: 'ask3-1', task: 't1', message_id: 'msg_1' }] }] }).next!
+  assert.deepEqual(sent.asks!.map((a) => a.notify), [[{ return_id: 'ask3-1', task: 't1', message_id: 'msg_1' }]])
+  assert.match(applyChange(c, { asks: [{ id: 'q3' }] }).errors.join(), /質問 q3: id は ask<数>/)
+  assert.match(applyChange(c, { asks: [{ id: 'ask3', from_returns: ['ask4-1'] }] }).errors.join(), /from_returns は ask3-<数> の配列/)
+  assert.match(applyChange(c, { asks: [{ id: 'ask3', notify: [{ return_id: 'ask3-1', message_id: '' }] }] }).errors.join(), /notify は/)
+  assert.match(applyChange(c, { asks: [{ id: 'ask3', note: 'x' }] }).errors.join(), /書けない欄 note/)
+  assert.ok(!('asks' in applyChange(c, { cards: [] }).next!), '質問の無い帳簿に空の asks を足さない')
+  const problems: string[] = []
+  assert.deepEqual(parseCockpit(JSON.stringify({ ...c, asks: [row, { title: 'id なし' }] }), problems).asks, [row])
+  assert.match(parseCockpit(JSON.stringify({ ...c, asks: {} }), problems) && problems.join(), /asks が配列ではない/)
+})
+
 test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ。null で消し、run_ で始まらない値・ほかの欄は断る。読み込みも受ける', () => {
   const c = aoba()
   c.main = { agent: 'claude', terminal: 'term_main' }

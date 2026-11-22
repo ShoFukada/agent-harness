@@ -1,4 +1,4 @@
-import type { Card, Cockpit, ConsultMemo, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
+import type { AskAnswer, AskThread, Card, Cockpit, ConsultMemo, DraftFormat, Handoff, OpType, UserLog, Utterance } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
@@ -112,10 +112,21 @@ export type CockpitView = {
   consults?: ConsultMemo[]
   /** この案件の worker と担当が出した、答えの無い orchestration の question。パネルは持たない。 */
   questions?: QuestionFact[]
+  /** 窓からの質問（控えの節は新しいものだけに絞る）。パネルは持たない。 */
+  asks?: AskThread[]
 }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */
-export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string }
+export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string; answer?: AskAnswer }
+/** 窓から質問する（consult --ask）。ask が無ければ新しい質問、あれば続き。card・task は結ぶ先（新しい質問だけ）。 */
+export type AskInput = { root: string; ask?: string; question: string; card?: string; task?: string }
+/** 質問のタブを開いた結果。ask は質問 id（新しい質問でも、立てられなかったときも返す）。 */
+export type AskResult = { opened: boolean; ask?: string; reason?: string }
+/** 質問の前に判断の記録から引いた行（撤回・置き換えされていないもの）。 */
+export type RulingHit = { id: string; at?: string; kind?: string; text: string; quote?: string }
+/** 「これで決める」の結果。op は書いた op_id、sent は質問のタブに「返しを書いて」を送れたか。 */
+/** again: 同じ答えをもう記録していた（記録も知らせも足していない）。 */
+export type AskDecideResult = { op: number; sent: boolean; reason?: string; again?: true }
 export type NotifyResult = { sent: boolean; reason?: string }
 /**
  * 担当を開いた結果。how はどこを開いたか（画面に出す）。tab は利用者が選ぶチャットのタブの題（Orca にはチャットのタブを前に出す手段が無いので、

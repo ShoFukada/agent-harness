@@ -381,6 +381,46 @@ body { margin:0; }
 .ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:10px 16px; }
 .ck.win .dh .crumbs .nxl { margin-left:auto; border:0; background:none; padding:0 2px; color:var(--focus); font-size:var(--fs-xs); white-space:nowrap; }
 
+/*
+ * 窓から質問する（R105）。欄は線で区切り（R111）、入力欄は 4 行（R90）。答えを待つ間・判断の記録の当たり・答えは同じ字の大きさで、
+ * 補助の文字（時刻・時点）を --ink3 にする。待つ間の印は回る線 1 つだけ（意味の無いアイコンを並べない。R101）。
+ */
+.ck.win .ask { display:grid; gap:10px; font-size:var(--fs-s); }
+.ck.win .wdet > .ask { margin:14px 16px 0; padding-top:12px; border-top:1px solid var(--rule2); scroll-margin-top:120px; }
+.ck.win .hits > .lb .mut { margin-left:10px; font-weight:400; font-size:var(--fs-xs); }
+.ck.win .ask details.cont > summary { font-size:var(--fs-s); }
+.ck.win .wpane > .ask { padding-bottom:14px; border-bottom:1px solid var(--rule); }
+.ck.win .askin { display:grid; gap:6px; }
+.ck.win .askin > .lb { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; font-size:var(--fs-s); font-weight:700; color:var(--ink); }
+.ck.win .askin > .lb .mut { font-size:var(--fs-xs); font-weight:400; }
+.ck.win .askin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(4lh + 18px); max-height:40vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
+.ck.win .askin textarea:focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
+.ck.win .ask .acts { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; position:static; padding:0; margin:0; background:none; border:0; }
+.ck.win .ask .btn.quiet { padding-inline:0; }
+.ck.win .ask > details.cont { border-top:1px solid var(--rule2); padding-top:10px; }
+.ck.win .ask .tag { margin-left:8px; }
+.ck.win .askst { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; padding:8px 10px; background:var(--sunk); }
+.ck.win .askst.bad { border-left:3px solid var(--hot); } .ck.win .askst.bad b { color:var(--hot); }
+.ck.win .askst .mut { font-size:var(--fs-xs); }
+.ck.win .spin { width:12px; height:12px; border:2px solid var(--rule); border-top-color:var(--focus); border-radius:50%; animation:cockpit-spin 0.9s linear infinite; }
+@keyframes cockpit-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .ck.win .spin { animation:none; border-top-color:var(--rule); } }
+.ck.win .hits { display:grid; gap:8px; padding:10px 0; border-top:1px solid var(--rule2); border-bottom:1px solid var(--rule2); }
+.ck.win .hits > .lb { font-weight:700; }
+.ck.win .hl { list-style:none; margin:0; padding:0; display:grid; }
+.ck.win .hl li { display:grid; gap:4px; padding:8px 0; border-top:1px solid var(--rule2); }
+.ck.win .hl li:first-child { border-top:0; padding-top:0; }
+.ck.win .hh { display:flex; gap:10px; align-items:baseline; font-size:var(--fs-xs); }
+.ck.win .hh .code { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; color:var(--ink); }
+.ck.win .asks { list-style:none; margin:0; padding:0; display:grid; }
+.ck.win .askt { display:grid; gap:8px; padding:12px 0; border-top:1px solid var(--rule2); }
+.ck.win .aq, .ck.win .aa { display:grid; gap:2px; }
+.ck.win .aq > .mut, .ck.win .aa > .mut { font-size:var(--fs-xs); }
+.ck.win .aq .verb { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; }
+.ck.win .aa .rich p { margin:0 0 4px; }
+.ck.win .aa .rich ul { margin:0 0 4px; padding-left:1.4em; }
+.ck.win .askdone { margin:0; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
+
 /* 全体: 形ごとの置き場所と仕事の箱 */
 .ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }
 /* 仕事の形は見出しの語だけで分ける（色の四角を付けない。初見 11）。 */
