@@ -450,7 +450,7 @@ const TSTATE: Record<TaskState, string> = { ok: '完了', run: '作業中', wait
  */
 export function stagesHtml(at: number, short = false): string {
   const words = STAGES.map((s, i) => (i < at ? `<span class="sd">${s}</span>` : i === at ? `<b class="sc">${s}</b>` : `<span class="sn">${s}</span>`))
-  return `<span class="stg"><span class="stg-all">${words.join('<span class="sep">・</span>')}</span>${short ? `<span class="stg-now">工程 <b>${STAGES[at] ?? ''}</b></span>` : ''}</span>`
+  return `<span class="stg"><span class="stg-all">${words.join('<span class="sep">・</span>')}</span>${short ? `<span class="stg-now">${at < STAGES.length ? `工程 <b>${STAGES[at]}</b>` : '全工程 完了'}</span>` : ''}</span>`
 }
 
 /**
@@ -541,12 +541,21 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now:
     ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task, now)).join('')}`).join('')
       + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '') + talk
     : ''
-  // 一覧の 1 行。状態は語 1 つ（色は要対応と停止だけ）、次にやることを工程より先に読ませる（初見 4・5）。協議は右の詳細から。
-  const who = [j.owner && j.owner.title !== j.title && `担当: ${esc(j.owner.title)}`, working && `worker ${working} 件作業中`, halted && `worker ${halted} 件停止`].filter(Boolean).join('・')
+  // 協議は右の詳細から。
+  const idle = b.d.idle.filter((x) => ts.some((t) => t.task.id === x.task))
+  const [late, due] = [idle.filter((x) => !x.check).length, idle.filter((x) => x.check).length]
+  // タスクが全部済んだ仕事は、右を「全工程 完了」にし、要対応などの状態は状況の行に出す（右の欄に工程と状態の文が混ざっていた。初見）。
+  const allDone = ts.length > 0 && ts.every((t) => t.state === 'ok')
+  const live = [working && `worker ${working} 件作業中`, halted && `worker ${halted} 件停止`, late && `放置のタスク ${late} 件`, due && `確認日の来たタスク ${due} 件`, allDone && j.state !== 'done' && 'タスクはすべて完了'].filter(Boolean).join('・')
+  const status = `<span class="pst ${j.state}${j.reply ? ' reply' : ''}">${esc(label)}</span>${live ? `<span>・${esc(live)}</span>` : ''}${j.next && j.state !== 'done' ? `<span>。次は${mono(note(j.next))}</span>` : ''}`
+  const line = (lb: string, body: string, cls = '') => `<span class="sx${cls}"><span class="lb">${lb}</span><span class="sv">${body}</span></span>`
+  // 担当は、その仕事に結ばれた閉じていない担当を全部（1 人だけ出すと、ほかの担当の仕事まで 1 人のものに見える。追加 42）。
+  const all = (b.v.cockpit!.owners ?? []).filter((o) => o.stream === j.id && o.state !== 'done').map((o) => o.title)
+  const owners = all.length === 1 && all[0] === j.title ? [] : all
   return `<div class="st f-${s?.form ?? 'none'}"><div class="sh">
-    <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="nm">${esc(j.title)}</span><span class="pst ${j.state}${j.reply ? ' reply' : ''}">${esc(label)}</span></button>
-    <span class="right"><span class="prog">${phaseBar(ts, s?.form, j.state)}</span></span>
-    ${j.next && !open ? `<span class="nxt">次: ${mono(note(j.next))}</span>` : ''}${who ? `<span class="meta">${who}</span>` : ''}</div>
+    <button type="button" class="t" data-toggle="s:${esc(j.id)}" aria-expanded="${open}"><span class="nm">${esc(j.title)}</span></button>
+    <span class="right"><span class="prog">${allDone && s?.form !== 'watch' ? '<span class="pbar">全工程 完了</span>' : phaseBar(ts, s?.form, j.state)}</span></span>
+    ${s?.summary?.trim() ? line('概要', esc(s.summary.trim()), ' sum') : ''}${line('状況', status)}${owners.length ? `<span class="meta">担当: ${esc(owners.join('・'))}</span>` : ''}</div>
     ${open ? `<div class="inner${ts.some((t) => replyWait(todo.get(t.task.id) ?? [])) ? ' wide' : ''}">${inner || '<span class="mut">なし</span>'}</div>` : ''}</div>`
 }
 
@@ -587,7 +596,13 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const reply = shown !== 'ok' && replyWait(b.d.queue.filter((r) => r.card.tasks?.includes(task.id)))
   const reqs = b.d.requests.filter((r) => r.req.tasks?.includes(task.id))
   // 済の条件はチェックの形にする（「未」の 1 字で示さない。初見 13）。読み上げには語を渡す。
-  const conds = reqs.flatMap((r) => (r.req.done_when ?? []).map((w, i) => `<li class="${r.covered[i] ? 'ok' : ''}"><span class="cb" role="img" aria-label="${r.covered[i] ? '済' : '未'}"></span>${esc(w)}</li>`))
+  // まだの条件を先に見せ、済んだ条件は「済 n 件」に畳む（長い一覧で詳細が済の条件で埋まった。追加 38）。
+  const cond = (w: string, ok: boolean) => `<li class="${ok ? 'ok' : ''}"><span class="cb" role="img" aria-label="${ok ? '済' : '未'}"></span>${esc(w)}</li>`
+  const all = reqs.flatMap((r) => (r.req.done_when ?? []).map((w, i) => ({ w, ok: !!r.covered[i] })))
+  const met = all.filter((x) => x.ok)
+  const conds = all.length
+    ? `${all.some((x) => !x.ok) ? `<ol class="dw">${all.filter((x) => !x.ok).map((x) => cond(x.w, false)).join('')}</ol>` : ''}${met.length ? fold(ui, `met:${t.task.id}`, `済 ${met.length} 件`, `<ol class="dw">${met.map((x) => cond(x.w, true)).join('')}</ol>`) : ''}`
+    : ''
   const origin = reqs.map((r) => {
     const quote = r.req.utterances?.map((u) => u.quote).join('\n') || r.req.quote || ''
     return `<div class="rqd"><div><span class="code">${esc(r.req.id)}</span>${esc(r.req.title)}<span class="rst">${esc(r.state)}</span></div>${clampQuote(quote, ui, `cont:${task.id}:${r.req.id}`)}</div>`
@@ -603,7 +618,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const srcs = (task.sources ?? []).filter((x) => /^(https?:\/\/|\/|~\/)/.test(x))
   const first = [
     fld('何のため', note(task.goal)),
-    conds.length ? fld('済の条件', `<ol class="dw">${conds.join('')}</ol>`) : '',
+    conds ? fld('済の条件', conds) : '',
     fld(task.waiting_on ? '待っているもの' : '次にやること', now ? mono(note(now)) : ''),
     fld('依頼していること', asking.map(cardLine).join('')),
     fld('依頼の原文', origin)

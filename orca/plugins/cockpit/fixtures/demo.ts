@@ -162,8 +162,12 @@ if (import.meta.main) {
   // 一緒に作る仕事の見本（R145）: AWS 構成案を一緒に作る仕事にし、担当がターンを終えて深田さんの返事を待っている形にする。
   // 試験（writeSample を使う）には入れない。止まった問いの行の数を変えないため。
   const file = path.join(roots.aoba!, '.orca', 'cockpit.json')
-  const aoba = JSON.parse(readFileSync(file, 'utf8')) as { streams: { id: string; form?: string }[]; tasks: { id: string; check_on?: string }[] }
+  const aoba = JSON.parse(readFileSync(file, 'utf8')) as { streams: { id: string; title: string; form?: string; summary?: string }[]; tasks: { id: string; check_on?: string; waiting_on?: string }[] }
   for (const [id, form] of [['s1', 'delegate'], ['s2', 'cowork']]) aoba.streams.find((x) => x.id === id)!.form = form
+  // 長い題（追加 38・42。題が数文字で切れた・待ちの文に場所を取られて消えた）と、人でない待ちの見本。
+  aoba.streams.find((x) => x.id === 's3')!.title = 'CrowdStrike の検知ルールの見直しと保守契約の更新に向けた事前の確認'
+  aoba.tasks.find((x) => x.id === 't3')!.waiting_on = '岩田さん（日程案への返事と認証情報）'
+  for (const [id, summary] of [['s1', '配車画面の一覧と地図の遅さを直し、stg で見てもらう'], ['s2', 'AWS の構成図と説明の本文を作り、定例で説明する']]) aoba.streams.find((x) => x.id === id)!.summary = summary
   // 確認日の見本（R142・R171）: 森さんの返事を待つタスクは今日が確認日（要対応に 1 行）、構成案の図は 2 日後。
   const day = (d: number) => new Date(Date.now() + d * 86_400_000).toLocaleDateString('sv-SE')
   aoba.tasks.find((x) => x.id === 't3')!.check_on = day(0)

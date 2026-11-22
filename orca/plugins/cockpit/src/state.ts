@@ -603,6 +603,19 @@ export function idleTasks(c: Cockpit, tasks: Map<string, TaskView>, facts: OrcaF
   })
 }
 
+/**
+ * タスクの待ち（waiting_on）の語（追加 42）。帳簿の waiting_on は自由な文で、相手の種類の欄が無いので語で見分ける。
+ * 人や相手方の名前だけ（「森さん」「先方」「BW の担当」など。括弧の中は見ない）なら「〜の返事待ち」、
+ * 出来事・作業・時間（「深田さんのスマホでの撮影」「次に上限に当たったときの席の切り替え」）は「〜を待つ」。動詞で終われば「〜のを待つ」。
+ */
+export function waitLabel(on: string): string {
+  // 末尾の括弧は状態の語の後ろへ回す（「岩田さんの返事待ち（日程案への返事と認証情報）」。誰・何を待つかを先に読ませる。Codex）。
+  const [, body, note] = /^(.*?)\s*((?:（[^）]*）|\([^)]*\))?)$/.exec(on)!
+  const bare = body!.replace(/（[^）]*）|\([^)]*\)/g, '').trim()
+  if (/^[^のがを]{0,20}(さん|様|氏|先方|顧客|担当|窓口|チーム|部)$/.test(bare) || /^[^がを]{0,20}の(担当|窓口|チーム)$/.test(bare)) return `${body}の返事待ち${note}`
+  return `${body}${/[うくぐすつぬぶむる]$/.test(bare) ? 'の' : ''}を待つ${note}`
+}
+
 /** 仕事ごとの今。済んだ仕事は後ろに回す。メインの書いた要約は使わず、タスクとカードから決める。 */
 function jobViews(c: Cockpit, tasks: Map<string, TaskView>, queue: Row[], rows: Row[], facts: OrcaFacts | undefined): JobView[] {
   const order: Record<JobState, number> = { mine: 0, stopped: 1, working: 2, customer: 3, idle: 4, done: 5 }
@@ -622,8 +635,9 @@ function jobViews(c: Cockpit, tasks: Map<string, TaskView>, queue: Row[], rows: 
         : waiting || ext ? 'customer'
         : worst === 'idle' || worst === 'wait' ? 'idle'
         : 'done'
-      const who = waiting?.card.awaiting?.who ?? ext?.task.waiting_on
-      const label = state === 'customer' && who ? `${who}の返事待ち` : state === 'mine' ? [reply && REPLY_LABEL, mine && `私待ち ${mine} 件`].filter(Boolean).join('・') : JOB_LABEL[state]
+      const label = state === 'customer' && waiting?.card.awaiting?.who ? `${waiting.card.awaiting.who}の返事待ち`
+        : state === 'customer' && ext ? waitLabel(ext.task.waiting_on!.trim())
+        : state === 'mine' ? [reply && REPLY_LABEL, mine && `私待ち ${mine} 件`].filter(Boolean).join('・') : JOB_LABEL[state]
       const nextTask = live.find((t) => t.state === worst) ?? live[0]
       return {
         id: s.id, title: s.title, state, label, mine, ...(reply && { reply }),

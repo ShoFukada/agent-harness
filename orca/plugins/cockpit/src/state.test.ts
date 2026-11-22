@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { parseCockpit, requestCards, stageOf, taskSig, type Card, type Cockpit, type Ruling, type TaskSeen } from './model.ts'
 import type { AgentRow, OwnerLive, QuestionFact } from './protocol.ts'
-import { bucketOf, byUrgency, coworkSessions, derive, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
+import { bucketOf, byUrgency, coworkSessions, derive, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, waitLabel, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
 import { chatHandles, liveChats } from '../window/orca-state.ts'
 import { orcaFacts } from '../window/state.ts'
@@ -672,6 +672,23 @@ test('案件の名前の形（R165・R181）: 全角の｜でちょうど 2 つ�
   // 形の言い方の写しを置かない（R181）。state.ts で形を書くのは WORKSPACE_NAME_FORM の 1 か所だけ。
   const src = readFileSync(new URL('./state.ts', import.meta.url), 'utf8')
   assert.equal(src.split('<顧客>').length - 1, 1)
+})
+
+test('待ちの語（追加 42）: 相手が人や相手方の名前だけなら「〜の返事待ち」、出来事・作業は「〜を待つ」（動詞で終われば「〜のを待つ」）', () => {
+  assert.equal(waitLabel('森さん'), '森さんの返事待ち')
+  assert.equal(waitLabel('先方'), '先方の返事待ち')
+  assert.equal(waitLabel('岩田さん（日程案への返事と認証情報）'), '岩田さんの返事待ち（日程案への返事と認証情報）')
+  assert.equal(waitLabel('BW の担当'), 'BW の担当の返事待ち')
+  assert.equal(waitLabel('次に上限に当たったときの本物の席の切り替え'), '次に上限に当たったときの本物の席の切り替えを待つ')
+  assert.equal(waitLabel('深田さんのスマホでの Orca Mobile の撮影'), '深田さんのスマホでの Orca Mobile の撮影を待つ')
+  assert.equal(waitLabel('深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめる（r67 の3）'), '深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめるのを待つ（r67 の3）')
+  assert.equal(waitLabel('深田さんが確かめる'), '深田さんが確かめるのを待つ')
+  // 仕事の状態の語に使う（顧客待ちの仕事）。
+  const w = ws(0)
+  const s = w.cockpit.streams[0]!.id
+  w.cockpit.tasks = [{ id: 'k1', stream: s, phase: '確認', title: '撮影を待つ', state: 'wait', waiting_on: '深田さんのスマホでの撮影' }]
+  w.cockpit.cards = w.cockpit.cards.filter((c) => c.stream !== s)
+  assert.equal(derive(w.cockpit, w.log, [], '/a', undefined, NOW).jobs.find((j) => j.id === s)!.label, '深田さんのスマホでの撮影を待つ')
 })
 
 test('push の一任（R95・R173）: 有効な permission（scope push・allow true）があれば push の許すを出させず、窓口が自分で push する印を出す。置き換えられた一任は数えない', () => {

@@ -468,18 +468,21 @@ body { margin:0; }
 .ck.win .fsec > .st:first-of-type { border-top:1px solid var(--rule); }
 .ck.win .st { border-bottom:1px solid var(--rule2); }
 .ck.win .st > .sh { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 16px; padding:10px 4px; }
-.ck.win .st .t { font-weight:700; font-size:var(--fs-l); display:flex; gap:10px; align-items:baseline; flex-wrap:nowrap; min-width:0; border:0; background:none; padding:0; text-align:left; }
+.ck.win .st .t { font-weight:700; font-size:var(--fs-m); display:flex; gap:10px; align-items:baseline; flex-wrap:nowrap; min-width:0; border:0; background:none; padding:0; text-align:left; line-height:1.45; }
 .ck.win .st .t::before { content:"＋"; color:var(--ink3); font-weight:400; }
 .ck.win .st .t[aria-expanded="true"]::before { content:"－"; }
-/* 次と担当の行を、開閉の印の幅だけ下げて仕事の名前にそろえる。 */
-.ck.win .st > .sh > .nxt, .ck.win .st > .sh > .meta { padding-left:26px; }
-.ck.win .st .t .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+/* 概要・状況・担当の行を、開閉の印の幅だけ下げて仕事の名前にそろえる。 */
+.ck.win .st > .sh > .sx, .ck.win .st > .sh > .meta { padding-left:24px; }
+.ck.win .st .sx { grid-column:1 / -1; display:grid; grid-template-columns:2.6em minmax(0,1fr); gap:8px; align-items:baseline; font-size:var(--fs-s); line-height:1.55; }
+.ck.win .st .sx > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
+.ck.win .st .sx > .sv { color:var(--ink); }
+.ck.win .st .sx.sum > .sv { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+/* 題は切らずに折り返す（長い題が数文字で切れた・待ちの文に場所を取られて消えた。追加 38・42）。 */
+.ck.win .st .t .nm { min-width:0; overflow-wrap:anywhere; }
 .ck.win .st .right { display:flex; align-items:center; gap:10px; }
-/* 次にやることを 2 行まで、工程より濃く読ませる（初見 5）。 */
-.ck.win .st .nxt { grid-column:1 / -1; font-size:var(--fs-s); color:var(--ink); display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 .ck.win .st .meta { grid-column:1 / -1; font-size:var(--fs-xs); color:var(--ink3); }
-/* 状態は語 1 つ。色は要対応と停止だけ（初見 4・11）。 */
-.ck.win .pst { flex:none; font-size:var(--fs-xs); font-weight:400; color:var(--ink3); white-space:nowrap; }
+/* 状況の頭の状態の語。色は要対応と停止だけ（初見 4・11）。 */
+.ck.win .pst { font-weight:400; }
 .ck.win .pst.mine { color:var(--focus); font-weight:700; }
 .ck.win .pst.stopped, .ck.win .pst.reply { color:var(--hot); font-weight:700; }
 /* 工程の進み（工程 n/5 と段の名前）。上下の箱で位置がそろうよう幅を決める。 */

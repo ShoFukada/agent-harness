@@ -42,6 +42,27 @@ test('見てほしい点の「1 …」の番号は一覧の番号にし（二重
   assert.match(h, /<li value="1">一覧の幅<\/li><li value="2">「担当と話す」の位置<\/li><\/ol><p class="mut">6 点ともおすすめなら「これでよい」<\/p>/)
 })
 
+test('全体の仕事の行（追加 42）: 題は切らずに 1 行目に出し、長い待ちの文は 3 行目の状況に寄せる（題が幅 0 になって消えた）。担当は閉じていない担当を全部出す', () => {
+  const m = aoba((v) => {
+    const s = v.cockpit!.streams[0]!
+    v.cockpit!.tasks = v.cockpit!.tasks.map((t) => (t.stream === s.id ? { ...t, state: 'wait' as const, waiting_on: '深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめる（r67 の3）' } : t))
+    v.cockpit!.cards = v.cockpit!.cards.filter((c) => c.stream !== s.id)
+    v.cockpit!.owners = [{ id: 'o1', title: s.title, stream: s.id, agent: 'claude', state: 'open' }, { id: 'o3', title: 'Botの組み直し', stream: s.id, agent: 'claude', state: 'open' }, { id: 'o5', title: '任せる｜決まりの一本化', stream: s.id, agent: 'claude', state: 'open' }, { id: 'o4', title: '済んだ担当', stream: s.id, agent: 'claude', state: 'done' }]
+  })
+  const s = m.boards[0]!.v.cockpit!.streams[0]!
+  const h = page(m, { tab: 'whole' })
+  const box = h.slice(h.indexOf(`data-toggle="s:${s.id}"`))
+  const head = box.slice(0, box.indexOf('</div>'))
+  assert.match(head, new RegExp(`<span class="nm">${s.title}</span></button>`))
+  assert.match(text(head), /状況 深田さんが窓で、カードの詳細に要る情報が出ているかを使いながら確かめるのを待つ（r67 の3）/)
+  // 協議の相手（ownerOf の 1 人目）が仕事と同じ名前でも、担当が 2 人以上なら全部出す（Codex）。
+  assert.match(text(head), new RegExp(`担当: ${s.title}・Botの組み直し・任せる｜決まりの一本化`))
+  assert.doesNotMatch(head, /済んだ担当/)
+  // 題は「…」で切らない。
+  const rule = /\.ck\.win \.st \.t \.nm \{([^}]*)\}/.exec(CSS)![1]!
+  assert.doesNotMatch(rule, /nowrap|ellipsis/)
+})
+
 test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中の仕事） → 見張る の順に置き（仕事を先に）、見張るに届いた連絡を並べる。右に未対応の一覧を出さない（R91）', () => {
   const m = aoba((v) => {
     const s = v.cockpit!.streams
@@ -57,6 +78,22 @@ test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中�
   assert.match(t, /届いた連絡 1 件/)
   assert.doesNotMatch(t, /件数外/, '意味の伝わらない語は出さない（初見 12）')
   assert.doesNotMatch(t, /未完了の依頼/)
+})
+
+test('全体の仕事の行（追加 38）: 題・概要・状況。概要は summary があるときだけ、状況は状態の語・worker の今・次にやることの 1 文', () => {
+  const m = aoba((v) => {
+    v.cockpit!.streams[0]!.summary = '配車画面の一覧を探しやすくする'
+    v.workers = [{ terminalId: 'term_w', title: '一覧の改修（worker）', agent: 'claude', state: 'working', since: NOW, task: 't1', where: 'テストを直している' }]
+  })
+  const h = page(m, { tab: 'whole' })
+  const s0 = m.boards[0]!.v.cockpit!.streams[0]!
+  const box = (id: string) => h.slice(h.indexOf(`data-toggle="s:${id}"`), h.indexOf('</div>', h.indexOf(`data-toggle="s:${id}"`)))
+  assert.match(text(box(s0.id)), /概要 配車画面の一覧を探しやすくする 状況 \S+/)
+  assert.match(text(box(s0.id)), /状況 .*。次は/)
+  // summary の無い仕事は概要の段を出さない。
+  const other = m.boards[0]!.v.cockpit!.streams.find((x) => !x.summary)!
+  assert.doesNotMatch(text(box(other.id)), /概要/)
+  assert.match(text(box(other.id)), /状況/)
 })
 
 test('全体: タスクを押すと右に詳細（工程・状態・goal・next・done・worker・結ばれたカード・依頼の原文と済の条件・出した指示）を出し、その箱を開く', () => {
@@ -81,6 +118,13 @@ test('全体: タスクを押すと右に詳細（工程・状態・goal・next�
     assert.ok(t.includes(x), x)
   assert.match(side, /data-jump="\/ws\/aoba#r5"/)
   assert.match(side, /<span class="cb" role="img" aria-label="未"><\/span>並べ替えができる/)
+  // 済んだ条件は「済 n 件」に畳み、まだの条件を先に見せる（追加 38）。
+  m.boards[0]!.v.cockpit!.requests![0]!.evidence = [{ when: 1, kind: 'commit', ref: 'abc1234' }]
+  const folded = page({ ...m, boards: boardsOf(m.boards.map((b) => b.v), NOW) }, { tab: 'whole', task: 't1' })
+  const fs = folded.slice(folded.indexOf('済の条件'))
+  // 開いた畳みは再描画のあとも開いたまま（data-fold で ui.open に残す。Codex）。
+  assert.match(page({ ...m, boards: boardsOf(m.boards.map((b) => b.v), NOW) }, { tab: 'whole', task: 't1', open: { 'met:t1': true } }), /data-fold="met:t1" open>/)
+  assert.match(fs, /^済の条件<\/span><div><ol class="dw"><li class=""><span class="cb" role="img" aria-label="未"><\/span>絞り込みができる<\/li><\/ol><details class="cont" data-fold="met:t1"><summary>済 1 件<\/summary><ol class="dw"><li class="ok">[^]*並べ替えができる/)
   // 番号は一覧の行に出さず、詳細の下に小さく置く（初見 2）。
   assert.doesNotMatch(all, /class="id"/)
   assert.match(side, /<p class="rid">番号<code>t1<\/code><\/p>/)
@@ -243,7 +287,10 @@ test('Codex v3 3: タスクが全部済でもカードが残る仕事は「タ�
   assert.doesNotMatch(head, /全工程 完了/)
   const whole = page(aoba((v) => { for (const c of v.cockpit!.cards) if (c.stream === 's4') c.state = 'done' }), { tab: 'whole', open: { done: true } })
   const box = whole.slice(whole.indexOf('定例と議事録'))
-  assert.match(box.slice(0, box.indexOf('data-talkstream')), /<span class="pbar"[^>]*>全工程 完了<\/span>/)
+  // 全体のタブの仕事の行は、右を工程の 5 語にそろえ、済んだことは状況の行で言う（追加 38）。
+  assert.match(text(box.slice(0, box.indexOf('data-talkstream'))), /定例と議事録 全工程 完了 状況 完了/)
+  const mine = page(aoba(), { tab: 'whole' })
+  assert.match(text(mine.slice(mine.indexOf('定例と議事録'), mine.indexOf('</div>', mine.indexOf('定例と議事録')))), /状況 要対応 1 件 ・タスクはすべて完了/)
 })
 
 test('Codex v3 4・5: 属性の値の中の > でタグを切らず、コピーのあとの知らせは今の「送った」ボタンの名前を案内する', () => {
@@ -659,7 +706,7 @@ test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ち�
   assert.match(rowOf(asked), /class="tag miss">返事待ち（あなた）</)
   assert.match(asked, /data-act="focus"[^>]*>担当のチャットを開く</)
   const whole = text(page(m('done'), { tab: 'whole', open: { 's:s2': true } }))
-  assert.match(whole, /AWS 構成案 返事待ち（あなた）/)
+  assert.match(whole, /AWS 構成案 [^状]*状況 返事待ち（あなた）/)
   assert.match(whole, /返事待ち（あなた） 構成案の図と本文/)
   const calm = page(m('working'), { sel: '/ws/aoba##cowork:s2' })
   assert.match(rowOf(calm), /<span class="kd">確認<\/span>/)
