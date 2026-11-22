@@ -160,14 +160,20 @@ test('案件のサイドバー: 名前の順に並べ、私の番の件数は語
   assert.deepEqual(names, [...names].sort((a, b) => a!.localeCompare(b!, 'ja')))
   assert.match(side, new RegExp(`data-filter="${aobaRoot}" aria-current="true"><span class="nm">青葉物流 配車アプリ</span><span class="n">私の番 \\d+</span><span class="here">Orca で表示中</span>`))
   assert.doesNotMatch(side, /私の番 0/)
-  assert.match(side, /data-side="close" aria-expanded="true">一覧を畳む</)
   assert.match(h, /data-orca="sync" disabled>Orca に合わせる/)
   const picked = renderWindow(m, { ...newUi(), filter: harness }, NOW, (s) => s)
   assert.match(picked, /<span class="pj">社内ハーネス<\/span>/)
   assert.match(picked, /data-orca="sync">Orca に合わせる/)
+  // 開閉のボタンは 1 つ。開いても畳んでも上の帯の先頭の同じ要素で、変わるのは aria-expanded だけ（R179。morph が同じ要素のまま属性だけを書き換える）。
   const closed = renderWindow(m, { ...newUi(), sideOpen: false }, NOW, (s) => s)
   assert.doesNotMatch(closed, /class="wcases"/)
-  assert.match(closed, /data-side="open" aria-expanded="false">案件の一覧<\/button><span class="pj">青葉物流 配車アプリ/)
+  const toggle = (x: string) => /<div class="wtop">(<button class="sidebtn"[^>]*>[^<]*<\/button>)<span class="pj">/.exec(x)?.[1]
+  assert.equal(toggle(h), '<button class="sidebtn" type="button" data-side="toggle" aria-controls="wcases" aria-expanded="true">案件の一覧</button>')
+  assert.equal(toggle(closed), toggle(h)!.replace('aria-expanded="true"', 'aria-expanded="false"'))
+  assert.equal((h.match(/data-side="toggle"/g) ?? []).length, 1, '開いたときにサイドバーの中に別の畳むボタンを置かない')
+  // サイドバーで角丸を使わない（選んだ行は端までの背景と左の線）。
+  const css = CSS.slice(CSS.indexOf('.ck.win .wcases'), CSS.indexOf('.ck.win .sidebtn'))
+  assert.doesNotMatch(css.replace('border-radius:0', ''), /border-radius/)
   // Orca の前面が操縦席の無いワークスペースなら、合わせる先が無いので押せない（Codex 重大 3）。
   const noCockpit = renderWindow({ ...m, focused: '/ws/elsewhere' }, { ...newUi(), filter: harness }, NOW, (s) => s)
   assert.match(noCockpit, /data-orca="sync" disabled>/)

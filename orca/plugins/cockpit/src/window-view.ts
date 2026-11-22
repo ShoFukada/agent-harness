@@ -24,7 +24,7 @@ function casesSide(m: Model, b: Board, orcaBtns: string): string {
     const n = COUNTED.reduce((s, k) => s + x.d.counts[k], 0)
     return `<button class="wcase" type="button" data-filter="${esc(x.root)}" aria-current="${x.root === b.root}"><span class="nm">${esc(x.v.cockpit!.workspace.name)}</span>${n ? `<span class="n">私の番 ${n}</span>` : ''}${m.focused === x.root ? '<span class="here">Orca で表示中</span>' : ''}</button>`
   }
-  return `<nav class="wcases" aria-label="案件"><div class="wch"><b>案件</b><button class="btn quiet" type="button" data-side="close" aria-expanded="true">一覧を畳む</button></div>${byName.map(row).join('')}<div class="wcorca">${orcaBtns}</div></nav>`
+  return `<nav class="wcases" id="wcases" aria-label="案件">${byName.map(row).join('')}<div class="wcorca">${orcaBtns}</div></nav>`
 }
 
 const vrows = (b: Board, rows: Row[]): VRow[] => rows.map((r) => ({ ...r, v: b.v }))
@@ -682,7 +682,7 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
   const front = m.boards.find((x) => x.root === m.focused)
   const orcaBtns = `<span class="orcab"><button class="btn quiet" type="button" data-orca="open">Orca で開く</button><button class="btn quiet" type="button" data-orca="sync"${!front || front.root === b.root ? ' disabled' : ''}>Orca に合わせる</button></span>`
   return `<div class="ck win${open ? ' side-open' : ''}" data-theme="${ui.dark ? 'dark' : 'light'}">
-    <div class="wtop">${open ? '' : '<button class="btn quiet sidebtn" type="button" data-side="open" aria-expanded="false">案件の一覧</button>'}<span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
+    <div class="wtop"><button class="sidebtn" type="button" data-side="toggle" aria-controls="wcases" aria-expanded="${open}">案件の一覧</button><span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
       <div class="tabs" role="tablist">${tabBtn('todo', '要対応', total)}${tabBtn('whole', '全体')}${tabBtn('done', '対応済み', b.d.closed.length, true)}</div>
       <div class="flags">${stuck ? `<span class="err">停止中 ${stuck} 件</span>` : ''}
         ${orcaBtns}${theme}</div></div>

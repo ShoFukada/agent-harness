@@ -292,14 +292,16 @@ body { margin:0; }
 .ck.win .wnotes { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
 .ck.win .wmain { display:flex; flex:1; min-height:0; position:relative; }
 .ck.win .wcol { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; }
-.ck.win .wcases { flex:none; width:220px; overflow-y:auto; border-right:1px solid var(--rule); background:var(--bg); padding:8px 8px 24px; display:grid; align-content:start; gap:2px; }
-.ck.win .wch { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:2px 6px 8px; }
-.ck.win .wcase { border:0; background:none; text-align:left; border-radius:6px; padding:7px 8px; display:grid; gap:1px; color:var(--ink); }
+.ck.win .wcases { flex:none; width:220px; overflow-y:auto; border-right:1px solid var(--rule); background:var(--bg); padding:6px 0 24px; display:grid; align-content:start; }
+.ck.win .wcase { border:0; border-radius:0; background:none; text-align:left; padding:9px 16px; display:grid; gap:1px; color:var(--ink); }
 .ck.win .wcase:hover { background:var(--sunk); }
-.ck.win .wcase[aria-current="true"] { background:var(--surface); font-weight:700; box-shadow:inset 3px 0 0 var(--focus), 0 0 0 1px var(--rule); }
+/* サイドバーの地（--bg）の上では --sunk の差が小さいので、選んだ行は本文の地（--surface）にする。 */
+.ck.win .wcase[aria-current="true"] { background:var(--surface); font-weight:700; box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .wcase .n { font-size:var(--fs-s); color:var(--ink); font-weight:600; }
 .ck.win .wcase .here { font-size:var(--fs-xs); color:var(--ink2); font-weight:400; }
-.ck.win .sidebtn { align-self:center; margin-bottom:10px; }
+/* 開閉で語も幅も変えず、開いているときは押し込んだ見た目にする（R179: 押す場所を動かさない）。 */
+.ck.win .sidebtn { align-self:center; margin-bottom:10px; flex:none; border:1px solid var(--ink3); border-radius:6px; background:var(--surface); color:var(--ink); padding:4px 12px; font-size:var(--fs-s); font-weight:600; }
+.ck.win .sidebtn[aria-expanded="true"] { background:var(--sunk); border-color:var(--focus); color:var(--focus); box-shadow:inset 0 0 0 1px var(--focus); }
 .ck.win .orcab { display:inline-flex; gap:6px; margin-right:12px; }
 .ck.win .orcab .btn:disabled { color:var(--ink3); text-decoration:none; cursor:default; }
 .ck.win .wcorca, .ck.win .wscrim { display:none; }
@@ -318,7 +320,7 @@ body { margin:0; }
   .ck.win .wcases { position:absolute; inset:0 auto 0 0; z-index:5; width:min(280px, 85vw); box-shadow:4px 0 16px rgb(0 0 0 / .18); }
   .ck.win .wscrim { display:block; position:absolute; inset:0; z-index:4; border:0; padding:0; background:rgb(0 0 0 / .45); }
   .ck.win .wtop .orcab { display:none; }
-  .ck.win .wcorca { display:block; padding:12px 6px 0; border-top:1px solid var(--rule); margin-top:8px; }
+  .ck.win .wcorca { display:block; padding:12px 16px 0; border-top:1px solid var(--rule); margin-top:8px; }
   .ck.win .wcorca .orcab { display:grid; gap:8px; margin:0; justify-items:start; }
   .ck.win .wbody.split { grid-template-columns:minmax(0,1fr); }
   .ck.win .wside { border-left:0; border-top:1px solid var(--rule); }

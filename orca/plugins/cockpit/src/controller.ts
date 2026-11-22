@@ -506,9 +506,9 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       return true
     }
     if (d.side !== undefined) {
-      ui.sideOpen = d.side === 'open'
+      ui.sideOpen = d.side === 'toggle' ? !ui.sideOpen : d.side === 'open'
       try {
-        localStorage.setItem(SIDE_KEY, d.side)
+        localStorage.setItem(SIDE_KEY, ui.sideOpen ? 'open' : 'close')
       } catch {
         // 覚えられないだけで、この窓の開閉は切り替える。
       }
