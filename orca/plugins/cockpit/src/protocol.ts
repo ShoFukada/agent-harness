@@ -104,6 +104,8 @@ export type CockpitView = {
   handoff?: Handoff
   /** 仕分けの検査に使う、id のある発言（本文は頭だけ）。パネルは持たない。 */
   utterances?: Utterance[]
+  /** 相談・質問の返しで反映された発言の id（仕分け済みとみなす）。判断の記録は窓に送らないので常駐のプロセスが決める。 */
+  returned?: string[]
   /** at の無い開いたカードを最初に見つけた時刻。 */
   firstSeen?: Record<string, string>
   /** タスクの id → 今の Dispatch（Run の続きをたどった先）。パネルは持たない。 */

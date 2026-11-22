@@ -149,6 +149,20 @@ test('対応済み: 確認の返答が無いまま閉じた見てに札を付け
   assert.match(text(h), /担当が完了 11\/21\(土\) 09:30・確認の返答なし/)
 })
 
+test('窓口の未処理: 30 分を過ぎた未仕分けの発言は 1 件ずつ並べず件数の 1 行にし、返しで反映された発言は数えない（追加 32）', () => {
+  const said = (i: number) => ({ id: `u${i}`, at: new Date(NOW - (60 + i) * 60_000).toISOString(), prompt: `発言の本文 ${i}` })
+  const m = aoba((v) => {
+    v.cockpit!.intake = { through: 'u0' }
+    v.utterances = Array.from({ length: 14 }, (_, i) => said(i))
+    v.returned = ['u12', 'u13']
+  })
+  const h = page(m)
+  assert.match(h, /<div class="wnotes" role="status"><b>窓口の未処理<\/b>発言の仕分け 12 件（30 分超過）<span class="by">窓口が対応します（操作は不要）<\/span><\/div>/)
+  assert.doesNotMatch(h, /発言の本文/)
+  assert.doesNotMatch(h, /帳簿の未記入/)
+  assert.match(page(m, { tab: 'whole' }), /<b>窓口の未処理<\/b>発言の仕分け 12 件/)
+})
+
 test('欄の形の違いの知らせは 1 行に畳み、読めない・繋がらない知らせだけを赤の帯に出す', () => {
   const m = aoba((v) => {
     v.errors = ['cockpit.json のカード v1「x」の evidence の形が違うので、その欄を出さずに表示しています']
@@ -156,11 +170,11 @@ test('欄の形の違いの知らせは 1 行に畳み、読めない・繋が�
   m.errors = ['常駐のプロセスに繋がりません']
   const h = page(m)
   assert.match(h, /<div class="werrs" role="alert"><div>常駐のプロセスに繋がりません<\/div><\/div>/)
-  assert.match(h, /<summary>帳簿の形式不備 1 件<\/summary><ul><li><span class="code">v1<\/span>・evidence<\/li><\/ul>/)
-  // パネルも 1 行ずつ並べず件数に畳む（追加 15）。
+  assert.match(h, /<div class="wnotes" role="status"><b>窓口の未処理<\/b>帳簿の形式不備 1 件<span class="by">窓口が対応します（操作は不要）<\/span><\/div>/)
+  assert.doesNotMatch(h, /evidence/)
   const panel = render({ ...m, panel: true }, newUi(), NOW, (x) => x)
-  assert.match(panel, /<summary>帳簿の形式不備 1 件<\/summary>/)
-  assert.doesNotMatch(panel, /<div>[^<]*evidence の形が違う/)
+  assert.match(panel, /<div class="chores" role="status"><b>窓口の未処理<\/b>帳簿の形式不備 1 件<span class="by">窓口が対応します（操作は不要）<\/span><\/div>/)
+  assert.doesNotMatch(panel, /evidence/)
   // 仕事の見出しには工程 n/5（5 段で固定）と今の段の名前を出し、凡例の帯は出さない（R82）。
   assert.match(h, /<span class="stg"><span class="stg-all"><span class="sd">調査<\/span><span class="sep">・<\/span><b class="sc">決定<\/b><span class="sep">・<\/span><span class="sn">作成<\/span>/)
   assert.doesNotMatch(h, /class="keyline"/)

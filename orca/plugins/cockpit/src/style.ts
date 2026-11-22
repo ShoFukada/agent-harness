@@ -239,10 +239,9 @@ body { margin:0; }
 /* 切り替えのタブと同じ段に並ぶので、枠を付けずタブと見分ける（押せることは下線で示す。初見 2 巡目の追加）。 */
 .ck .flag.repeat { border:0; padding:1px 0; font-size:var(--fs-xs); color:var(--ink2); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
 .ck .errs { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
-.ck details.soft { grid-column:1 / -1; margin-bottom:8px; font-size:var(--fs-s); color:var(--ink2); }
-.ck details.soft summary { cursor:pointer; }
-/* 開いても画面を押し下げないよう、横に流して高さを抑える。 */
-.ck details.soft ul, .ck.win .wnotes ul { margin:4px 0 2px; padding:0; list-style:none; font-size:var(--fs-xs); display:flex; flex-wrap:wrap; gap:2px 16px; max-height:6em; overflow-y:auto; }
+.ck .chores { grid-column:1 / -1; margin-bottom:8px; font-size:var(--fs-s); color:var(--ink2); }
+.ck .chores b, .ck.win .wnotes b { font-weight:600; margin-right:8px; }
+.ck .chores .by, .ck.win .wnotes .by { margin-left:12px; }
 .ck .errs div { background:var(--hot-bg); color:var(--hot); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); font-weight:600; }
 .ck .toasts { position:fixed; left:50%; bottom:max(16px, env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:10; width:max-content; max-width:min(640px, calc(100vw - 24px)); display:grid; gap:6px; }
 .ck .toast {
@@ -291,7 +290,6 @@ body { margin:0; }
 .ck.win .flags .err { color:var(--hot); font-weight:600; }
 .ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
 .ck.win .wnotes { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
-.ck.win .wnotes summary { cursor:pointer; }
 .ck.win .wbody { display:grid; flex:1; min-height:0; background:var(--surface); }
 .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
 /* 狭い幅では詳細の幅を決めて、一覧の幅を残す（初見 14）。 */
@@ -351,9 +349,6 @@ body { margin:0; }
 .ck.win .tag.wait { color:var(--ink2); }
 .ck.win .tag.talk { color:var(--focus); font-weight:600; }
 .ck.win .tag.miss { color:var(--hot); }
-.ck.win .gaps { border:1px solid var(--hot); border-radius:8px; background:var(--surface); padding:8px 12px; font-size:var(--fs-s); display:grid; gap:2px; }
-.ck.win .gaps b { color:var(--hot); }
-.ck.win .gaps ul { margin:4px 0 0; padding-left:1.2em; }
 
 /* 詳細（要対応・対応済みの右） */
 /* 縦の flex にして、操作の帯をいつも詳細の下端に置く（短い詳細で本文のすぐ下に上がらないように。初見 2 巡目 4）。 */

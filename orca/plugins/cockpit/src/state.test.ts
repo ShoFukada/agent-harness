@@ -232,6 +232,25 @@ test('発言の仕分け: through より後の発言と、checked_through より
   assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW, undefined, { utterances }).checks.unsorted, ['u4'])
 })
 
+test('発言の仕分け: 相談・質問の返しで反映された発言（判断の記録の from_return・依頼の from_return）は仕分け済み。反映されていない返しの発言は残す（追加 32）', () => {
+  const w = ws(0)
+  const u = (id: string) => ({ id, at: new Date(NOW - 60 * 60_000).toISOString(), prompt: `発言 ${id}` })
+  const utterances = ['u1', 'u2', 'u3', 'u4', 'u5', 'u6'].map(u)
+  w.cockpit.intake = { through: 'u1', none: ['u1'] }
+  w.cockpit.requests = [{ id: 'q1', at: '', title: '', from_return: 'd1-2', source: { at: '', quote: '' }, kind: 'work', done_when: ['x'] }]
+  const consults = [{ card: 'd1', path: '/a/.orca/consult/d1.md', returns: [
+    { return_id: 'd1-1', decisions: [{ text: '図はこのまま', quote: 'このままで', utterance: 'u2' }], requests: [{ quote: '資料も直して', utterance: 'u3' }] },
+    { return_id: 'd1-2', requests: [{ quote: '一覧も', utterance: 'u4' }] },
+    { return_id: 'd1-3', decisions: [{ text: 'まだ', quote: 'まだ', utterance: 'u5' }] }
+  ] }]
+  const asks = [{ id: 'ask1', path: '', returnsPath: '', entries: [], answers: 1, returns: [{ return_id: 'ask1-1', decisions: [{ text: '本番は来週', utterance: 'u6' }] }] }]
+  const rulings = [{ id: 'R1', from_return: 'd1-1' }, { id: 'R2', from_return: 'ask1-1' }]
+  const opts = { utterances, rulings, consults, asks }
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', undefined, NOW, opts).unsorted.map((g) => g.id), ['u3', 'u5'])
+  assert.deepEqual(report(w.cockpit, w.log, [], undefined, 'skipped', NOW, undefined, opts).checks.unsorted, ['u3', 'u5'])
+  assert.deepEqual(derive(w.cockpit, w.log, [], '/a', undefined, NOW, { utterances, returned: ['u2', 'u3', 'u4', 'u5', 'u6'] }).unsorted, [])
+})
+
 test('タスクの今の Dispatch は Run の続きをたどった先（current）。手書きの run のまま Orca のタスクが終わったもの・仕事の無いもの・工程の外・長い題・形の無い仕事を名指しする', () => {
   const w = ws(0)
   const c = w.cockpit

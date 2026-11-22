@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { ASK_ID, askItem, chatMain, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import type { Ask, AskDecideResult, AskResult, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
-import { coworkSessions, matchRulings, ownerName, ownerOf } from '../src/state.ts'
+import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances } from '../src/state.ts'
 import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
@@ -331,6 +331,7 @@ export function createServer(opts: Options) {
       notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen,
+      returned: files.cockpit ? returnedUtterances(files.cockpit, files.rulings, files.consults, files.asks) : undefined,
       terminals: lastRefresh && !orcaError ? [...terms.values(), ...chats] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
       consults: consultsFor(files.consults, cockpit, archive), questions: root ? questionsBy.get(root) : undefined,
       asks: slimAsks(files.asks)

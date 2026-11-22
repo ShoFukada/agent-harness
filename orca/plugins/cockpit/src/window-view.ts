@@ -2,7 +2,7 @@
 import { actionVerb, COUNTED, COWORK_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, sampleHtml, softHtml, stripHtml, toastsHtml,
+  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, rich, choresHtml, sampleHtml, stripHtml, toastsHtml,
   type AskWait, type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 import type { RulingHit } from './protocol.ts'
@@ -106,15 +106,6 @@ function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
   return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b>${prog ? `<span class="prog">${prog}</span>` : ''}<span class="mut">${n}</span>${j?.owner && j.owner.title !== s.title ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}</div>`
 }
 
-/** 帳簿の抜け（窓口が 30 分のうちに直さなかったもの）。R47。 */
-function gapsHtml(b: Board): string {
-  const gs = b.d.gaps
-  if (!gs.length) return ''
-  const what = { card: 'カード', request: '依頼', utterance: '発言' } as const
-  return `<div class="gaps" role="status"><b>帳簿の未記入 ${gs.length} 件</b><span class="mut">30 分超過</span>
-    <ul>${gs.map((g) => `<li>${esc(what[g.kind])} <span class="code">${esc(g.id)}</span> ${esc(g.title)}<span class="mut">（欠け: ${esc(g.missing.join('・'))}）</span></li>`).join('')}</ul></div>`
-}
-
 function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
   const groups = todoGroups(b)
   const reps = vrows(b, b.d.reports)
@@ -126,7 +117,7 @@ function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
   const all = [...groups.flatMap(([, xs]) => xs), ...reps]
   const cur = all.find((r) => keyOf(r) === ui.sel)
   const next = cur ? order[order.indexOf(keyOf(cur)) + 1] : undefined
-  return `<div class="wpane" aria-label="要対応">${gapsHtml(b)}${list}${rd}</div><aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, next) : ''}</aside>`
+  return `<div class="wpane" aria-label="要対応">${list}${rd}</div><aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, next) : ''}</aside>`
 }
 
 /** 種類ごとの「最初に見える部分」。決めるのに要るものだけを出し、残りは「詳しく」に畳む。 */
@@ -679,6 +670,6 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
       <div class="flags">${stuck ? `<span class="err">停止中 ${stuck} 件</span>` : ''}
         ${theme}</div></div>
     ${hard.length ? `<div class="werrs" role="alert">${hard.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}
-    ${softHtml(soft, ui, 'wnotes')}
+    ${choresHtml(b.d.gaps, soft.length, 'wnotes')}
     <main class="wbody split">${body}</main>${toastsHtml(ui, now)}</div>`
 }

@@ -172,7 +172,7 @@ export type RequestView = {
   /** 済の条件ごとに証拠があるか。 */
   covered: boolean[]
 }
-export type DeriveOpts = { utterances?: Utterance[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[]; marks?: ReturnMark[]; asks?: AskThread[]; askMarks?: AskMark[]; root?: string }
+export type DeriveOpts = { utterances?: Utterance[]; returned?: string[]; firstSeen?: Record<string, string>; rulings?: Ruling[]; consults?: ConsultMemo[]; marks?: ReturnMark[]; asks?: AskThread[]; askMarks?: AskMark[]; root?: string }
 /** 帳簿の不備を窓口に直させる猶予。過ぎても欠けたままなら、窓の要対応の上に「抜けている」として出す（R47）。 */
 export const GAP_GRACE_MS = 30 * 60_000
 
@@ -439,7 +439,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const settled = rows.filter((r) => r.status === 'closed').sort((a, b) => timeOf(b.when) - timeOf(a.when))
   const closed = settled.filter(recent)
   const requests = requestViews(c, log, archive, tasks)
-  const unsorted = unsortedOf(c, opts.utterances ?? [])
+  const unsorted = unsortedOf(c, opts.utterances ?? [], new Set(opts.returned ?? returnedUtterances(c, opts.rulings ?? [], opts.consults ?? [], opts.asks ?? [])))
   const late = (g: Gap) => !!g.since && now - Date.parse(g.since) >= GAP_GRACE_MS
   const reqGaps = requests.filter((r) => r.missing.length).map((r): Gap => ({ kind: 'request', id: r.req.id, title: r.req.title, missing: r.missing, since: r.req.at }))
 
@@ -498,7 +498,7 @@ export function requestViews(c: Cockpit, log: UserLog, archive: Card[], tasks: M
  * 仕分けていない発言。intake の through より後の発言と、checked_through より後で through 以前のうち、どの依頼にも none にも結ばれていないもの。
  * id の無い行（発言に id を付ける前の記録）は結べないので見ない。intake の無い帳簿（移し替えの前）は検査しない。
  */
-export function unsortedOf(c: Cockpit, utterances: Utterance[]): Gap[] {
+export function unsortedOf(c: Cockpit, utterances: Utterance[], returned: ReadonlySet<string> = new Set()): Gap[] {
   if (!c.intake) return []
   const ids = utterances.filter((u): u is Utterance & { id: string } => !!u.id)
   const at = (id: string | undefined) => (id ? ids.findIndex((u) => u.id === id) : -1)
@@ -506,8 +506,20 @@ export function unsortedOf(c: Cockpit, utterances: Utterance[]): Gap[] {
   const checked = at(c.intake.checked_through)
   const bound = new Set([...(c.intake.none ?? []), ...(c.requests ?? []).flatMap((r) => (r.utterances ?? []).map((u) => u.id))])
   return ids
-    .filter((u, i) => i > through || (i > checked && !bound.has(u.id)))
+    .filter((u, i) => !returned.has(u.id) && (i > through || (i > checked && !bound.has(u.id))))
     .map((u) => ({ kind: 'utterance', id: u.id, title: (u.prompt ?? '').replace(/\s+/g, ' ').slice(0, 60), missing: ['仕分け'], since: u.at }))
+}
+
+/**
+ * 相談・質問の返しで反映された発言の id。決まったこと（decisions[].utterance）は判断の記録にその返しの from_return があれば、
+ * 依頼（requests[].utterance）は帳簿の依頼にその返しの from_return があれば、仕分け済みとみなす（追加 32）。
+ */
+export function returnedUtterances(c: Cockpit, rulings: Ruling[], memos: ConsultMemo[], asks: AskThread[]): string[] {
+  const inRulings = new Set(rulings.map((r) => r.from_return).filter(Boolean))
+  const inRequests = new Set((c.requests ?? []).map((r) => r.from_return).filter(Boolean))
+  const rets = [...memos.flatMap((m) => m.returns), ...asks.flatMap((a) => a.returns)]
+  const ids = (xs: unknown) => (Array.isArray(xs) ? xs.map((x) => x?.utterance).filter((x): x is string => typeof x === 'string') : [])
+  return [...new Set(rets.flatMap((r) => [...(inRulings.has(r.return_id) ? ids(r.decisions) : []), ...(inRequests.has(r.return_id) ? ids(r.requests) : [])]))]
 }
 
 /** 仕事ごとの今。済んだ仕事は後ろに回す。メインの書いた要約は使わず、タスクとカードから決める。 */

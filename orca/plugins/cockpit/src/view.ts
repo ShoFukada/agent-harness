@@ -3,7 +3,7 @@ import { actionVerb, chatMain, CONTEXT_FIELDS, COUNTED, COWORK_ID, dismissable, 
 import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
-  type Bucket, type Derived, type JobView, type OrcaFacts, type OwnerRef, type Row
+  type Bucket, type Derived, type Gap, type JobView, type OrcaFacts, type OwnerRef, type Row
 } from './state.ts'
 
 export type Board = { root: string; v: CockpitView; d: Derived }
@@ -66,7 +66,7 @@ export function boardsOf(views: CockpitView[], now: number): Board[] {
     .filter((v): v is CockpitView & { root: string; cockpit: NonNullable<CockpitView['cockpit']> } => !!v.root && !!v.cockpit)
     .map((v) => {
       const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, current: v.current, terminals: v.terminals, terminalsPartial: v.terminalsPartial, questions: v.questions }
-      return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now, { utterances: v.utterances, firstSeen: v.firstSeen }) }
+      return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now, { utterances: v.utterances, returned: v.returned, firstSeen: v.firstSeen }) }
     })
 }
 
@@ -230,15 +230,15 @@ export const sp = (xs: (string | false | undefined)[]) => xs.filter(Boolean).map
 
 /** 欄を外して読めた知らせ（1 枚のカードの書き間違い）か。読めない・繋がらない知らせと分ける。 */
 export const isSoft = (e: string) => /その欄を(外して|出さずに)/.test(e)
-const SOFT = /の(カード|タスク|依頼) (\S+?)(?:「[^」]*」)? ?の (.+?) の形が違う/
-/** 欄の形の違いは件数の 1 行に畳み、開いたときも「id・欄の名前」の 1 行ずつにする（追加 15）。窓口には checks と状態の CLI で名指しが届く。 */
-export function softHtml(soft: string[], ui: Ui, cls: string): string {
-  if (!soft.length) return ''
-  const line = (e: string) => {
-    const m = SOFT.exec(e)
-    return m ? `<span class="code">${esc(m[2])}</span>・${esc(m[3])}` : esc(e)
-  }
-  return `<details class="${cls}" data-fold="soft"${ui.open.soft ? ' open' : ''}><summary>帳簿の形式不備 ${soft.length} 件</summary><ul>${soft.map((e) => `<li>${line(e)}</li>`).join('')}</ul></details>`
+/**
+ * 窓口の仕事（30 分を過ぎた帳簿の未記入・発言の仕分けと、欄の形の違い）は、1 件ずつ並べず種類ごとの件数の 1 行にする（追加 32）。
+ * 深田さんが片付けるものではなく、窓口には checks と状態の CLI で名指しが届くため。
+ */
+export function choresHtml(gaps: Gap[], soft: number, cls: string): string {
+  const n = (kind: Gap['kind']) => gaps.filter((g) => g.kind === kind).length
+  const late = [n('utterance') && `発言の仕分け ${n('utterance')} 件`, n('card') && `カードの記入 ${n('card')} 件`, n('request') && `依頼の記入 ${n('request')} 件`].filter(Boolean).join('・')
+  const parts = [late && `${late}（30 分超過）`, soft && `帳簿の形式不備 ${soft} 件`].filter(Boolean)
+  return parts.length ? `<div class="${cls}" role="status"><b>窓口の未処理</b>${esc(parts.join('・'))}<span class="by">窓口が対応します（操作は不要）</span></div>` : ''
 }
 
 export const fld = (label: string, html: string) => (html ? `<div class="fld"><span class="lb">${esc(label)}</span><div>${html}</div></div>` : '')
@@ -589,7 +589,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
       ], showWs)
   return `<div class="ck${m.panel ? ' pnl' : ''}" data-theme="${ui.dark ? 'dark' : 'light'}">${top}
     <main class="board${m.panel ? ' panel' : ''}" data-pane="${ui.pane ?? 'queue'}">
-      ${errs.length ? `<div class="errs" role="alert">${errs.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}${softHtml(notes.filter(isSoft), ui, 'soft')}
+      ${errs.length ? `<div class="errs" role="alert">${errs.map((e) => `<div>${esc(e)}</div>`).join('')}</div>` : ''}${choresHtml(shown.flatMap((b) => b.d.gaps), notes.filter(isSoft).length, 'chores')}
       ${unseen.length && ui.open.unseen ? `<div class="notes warn" role="status"><b>見ていないもの</b>${unseen.map((x) => `<div>${esc(x)}</div>`).join('')}</div>` : ''}
       ${handoffHtml(shown, now)}
       ${m.panel ? '' : casesHtml(m, ui, now)}

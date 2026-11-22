@@ -161,7 +161,7 @@
 | `routes` | 連絡を拾う経路（Slack・Teams・メール）と、見張りが読んだ時刻。古いと「見ていない」に出る |
 | `cards` | 人に返してほしいもの。`kind` は `stuck`・`permit`・`decide`・`send`・`review`・`consult`・`inbox`・`report`（版 2 の `talk` も読む）。`request` は依頼の原文、`request_id` は帳簿の依頼の id |
 | `requests` | 依頼の帳簿。`utterances`（発言の記録の id と引用）か `source`（`session`・`at`・`quote`）、`done_when`（済の条件 1〜3）、`kind`、`evidence`（`{ when, kind, ref }`、`when` は済の条件の 1 始まりの番号）。済は `state` を書かず、証拠から `src/state.ts` が決める。`legacy` は移し替えの時点にあった行の印 |
-| `intake` | 発言の仕分けの位置（`through` までの発言は依頼か `none` に結んである） |
+| `intake` | 発言の仕分けの位置（`through` までの発言は依頼か `none` に結んである）。相談・質問の返しで決まった発言は、その返しを判断の記録（`from_return`）か依頼（`from_return`）に入れれば仕分け済みとみなす。仕分けていない発言は、30分を過ぎると窓の上に「窓口の未処理: 発言の仕分けn件（30分超過）」の1行で出る |
 | `applied_ops` | 窓口が反映し終えた操作の `op_id` |
 
 帳簿は Write・Edit で書かず、下の「書く道具」を通します。人の操作は `.orca/cockpit.user.json` に `{ "ops": [{ "op_id": 1, "at": "…", "item_id": "d1", "item_rev": 1, "type": "decide", "option_id": "a" }] }` の形で追記されます。窓と同じ判定済みの状態は `node window/state.ts <ワークスペースの root>` で JSON として読めます。hook と窓口はこの出力の `overview`・`mine`・`jobs`・`tasks`（`from` と今の Dispatch の `dispatch`）・`checks` を読みます。`checks` の版 3 の検査は `incomplete_cards`・`incomplete_requests`・`unsorted`・`stale_tasks`・`loose_tasks`・`unknown_phase`・`no_form`・`unmapped_elements`・`unproven`・`affected_tasks`・`unreflected_returns`（相談のメモにあって判断の記録の `from_return` か帳簿のカードの `from_returns` に無い返しと、カードの `held_returns` に残る返し。`compaction-keep.py unreflected` と同じ判定）・`stale_consults`（カードが片付いたのに Orca に残る相談のタブとチャット）です。`unreflected_returns` には窓からの質問の分も `ask` 付きで並びます（`{ id: return_id, ask, missing, memo, returns, tasks? }` と、返しの無い「これで決める」 `{ id: null, ask, op, missing: ['返し'], memo }`。`compaction-keep.py unreflected` の `unreflected_asks` と同じ判定）。
