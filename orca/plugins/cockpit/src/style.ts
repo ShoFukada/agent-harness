@@ -2,7 +2,7 @@
 // 目立たせるのは左の期限の軸だけにし、ほかは静かに保つ。外部のフォントは読み込まない（パネルは Orca のサンドボックス）。
 export const CSS = `
 .ck { color-scheme: light;
-  --bg:#e9edf0; --surface:#ffffff; --sunk:#f3f5f7; --ink:#15212c; --ink2:#4b5966; --ink3:#616b76; --rule:#d3dae0; --rule2:#e4e9ed;
+  --bg:#e9edf0; --surface:#ffffff; --sunk:#f3f5f7; --ink:#15212c; --ink2:#4b5966; --ink3:#5c6671; --rule:#d3dae0; --rule2:#e4e9ed;
   --focus:#1f5fbf; --hot:#c2361a; --hot-bg:#fdeee9; --ok:#2b7649;
   --k-inbox:#0d756c; --k-send:#6a47c9; --k-decide:#1f3a68; --k-review:#0b6e99; --k-permit:#925d00; --k-stuck:#39434d; --k-talk:#5a6b7d; --k-report:#616b73; --k-consult:#2f6f5e;
   --f-delegate:#2c56c9; --f-cowork:#925e0e; --f-watch:#0e756a; --amber:#925d00; --amber-bg:#fbf1de; --ok-bg:#e6f3ea; --run:#5fa3e6; --run-bg:#e9f3fc; --mine:#1f3a68;
@@ -74,7 +74,7 @@ body { margin:0; }
   .ck .cases { position:static; display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none;
     -webkit-mask-image:linear-gradient(to right, #000 85%, transparent); mask-image:linear-gradient(to right, #000 85%, transparent); }
   .ck .strips .strip { scroll-margin-top:60px; }
-  .ck .case { flex:none; grid-template-columns:auto auto; padding:4px 10px; border:1px solid var(--rule); border-radius:999px; }
+  .ck .case { flex:none; grid-template-columns:auto auto; padding:4px 10px; border:1px solid var(--ink3); border-radius:999px; }
   .ck .case .sub, .ck .cases h3 { display:none; }
 }
 
@@ -92,7 +92,7 @@ body { margin:0; }
 .ck .when small { display:block; font-weight:400; font-size:var(--fs-xs); color:var(--ink3); }
 .ck .now-line { grid-column:1 / -1; display:grid; grid-template-columns:88px minmax(0,1fr); gap:0 14px; align-items:center; margin:6px 0; }
 .ck .now-line span { text-align:right; font-size:var(--fs-xs); font-weight:700; color:var(--focus); }
-.ck .now-line i { height:2px; background:var(--focus); opacity:.55; border-radius:1px; }
+.ck .now-line i { height:2px; background:var(--focus); border-radius:1px; }
 /* 票は区切り線で並べ、囲みの箱にしない（R111）。 */
 .ck .strips { display:grid; margin:6px 0; min-width:0; border-block:1px solid var(--rule); }
 /* 票は地の上に線で区切って並べ、開いた票だけ面の色で浮かせる（白い箱を並べない。追加 22）。 */
@@ -173,7 +173,7 @@ body { margin:0; }
 .ck .done-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
 .ck .done-list li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; align-items:start; border-bottom:1px solid var(--rule2); padding-bottom:6px; }
 .ck .done-list small { grid-column:1; color:var(--ink3); font-size:var(--fs-xs); }
-.ck .other textarea { width:100%; field-sizing:content; min-height:calc(6lh + 18px); max-height:50vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--rule); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
+.ck .other textarea { width:100%; field-sizing:content; min-height:calc(6lh + 18px); max-height:50vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
 .ck .other .cnt { font-size:var(--fs-xs); color:var(--ink3); }
 
 /* 返答の列。低い窓でも見えるよう、開いた票の下に留める。 */
@@ -182,7 +182,7 @@ body { margin:0; }
 .ck .btn { white-space:nowrap; border:1px solid var(--ink3); background:var(--surface); border-radius:7px; padding:5px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
 .ck .btn:hover { border-color:var(--ink); }
 .ck .btn.pri { background:var(--ink); border-color:var(--ink); color:var(--surface); }
-.ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink3); cursor:default; }
+.ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink2); cursor:default; }
 .ck .btn.talk { border-color:var(--focus); color:var(--focus); }
 .ck .btn.quiet { border-color:transparent; background:none; padding-inline:4px; color:var(--ink2); font-weight:400; text-decoration:underline; text-underline-offset:3px; }
 /* 枠の無い副の操作も、下線で押せると分かるようにする（Neon 追加 23）。 */
@@ -280,6 +280,7 @@ body { margin:0; }
  * 窓の色と字の体系（R81）。色の役割は 地（--bg・--surface・--sunk）・文字（--ink）・補助の文字（--ink2・--ink3）・線（--rule・--rule2）・
  * 強調 1 色（--focus）・危険 1 色（--hot）と、仕事の 3 つの形（--f-delegate・--f-cowork・--f-watch）だけ。カードの種類は色で分けず語と印で示すので、
  * パネルと共有する種類・状態の色の変数を、窓の中では役割の色に寄せる。字の大きさは 12・14・16・20px の 4 段（12px 未満は使わない）。
+ * 押せる物と入力欄の枠は --ink3 にする（地との比 3:1 以上。追加 51）。--rule・--rule2 は区切りの線・飾り・無効のボタンの地だけに使う。
  */
 .ck.win, .ck.pnl {
   --k-inbox:var(--ink2); --k-send:var(--ink2); --k-decide:var(--ink2); --k-review:var(--ink2); --k-permit:var(--ink2); --k-stuck:var(--ink2); --k-talk:var(--ink2); --k-report:var(--ink2); --k-consult:var(--ink2);
@@ -476,7 +477,7 @@ body { margin:0; }
 .ck .md .mdpre { margin:4px 0 8px; padding:8px 10px; background:var(--sunk); border:1px solid var(--rule2); border-radius:6px; overflow-x:auto; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); line-height:1.55; white-space:pre; }
 /* 全体の右の欄の切り替え（タスクの詳細｜案件への質問。R166） */
 .ck.win .wsw { position:sticky; top:0; z-index:2; display:flex; gap:4px; padding:10px 16px 8px; background:var(--surface); border-bottom:1px solid var(--rule2); }
-.ck.win .wsw button { flex:1 1 0; min-width:0; border:1px solid var(--rule); background:none; border-radius:7px; padding:5px 10px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); display:inline-flex; justify-content:center; align-items:center; gap:6px; }
+.ck.win .wsw button { flex:1 1 0; min-width:0; border:1px solid var(--ink3); background:none; border-radius:7px; padding:5px 10px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); display:inline-flex; justify-content:center; align-items:center; gap:6px; }
 .ck.win .wsw button[aria-pressed="true"] { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck.win .wsw .n { font-weight:700; }
 .ck.win .askdone { margin:0; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
