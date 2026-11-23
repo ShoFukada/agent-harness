@@ -3,18 +3,21 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   dismissable, isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  ASK_ID, isAskItem, latestAnswer, latestChoices, RETURN_ID, taskSig, type TaskSeen, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
+  ANSWER_VIA, ASK_ID, isAnswerItem, isAskItem, latestAnswer, latestChoices, RETURN_ID, taskSig, type TaskSeen, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
 export const SIGNAL = '【操縦席】未反映の操作があります'
 
+/** 深田さんが文を書いた（か選んだ）操作。合図にどのカードかと本文の頭を載せる。 */
+const saidOp = (o: Op) => o.type === 'talk' || o.type === 'repeat' || o.type === 'answer' || (o.type === 'decide' && o.option_id === OTHER)
+
 /** 合図の 1 行。別の答えと「担当と話す」があれば、どのカードかと本文の頭を載せる（端末に送るので改行は空白にする）。 */
 export function signalText(ops: Op[]): string {
-  const said = ops.filter((o) => o.type === 'talk' || o.type === 'repeat' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
+  const said = ops.filter(saidOp).at(-1)
   if (!said) return SIGNAL
   const t = (said.text ?? '').replace(/\s+/g, ' ').trim()
-  const what = said.type === 'talk' ? (t ? '直してほしい' : '担当と話す') : said.type === 'repeat' ? '前にも言った' : '別の答え'
+  const what = said.type === 'talk' ? (t ? '直してほしい' : '担当と話す') : said.type === 'repeat' ? '前にも言った' : said.type === 'answer' ? '窓から答えた' : '別の答え'
   return `${SIGNAL}（${what}${said.item_id ? ` ${said.item_id}` : ''}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
 }
 
@@ -121,16 +124,16 @@ const ASK_KIND = { 質問: 'q', 答え: 'a', 知らせ: 'n' } as const
 
 /**
  * 質問と答えの控え（consult --ask が頭を、hook が「### 質問 HH:MM（u-12）」「### 答え HH:MM」「### 知らせ HH:MM」の節を書く）。
- * 頭の「- カード:」「- タスク:」は compaction-keep.py の ask_binding と同じ形で読む。
+ * 頭の「- カード:」「- タスク:」「- 仕事:」は compaction-keep.py の ask_binding と同じ形で読む。
  */
-export function parseAskMemo(raw: string): Pick<AskThread, 'card' | 'task' | 'at' | 'entries'> {
+export function parseAskMemo(raw: string): Pick<AskThread, 'card' | 'task' | 'stream' | 'at' | 'entries'> {
   const text = raw.replace(/\r\n?/g, '\n')
   // 閉じていないフェンスは見ない（hook が後に書いた本物の答えまで隠すため）。
   const fenced: [number, number][] = []
   for (let m, re = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$/gm; (m = re.exec(text)); ) fenced.push([m.index, m.index + m[0].length])
   const heads = [...text.matchAll(ASK_SECTION)].filter((m) => !fenced.some(([a, b]) => m.index! > a && m.index! < b))
   const head = text.slice(0, heads[0]?.index ?? text.length).split('\n###', 1)[0]!
-  const bound = Object.fromEntries([...head.matchAll(/^- (カード|タスク): ([A-Za-z0-9_]+)$/gm)].map((m) => [m[1], m[2]]))
+  const bound = Object.fromEntries([...head.matchAll(/^- (カード|タスク|仕事): ([A-Za-z0-9_]+)$/gm)].map((m) => [m[1], m[2]]))
   const at = /（窓口の会話 ([^）]+) 時点）/.exec(head)?.[1]
   const entries: AskEntry[] = heads.map((m, i) => ({
     kind: ASK_KIND[m[1] as keyof typeof ASK_KIND],
@@ -138,7 +141,7 @@ export function parseAskMemo(raw: string): Pick<AskThread, 'card' | 'task' | 'at
     text: text.slice(m.index! + m[0].length, heads[i + 1]?.index ?? text.length).trim(),
     ...(m[3] && { utterance: m[3] })
   }))
-  return { ...(bound['カード'] && { card: bound['カード'] }), ...(bound['タスク'] && { task: bound['タスク'] }), ...(at && { at }), entries }
+  return { ...(bound['カード'] && { card: bound['カード'] }), ...(bound['タスク'] && { task: bound['タスク'] }), ...(bound['仕事'] && { stream: bound['仕事'] }), ...(at && { at }), entries }
 }
 
 /** 質問の返しの記録の行（compaction-keep.py の read_jsonl と同じく、壊れた行とオブジェクトでない行は飛ばす）。 */
@@ -173,7 +176,14 @@ export async function readAsks(root: string): Promise<AskThread[]> {
     const m = parseAskMemo(memo ?? '')
     const decide = latestAnswer(m.entries)
     const choices = decide ? latestChoices(m.entries) : []
-    return { id, path: path.join(dir, `ask-${id}.md`), returnsPath: path.join(dir, `ask-${id}.returns.jsonl`), ...m, answers: m.entries.filter((e) => e.kind === 'a').length, ...(decide && { decide }), ...(choices.length && { choices }), returns: parseAskReturns(rets ?? '') }
+    const first = m.entries.find((e) => e.kind === 'q')?.text
+    // 一覧の時刻と並びは、控えか返しの記録を最後に書いた時刻（控えの節は時刻だけで日付を持たないため）。
+    const times = await Promise.all([`ask-${id}.md`, `ask-${id}.returns.jsonl`].map((n) => fsp.stat(path.join(dir, n)).then((x) => x.mtimeMs, () => 0)))
+    const updated = Math.max(...times)
+    return {
+      id, path: path.join(dir, `ask-${id}.md`), returnsPath: path.join(dir, `ask-${id}.returns.jsonl`), ...m, answers: m.entries.filter((e) => e.kind === 'a').length,
+      ...(decide && { decide }), ...(choices.length && { choices }), ...(first && { first }), ...(updated && { updated: new Date(updated).toISOString() }), returns: parseAskReturns(rets ?? '')
+    }
   }))
 }
 
@@ -419,6 +429,16 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
     if (input.item_id !== '') throw invalid('「前にも言った」はカードに付けません')
     return
   }
+  if (input.type === 'answer') {
+    if (!isAnswerItem(input.item_id) || !Number.isInteger(input.item_rev)) throw invalid('窓から答えられるのは停止の行と一緒に作る仕事の行だけです')
+    if (!(typeof input.text === 'string' && input.text.trim())) throw invalid('答えの文がありません')
+    if (!ANSWER_VIA.includes(input.via!)) throw invalid('届け方の形が違います')
+    if (!Array.isArray(input.to) || !input.to.length || !input.to.every((x) => typeof x === 'string' && x)) throw invalid('届け先の形が違います')
+    if (input.key !== undefined && !(Number.isInteger(input.key) && input.key > 0)) throw invalid('端末に送った番号の形が違います')
+    const bad = textError(input.text)
+    if (bad) throw invalid(bad)
+    return
+  }
   if (input.type === 'ask_decide' || isAskItem(input.item_id)) {
     if (input.type === 'undo' && log.ops.some((o) => o.op_id === input.undo_of && o.type === 'ask_decide' && o.item_id === input.item_id)) return
     if (input.type !== 'ask_decide' || !isAskItem(input.item_id) || input.item_rev !== 0) throw invalid('窓からの質問に返せるのは「これで決める」だけです')
@@ -487,7 +507,7 @@ async function lock(file: string, staleMs = 10_000, waitMs = 3_000): Promise<() 
 export type SendRun = (runId: string, subject: string, body: string) => Promise<NotifyResult>
 
 export function runSignalBody(cockpit: Cockpit, ops: Op[]): string {
-  const said = ops.filter((o) => o.type === 'talk' || o.type === 'repeat' || (o.type === 'decide' && o.option_id === OTHER)).at(-1)
+  const said = ops.filter(saidOp).at(-1)
   const text = said?.text?.trim()
   return [`${cockpit.workspace.name} の操縦席の窓から: ${signalText(ops)}`, ...(text ? ['', '書いた文（全文）:', text] : []), '', '未反映の操作を cockpit skill の手順で反映してください。'].join('\n')
 }

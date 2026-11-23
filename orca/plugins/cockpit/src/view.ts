@@ -38,33 +38,33 @@ export type Ui = {
   undos: { root: string; opId: number; itemId: string; rev: number; label: string; title: string; to: string; until: number }[]
   /** 狭い幅で出す側（私の番か、案件の今と待ち）。広い幅では両方出す。 */
   pane?: 'queue' | 'side'
-  /** 窓のタブ（要対応・全体・対応済み）。 */
-  tab?: 'todo' | 'whole' | 'done'
+  tab?: 'todo' | 'whole' | 'asks' | 'done'
   /** 窓の対応済みで開いている票（root#id）。要対応の sel と分けて持つ。 */
   doneSel?: string
   /** 窓の全体で右に詳細を出しているタスクの id。 */
   task?: string
   /** 窓の全体で右に詳細を出している見張る仕事（root#仕事の id）。タスクの詳細と入れ替わりに出す。 */
   watch?: string
-  /** 窓の全体の右の欄に出すもの。detail はタスク・見張る仕事の詳細、ask は案件への質問（R166）。既定は detail（選んだものが無ければ ask）。 */
-  wholeSide?: 'detail' | 'ask'
+  stream?: string
+  thread?: string
+  askAll?: boolean
   theme: Theme
   dark: boolean
-  /** 窓からの質問の書きかけ（欄の鍵 → 文）。欄の鍵は <root>#whole・<root>#card:<id>・<root>#task:<id>（新しい質問）と <root>#id:<質問 id>（続き）。 */
+  /** 窓からの質問の書きかけ（欄の鍵 → 文）。欄の鍵は <root>#whole・<root>#card:<id>・<root>#task:<id>・<root>#stream:<id>（新しい質問）と <root>#id:<質問 id>（続き）。 */
   askDraft: Record<string, string>
   /** 質問の前に判断の記録から引いた行（欄の鍵 → 引いた質問の文と当たり）。 */
   askHits: Record<string, { q: string; hits: RulingHit[] }>
   /** 送って答えを待っている質問（欄の鍵 → 送った時刻・文・質問 id・送った時点の答えの数・立てられなかった理由）。 */
   askWait: Record<string, AskWait>
-  /** この窓で聞いた質問（<root>#<質問 id>。全体の上で開いて出す。前の質問は畳む）。 */
-  askMine: Record<string, boolean>
+  answerDraft?: Record<string, string>
+  answering?: Record<string, { error?: string }>
   /** 窓を前に見たときからの変化（追加 24）。描くたびに controller がブラウザの控えから作る。控えが無ければ無い。 */
   since?: Since
 }
 export type AskWait = { root: string; at: number; q: string; ask?: string; answers: number; error?: string }
 /** 票の中身を描くのに要る、その案件の図。 */
 export type VRow = Row & { v?: CockpitView }
-export const newUi = (): Ui => ({ picked: {}, other: {}, otherOpen: {}, open: {}, undos: [], theme: 'light', dark: false, askDraft: {}, askHits: {}, askWait: {}, askMine: {} })
+export const newUi = (): Ui => ({ picked: {}, other: {}, otherOpen: {}, open: {}, undos: [], theme: 'light', dark: false, askDraft: {}, askHits: {}, askWait: {} })
 
 export const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 export const keyOf = (r: { root: string; card: { id: string } }) => `${r.root}#${r.card.id}`

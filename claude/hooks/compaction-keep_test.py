@@ -1504,7 +1504,7 @@ class AskFromWindow(Base):
         self.rule(kind="decision", text="d21 の凡例は 6 つ")                # R2
         self.memo_dir = os.path.join(self.root, ".orca", "consult")
         os.makedirs(self.memo_dir)
-        for ask, bind in (("ask1", ""), ("ask2", "- カード: d21\n")):
+        for ask, bind in (("ask1", ""), ("ask2", "- カード: d21\n"), ("ask3", "- 仕事: s7\n")):
             with open(os.path.join(self.memo_dir, "ask-%s.md" % ask), "w", encoding="utf-8") as fh:
                 fh.write("# 質問｜テスト｜%s\n%s- 写した窓口の会話: s-main\n\n" % (ask, bind))
 
@@ -1767,6 +1767,34 @@ class AskFromWindow(Base):
         out = self.say("【相談の知らせ】返しを書いて（op 812）")
         self.assertIn("R3 [decision] t9 は止める", out)
         self.assertEqual(self.jsonl("utterances.jsonl"), [])
+
+    def test_a_question_on_a_stream_gets_the_rulings_on_the_stream_and_its_tasks(self):
+        """仕事に結んだ質問（控えの頭の「- 仕事:」）は、仕事の id を挙げる・その下のタスクを affects に持つ判断と全体の制約だけを流す。"""
+        self.cockpit["tasks"][0]["stream"] = "s7"
+        self.write_cockpit()
+        self.assertIn("仕事 s7 に結ばれた質問", self.tool_args("ask-context", "ask3").stdout)
+        self.launch("R2", ask="ask3")
+        self.rule(kind="decision", text="t9 の話（この仕事に関係しない）")      # R3
+        self.rule(kind="decision", text="s7 は定例の前日までに出す")            # R4 仕事を名指し
+        self.rule(kind="decision", text="入口を描く", affects=["t1"])          # R5 仕事の下のタスク
+        self.rule(kind="constraint", text="費用は月 5 万円まで", quote="5 万")  # R6 全体の制約
+        out = self.say("続き", ask="ask3")
+        self.assertNotIn("t9 の話", out)
+        for want in ("R4 [decision] s7 は定例", "R5 [decision] 入口を描く", "R6 [constraint] 費用は"):
+            self.assertIn(want, out)
+        # 関係しない判断は読んだことにする（カードの相談と同じ。窓口の照合も関係する判断だけを見る）
+        self.assertIn("関係する判断が増えた", out)
+        self.assertIn("返しの rulings_seen に書く値は R6", out)
+        self.assertEqual(self.say("次", ask="ask3"), "")
+        since = self.tool_args("ask-context", "ask3", "--since", "R2").stdout
+        self.assertNotIn("t9 の話", since)
+        self.assertIn("R4 [decision] s7 は定例", since)
+        self.assertEqual(self.jsonl("utterances.jsonl")[-1]["ask"], "ask3")
+        # 最初の文脈も仕事に関係する判断だけ（ほかの仕事の判断で長さの上限を使わない）。
+        first = self.tool_args("ask-context", "ask3").stdout
+        self.assertNotIn("t9 の話", first)
+        self.assertIn("R5 [decision] 入口を描く", first)
+        self.assertIn("rulings_seen: R6", first)
 
     def test_rulings_seen_of_a_question_without_a_card_stops_at_what_it_passed(self):
         self.launch("R2")

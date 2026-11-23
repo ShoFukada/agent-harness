@@ -1,10 +1,20 @@
-import type { AskAnswer, AskThread, Card, Cockpit, ConsultMemo, DraftCheck, DraftFormat, Handoff, OpType, TaskSeen, UserLog, Utterance } from './model.ts'
+import type { AnswerVia, AskAnswer, AskThread, Card, Cockpit, ConsultMemo, DraftCheck, DraftFormat, Handoff, OpType, TaskSeen, UserLog, Utterance } from './model.ts'
 
 /** 止まっている理由。blocked: 許可待ち、waiting: 返事待ち、dead: プロセスが落ちた。 */
 export type StopReason = 'blocked' | 'waiting' | 'interrupted' | 'error' | 'dead' | 'auth' | 'limit'
 
 /** 止まったエージェントが人に出している問い。question: 質問（AskUserQuestion・orchestration の question）、permit: 道具を使ってよいかの確認。 */
-export type Ask = { kind: 'question' | 'permit'; text: string; options?: string[]; /** 誰が誰に聞いているかの 1 行（窓の行の 2 行目と詳細の題の下）。derive が足す。 */ from?: string }
+export type Ask = {
+  kind: 'question' | 'permit'; text: string; options?: string[]; /** 誰が誰に聞いているかの 1 行（窓の行の 2 行目と詳細の題の下）。derive が足す。 */ from?: string
+  /** 端末の画面から読んだ問いだけ: 選択肢の番号と文と下の説明、自由入力（Type something）の番号、枠の上の段落、枠の中の問いより上の行（許可の道具の名前と全文）。 */
+  choices?: ScreenChoice[]; free?: number; before?: string; body?: string[]
+  /** 許可の確認で、題（text）をコマンドにしたときの画面の問いの文（Do you want to proceed? など）。 */
+  question?: string
+  /** 画面の問いの印（window/orca-state.ts の screenSig）。窓から答えを送る直前に画面を読み直し、同じ問いのときだけキーを送る。 */
+  sig?: string
+}
+/** 端末の選択肢の 1 行。n は押す番号のキー、label は画面の文のまま、note は下の説明の行。 */
+export type ScreenChoice = { n: number; label: string; note?: string }
 
 /** Orca の orchestration の question のうち、答えの無いまま待っているもの（window/orca-state.ts の questionFacts）。 */
 export type QuestionFact = {
@@ -141,9 +151,9 @@ export type AutomationFact = { id: string; name?: string; rrule?: string; timezo
 export type AutomationRun = { status: string; at: number; content?: string; error?: string; chat?: string }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */
-export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string; answer?: AskAnswer; choice?: string }
-/** 窓から質問する（consult --ask）。ask が無ければ新しい質問、あれば続き。card・task は結ぶ先（新しい質問だけ）。 */
-export type AskInput = { root: string; ask?: string; question: string; card?: string; task?: string }
+export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string; answer?: AskAnswer; choice?: string; via?: AnswerVia; to?: string[]; key?: number }
+/** 窓から質問する（consult --ask）。ask が無ければ新しい質問、あれば続き。card・task・stream は結ぶ先（新しい質問だけ・1 つまで）。 */
+export type AskInput = { root: string; ask?: string; question: string; card?: string; task?: string; stream?: string }
 /** 質問のタブを開いた結果。ask は質問 id（新しい質問でも、立てられなかったときも返す）。 */
 export type AskResult = { opened: boolean; ask?: string; reason?: string }
 /** 質問の前に判断の記録から引いた行（撤回・置き換えされていないもの）。 */
@@ -152,6 +162,13 @@ export type RulingHit = { id: string; at?: string; kind?: string; text: string; 
 /** again: 同じ答えをもう記録していた（記録も知らせも足していない）。 */
 export type AskDecideResult = { op: number; sent: boolean; reason?: string; again?: true }
 export type NotifyResult = { sent: boolean; reason?: string }
+/**
+ * 停止の行に窓から答える（/api/answer）。item_id は行の id、rev は行の版（聞いた時刻の ms）。端末の問いは、選んだ番号（choice）か書いた文（text）と、
+ * 見ていた画面の印（sig）を送る。orchestration の問い（#ask:msg_…）と担当の返事待ち（#cowork:…）は text だけ。
+ */
+export type AnswerInput = { root: string; item_id: string; rev: number; text?: string; choice?: number; sig?: string }
+/** 答えを届けた結果。届かなければ reason（op は書いていない）。how は届け先を利用者の語で（「端末」「worker と窓口」など）。 */
+export type AnswerResult = { sent: boolean; how?: string; op?: number; reason?: string; note?: string }
 /**
  * 担当を開いた結果。how はどこを開いたか（画面に出す）。tab は利用者が選ぶチャットのタブの題（Orca にはチャットのタブを前に出す手段が無いので、
  * 名前で案内する）。reason は開けなかった理由。note はカードの相談を立てられずに窓口へ回したときの理由。

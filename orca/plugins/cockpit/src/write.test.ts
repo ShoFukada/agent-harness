@@ -275,6 +275,8 @@ test('質問の返し: asks[] を質問 id ごとに足し・置き換え、そ�
   assert.match(applyChange(c, { asks: [{ id: 'ask3', from_returns: ['ask4-1'] }] }).errors.join(), /from_returns は ask3-<数> の配列/)
   assert.match(applyChange(c, { asks: [{ id: 'ask3', notify: [{ return_id: 'ask3-1', message_id: '' }] }] }).errors.join(), /notify は/)
   assert.match(applyChange(c, { asks: [{ id: 'ask3', note: 'x' }] }).errors.join(), /書けない欄 note/)
+  assert.deepEqual(applyChange(c, { asks: [{ id: 'ask4', stream: 's2', from_returns: ['ask4-1'] }] }).next!.asks!.find((x) => x.id === 'ask4'), { id: 'ask4', stream: 's2', from_returns: ['ask4-1'] })
+  assert.match(applyChange(c, { asks: [{ id: 'ask4', stream: 3 as never }] }).errors.join(), /stream は文字列/)
   assert.ok(!('asks' in applyChange(c, { cards: [] }).next!), '質問の無い帳簿に空の asks を足さない')
   const problems: string[] = []
   assert.deepEqual(parseCockpit(JSON.stringify({ ...c, asks: [row, { title: 'id なし' }] }), problems).asks, [row])

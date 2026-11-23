@@ -71,7 +71,7 @@ const REQUEST_KEYS: Keys = {
 const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'status', 'status_basis', 'sources', 'form', 'watch'], nested: { watch: ['automation', 'targets', 'to'] } }
 const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'state'], nested: {} }
 const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through', 'notices_through', 'no_wait'], nested: {} }
-const ASK_KEYS: Keys = { top: ['id', 'card', 'task', 'memo', 'from_returns', 'held_returns', 'notify'], nested: { notify: ['return_id', 'task', 'message_id'] } }
+const ASK_KEYS: Keys = { top: ['id', 'card', 'task', 'stream', 'memo', 'from_returns', 'held_returns', 'notify'], nested: { notify: ['return_id', 'task', 'message_id'] } }
 
 /** asks[] の 1 行の形の誤り。返しの id はその質問のもの（ask3-1）だけを受ける（compaction-keep.py の照合で別の質問の返しと取り違えないため）。 */
 function askErrors(a: Record<string, unknown>): string[] {
@@ -79,7 +79,7 @@ function askErrors(a: Record<string, unknown>): string[] {
   const own = (v: unknown) => typeof v === 'string' && returnId(v) && v.slice(0, v.lastIndexOf('-')) === id
   const errs: string[] = []
   if (!ASK_ID.test(id)) errs.push('id は ask<数>')
-  for (const k of ['card', 'task', 'memo'] as const) if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k])) errs.push(`${k} は文字列`)
+  for (const k of ['card', 'task', 'stream', 'memo'] as const) if (a[k] !== undefined && (typeof a[k] !== 'string' || !a[k])) errs.push(`${k} は文字列`)
   for (const k of ['from_returns', 'held_returns'] as const) if (a[k] !== undefined && !(Array.isArray(a[k]) && (a[k] as unknown[]).every(own))) errs.push(`${k} は ${id}-<数> の配列`)
   if (a.notify !== undefined && !(Array.isArray(a.notify) && a.notify.every((n) => isObj(n) && own(n.return_id) && (n.task === undefined || typeof n.task === 'string') && (n.message_id === undefined || (typeof n.message_id === 'string' && n.message_id)))))
     errs.push(`notify は { return_id: ${id}-<数>, task?, message_id? } の配列`)

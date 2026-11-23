@@ -8,25 +8,27 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ASK_ID, askItem, askWords, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type Op, type OpType } from '../src/model.ts'
+import { ASK_ID, askItem, askWords, COWORK_ID, escapeAskSections, isAnswerItem, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type Op, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
-import type { Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
-import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks, unreflectedAsks } from '../src/state.ts'
+import type { AnswerResult, Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
+import { agentCardId, coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks, unreflectedAsks } from '../src/state.ts'
 import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
-import { sendFromMailbox, type MailOrca } from './mail.ts'
+import { deliverAnswer, type AnswerPlan } from './answer.ts'
+import { mailboxOf, sendFromMailbox, type MailOrca } from './mail.ts'
 import { addAskSent, appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readAskSent, readAskTabs, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAskTab, writeNotified, type Files, type SendRun } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
-const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts', 'src/markdown.ts', 'src/since.ts'])
+const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts', 'src/window-asks.ts', 'src/window-answer.ts', 'src/window-parts.ts', 'src/markdown.ts', 'src/since.ts'])
 /** カードの詳細に出す、相談で決まったことの件数（window-view.ts の consultHtml と同じ）。 */
 const SHOWN_DECISIONS = 3
 /** 窓に送る、質問 1 つの控えの節の数と 1 節の字数（長い答えを毎回の配信に載せない）。 */
 const ASK_ENTRIES = 6
 const ASK_TEXT = 6000
+const ASK_FIRST = 200
 /** 「これで決める」のあとに質問のタブへ送る知らせ（compaction-keep.py が深田さんの発言として記録しない書式）。 */
 export const askNotice = (op: number) => `【相談の知らせ】返しを書いて（op ${op}）`
 /**
@@ -90,6 +92,12 @@ export type Orca = {
   /** 端末の今の画面の行（terminal read --screen）。AskUserQuestion の問いは画面にしか無い。 */
   screen?(terminal: string): Promise<string[]>
   send(terminal: string, text: string): Promise<void>
+  /** 端末にキーをそのまま送る（terminal send の --enter 無し。改行は \r で送る）。端末の選択肢を窓から選ぶ。 */
+  keys?(terminal: string, text: string): Promise<void>
+  /** orchestration の問いに返事を送る（orchestration reply --id --from <郵便受け>）。 */
+  reply?(from: string, id: string, body: string): Promise<void>
+  /** orchestration の知らせを宛先（run:…・dispatch:…）に送る。Orca の注意書き（受け取りが遅れるなど）を返す。 */
+  sendTo?(from: string, to: string, subject: string, body: string): Promise<string[]>
   /** 窓口の Run に orchestration の知らせを送る（orchestration send --from <郵便受け> --to run:<id>）。 */
   notifyRun?(from: string, runId: string, subject: string, body: string): Promise<void>
   /** 窓の郵便受け（AI を動かさない端末）をその worktree に作り、handle を返す。 */
@@ -189,6 +197,10 @@ export function orcaCli(bin = 'orca'): Orca {
       ),
     screen: async (terminal) => (((await run(['terminal', 'read', '--terminal', terminal, '--screen'])).terminal as { tail?: string[] } | undefined)?.tail ?? []),
     send: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text, '--enter'])),
+    keys: async (terminal, text) => void (await run(['terminal', 'send', '--terminal', terminal, '--text', text])),
+    reply: async (from, id, body) => void (await run(['orchestration', 'reply', '--id', id, '--from', from, '--body-file', '-'], body)),
+    sendTo: async (from, to, subject, body) =>
+      ((await run(['orchestration', 'send', '--from', from, '--to', to, '--type', 'status', '--subject', subject, '--body-file', '-'], body)).warnings as string[] | undefined) ?? [],
     notifyRun: async (from, runId, subject, body) => void (await run(['orchestration', 'send', '--from', from, '--to', `run:${runId}`, '--type', 'status', '--subject', subject, '--body-file', '-'], body)),
     mailbox: async (root) => {
       const r = await run(['terminal', 'create', '--worktree', `path:${root}`, '--title', MAILBOX_TITLE, '--command', 'tail -f /dev/null'])
@@ -263,7 +275,7 @@ class HttpError extends Error {
  */
 export type Consult = (root: string, card: string) => Promise<string>
 /** 窓からの質問のタブを立てる（開いていれば前に出して質問を送る）道具。返すのはタブの端末の handle。 */
-export type AskCmd = (root: string, id: string, o: { card?: string; task?: string; question?: string }) => Promise<string>
+export type AskCmd = (root: string, id: string, o: { card?: string; task?: string; stream?: string; question?: string }) => Promise<string>
 /**
  * clip はテストで差し替える（既定は clip-draft を呼ぶ）。tailnetHosts は tailscale serve が HTTPS で渡す Host（例: mac.tail1234.ts.net）で、
  * その Host と Origin（https://<Host>）も許す。待ち受けは 127.0.0.1 のまま（serve が Mac の中から繋ぐ）。
@@ -300,7 +312,7 @@ export function consultCli(cmd: string): Consult {
 export function askCli(cmd: string): AskCmd {
   return (root, id, o) =>
     new Promise((resolve, reject) =>
-      execFile(cmd, ['--ask', root, id, ...(o.card ? ['--on-card', o.card] : []), ...(o.task ? ['--on-task', o.task] : []), ...(o.question ? [`--question=${o.question}`] : [])], { timeout: 60_000 }, (err, out, errOut) => {
+      execFile(cmd, ['--ask', root, id, ...(o.card ? ['--on-card', o.card] : []), ...(o.task ? ['--on-task', o.task] : []), ...(o.stream ? ['--on-stream', o.stream] : []), ...(o.question ? [`--question=${o.question}`] : [])], { timeout: 60_000 }, (err, out, errOut) => {
         const handle = String(out).split('\n')[0]?.trim()
         if (!err && handle) return resolve(handle)
         // consult の理由の頭の「consult: 」は深田さんに要らないので外す。
@@ -310,10 +322,11 @@ export function askCli(cmd: string): AskCmd {
     )
 }
 
-/** 窓に送る質問。控えの節は新しいものから ASK_ENTRIES 個、返しは return_id・op・決まったことの文だけにする。 */
 export function slimAsks(xs: AskThread[]): AskThread[] {
   return xs.map((a) => ({
     ...a,
+    ...(a.first && { first: a.first.length > ASK_FIRST ? `${a.first.slice(0, ASK_FIRST)}…` : a.first }),
+    ...(a.entries.length > ASK_ENTRIES && { omitted: a.entries.length - ASK_ENTRIES }),
     entries: a.entries.slice(-ASK_ENTRIES).map((e) => ({ ...e, text: e.text.length > ASK_TEXT ? `${e.text.slice(0, ASK_TEXT)}…` : e.text })),
     returns: a.returns.map((r) => ({
       return_id: r.return_id, ...(r.op !== undefined && { op: r.op }),
@@ -353,6 +366,8 @@ export function createServer(opts: Options) {
   }
   /** 端末の画面から読んだ問い（「handle@止まった時刻」→ 問い）。同じ停止のあいだは読み直さない。 */
   let screens = new Map<string, Ask>()
+  /** 窓から答えを送っている端末の handle と行の id。 */
+  const answering = new Set<string>()
   let orcaError: string | undefined
   let pluginNote: string | undefined
   /** ワークスペースの root → worker の記録の Dispatch の様子。まだ読んでいなければ無い。 */
@@ -627,8 +642,8 @@ export function createServer(opts: Options) {
   }
 
   /**
-   * 許可待ち・返事待ちの端末で、Orca の道具の欄から問いを読めないもの（AskUserQuestion）は、画面の末尾から読む。読めた問いは ps の行に足す
-   * （orca-state.ts の toAgent が使う）。チャットは画面を読めないので、読めなかったと出す。
+   * 許可待ち・返事待ちの端末の問いを、画面の末尾から読む（AskUserQuestion は道具の欄に本文が無く、許可の確認は選択肢の文が画面にしか無い）。
+   * 読めた問いは ps の行に足す（orca-state.ts の toAgent が使う）。チャットは画面を読めないので、読めなかったと出す。
    */
   async function readScreens(): Promise<void> {
     const next = new Map<string, Ask>()
@@ -636,7 +651,7 @@ export function createServer(opts: Options) {
     // 端末ごとに並べて読み、1 本が 15 秒待たせても他の端末の分を待たせない。
     await Promise.all(ps.flatMap((r) => r.agents).map(async (a) => {
       const handle = terms.get(a.paneKey)
-      if ((a.state !== 'blocked' && a.state !== 'waiting') || !handle || toolAsk(a) || !orca.screen) return
+      if ((a.state !== 'blocked' && a.state !== 'waiting') || !handle || !orca.screen) return
       const key = `${handle}@${a.stateStartedAt}`
       const ask = screenAsk(await orca.screen(handle).catch(() => []), a.state === 'blocked' ? 'permit' : 'question') ?? screens.get(key)
       if (ask) next.set(key, (a.screen = ask))
@@ -926,6 +941,40 @@ export function createServer(opts: Options) {
     return { worktree: chat.worktree, how: `${o.title}の担当`, tab: chat.title ?? (o.owner ? ownerName(c, o.owner) : o.title) }
   }
 
+  function answerPlan(ws: Ws, c: Cockpit, id: string): AnswerPlan | { reason: string } {
+    const agents = agentsOf(ws.root, ws.files)
+    const keysTo = (a: (typeof agents.workers)[number], who: string): AnswerPlan | { reason: string } =>
+      a.chat ? { reason: 'チャットの問いは窓から選べません。チャットを開いて答えてください' }
+        : !a.terminalId || !a.ask?.sig ? { reason: '端末の画面から問いを読めていません。端末を開いて答えてください' }
+        : { via: 'keys', terminal: a.terminalId, kind: a.ask.kind, how: `${who}の端末` }
+    if (id.startsWith('#ask:')) {
+      const msg = id.slice('#ask:'.length)
+      const q = questionsBy.get(ws.root)?.find((x) => x.id === msg)
+      const open = questions.find((x) => x.id === msg)
+      if (!q || !open) return { reason: 'この問いはもう答えが付いたか、聞いた worker が終わっています' }
+      const task = c.tasks.find((t) => t.id === q.task)
+      const stream = c.streams.find((s) => s.id === (task?.stream ?? q.stream))
+      const who = q.byOwner ? `担当（${stream?.title ?? q.asker ?? '名前不明'}）` : `worker（${task?.title ?? stream?.title ?? q.asker ?? '名前不明'}）`
+      return { via: 'reply', id: msg, copyTo: `run:${open.run}`, who, line: q.line, how: `${who}と${q.to === 'main' ? '窓口' : '担当'}` }
+    }
+    if (id.startsWith('#agent:')) {
+      const a = [agents.main, ...agents.workers].find((x) => x && agentCardId(x) === id && (x.stop === 'blocked' || x.stop === 'waiting'))
+      return a ? keysTo(a, a.title ?? 'エージェント') : { reason: '止まっていたエージェントが見つかりません。もう動き出したか、閉じられました' }
+    }
+    const stream = c.streams.find((s) => `${COWORK_ID}${s.id}` === id)
+    if (!stream) return { reason: '仕事が見つかりません。再読み込みしてからもう一度押してください' }
+    const o = ownerFor(ws, c, { id: '', rev: 0, kind: 'talk', state: 'open', title: '', stream: stream.id })
+    if (o.how === 'main') return { reason: `「${stream.title}」に担当がいません` }
+    const self = (x: { session?: string; terminalId: string | null }) => (!!o.session && x.session === o.session) || (!!o.terminal && x.terminalId === o.terminal)
+    const asked = agents.workers.find((x) => self(x) && !!x.ask && (x.stop === 'blocked' || x.stop === 'waiting'))
+    if (asked) return keysTo(asked, `担当「${o.title}」`)
+    const handle = o.owner?.terminal
+    const d = Object.entries(facts.get(ws.root) ?? {}).find(([, f]) => f && ((!!o.session && f.session === o.session) || (!!handle && f.terminal === handle))
+      && f.state !== 'succeeded' && f.state !== 'failed' && f.liveness !== 'exited')
+    if (!d) return { reason: `担当「${o.title}」の今の Dispatch が見つかりません。${o.how === 'chat' ? 'チャット' : '端末'}を開いて答えてください` }
+    return { via: 'dispatch', to: `dispatch:${d[0]}`, how: `担当「${o.title}」` }
+  }
+
   /**
    * 私の番で、まだ話し中の印が無いときだけ記録する（取り消したあとにもう一度押したときも記録する）。印が付いてもカードは私の番に残る。
    * カードの相談はタブの handle を残し、別のタブで話し中なら（閉じて立て直した）新しいタブで記録し直す。
@@ -957,8 +1006,8 @@ export function createServer(opts: Options) {
       const ws = knownWs(b.root)
       if (!OP_TYPES.includes(b.type as OpType) || typeof b.item_id !== 'string' || typeof b.item_rev !== 'number')
         throw new HttpError(400, '操作の形が違います')
-      // 「これで決める」は質問のタブへの知らせと組なので、askdecide からだけ受ける。
       if (b.type === 'ask_decide') throw new HttpError(400, '「これで決める」は質問の欄から押してください')
+      if (b.type === 'answer') throw new HttpError(400, '答えは停止の行の答えの欄から送ってください')
       const input: OpInput = {
         root: ws.root, item_id: b.item_id, item_rev: b.item_rev, type: b.type as OpType,
         option_id: str(b.option_id), undo_of: typeof b.undo_of === 'number' ? b.undo_of : undefined,
@@ -1031,8 +1080,12 @@ export function createServer(opts: Options) {
       if (cont !== undefined && !(ASK_ID.test(cont) && ws.files.asks.some((a) => a.id === cont))) throw new HttpError(409, `質問 ${cont} が見つかりません。再読み込みしてからもう一度押してください`)
       const card = cont ? undefined : str(b.card)
       const task = cont ? undefined : str(b.task)
+      const stream = cont ? undefined : str(b.stream)
+      // consult は結び先を 1 つしか受けない（--on-card・--on-task・--on-stream）。
+      if ([card, task, stream].filter(Boolean).length > 1) throw new HttpError(400, '質問を結ぶ先はカード・タスク・仕事のどれか 1 つです')
       if (card && !c.cards.some((x) => x.id === card)) throw new HttpError(409, 'カードが見つかりません。再読み込みしてからもう一度押してください')
       if (task && !c.tasks.some((x) => x.id === task)) throw new HttpError(409, 'タスクが見つかりません。再読み込みしてからもう一度押してください')
+      if (stream && !c.streams.some((x) => x.id === stream)) throw new HttpError(409, '仕事が見つかりません。再読み込みしてからもう一度押してください')
       if (!opts.ask) return { opened: false, reason: '質問の道具（consult --ask）が渡されていません' }
       return inQueue(ws.root, async (): Promise<AskResult> => {
         // 新しい質問は id を予約し、consult が控えの頭を書くまでほかのプロセスにも採らせない。
@@ -1055,7 +1108,7 @@ export function createServer(opts: Options) {
           }
           // 題のタブが無いときだけ consult が端末を立てる。立てた端末だけを窓のものとして覚える（開いているタブに送った分は覚え直さない）。
           const before = cont ? await askTab(ws, cont).catch(() => undefined) : { reason: '' }
-          const handle = await opts.ask!(ws.root, id, { card, task, question })
+          const handle = await opts.ask!(ws.root, id, { card, task, stream, question })
           if (before && 'reason' in before) await writeAskTab(opts.dir, ws.root, id, handle).catch((e: Error) => console.error(`asktabs.json: ${e.message}`))
         } catch (e) {
           return { opened: false, ask: cont, reason: (e as Error).message }
@@ -1067,6 +1120,43 @@ export function createServer(opts: Options) {
         broadcast()
         return { opened: true, ask: id }
       })
+    },
+    async answer(b): Promise<AnswerResult> {
+      const ws = knownWs(b.root)
+      const c = ws.files.cockpit
+      if (!c) throw new HttpError(409, '操縦席がありません')
+      const id = str(b.item_id)
+      if (!id || !isAnswerItem(id) || typeof b.rev !== 'number' || !Number.isInteger(b.rev)) throw new HttpError(400, '答える行の形が違います')
+      if (b.text !== undefined && typeof b.text !== 'string') throw new HttpError(400, '答えの形が違います')
+      if (b.choice !== undefined && !(typeof b.choice === 'number' && Number.isInteger(b.choice) && b.choice > 0)) throw new HttpError(400, '選んだ番号の形が違います')
+      const text = (b.text as string | undefined)?.trim() || undefined
+      const choice = b.choice as number | undefined
+      if (!text && choice === undefined) throw new HttpError(400, '答えを書くか、選択肢を選んでください')
+      const bad = textError(text)
+      if (bad) throw new HttpError(400, bad)
+      if (refreshing || Date.now() - lastRefresh > REFRESH_GAP_MS) await refreshOrca()
+      const plan = answerPlan(ws, c, id)
+      if ('reason' in plan) return { sent: false, reason: plan.reason }
+      // 見ていた画面と届け方が食い違えば送らない（端末の問いに書いた文を担当への知らせにしない・その逆もしない）。
+      if ((plan.via === 'keys') !== (typeof b.sig === 'string')) return { sent: false, reason: '答える先の様子が変わりました。読み直してから、もう一度答えてください' }
+      if (plan.via !== 'keys' && choice !== undefined) throw new HttpError(400, 'この問いには番号ではなく文で答えてください')
+      // 同じ端末・同じ行へ重ねて送らない（2 つの窓から同時に押すと、両方が同じ画面で照合を通り、後の番号が次の問いに入る）。
+      const lock = plan.via === 'keys' ? plan.terminal : `${ws.root}\n${id}`
+      if (answering.has(lock)) return { sent: false, reason: '同じ問いに答えを送っている途中です。少し待って、画面を確かめてください' }
+      answering.add(lock)
+      const r = await deliverAnswer(plan, { text, choice, sig: b.sig as string | undefined }, { orca, from: () => mailboxOf(orca as MailOrca, opts.dir, ws.root) })
+        .finally(() => answering.delete(lock))
+      if (!r.sent) return r
+      background()
+      try {
+        const log = await appendOp(ws.root, c, { root: ws.root, item_id: id, item_rev: b.rev, type: 'answer', text: r.text, via: plan.via, to: r.to, ...(r.key !== undefined && { key: r.key }) })
+        ws.files = { ...ws.files, log }
+        broadcast()
+        void autoSignal(ws).then(broadcast, (e) => console.error(e))
+        return { sent: true, how: plan.how, op: log.ops.at(-1)?.op_id, ...(r.note && { note: r.note }) }
+      } catch (e) {
+        return { sent: true, how: plan.how, note: `${r.note ? `${r.note}。` : ''}答えは届けましたが、操作の記録に残せませんでした: ${(e as Error).message}` }
+      }
     },
     /** 質問の前に、判断の記録から有効な判断を語で引く。 */
     async asklookup(b): Promise<{ hits: RulingHit[] }> {

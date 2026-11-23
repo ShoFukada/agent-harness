@@ -29,7 +29,8 @@ const ctl = mount({
   ask: (input) => post('/api/ask', input),
   askLookup: (root, q) => post('/api/asklookup', { root, q }),
   askDecide: (root, ask, answer, how) => post('/api/askdecide', { root, ask, answer, ...how }),
-  askTab: (root, ask) => post('/api/asktab', { root, ask })
+  askTab: (root, ask) => post('/api/asktab', { root, ask }),
+  answer: (input) => post('/api/answer', input)
 }, { window: true })
 
 function show(): void {

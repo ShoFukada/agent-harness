@@ -351,7 +351,7 @@ export const askItem = (id: string) => `#ask:${id}`
 export const isAskItem = (id: string) => /^#ask:ask\d+$/.test(id)
 /** 帳簿の asks[] の 1 行（窓口が返しを反映したら書く。cockpit skill の schema.md）。 */
 export type AskRecord = {
-  id: string; card?: string; task?: string; memo?: string
+  id: string; card?: string; task?: string; stream?: string; memo?: string
   from_returns?: string[]; held_returns?: string[]
   notify?: { return_id: string; task?: string; message_id?: string }[]
 }
@@ -360,11 +360,18 @@ export type AskMark = { id: string; from_returns?: unknown; held_returns?: unkno
 export type AskReturn = { return_id: string; op?: unknown; decisions?: { text?: string; utterance?: string }[]; requests?: { utterance?: string }[] }
 /** 質問と答えの控え（ask-<id>.md）の節。q: 深田さんの質問、a: 答え、n: 窓・窓口からの知らせ。time は HH:MM。 */
 export type AskEntry = { kind: 'q' | 'a' | 'n'; time: string; text: string; utterance?: string }
-/** 窓からの質問 1 つ。path・returnsPath は絶対パス。at は写した窓口の会話の時点（「22:40」）。 */
+/**
+ * 窓からの質問 1 つ。path・returnsPath は絶対パス。at は写した窓口の会話の時点（「22:40」）。結び先（card・task・stream）は 1 つまで。
+ * first は最初の質問の文（一覧の題）、updated は控えか返しの記録を最後に書いた時刻（ISO。一覧の時刻と並び）、
+ * omitted は窓に送るときに外した古い節の数。
+ */
 export type AskThread = {
-  id: string; path: string; returnsPath: string; card?: string; task?: string; at?: string
+  id: string; path: string; returnsPath: string; card?: string; task?: string; stream?: string; at?: string
   entries: AskEntry[]; returns: AskReturn[]
   answers: number
+  first?: string
+  updated?: string
+  omitted?: number
   decide?: AskAnswer
   /** decide の答えの【選べる案】（無ければ無い）。 */
   choices?: AskChoice[]
@@ -396,22 +403,29 @@ export type AskChoice = { key: string; title: string; pick?: true }
  * 答えの中で最後の「【選べる案】」の行から続く「- A: 題」の行（2〜5 行）。閉じたコードフェンスの中は読まない（控えの節の見出しと同じ扱い）。
  * 形の違う行で止め、形が無い・行数が合わない答えは空（文章から案を推し量らない）。
  */
-export function askChoices(text: string): AskChoice[] {
+export const askChoices = (text: string): AskChoice[] => choiceBlock(text)?.choices ?? []
+export function withoutChoices(text: string): string {
+  const b = choiceBlock(text)
+  return b ? (b.text.slice(0, b.start) + b.text.slice(b.end)).trim() : text
+}
+function choiceBlock(text: string): { text: string; start: number; end: number; choices: AskChoice[] } | undefined {
   const t = text.replace(/\r\n?/g, '\n')
   const fenced: [number, number][] = []
   for (let m, re = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$/gm; (m = re.exec(t)); ) fenced.push([m.index, m.index + m[0].length])
   const mark = [...t.matchAll(/^【選べる案】[ \t]*$/gm)].filter((m) => !fenced.some(([a, b]) => m.index! > a && m.index! < b)).at(-1)
-  if (!mark) return []
+  if (!mark) return undefined
   const out: AskChoice[] = []
-  for (const line of t.slice(mark.index! + mark[0].length + 1).split('\n')) {
+  let end = mark.index! + mark[0].length
+  for (const line of t.slice(end + 1).split('\n')) {
     const m = /^- ([A-Z]): (.+?)[ \t]*$/.exec(line)
     if (!m || out.some((c) => c.key === m[1])) break
     const pick = /（推し）$/.test(m[2]!)
     const title = m[2]!.replace(/[ \t]*（推し）$/, '')
     if (!title) break
     out.push({ key: m[1]!, title, ...(pick && { pick: true as const }) })
+    end += line.length + 1
   }
-  return out.length >= 2 && out.length <= 5 ? out : []
+  return out.length >= 2 && out.length <= 5 ? { text: t, start: mark.index!, end, choices: out } : undefined
 }
 /** 最後の質問より後の、最後の答えの【選べる案】。 */
 export function latestChoices(entries: AskEntry[]): AskChoice[] {
@@ -461,8 +475,17 @@ export type Cockpit = {
  * ask_decide: 窓からの質問の「これで決める」。item_id は #ask:<質問 id>、item_rev は 0、answer はどの答えか、choice は選んだ案、text は書いて返した文。窓口はこの op だけでは何もせず、
  * op にこの op_id を持つ返しが届いたら反映し、同じ書き込みで applied_ops に足す（cockpit skill の ops.md）。
  */
-export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide'
-export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide']
+/**
+ * answer: 停止の行の「答える」「許可」で、窓から問いの主に答えを届けた記録。item_id は行の id（#ask:msg_…・#cowork:<仕事>・#agent:…）、item_rev は聞いた時刻の ms。
+ * text は深田さんの言葉の原文（選んだら選択肢の文）、via は届け方、to は届け先、key は端末に送った番号。届けてから書く（届かなければ書かない）。
+ * 窓口はこの op で何も届け直さず、判断の記録に残すものがあれば残して applied_ops に足す（cockpit skill の ops.md）。
+ */
+export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide' | 'answer'
+export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide', 'answer']
+/** answer の届け方。reply は問いへの返事（と宛先への写し）、dispatch は担当の今の Dispatch への知らせ、keys は端末へのキー。 */
+export type AnswerVia = 'reply' | 'dispatch' | 'keys'
+export const ANSWER_VIA: AnswerVia[] = ['reply', 'dispatch', 'keys']
+export const isAnswerItem = (id: string) => (id.startsWith('#ask:') && !isAskItem(id)) || id.startsWith('#agent:') || id.startsWith(COWORK_ID)
 /** 一緒に作る仕事の行の id の頭（R145）。帳簿のカードではなく、担当のチャットの Orca の様子から作る（state.ts の coworkRows）。 */
 export const COWORK_ID = '#cowork:'
 /** 線を越えて動いていないタスクの行の id の頭（追加 35）。 */
@@ -486,6 +509,10 @@ export type Op = {
   answer?: AskAnswer
   /** ask_decide: 選んだ【選べる案】の記号（A など）。書いた文で返したときは text。どちらも無いのは古い「この答えを窓口に返す」。 */
   choice?: string
+  /** answer: 届け方と届け先（msg_…・run:…・dispatch:…・term_…）、端末に送った番号。 */
+  via?: AnswerVia
+  to?: string[]
+  key?: number
 }
 export type UserLog = { ops: Op[] }
 export type Archive = { cards: Card[] }

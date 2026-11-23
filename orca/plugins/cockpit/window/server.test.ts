@@ -14,6 +14,7 @@ import type { AutomationRun, OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
 import { askCli, askMessage, askNotice, askTitle, automationFact, createServer, orcaCli, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
+import type { Op } from '../src/model.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
 
@@ -479,8 +480,10 @@ test('相談のメモは送るカードのものだけを、表示に使う欄�
  */
 function fakeAsk(fail?: string, wait = 0) {
   const asked: [string, string, string | undefined, string | undefined, string | undefined][] = []
+  const streams: (string | undefined)[] = []
   const ask: AskCmd = async (root, id, o) => {
     asked.push([path.basename(root), id, o.card, o.task, o.question])
+    streams.push(o.stream)
     await new Promise((r) => setTimeout(r, wait))
     if (fail) throw new Error(fail)
     const memo = path.join(root, '.orca/consult', `ask-${id}.md`)
@@ -488,12 +491,28 @@ function fakeAsk(fail?: string, wait = 0) {
     try {
       readFileSync(memo)
     } catch {
-      writeFileSync(memo, `# ${askTitle('案件A', id)}\n${o.card ? `- カード: ${o.card}\n` : ''}${o.task ? `- タスク: ${o.task}\n` : ''}- 写した窓口の会話: s1（窓口の会話 09:05 時点）\n\n`)
+      writeFileSync(memo, `# ${askTitle('案件A', id)}\n${o.card ? `- カード: ${o.card}\n` : ''}${o.task ? `- タスク: ${o.task}\n` : ''}${o.stream ? `- 仕事: ${o.stream}\n` : ''}- 写した窓口の会話: s1（窓口の会話 09:05 時点）\n\n`)
     }
     return `term_${id}`
   }
-  return { ask, asked }
+  return { ask, asked, streams }
 }
+
+test('仕事に質問する（R220）: 仕事 id を consult --ask の --on-stream に渡し、控えの頭の「- 仕事:」で質問を仕事に結ぶ。知らない仕事・結び先 2 つは断る', async () => {
+  const { a, rows } = workspaces()
+  const { ask, asked, streams } = fakeAsk()
+  const { s, port, post } = await start(rows, a, undefined, undefined, undefined, undefined, { ask })
+  const ev = listen(port, s.token)
+  await ev.until(ready)
+  assert.deepEqual((await post('ask', { root: a, question: '構成図の方針は？', stream: 's2' })).body, { opened: true, ask: 'ask1' })
+  assert.deepEqual([asked[0]!.slice(1), streams[0]], [['ask1', undefined, undefined, '構成図の方針は？'], 's2'])
+  assert.equal((await post('ask', { root: a, question: 'x', stream: 's9' })).status, 409)
+  assert.equal((await post('ask', { root: a, question: 'x', stream: 's2', task: 't1' })).status, 400)
+  await post('ask', { root: a, ask: 'ask1', question: '続き', stream: 's1' })
+  assert.equal(streams.at(-1), undefined)
+  const w = await ev.until((v) => (board(v, a)?.asks ?? []).length === 1)
+  assert.deepEqual(board(w, a)!.asks!.map((x) => [x.id, x.card, x.task, x.stream]), [['ask1', undefined, undefined, 's2']])
+})
 
 test('窓から質問する: 新しい質問は質問 id を 1 つずつ採って consult --ask に結び先と質問を渡し、続きは同じ id で送る。知らない質問・空の質問・知らない結び先は断る', async () => {
   const { a, rows } = workspaces()
@@ -597,6 +616,8 @@ test('窓から質問する: consult --ask の引数と、失敗の理由の頭�
   assert.equal(await askCli(ok)('/ws/a', 'ask3', { card: 'd21', question: '--help' }), 'term_x')
   assert.deepEqual(readFileSync(path.join(dir, 'args'), 'utf8').split('\n').slice(0, 6), ['--ask', '/ws/a', 'ask3', '--on-card', 'd21', '--question=--help'])
   await assert.rejects(askCli(ng)('/ws/a', 'ask3', {}), /^Error: 窓口の会話が分かりません$/)
+  await askCli(ok)('/ws/a', 'ask4', { stream: 's2', question: '方針は？' })
+  assert.deepEqual(readFileSync(path.join(dir, 'args'), 'utf8').split('\n').slice(0, 6), ['--ask', '/ws/a', 'ask4', '--on-stream', 's2', '--question=方針は？'])
 })
 
 test('窓から質問する: 判断の記録から撤回されていない判断を語で引いて、原文・番号・日時を返す', async () => {
@@ -970,6 +991,9 @@ test('窓に送る質問は、控えの新しい節と返しの表示に使う�
   assert.equal(x.entries.at(-1)!.text.length, 6001)
   assert.equal(x.answers, 4)
   assert.deepEqual(x.returns, [{ return_id: 'ask1-1', op: 5, decisions: [{ text: '1 つにする' }] }])
+  assert.equal(x.first, '本文0')
+  assert.equal(x.omitted, 2)
+  assert.ok(Date.now() - Date.parse(x.updated!) < 60_000)
 })
 
 /** 担当 o1 を、worker-start --agent で立てたチャットにする。窓口は受け取りの terminal（structworker_…）を terminal に書いた。 */
@@ -1368,7 +1392,7 @@ test('4000 字を超える別の答えは切り詰めずに断り、ちょうど
   assert.equal(log.ops[0].text.length, 4000)
 })
 
-test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestion は画面から、許可は道具の欄から、orchestration の question は inbox から（偽の Orca は fixtures/demo.ts）', async () => {
+test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestion と許可の確認は画面から、orchestration の question は inbox から（偽の Orca は fixtures/demo.ts）', async () => {
   const base = tmp('cockpit-asks-')
   const now = Date.now()
   const { roots, orca } = writeSample(base, now)
@@ -1393,13 +1417,59 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   // 詳細: 題に収まった問いは本文を重ねず、選択肢は番号を付けずにどこで選ぶかを添える。
   const h = renderWindow(m, { ...newUi(), sel: keyOf(row('既定の並び')) }, now, (x) => x)
   assert.doesNotMatch(h, /聞かれていること/)
-  assert.match(h, /選択肢（窓口に伝える）<\/span><div><ul class="rich"><li>配送日の降順にする<\/li><li>登録順のままにする/)
-  assert.match(h, /答え方.*窓口の端末を開いて答えを伝えれば、窓口がworker（一覧の並べ替えと絞り込み）に返す/s)
+  assert.match(h, /答える（聞いた worker に返す）.*data-pick="0"[^>]*>配送日の降順にする<\/button>.*data-pick="1"[^>]*>登録順のままにする<\/button>.*選択肢に無い答えを書く/s)
+  assert.doesNotMatch(h, /選択肢（窓口に伝える）|答え方/)
   assert.match(h, /聞いた日時.*>窓口の端末を開く</s)
-  assert.match(renderWindow(m, { ...newUi(), sel: keyOf(row('キャッシュ')) }, now, (x) => x), /選択肢（端末で選ぶ）/)
-  // 許可待ちは道具の欄から（ログ集計の見直し）。
+  const hc = renderWindow(m, { ...newUi(), sel: keyOf(row('キャッシュ')) }, now, (x) => x)
+  assert.match(hc, /答える（端末に送る）.*data-choice="1"[^>]*>キャッシュを入れて直す<\/button><span class="mut">地図のタイルを 1 日分ためる（stg で 2 日）<\/span>.*data-choice="2"/s)
+  assert.match(hc, /選択肢に無い答えを書く/)
+  assert.match(hc, /直前の発言<\/span><div><div class="quote">⏺ 地図の遅さを測りました。/)
+  assert.doesNotMatch(hc, /選択肢（端末で選ぶ）/)
   const harness = m.boards.find((b) => b.root === roots.harness)!
-  assert.deepEqual(lines(harness), [['許可: Bash: git push origin feature/log-summary', 'worker（集計の分け方を直す）が許可を求めている']])
+  assert.deepEqual(lines(harness), [['許可: git push origin feature/log-summary', 'worker（集計の分け方を直す）が許可を求めている']])
+  const hp = renderWindow({ ...m, focused: roots.harness }, { ...newUi(), filter: roots.harness, sel: keyOf(todoGroups(harness).flatMap(([, xs]) => xs).find((r) => r.agent?.ask)!) }, now, (x) => x)
+  assert.match(hp, /許可を求めていること<\/span><div><div class="quote code">Bash command\nPush feature\/log-summary to origin\ngit push origin feature\/log-summary<\/div>/)
+  assert.match(hp, /class="btn pri" type="button" data-act="answer"[^>]*data-choice="1"[^>]*>Yes<\/button>.*data-choice="2"[^>]*>Yes, and don&#39;t ask again for git push commands in \/w\/harness<\/button>.*data-choice="3"[^>]*>No</s)
+  assert.doesNotMatch(hp, /選択肢に無い答えを書く/)
+})
+
+test('停止の行に窓から答える（R222・R223）: 端末の問いは画面を読み直して同じときだけ番号のキーを送り、orchestration の問いは worker に返して宛先に写す。届けてから op に原文を残す', async () => {
+  const base = tmp('cockpit-answer-')
+  const now = Date.now()
+  const { roots, orca, calls } = writeSample(base, now)
+  const dir = tmp('cockpit-dir-')
+  writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: roots.aoba, at: new Date().toISOString() }))
+  const s = createServer({ port: 0, dir, orca })
+  servers.push(s)
+  const port = await s.listen()
+  const origin = `http://127.0.0.1:${port}`
+  const post = async (name: string, body: unknown) => {
+    const r = await fetch(`${origin}/api/${name}`, { method: 'POST', headers: { 'content-type': 'application/json', origin, 'x-cockpit-token': s.token }, body: JSON.stringify(body) })
+    return { status: r.status, body: await r.json() }
+  }
+  const v = await listen(port, s.token).until((x) => !!board(x, roots.aoba!)?.questions?.length)
+  const aoba = boardsOf(v.boards, now).find((b) => b.root === roots.aoba)!
+  const row = (t: string) => todoGroups(aoba).flatMap(([, xs]) => xs).find((r) => r.card.title.includes(t))!
+  const map = row('キャッシュ')
+  const ops = () => (JSON.parse(readFileSync(path.join(roots.aoba!, '.orca', 'cockpit.user.json'), 'utf8')) as { ops: Op[] }).ops.filter((o) => o.type === 'answer')
+  const stale = await post('answer', { root: roots.aoba, item_id: map.card.id, rev: map.card.rev, choice: 2, sig: 'old' })
+  assert.deepEqual(stale.body, { sent: false, reason: '端末の画面が変わりました。読み直してから、もう一度選んでください' })
+  assert.equal(calls.filter((c) => c[0] === 'keys').length, 0)
+  const sent = await post('answer', { root: roots.aoba, item_id: map.card.id, rev: map.card.rev, choice: 2, sig: map.agent!.ask!.sig })
+  assert.equal(sent.body.sent, true, JSON.stringify(sent.body))
+  assert.deepEqual(calls.filter((c) => c[0] === 'keys'), [['keys', 'term_aoba_w2', '2']])
+  assert.deepEqual(ops().map((o) => [o.item_id, o.item_rev, o.text, o.via, o.to, o.key]), [[map.card.id, map.card.rev, '調査報告だけにする', 'keys', ['term_aoba_w2'], 2]])
+  const q = row('既定の並び')
+  const r = await post('answer', { root: roots.aoba, item_id: q.card.id, rev: q.card.rev, text: '配送日の降順にする' })
+  assert.deepEqual(r.body.sent, true, JSON.stringify(r.body))
+  assert.deepEqual(calls.filter((c) => c[0] === 'reply'), [['reply', 'term_mailbox', 'msg_q1', '配送日の降順にする']])
+  const copy = calls.find((c) => c[0] === 'sendTo')!
+  assert.deepEqual(copy.slice(0, 3), ['sendTo', 'term_mailbox', 'run:run_aoba'])
+  assert.match(copy[4]!, /答え（原文）:\n配送日の降順にする$/)
+  assert.deepEqual(ops().at(-1)!.to, ['msg_q1', 'run:run_aoba'])
+  assert.deepEqual((await post('answer', { root: roots.aoba, item_id: q.card.id, rev: q.card.rev, text: 'x', sig: 's' })).body, { sent: false, reason: '答える先の様子が変わりました。読み直してから、もう一度答えてください' })
+  assert.equal((await post('answer', { root: roots.aoba, item_id: q.card.id, rev: q.card.rev, choice: 1 })).status, 400)
+  assert.equal((await post('op', { root: roots.aoba, item_id: q.card.id, item_rev: q.card.rev, type: 'answer', text: 'x' })).status, 400)
 })
 
 test('送る文面の書式の検査（R161・R162）: 状態を作るときに検査し、カードごとの結果を載せる。同じ本文は CLI を呼び直さない', async () => {

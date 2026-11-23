@@ -678,13 +678,14 @@ def ask_reply_words(root, ask_id, prompt):
     return None
 
 
-def on_thread_prompt(root, inp, kind, tid, card_id):
+def on_thread_prompt(root, inp, kind, tid, card_id, stream_id=None):
     """カードの相談（kind "card"、tid はカード id）と窓からの質問（kind "ask"、tid は質問 id）の発言を、窓口と同じロックと採番で
     root の発言の記録に card か ask 付きで足し（設計 10.7 の 4・11.2）、前のターンのあとに増えた判断とカードの rev の変化を流す
     （10.3 の 4・11.6 の 6）。メインの役割は流さない。
 
     起点は keep.json の consults[カード id] か asks[質問 id]。起動の指示（知らせの印つき）が持つ rulings_seen と rev から始める。
-    増えた判断は、カードがあればカードに関係するものだけ（related_rulings）、カードの無い質問は対象で絞らずに全部流す。"""
+    増えた判断は、カードか仕事（stream_id。仕事に結んだ質問）があればそれに関係するものだけ（related_rulings）、
+    どちらにも結ばれていない質問は対象で絞らずに全部流す。"""
     prompt = inp.get("prompt") or ""
     tag = "相談" if kind == "card" else "質問"
     lines, asked, uid = [], None, None
@@ -710,17 +711,17 @@ def on_thread_prompt(root, inp, kind, tid, card_id):
         base = None if m else seen.get(tid)
         shown = None
         if base:
-            if card_id:
-                stream, tasks, _ = consult_scope(root, card)
-                new = related_rulings(rows, card_id, stream, tasks, base.get("seen") or 0)
+            scoped = bool(card_id or stream_id)
+            if scoped:
+                new = ask_related(root, rows, card_id, stream_id, base.get("seen") or 0)
             else:
                 new = [r for r in rows if ruling_num(r) > (base.get("seen") or 0) and r.get("kind") in BINDING + ("revoke",)]
-            # カード付きは関係しない判断を読んだことにしてよい（窓口の照合も関係する判断だけを見る）。カードの無い質問は、
+            # カード・仕事付きは関係しない判断を読んだことにしてよい（窓口の照合も関係する判断だけを見る）。どちらも無い質問は、
             # 渡した判断の最後の id までしか進めない（窓口の照合は全部を見るので、渡していない id まで進めると見逃す。11.6 の 6）
-            shown = max([ruling_num(r) for r in rows] + [0]) if card_id else max([ruling_num(r) for r in new] + [base.get("seen") or 0])
+            shown = max([ruling_num(r) for r in rows] + [0]) if scoped else max([ruling_num(r) for r in new] + [base.get("seen") or 0])
             if new:
                 lines.append("【%s】前のターンのあとに、窓口の判断の記録に%s判断が増えた（扱いは役割の文書。%sの rulings_seen に書く値は R%d）:"
-                             % (tag, "関係する" if card_id else "", "窓口に返すとき" if kind == "card" else "返し", shown))
+                             % (tag, "関係する" if scoped else "", "窓口に返すとき" if kind == "card" else "返し", shown))
                 lines += ["- " + ruling_line(r) for r in new]
             if card_id and card.get("rev") != base.get("rev"):
                 if kind == "card":
@@ -836,18 +837,31 @@ def ask_returns_path(root, ask_id):
     return os.path.join(root, ".orca", "consult", "ask-%s.returns.jsonl" % ask_id)
 
 
-ASK_BIND = re.compile(r"^- (カード|タスク): ([A-Za-z0-9_]+)$", re.M)
+ASK_BIND = re.compile(r"^- (カード|タスク|仕事): ([A-Za-z0-9_]+)$", re.M)
 
 
 def ask_binding(root, ask_id):
-    """質問に結ばれた (カード id, タスク id)。consult --ask が控えの頭（最初の ### より前）に書いた行から読む。"""
+    """質問に結ばれた (カード id, タスク id, 仕事 id)。consult --ask が控えの頭（最初の ### より前）に書いた行から読む（結び先は 1 つまで）。"""
     try:
         with open(ask_memo_path(root, ask_id), encoding="utf-8") as fh:
             head = fh.read().split("\n###", 1)[0]
     except OSError:
-        return None, None
+        return None, None, None
     got = dict(ASK_BIND.findall(head))
-    return got.get("カード"), got.get("タスク")
+    return got.get("カード"), got.get("タスク"), got.get("仕事")
+
+
+def stream_tasks(root, stream_id):
+    return [t["id"] for t in cockpit(root).get("tasks") or [] if isinstance(t, dict) and t.get("stream") == stream_id and isinstance(t.get("id"), str)]
+
+
+def ask_related(root, rows, card_id, stream_id, since):
+    """結んだ質問に関係する、R<since> より後の判断。カードはカードの相談と同じ、仕事は仕事の id とその下のタスクで引く
+    （consult の stream_rulings と同じ引き方に、全体の制約と撤回を足したもの。related_rulings に仕事だけを渡す）。"""
+    if card_id:
+        stream, tasks, _ = consult_scope(root, find_card(root, card_id) or {})
+        return related_rulings(rows, card_id, stream, tasks, since)
+    return related_rulings(rows, None, stream_id, stream_tasks(root, stream_id), since)
 
 
 def git_log(root):
@@ -862,12 +876,14 @@ def git_log(root):
 def ask_context(root, ask_id):
     """質問の相手に最初に渡す文脈（11.1・11.6 の 1・6）。カード付きはカードの相談と同じ束、カードの無い質問は有効な判断を新しい順に全部
     （上限を超えた古いものは id とパスだけ）。rulings_seen は実際に渡した判断の最後の id。最後に git の最近の履歴を付ける。"""
-    card_id, task_id = ask_binding(root, ask_id)
+    card_id, task_id, stream_id = ask_binding(root, ask_id)
     if card_id:
         out = [consult_context(root, card_id)]
     else:
         c = cockpit(root)
-        out = ["# 質問 %s の文脈（%s 時点。カードに結ばれていない質問）" % (ask_id, now().strftime("%Y-%m-%d %H:%M"))]
+        # 仕事に結んだ質問の仕事・タスク・関係する判断は consult --ask が足す（nix-darwin の claude/bin/consult の stream_context）
+        out = ["# 質問 %s の文脈（%s 時点。%s）" % (ask_id, now().strftime("%Y-%m-%d %H:%M"),
+                                              "仕事 %s に結ばれた質問" % stream_id if stream_id else "カードに結ばれていない質問")]
         if task_id:
             report = state_report(root) or {}
             shown = next((t for t in report.get("tasks") or [] if isinstance(t, dict) and t.get("id") == task_id), {})
@@ -876,7 +892,9 @@ def ask_context(root, ask_id):
                     "```json", json.dumps(shorten({**(row or {"id": task_id, "note": "帳簿に無い"}), **({"state": shown["state"]} if shown.get("state") else {})},
                                                   "帳簿のタスク %s の欄 " % task_id), ensure_ascii=False, indent=1), "```"]
         out += ["", "## 開いているカードと済んでいないタスク（帳簿の手書きの値）"] + (open_lines(c) or ["- なし"])
-        act = sorted(active_rulings(rulings(root)), key=ruling_num, reverse=True)
+        # 仕事に結んだ質問は、仕事に関係する判断だけを数えて詰める（ほかの仕事の判断で上限が埋まり、関係する判断が落ちないように）。
+        rows = rulings(root)
+        act = sorted(ask_related(root, rows, None, stream_id, None) if stream_id else active_rulings(rows), key=ruling_num, reverse=True)
         body, size, dropped = [], len("\n".join(out)), []
         for r in act:
             line = "- " + ruling_line(r)
@@ -887,7 +905,7 @@ def ask_context(root, ask_id):
             size += len(line) + 1
         passed = [r for r in act if r["id"] not in dropped]
         out += ["rulings_seen: R%d" % max([ruling_num(r) for r in passed] + [0]),
-                "", "## 有効な判断（新しい順。原文つき）"] + (body or ["- なし"])
+                "", "## %s（新しい順。原文つき）" % ("仕事に関係する有効な判断" if stream_id else "有効な判断")] + (body or ["- なし"])
         if dropped:
             out.append("- ほか %d 件（%s）は長さの上限で省いた。要るときに %s の同じ id の行を読む" % (len(dropped), "・".join(dropped), path_of(root, "rulings.jsonl")))
     log = git_log(root)
@@ -898,13 +916,12 @@ def ask_context(root, ask_id):
 
 def ask_since(root, ask_id, since, own=None):
     """質問の返しの rulings_seen より後に増えた判断（窓口が反映する直前の確かめ。own の返しから書いた行は除く）。
-    カード付きはカードの相談と同じ関係する判断、カードの無い質問は全部。"""
+    カード付きはカードの相談と同じ関係する判断、仕事付きは仕事とその下のタスクに関係する判断、どちらにも結ばれていない質問は全部。"""
     rows = rulings(root)
-    card_id, _ = ask_binding(root, ask_id)
+    card_id, _, stream_id = ask_binding(root, ask_id)
     card = find_card(root, card_id) if card_id else None
-    if card is not None:
-        stream, tasks, _ = consult_scope(root, card)
-        new = related_rulings(rows, card_id, stream, tasks, since)
+    if card is not None or stream_id:
+        new = ask_related(root, rows, card_id if card is not None else None, stream_id, since)
     else:
         new = [r for r in rows if ruling_num(r) > since and r.get("kind") in BINDING + ("revoke",)]
     return [r for r in new if not own or r.get("from_return") != own]
@@ -1915,7 +1932,8 @@ def hook():
         root, ask_id = consult_ask_env()
         try:
             if root and event == "UserPromptSubmit":
-                on_thread_prompt(root, inp, "ask", ask_id, ask_binding(root, ask_id)[0])
+                card_id, _, stream_id = ask_binding(root, ask_id)
+                on_thread_prompt(root, inp, "ask", ask_id, card_id, stream_id)
             elif root and event == "Stop":
                 on_ask_stop(root, ask_id, inp)
             elif root and event == "SessionStart":

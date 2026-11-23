@@ -1,13 +1,14 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
 import { DRAFT_FORMATS, draftFormat, FORMAT_LABEL, OTHER, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftCheck, type DraftFormat, type OpType } from './model.ts'
 import { morph } from './morph.ts'
-import type { AskDecideResult, AskInput, AskResult, ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, RulingHit, TalkResult } from './protocol.ts'
+import type { AnswerInput, AnswerResult, AskDecideResult, AskInput, AskResult, ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, RulingHit, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
 import { FRESH_WAIT_MS, seenTracker } from './since.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, focusMessage, openedMessage, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
-import { askPending, boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
+import { boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
+import { askOpened, askOrder, askPending, askRows, askStarted, parseAskKey } from './window-asks.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -26,6 +27,7 @@ export type Transport = {
   askLookup?(root: string, q: string): Promise<{ hits: RulingHit[] }>
   askDecide?(root: string, ask: string, answer: AskAnswer, how?: { choice?: string; text?: string }): Promise<AskDecideResult>
   askTab?(root: string, ask: string): Promise<OpenResult>
+  answer?(input: AnswerInput): Promise<AnswerResult>
 }
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
 
@@ -181,14 +183,18 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       // 答えが控えに届いた質問は、待つ表示をやめる（送った時点より答えの節が増えた）。送った案件の控えで見る。
       for (const [k, w] of Object.entries(ui.askWait))
         if (w.ask && !w.error && (feed.views.find((v) => v.root === w.root)?.asks ?? []).some((a) => a.id === w.ask && a.answers > w.answers)) delete ui.askWait[k]
-      order = ui.tab === 'done' ? doneOrder(b) : ui.tab === 'whole' ? taskOrder(b) : todoOrder(b)
+      order = ui.tab === 'done' ? doneOrder(b) : ui.tab === 'whole' ? taskOrder(b) : ui.tab === 'asks' ? askOrder(b, ui) : todoOrder(b)
       // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
       const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
       if ((ui.tab ?? 'todo') === 'todo' && !(ui.sel && (order.includes(ui.sel) || reports.includes(ui.sel)))) ui.sel = order[0] ?? reports[0]
       // 対応済みはタスクの詳細から開いた期間外のカードも選んだまま出す（今の案件のものだけ）。
       if (ui.tab === 'done' && !(ui.doneSel && (order.includes(ui.doneSel) || b?.d.settled.some((r) => keyOf(r) === ui.doneSel)))) ui.doneSel = order[0]
-      // 全体は右に出しているタスクが消えたら、上から最初のタスクにする（済んだタスクは選んだまま読める）。
-      if (ui.tab === 'whole' && !(ui.task && b?.d.tasks.has(ui.task))) ui.task = order[0]
+      if (ui.tab === 'whole') {
+        if (ui.stream && !b?.d.jobs.some((j) => j.id === ui.stream)) ui.stream = undefined
+        if (!ui.stream && !ui.watch && !(ui.task && b?.d.tasks.has(ui.task))) ui.task = order[0]
+        if (!ui.stream && !ui.watch && !ui.task) ui.stream = b?.d.jobs.find((j) => j.state !== 'done')?.id
+      }
+      if (ui.tab === 'asks' && !(ui.thread && b && askRows(b, ui).some((r) => r.id === ui.thread))) ui.thread = order[0]
     }
     return m
   }
@@ -351,6 +357,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       }
       case 'revert': return void act('revert', r, { target: Number(el.dataset.target) }, '戻すよう依頼しました')
       case 'dismiss': return void act('dismiss', r, {}, '対応済みにしました')
+      case 'answer': return void answer(r, el)
       case 'accept': case 'sent': case 'skip': case 'delegate': case 'ack':
         return void act(name, r, {}, r.card.kind === 'permit' && name === 'accept' ? '許可しました' : r.card.manual && name === 'sent' ? '対応済みにしました' : LABEL[name]!)
     }
@@ -379,13 +386,19 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
 
   const tabOf = (): Tab => (win ? ui.tab ?? 'todo' : 'todo')
   /** 今のタブで右に出しているもの（j・k の今の位置）。全体はタスクの id。 */
-  const current = () => ({ todo: ui.sel, whole: ui.task, done: ui.doneSel })[tabOf()]
+  const current = () => ({ todo: ui.sel, whole: ui.task, asks: ui.thread, done: ui.doneSel })[tabOf()]
   /** キーで返答・協議する票。全体では開いている受信だけ（要対応で選んだまま隠れた票に返答しない）。 */
-  const cardKey = () => ({ todo: ui.sel, whole: openInbox(), done: ui.doneSel })[tabOf()]
+  const cardKey = () => ({ todo: ui.sel, whole: openInbox(), asks: undefined, done: ui.doneSel })[tabOf()]
   /** 全体の「届いた連絡」に今出ている受信の票（案件が切り替わった・片付いたあとに前の票へ返答しない）。 */
   function openInbox(): string | undefined {
     const r = rows.get(ui.sel ?? '')
     return r && r.root === shownRoot && r.status === 'mine' && r.card.kind === 'inbox' ? ui.sel : undefined
+  }
+
+  function pickWhole(p: { task?: string; stream?: string; watch?: string }): void {
+    ui.task = p.task
+    ui.stream = p.stream
+    ui.watch = p.watch
   }
 
   /** 対応済みのカードを選ぶ。閉じた仕事の中のカードへ移ったら、その仕事を既定（開く）に戻して隠さない。 */
@@ -399,15 +412,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const tb = tabOf()
     const task = tb === 'whole' && !!k && order.includes(k)
     if (tb === 'done') pickDone(k)
-    else if (task) {
-      ui.task = k
-      ui.watch = undefined
-      ui.wholeSide = 'detail'
-    }
+    else if (tb === 'asks') ui.thread = k
+    else if (task) pickWhole({ task: k })
     // 窓の要対応は詳細を常に開くので、押し直しても閉じない。全体の受信の票は開け閉めする。
     else ui.sel = win && tb === 'todo' ? k : ui.sel === k ? undefined : k
     draw()
-    const shown = task ? `[data-task="${CSS_ESC(k)}"]` : tb === 'done' ? k && `[data-dsel="${CSS_ESC(k)}"]` : ui.sel && `[data-strip="${CSS_ESC(ui.sel)}"],[data-sel="${CSS_ESC(ui.sel)}"].cardrow`
+    const shown = task ? `[data-task="${CSS_ESC(k)}"]` : tb === 'asks' ? k && `[data-thread="${CSS_ESC(k)}"]` : tb === 'done' ? k && `[data-dsel="${CSS_ESC(k)}"]` : ui.sel && `[data-strip="${CSS_ESC(ui.sel)}"],[data-sel="${CSS_ESC(ui.sel)}"].cardrow`
     if (shown) app.querySelector(shown)?.scrollIntoView({ block: 'nearest' })
   }
 
@@ -434,12 +444,9 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }, 1000)
   }
 
-  /** 欄の鍵（<root>#<置き場所>）から、送る案件と送る先（続きの質問 id・結ぶカードかタスク）。 */
-  function askTarget(key: string): { root: string } & Pick<AskInput, 'ask' | 'card' | 'task'> {
-    const root = key.slice(0, key.lastIndexOf('#'))
-    const scope = key.slice(key.lastIndexOf('#') + 1)
-    const [kind, id] = [scope.slice(0, scope.indexOf(':')), scope.slice(scope.indexOf(':') + 1)]
-    return { root, ...(kind === 'id' ? { ask: id } : kind === 'card' ? { card: id } : kind === 'task' ? { task: id } : {}) }
+  function askTarget(key: string): { root: string } & Pick<AskInput, 'ask' | 'card' | 'task' | 'stream'> {
+    const { root, scope: s } = parseAskKey(key)
+    return { root, ...(s.kind === 'id' ? { ask: s.id } : s.kind === 'card' ? { card: s.id } : s.kind === 'task' ? { task: s.id } : s.kind === 'stream' ? { stream: s.id } : {}) }
   }
 
   /** 判断の記録を引いているあいだの欄（二度押しで写しを 2 つ立てない。Codex 中 1）。 */
@@ -470,7 +477,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       }
       delete ui.askHits[key]
       const thread = (feed.views.find((v) => v.root === root)?.asks ?? []).find((a) => a.id === target.ask)
-      ui.askWait[key] = { root, at: Date.now(), q, answers: thread?.answers ?? 0, ...(target.ask && { ask: target.ask }) }
+      askStarted(ui, key, { root, at: Date.now(), q, answers: thread?.answers ?? 0, ...(target.ask && { ask: target.ask }) })
     } finally {
       askLooking.delete(key)
     }
@@ -478,12 +485,9 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     draw()
     try {
       const res = await t.ask({ root, question: q, ...target })
-      const w = ui.askWait[key]
-      if (!w) return
-      if (!res.opened) w.error = res.reason ?? '理由が分かりません'
-      else {
-        w.ask = res.ask
-        if (res.ask) ui.askMine[`${root}#${res.ask}`] = true
+      if (!ui.askWait[key]) return
+      askOpened(ui, key, res)
+      if (res.opened) {
         // 送っているあいだに次の文を書いていたら残す。打っていた欄は描き直しで触らない（morph）ので、送れた文はここで消す。
         if ((ui.askDraft[key] ?? '').trim() === q) delete ui.askDraft[key]
         const ta = app.querySelector<HTMLTextAreaElement>(`textarea[data-askdraft="${CSS_ESC(key)}"]`)
@@ -525,6 +529,33 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
         return
       }
     }
+  }
+
+  async function answer(r: VRow, el: HTMLElement): Promise<void> {
+    const k = keyOf(r)
+    const ask = r.agent?.ask
+    if (!t.answer || !ask || (ui.answering?.[k] && !ui.answering[k]!.error)) return
+    const d = el.dataset
+    const text = d.write ? (ui.answerDraft?.[k] ?? '').trim() : d.pick !== undefined ? ask.options?.[Number(d.pick)] : undefined
+    const choice = d.choice ? Number(d.choice) : undefined
+    if (!text && choice === undefined) return
+    ;(ui.answering ??= {})[k] = {}
+    draw()
+    try {
+      const x = await t.answer({ root: r.root, item_id: r.card.id, rev: r.card.rev, ...(text && { text }), ...(choice !== undefined && { choice }), ...(ask.sig && { sig: ask.sig }) })
+      if (!x.sent) {
+        ui.answering[k] = { error: x.reason ?? '届けられませんでした' }
+        return draw()
+      }
+      delete ui.answering[k]
+      if (d.write && ui.answerDraft) delete ui.answerDraft[k]
+      const ta = app.querySelector<HTMLTextAreaElement>(`textarea[data-ansdraft="${CSS_ESC(k)}"]`)
+      if (d.write && ta) ta.value = ''
+      toast(`${x.how ?? '宛先'}に答えを届けました${x.note ? `。${x.note}` : ''}`)
+    } catch (e) {
+      ui.answering[k] = { error: (e as Error).message }
+    }
+    draw()
   }
 
   /** 案を選んで（choice）か、書いた文で（text）窓口に返す。書いた文は、届けたら欄から消す。 */
@@ -576,22 +607,23 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
     else if (d.tab !== undefined) {
       ui.tab = d.tab as Tab
-      if (d.task) {
-        ui.task = d.task
-        ui.watch = undefined
-        ui.wholeSide = 'detail'
+      if (d.task || d.stream) pickWhole({ task: d.task, stream: d.stream })
+    }
+    else if (d.stream !== undefined) {
+      if (ui.stream === d.stream) ui.open[d.toggle!] = el.getAttribute('aria-expanded') !== 'true'
+      else {
+        pickWhole({ stream: d.stream })
+        ui.open[d.toggle!] = true
       }
     }
     else if (d.toggle !== undefined) ui.open[d.toggle] = el.getAttribute('aria-expanded') !== 'true'
-    else if (d.task !== undefined) {
-      ui.task = d.task
-      ui.watch = undefined
-      ui.wholeSide = 'detail'
-    } else if (d.watch !== undefined) {
-      ui.watch = d.watch
-      ui.task = undefined
-      ui.wholeSide = 'detail'
-    } else if (d.wside !== undefined) ui.wholeSide = d.wside === 'ask' ? 'ask' : 'detail'
+    else if (d.task !== undefined) pickWhole({ task: d.task })
+    else if (d.watch !== undefined) pickWhole({ watch: d.watch })
+    else if (d.thread !== undefined) {
+      ui.tab = 'asks'
+      ui.thread = d.thread
+      if (d.settled) ui.askAll = true
+    } else if (d.askall !== undefined) ui.askAll = d.askall === '1'
     else if (d.jump !== undefined) {
       // 済んだカードは対応済みのタブで開く。
       if (rows.get(d.jump)?.status === 'closed') {
@@ -614,7 +646,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   app.addEventListener('click', (e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask],[data-side],[data-orca],[data-watch],[data-wside]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask],[data-side],[data-orca],[data-watch],[data-thread],[data-askall],[data-stream]')
     if (!el || !app.contains(el)) return
     if (win && onWindow(el)) return
     if (el.dataset.sel !== undefined) return select(el.dataset.sel)
@@ -657,6 +689,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       if (send) send.disabled = !el.value.trim() || !!(ui.askWait[k] && !ui.askWait[k]!.error)
       const reply = el.closest('.askin')?.querySelector<HTMLButtonElement>('button[data-ask="reply"]')
       if (reply) reply.disabled = !el.value.trim()
+    }
+    const ak = el.dataset.ansdraft
+    if (ak !== undefined) {
+      ;(ui.answerDraft ??= {})[ak] = el.value
+      const send = el.closest('.ansin')?.querySelector<HTMLButtonElement>('button[data-write]')
+      if (send) send.disabled = !el.value.trim() || !!(ui.answering?.[ak] && !ui.answering[ak]!.error)
     }
     if (el.dataset.other) {
       ui.other[el.dataset.other] = el.value

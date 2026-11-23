@@ -334,6 +334,7 @@ body { margin:0; }
 .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) minmax(420px,44%); }
 /* 狭い幅では詳細の幅を決めて、一覧の幅を残す（初見 14）。 */
 @media (max-width:1100px) { .ck.win .wbody.split { grid-template-columns:minmax(0,1fr) 380px; } }
+.ck.win .wbody.split:has(> .wpane[aria-label="やりとり"]) { grid-template-columns:minmax(320px,2fr) minmax(0,3fr); }
 .ck.win .wpane { container:wpane / inline-size; overflow-y:auto; padding:12px 16px 64px; display:grid; align-content:start; gap:24px; min-height:0; min-width:0; }
 .ck.win .wside { overflow-y:auto; border-left:1px solid var(--rule); background:var(--surface); min-height:0; min-width:0; }
 .ck.win .wpane > p { margin:0; font-size:var(--fs-s); }
@@ -347,7 +348,7 @@ body { margin:0; }
   .ck.win .wtop .orcab { display:none; }
   .ck.win .wcorca { display:block; padding:12px 16px 0; border-top:1px solid var(--rule); margin-top:8px; }
   .ck.win .wcorca .orcab { display:grid; gap:8px; margin:0; justify-items:start; }
-  .ck.win .wbody.split { grid-template-columns:minmax(0,1fr); }
+  .ck.win .wbody.split, .ck.win .wbody.split:has(> .wpane[aria-label="やりとり"]) { grid-template-columns:minmax(0,1fr); }
   .ck.win .wside { border-left:0; border-top:1px solid var(--rule); }
   .ck.win .wpane { padding-bottom:24px; } }
 
@@ -443,6 +444,16 @@ body { margin:0; }
 .ck.win .askin > .lb .mut { font-size:var(--fs-xs); font-weight:400; }
 .ck.win .askin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(4lh + 18px); max-height:60vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
 .ck.win .askin textarea:focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
+.ck.win .answer { display:grid; gap:12px; }
+.ck.win .anspick { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.ck.win .anspick li { display:grid; gap:4px; justify-items:start; }
+.ck.win .anspick .btn { text-align:left; white-space:normal; overflow-wrap:anywhere; }
+.ck.win .anspick .mut { font-size:var(--fs-xs); padding-left:12px; }
+.ck.win .ansin { display:grid; gap:8px; }
+.ck.win .ansin > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
+.ck.win .ansin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(2lh + 18px); max-height:40vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 12px; background:var(--surface); color:var(--ink); }
+.ck.win .ansin textarea:focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
+.ck.win .ansin .ansgo { display:flex; gap:8px; }
 .ck.win .ask .acts { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; position:static; padding:0; margin:0; background:none; border:0; }
 .ck.win .ask .btn.quiet { padding-inline:0; }
 .ck.win .ask > details.cont { border-top:1px solid var(--rule2); padding-top:10px; }
@@ -460,8 +471,6 @@ body { margin:0; }
 .ck.win .hl li:first-child { border-top:0; padding-top:0; }
 .ck.win .hh { display:flex; gap:8px; align-items:baseline; font-size:var(--fs-xs); }
 .ck.win .hh .code { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; color:var(--ink); }
-.ck.win .asks { list-style:none; margin:0; padding:0; display:grid; }
-.ck.win .askt { display:grid; gap:8px; padding:12px 0; border-top:1px solid var(--rule2); }
 .ck.win .aq, .ck.win .aa { display:grid; gap:4px; }
 .ck.win .aq > .mut, .ck.win .aa > .mut { font-size:var(--fs-xs); }
 .ck.win .aq .verb { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; text-wrap:pretty; word-break:auto-phrase; }
@@ -482,15 +491,43 @@ body { margin:0; }
 .ck .md td { min-width:7em; }
 .ck .md th { background:var(--sunk); font-weight:600; white-space:nowrap; }
 .ck .md .mdpre { margin:4px 0 8px; padding:8px 8px; background:var(--sunk); border:1px solid var(--rule2); border-radius:6px; overflow-x:auto; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); line-height:1.55; white-space:pre; }
-/* 全体の右の欄の切り替え（タスクの詳細｜案件への質問。R166） */
-.ck.win .wsw { position:sticky; top:0; z-index:2; display:flex; gap:8px; padding:12px 16px; background:var(--surface); border-bottom:1px solid var(--rule2); }
-.ck.win .wsw button { flex:1 1 0; min-width:0; border:1px solid var(--ink3); background:none; border-radius:7px; padding:4px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); display:inline-flex; justify-content:center; align-items:center; gap:6px; }
-.ck.win .wsw button[aria-pressed="true"] { background:var(--ink); border-color:var(--ink); color:var(--surface); }
-.ck.win .wsw .n { font-weight:700; }
-.ck.win .askdone { margin:0; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
-.ck.win .askpick { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
-.ck.win .askpick li { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; font-size:var(--fs-s); }
+.ck.win .alist { display:grid; gap:8px; }
+.ck.win .alist .ah { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; }
+.ck.win .alist h3 { margin:0; font-size:var(--fs-m); font-weight:700; }
+.ck.win .afil { display:inline-flex; gap:4px; }
+.ck.win .afil button { border:1px solid var(--ink3); background:none; border-radius:7px; padding:4px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
+.ck.win .afil button[aria-pressed="true"] { background:var(--ink); border-color:var(--ink); color:var(--surface); }
+.ck.win .arows { display:grid; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule2); }
+.ck.win .arow { display:grid; grid-template-columns:64px minmax(0,1fr) auto; gap:12px; align-items:start; border:0; border-radius:0; padding:8px 12px; background:none; text-align:left; width:100%; font:inherit; color:inherit; }
+.ck.win .arow + .arow { border-top:1px solid var(--rule2); }
+.ck.win .arow:hover { background:var(--sunk); }
+.ck.win .arow[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
+.ck.win .arow .at { display:grid; min-width:0; font-size:var(--fs-s); }
+.ck.win .arow .ati { font-weight:600; line-height:1.5; overflow-wrap:anywhere; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+.ck.win .arow .crumb { font-size:var(--fs-xs); color:var(--ink3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ck.win .arow .crumb.miss { color:var(--hot); }
+.ck.win .arow .du { font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; line-height:1.75; }
+.ck.win .ast { font-size:var(--fs-xs); font-weight:700; color:var(--ink2); white-space:nowrap; line-height:1.75; }
+.ck.win .ast.s-answered { color:var(--focus); }
+.ck.win .ast.s-done { color:var(--ink3); font-weight:400; }
+.ck.win .ask > .lb { display:flex; gap:8px; align-items:baseline; font-size:var(--fs-s); font-weight:700; }
+.ck.win .ask > .lb .mut { font-size:var(--fs-xs); font-weight:400; }
+.ck.win .wdet > .ask .arow { padding-inline:4px; }
+.ck.win .askfail { display:grid; gap:8px; }
+.ck.win .alk { border:0; background:none; padding:0; font:inherit; color:var(--focus); text-decoration:underline; text-underline-offset:3px; cursor:pointer; text-align:left; }
+.ck.win .athread .dh .crumbs { font-size:var(--fs-s); }
+.ck.win .athread .dh .crumbs .nxl { font-size:var(--fs-s); text-decoration:underline; text-underline-offset:3px; }
+.ck.win .wdet > .ask.conv { margin:12px 16px 0; padding-top:0; border-top:0; gap:16px; }
+.ck.win .askdone { display:grid; gap:4px; padding-left:12px; border-left:3px solid var(--rule); }
+.ck.win .askdone p { margin:0; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
+.ck.win .askdone ul.rich { margin:0; padding-left:1.4em; }
+.ck.win .askpick { display:grid; gap:8px; padding:12px; background:var(--sunk); }
+.ck.win .askpick > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
+.ck.win .askpick ul { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.ck.win .askpick li { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; font-size:var(--fs-s); }
 .ck.win .askpick .btn { flex:none; }
+.ck.win .wdet .said { display:block; overflow-wrap:anywhere; }
+.ck.win .st.cur > .sh { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 
 /* 全体: 形ごとの置き場所と仕事の箱 */
 .ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }

@@ -174,43 +174,92 @@ export function toolAsk(a: Pick<PsAgent, 'state' | 'toolName' | 'toolInput'>): A
 }
 
 const OPTION = /^\s*([❯›>]\s*)?(\d{1,2})[.)]\s+(.+?)\s*$/
-const BORDER = /^[\s─━═│┃╭╮╰╯┌┐└┘├┤☐☒✔·•-]*$/
+const BORDER = /^[\s─━═│┃╭╮╰╯┌┐└┘├┤╌┄☐☒✔·•-]*$/
+// 枠の上の線（Claude Code は問いの画面を ─ の線で囲む）。
+const TOP = /^[─━]{8,}$/
 // Claude Code が選択肢の下に足す、自由入力と相談の行。選択肢としては出さない。
-const EXTRA = /^(Type something|Chat about this)/i
+const FREE = /^Type something/i
+const CHAT = /^Chat about this/i
+// 画面の下の操作の案内。選択肢の説明として読まない。
+const FOOTER = /^(Enter to (select|confirm)|Esc to cancel|↑\/↓)/
 /**
  * 端末の画面の末尾から、選択肢の付いた問いを読む（Claude Code の AskUserQuestion と許可の確認は、問いの文の下に「❯ 1. …」の行が並ぶ）。
  * 問いは、いちばん下の「1.」の上の、空行か枠で区切られた塊。折り返しは繋ぐ。読めなければ undefined。
+ * 選択肢の番号・文・下の説明、自由入力の番号、枠の上の段落（エージェントの最後の発言）、枠の中で問いより上の行（見出し・許可の道具と全文）も読む。
  */
 export function screenAsk(lines: string[], kind: Ask['kind'] = 'question'): Ask | undefined {
-  const tail = lines.slice(-60)
+  const tail = lines.slice(-60).map((l) => l.replace(/[│┃]/g, ''))
   let first = -1
   for (let i = tail.length - 1; i >= 0; i--) if (OPTION.exec(tail[i]!)?.[2] === '1') { first = i; break }
   if (first < 0) return undefined
-  const options: string[] = []
+  const choices: { n: number; label: string; note?: string }[] = []
+  let free: number | undefined
   // 選んでいる選択肢の印（❯）が無い番号の並びは、エージェントの出力の箇条書きなので問いと読まない。
   let cursor = false
+  let last: { n: number; label: string; note?: string } | undefined
   for (let i = first, n = 1; i < tail.length; i++) {
+    const line = tail[i]!.trim()
     const m = OPTION.exec(tail[i]!)
     if (m && Number(m[2]) === n) {
       n++
       cursor ||= !!m[1]
-      if (!EXTRA.test(m[3]!)) options.push(m[3]!.replace(/\s*\(esc\)$/, ''))
-    }
+      const label = m[3]!.replace(/\s*\(esc\)$/, '')
+      last = undefined
+      if (FREE.test(label)) free = Number(m[2])
+      else if (!CHAT.test(label)) choices.push((last = { n: Number(m[2]), label }) as { n: number; label: string })
+    } else if (FOOTER.test(line)) break
+    else if (last && line && !BORDER.test(line)) last.note = last.note ? `${last.note} ${line}` : line
   }
   if (!cursor) return undefined
+  // 問いの文。見出し（☐ 対応の範囲）は問いに混ぜず、枠の中の行に回す。
+  let qTop = first
   const block: string[] = []
   for (let i = first - 1; i >= 0 && first - i <= 12; i--) {
-    const l = tail[i]!.replace(/[│┃]/g, '').trim()
-    if (!l || BORDER.test(l)) {
+    const l = tail[i]!.trim()
+    if (!l || BORDER.test(l) || /^[☐☒✔]/.test(l)) {
       if (block.length) break
       continue
     }
     block.unshift(l)
+    qTop = i
   }
   // 英字どうしの折り返しは語の間の空白が落ちるので、空白で繋ぐ。和文はそのまま繋ぐ。
-  const text = block.reduce((s, l) => (s && /[A-Za-z0-9,]$/.test(s) && /^[A-Za-z0-9]/.test(l) ? `${s} ${l}` : s + l), '')
-  return text ? { kind, text, ...(options.length && { options }) } : undefined
+  const question = block.reduce((s, l) => (s && /[A-Za-z0-9,]$/.test(s) && /^[A-Za-z0-9]/.test(l) ? `${s} ${l}` : s + l), '')
+  if (!question) return undefined
+  let top = -1
+  for (let i = qTop - 1; i >= 0 && qTop - i <= 40; i--) if (TOP.test(tail[i]!.trim())) { top = i; break }
+  // 枠の中で問いより上の行。許可の確認は道具の名前・説明・コマンドの全文（端末を見ずに許すので切らない）。案内の行（Tip:）は外す。
+  const body = (top >= 0 ? tail.slice(top + 1, qTop) : []).map((l) => l.trim()).filter((l) => l && !BORDER.test(l.replace(/^[☐☒✔]\s*/, '')) || /^[☐☒✔]\s*\S/.test(l)).filter((l) => !/^Tip:/.test(l))
+  // 枠の上の段落（エージェントの最後の発言。「⏺」で始まる行から）。
+  const before: string[] = []
+  for (let i = top - 1; i >= 0; i--) {
+    const l = tail[i]!.trim()
+    if (!l) {
+      if (before.length) break
+      continue
+    }
+    // 利用者の入力（❯ の行と、その折り返し）に当たったら、そこまでに拾った行は入力の続きなので捨てる。
+    if (/^❯/.test(l)) {
+      before.length = 0
+      break
+    }
+    if (TOP.test(l)) break
+    before.unshift(l)
+    if (/^⏺/.test(l)) break
+  }
+  // 許可の確認の題は、道具の名前のあとの最後の行（コマンド・パス）。読めなければ問いの文。
+  const text = kind === 'permit' && body.length >= 2 ? body.at(-1)! : question
+  const ask: Ask = {
+    kind, text, ...(choices.length && { options: choices.map((c) => c.label), choices }), ...(free && { free }),
+    ...(before.length && top >= 0 && { before: before.join('\n') }), ...(body.length && { body }), ...(kind === 'permit' && text !== question && { question })
+  }
+  // 許す中身（枠の中の行）が読めない許可の確認は、コマンドが変わっても印が同じになるので、窓から答えさせない（印を付けない）。
+  return kind === 'permit' && !body.length ? ask : { ...ask, sig: screenSig(ask) }
 }
+
+/** 画面の問いの印。問いの文・枠の中の行・選択肢の番号と文・自由入力の番号が同じなら同じ印（枠の上の段落は描き直しで変わりうるので入れない）。 */
+export const screenSig = (a: Pick<Ask, 'kind' | 'text' | 'body' | 'choices' | 'free'>) =>
+  JSON.stringify([a.kind, a.text, a.body ?? [], (a.choices ?? []).map((c) => [c.n, c.label, c.note ?? '']), a.free ?? 0])
 
 export type PsRow = { worktreeId: string; path: string; parentWorktreeId: string | null; displayName?: string | null; comment?: string | null; agents: PsAgent[] }
 // ログイン切れと利用枠は Orca が状態として持たないので、最後の発言の文から推す。
@@ -270,7 +319,9 @@ function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit 
   const f = failureOf(a, failures)
   const stop = stopReason(a, f)
   const reset = stop === 'limit' ? resetAt(a.lastAssistantMessage) ?? resetAt(f?.detail) : undefined
-  const ask = stop === 'blocked' || stop === 'waiting' ? toolAsk(a) ?? a.screen : undefined
+  // 画面から読めた問いを先に使う（選択肢の番号と文があり、窓から答えられる）。許可の確認を枠の無い画面から読んだときは、題を道具の欄の文（道具とコマンド）にする。
+  const tool = stop === 'blocked' || stop === 'waiting' ? toolAsk(a) : undefined
+  const ask = stop === 'blocked' || stop === 'waiting' ? (a.screen?.kind === 'permit' && tool && !a.screen.body?.length ? { ...a.screen, text: tool.text } : a.screen ?? tool) : undefined
   return {
     terminalId,
     title: a.conversationName ?? a.displayName ?? a.taskTitle ?? path.basename(row.path),

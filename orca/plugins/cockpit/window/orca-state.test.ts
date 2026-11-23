@@ -100,10 +100,38 @@ test('Orca の道具の欄から許可の問いを読み、AskUserQuestion は�
 
 test('端末の画面の末尾から、選択肢の付いた問いを読む（折り返しを繋ぎ、自由入力と相談の行は選択肢にしない）', async () => {
   const { ASK_SCREEN } = await import('../fixtures/demo.ts')
-  assert.deepEqual(screenAsk(ASK_SCREEN), { kind: 'question', text: 'キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', options: ['キャッシュを入れて直す', '調査報告だけにする'] })
-  // Claude Code の許可の確認。英字の折り返しは空白で繋ぐ。
-  const permit = [' Bash command', '', '   git push origin main', '', ' Do you want to', ' proceed?', ' ❯ 1. Yes', "   2. Yes, and don't ask again for git push", '   3. No, and tell Claude what to do differently (esc)']
-  assert.deepEqual(screenAsk(permit, 'permit'), { kind: 'permit', text: 'Do you want to proceed?', options: ['Yes', "Yes, and don't ask again for git push", 'No, and tell Claude what to do differently'] })
+  const { sig, ...q } = screenAsk(ASK_SCREEN)!
+  assert.deepEqual(q, {
+    kind: 'question', text: 'キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', options: ['キャッシュを入れて直す', '調査報告だけにする'],
+    choices: [{ n: 1, label: 'キャッシュを入れて直す', note: '地図のタイルを 1 日分ためる（stg で 2 日）' }, { n: 2, label: '調査報告だけにする', note: '原因と直し方の見積もりを田中さんに出す' }],
+    free: 3, before: '⏺ 地図の遅さを測りました。朝 8 時台だけ 10 秒かかります。', body: ['☐ 対応の範囲']
+  })
+  // 枠のすぐ上が利用者の入力（❯ と、その折り返し）なら、枠の上の段落は無い（使い捨ての端末で、入力の折り返しを拾っていた）。
+  const typed = ['❯ AskUserQuestion の道具で 1 問だけ聞いて。選択肢は 2', '  つ。答えを受けたら終わって。', ...ASK_SCREEN.slice(2)]
+  assert.equal(screenAsk(typed)!.before, undefined)
+  assert.equal(screenAsk(['⏺ 別の発言', ...ASK_SCREEN.slice(1)])!.sig, sig)
+  assert.notEqual(screenAsk(ASK_SCREEN.map((l) => l.replace('調査報告だけにする', '何もしない')))!.sig, sig)
+  // Claude Code の許可の確認（使い捨ての端末で撮った画面）。題は許すコマンドの全文、道具の名前と説明は枠の中の行に、案内（Tip:）は外す。
+  const rule = '╌'.repeat(40)
+  const permit = [
+    '⏺ Writing kt1 into /tmp/keytest/a.txt', '  ⎿  $ echo kt1 > /tmp/keytest/a.txt', '─'.repeat(40), ' Bash command',
+    ' Tip: auto mode handles these prompts for you — choose "switch to auto mode" below', ' Write kt1 into /tmp/keytest/a.txt', rule, ' echo kt1 > /tmp/keytest/a.txt', rule,
+    ' Do you want to proceed?', ' ❯ 1. Yes', '   2. Yes, and always allow access to /tmp/keytest from this project', '   3. Yes, and switch to auto mode · auto mode handles these prompts for you', '   4. No',
+    ' Esc to cancel · Tab to amend'
+  ]
+  const p = screenAsk(permit, 'permit')!
+  assert.equal(p.text, 'echo kt1 > /tmp/keytest/a.txt')
+  assert.equal(p.question, 'Do you want to proceed?')
+  assert.deepEqual(p.body, ['Bash command', 'Write kt1 into /tmp/keytest/a.txt', 'echo kt1 > /tmp/keytest/a.txt'])
+  assert.deepEqual(p.choices!.map((c) => [c.n, c.label]), [[1, 'Yes'], [2, 'Yes, and always allow access to /tmp/keytest from this project'], [3, 'Yes, and switch to auto mode · auto mode handles these prompts for you'], [4, 'No']])
+  assert.equal(p.before, '⏺ Writing kt1 into /tmp/keytest/a.txt\n⎿  $ echo kt1 > /tmp/keytest/a.txt')
+  const bare = [' Bash command', '', '   git push origin main', '', ' Do you want to', ' proceed?', ' ❯ 1. Yes', "   2. Yes, and don't ask again for git push", '   3. No, and tell Claude what to do differently (esc)']
+  assert.deepEqual(screenAsk(bare, 'permit')!.options, ['Yes', "Yes, and don't ask again for git push", 'No, and tell Claude what to do differently'])
+  assert.equal(screenAsk(bare, 'permit')!.text, 'Do you want to proceed?')
+  // 許す中身を読めない許可の確認には印を付けない（コマンドが変わっても同じ印になり、前のボタンで別のコマンドを許してしまう）。
+  assert.equal(screenAsk(bare, 'permit')!.sig, undefined)
+  // 選択肢の説明が入れ替われば印も変わる。
+  assert.notEqual(screenAsk(ASK_SCREEN.map((l) => l.replace('1 日分', '2 日分')))!.sig, sig)
   assert.equal(screenAsk(['❯ ', '  ctx 17%']), undefined)
   // 返事待ちの画面に残ったエージェントの箇条書き（選んでいる印が無い）は問いと読まない。
   assert.equal(screenAsk(['直したこと:', '1. 一覧の並び', '2. 絞り込み', '', '❯ ']), undefined)

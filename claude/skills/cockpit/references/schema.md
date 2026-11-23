@@ -90,7 +90,7 @@ JSON
 - `routes[]`: 連絡を拾う経路（Slack・Teams・メール）。`id`・`label`（「Slack #aoba-dev」）・`read_at`（見張りが最後に読んだ時刻）・`error`・`stale_minutes`（既定 120）。古い・失敗した経路は窓に「見ていない」と出て、hook も `checks.routes` で名指しする。見張りが書く欄で、メインは経路を足すときだけ書く。`streams[].watch` との違い: `routes[]` は経路ごとに最後に読んだ時刻を見張りが書き込む記録で、`watch` は Bot の設定への参照を窓口が保つ欄（前回の結果は Orca から引き、帳簿には書き込まない）
 - `cards[]`: 深田の私の番の候補。形はこのファイルの「カード」、書き方は references/cards.md
 - `applied_ops[]`: 反映済みの op_id の一覧。書く道具の `applied_ops` で足す
-- `asks[]`: 窓からの質問のうち、返しを反映したもの（references/consult.md の「窓から質問する」）。`{ "id": "ask3", "card": "d21"?, "task": "t50"?, "memo": ".orca/consult/ask-ask3.md", "from_returns": ["ask3-1"], "held_returns": [], "notify": [{ "return_id": "ask3-1", "task": "t50", "message_id": "msg_…"? }] }`。`from_returns` に足すのが反映の最後の書き込み、`held_returns` は増えた判断で保留にした返し、`notify[]` は担当・worker に伝える返しで、送れたら `message_id` を書く。返しの記録にあって `from_returns` に無い返し・`held_returns` に残る返し・`message_id` の無い `notify` は `checks.unreflected_returns` に出る
+- `asks[]`: 窓からの質問のうち、返しを反映したもの（references/consult.md の「窓から質問する」）。`{ "id": "ask3", "card": "d21"?, "task": "t50"?, "stream": "s2"?, "memo": ".orca/consult/ask-ask3.md", "from_returns": ["ask3-1"], "held_returns": [], "notify": [{ "return_id": "ask3-1", "task": "t50", "message_id": "msg_…"? }] }`。`from_returns` に足すのが反映の最後の書き込み、`held_returns` は増えた判断で保留にした返し、`notify[]` は担当・worker に伝える返しで、送れたら `message_id` を書く。返しの記録にあって `from_returns` に無い返し・`held_returns` に残る返し・`message_id` の無い `notify` は `checks.unreflected_returns` に出る
 - `notes_ref`: 任意。案件のメモの場所
 - `requests[]`: 依頼の帳簿。形はこのファイルの「依頼の帳簿」
 - `intake`: 発言と知らせの仕分けの位置。形はこのファイルの「依頼の帳簿」

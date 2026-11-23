@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { askChoices, askWords, draftFormat, escapeAskSections, latestAnswer, latestChoices, missingFields, unanswered, nextOp, overlay, parseCockpit, shownTask, UNDO_GRACE_MS, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
+import { askChoices, askWords, withoutChoices, draftFormat, escapeAskSections, latestAnswer, latestChoices, missingFields, unanswered, nextOp, overlay, parseCockpit, shownTask, UNDO_GRACE_MS, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
 import { appendOp, notifyMain, readNotified, SIGNAL, signalPlan, signalText, splitLine, writeAtomic, writeNotified } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -298,6 +298,9 @@ test('【選べる案】: 答えの最後の印から続く「- A: 題」の行�
   assert.deepEqual(askChoices(`【選べる案】\n${'ABCDEF'.split('').map((k) => `- ${k}: 案`).join('\n')}`), [], '6 行は出さない')
   assert.deepEqual(askChoices('A か B のどちらかです。\n- A: 文章の箇条書き\n- B: 文章の箇条書き'), [], '印の無い箇条書きから推し量らない')
   assert.deepEqual(askChoices('【選べる案】\n- A: 同じ\n- A: 同じ記号'), [])
+  assert.equal(withoutChoices(ans), '2 案あります。\n\n\n\n【窓口への返し】')
+  assert.equal(withoutChoices(`${fenced}\n【選べる案】\n- A: 本物\n- B: 本物 2`), fenced)
+  assert.equal(withoutChoices('【選べる案】\n- A: 1 つだけ'), '【選べる案】\n- A: 1 つだけ')
   // 最後の質問より後の答えだけ。
   const entries = [{ kind: 'q' as const, time: '09:10', text: '地図は？' }, { kind: 'a' as const, time: '09:11', text: ans }]
   assert.equal(latestChoices(entries).length, 2)
