@@ -384,7 +384,6 @@ body { margin:0; }
 .ck.win .cardrow .tl { display:flex; align-items:baseline; gap:8px; min-width:0; }
 /* 題は行で一番知りたい文なので 2 行まで見せ、3 行目から切る（ui.md。利用者役の初見で「題名が途中で切れる」）。 */
 .ck.win .cardrow .tl .ti { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; overflow-wrap:anywhere; line-height:1.5; min-width:0; }
-.ck.win .cardrow .tl .tag { flex:none; }
 .ck.win .cardrow .crumb { display:block; font-size:var(--fs-xs); color:var(--ink3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck.win .cardrow .du { font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; text-align:right; display:grid; justify-items:end; }
 .ck.win .cardrow .du.cl { max-width:240px; }

@@ -63,19 +63,30 @@ const tag = (text: string, cls = '') => `<span class="tag${cls ? ` ${cls}` : ''}
 const markTag = (m: Mark | undefined) => (m ? tag(MARK_LABEL[m], 'new') : '')
 
 /** 行の札。協議中と修正待ち。相談は見出しで別に数えるので札を付けない（初見 12）。 */
-function tags(r: Row): string {
+function tags(r: Row): string[] {
   return [
     r.talking && tag('協議中', 'talk'),
     // 返事待ちは全体の仕事とタスクの状態と同じ語・同じ色にする（Neon）。
     replyWait([r]) && tag(REPLY_LABEL, 'miss'),
     r.status === 'fixing' && (r.pending ? tag('修正依頼済み（受領待ち）', 'wait') : tag('修正待ち', 'wait'))
-  ].filter(Boolean).join('')
+  ].filter((x): x is string => !!x)
+}
+
+/**
+ * 行の 2 行目（おすすめの行と、居場所の行）。札は題の横に置くと、2 行に折り返した題の 1 行目に割り込んで題が分断されるので、
+ * 2 行目の先頭に置く。居場所の行があればその先頭、無ければおすすめの行の先頭、どちらも無ければ札だけの行にする。
+ */
+function subLinesHtml(marks: string[], rec: string, sub: string | undefined): string {
+  const ms = marks.filter(Boolean)
+  const line = (cls: string, xs: string[]) => (xs.length ? `<span class="${cls}">${xs.join('・')}</span>` : '')
+  const onRec = !sub && !!rec
+  return line('recm', [...(onRec ? ms : []), ...(rec ? [rec] : [])]) + line('crumb', [...(onRec ? [] : ms), ...(sub ? [esc(sub)] : [])])
 }
 
 /** 判断の一覧の 1 行に出すおすすめの案（一覧だけで決められるように。info-needs Q1）。 */
 const recOf = (r: Row) => {
   const o = r.status === 'mine' && r.card.kind === 'decide' ? r.card.options?.find((x) => x.recommended) : undefined
-  return o ? `<span class="recm">おすすめ: ${esc(o.label)}</span>` : ''
+  return o ? `おすすめ: ${esc(o.label)}` : ''
 }
 
 const taskOf = (b: Board, r: Row): TaskView | undefined => b.d.tasks.get(r.card.tasks?.[0] ?? '')
@@ -101,7 +112,7 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
   const sub = r.agent?.ask?.from ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.wait?.what && `確かめること ${t.task.wait.what}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
-    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span>${markTag(mark)}${tags(r)}</span>${recOf(r)}${sub ? `<span class="crumb">${esc(sub)}</span>` : ''}</span>
+    <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span></span>${subLinesHtml([markTag(mark), ...tags(r)], recOf(r), sub)}</span>
     <span class="du${closed ? ' cl' : ''}">${right}${closed || !rowIdHtml(r) ? '' : `${right ? '' : '<span aria-hidden="true">&nbsp;</span>'}${rowIdHtml(r)}`}</span></button>`
 }
 

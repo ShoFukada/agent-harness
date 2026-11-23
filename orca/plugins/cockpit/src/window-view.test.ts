@@ -847,6 +847,27 @@ test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ち�
   assert.doesNotMatch(rowOf(calm), /返事待ち/)
 })
 
+const talk = (v: CockpitView, id: string) =>
+  v.log.ops.push({ op_id: 901, at: '2026-11-21T00:00:00.000Z', item_id: id, item_rev: v.cockpit!.cards.find((x) => x.id === id)!.rev, type: 'talk' })
+
+test('要対応の行の札は題の横に置かず（2 行に折り返した題に割り込んで分断する）、2 行目の先頭に「札・2 行目の文」の形で置く。決める行はおすすめの行の先頭、2 行目の無い行は札だけの 2 行目にする', () => {
+  const m = aoba((v) => {
+    v.cockpit!.streams.find((x) => x.id === 's2')!.form = 'cowork'
+    v.cockpit!.cards = v.cockpit!.cards.filter((x) => x.stream !== 's2')
+    v.owners = [{ session: 'sess-aws', kind: 'chat', state: 'done', worktree: '/ws/aoba-aws', updatedAt: NOW - 60_000, last: '定例では、費用の見積もりを先に説明しますか、それとも構成図から説明しますか？' }]
+    talk(v, 'd22')
+  })
+  // 決める d21 は s2 の札なので別の窓で協議中にする。
+  const h = page(m) + page(aoba((v) => talk(v, 'd21')))
+  const rowOf = (key: string) => h.match(new RegExp(`<[^>]*data-sel="${key}"[\\s\\S]*?</button>`))?.[0] ?? ''
+  for (const key of ['/ws/aoba##cowork:s2', '/ws/aoba#d22', '/ws/aoba#d21']) assert.match(rowOf(key), /<span class="tl"><span class="ti">[^<]*<\/span><\/span>/, `${key} の題の行に札が無い`)
+  assert.match(rowOf('/ws/aoba##cowork:s2'), /<span class="crumb"><span class="tag miss">返事待ち（あなた）<\/span>・担当（AWS 構成案）があなたの返事を待っている<\/span>/)
+  assert.match(rowOf('/ws/aoba#d22'), /<span class="crumb"><span class="tag talk">協議中<\/span><\/span>/)
+  // 決める行はおすすめの行が 2 行目なので、その先頭に置く（札だけの 3 行目を作らない）。
+  assert.match(rowOf('/ws/aoba#d21'), /<span class="recm"><span class="tag talk">協議中<\/span>・おすすめ: [^<]+<\/span><\/span>/)
+  assert.doesNotMatch(CSS, /\.cardrow \.tl \.tag/)
+})
+
 test('要対応の行の ID（追加 40）: 各行の右の列の下に、質問で打てる ID を補助の色で出す。Orca から作った行は指すタスク、無ければ仕事の id。対応済みの行には出さない', () => {
   const h = page(aoba())
   for (const id of ['d22', 'd21', 'c4', 'r5']) assert.match(h, new RegExp(`data-sel="/ws/aoba#${id}"[\\s\\S]*?<span class="du">[\\s\\S]*?<span class="cid">番号<span class="cv">${id}</span></span></span></button>`))

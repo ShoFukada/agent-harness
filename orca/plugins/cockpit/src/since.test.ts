@@ -130,7 +130,8 @@ test('前に見たときからの変化: 上の帯は語つきの数で 1 行、
   ui.sel = todoOrder(m.boards[0])[0]
   const todo = renderWindow(m, ui, NOW, (x) => x)
   assert.match(todo, /<div class="wsince" role="status">/)
-  assert.match(todo, /data-sel="\/ws\/aoba#d30"[^>]*>[\s\S]*?<span class="ti">一覧の既定の並び<\/span><span class="tag new">新規<\/span>/)
+  // 印は題に割り込まないよう 2 行目の先頭に置く。
+  assert.match(todo, /data-sel="\/ws\/aoba#d30"[^>]*>[\s\S]*?<span class="ti">一覧の既定の並び<\/span><\/span><span class="recm"><span class="tag new">新規<\/span>・おすすめ: /)
   assert.match(todo, /data-sel="\/ws\/aoba#d21"[^>]*>[\s\S]*?<span class="tag new">更新<\/span>/)
   assert.doesNotMatch(todo.replace(/data-sel="\/ws\/aoba#d(30|21)"[\s\S]*?<\/button>/g, ''), /class="tag new"/, 'ほかの行には付けない')
   const whole = renderWindow(m, { ...ui, tab: 'whole', open: { 's:s2': true } }, NOW, (x) => x)
