@@ -186,6 +186,8 @@ body { margin:0; }
 .ck .btn:disabled:not(.pri) { color:var(--ink3); border-color:var(--rule); cursor:default; }
 .ck .btn.talk { border-color:var(--focus); color:var(--focus); }
 .ck .btn.quiet { border-color:transparent; background:none; padding-inline:4px; color:var(--ink2); font-weight:400; text-decoration:underline; text-underline-offset:3px; }
+/* 枠の無いボタンは、押せないときも枠を出さず、薄い色と下線なしで見せる（枠が出ると押せるボタンに見える）。 */
+.ck .btn.quiet:disabled { border-color:transparent; color:var(--ink3); text-decoration:none; cursor:default; }
 /* 枠の無い副の操作も、下線で押せると分かるようにする（Neon 追加 23）。 */
 .ck .acts .hint { margin-left:auto; font-size:var(--fs-xs); color:var(--ink3); }
 .ck kbd { font:inherit; font-size:var(--fs-xs); border:1px solid var(--ink3); border-radius:4px; padding:0 4px; }
@@ -423,12 +425,12 @@ body { margin:0; }
 .ck.win .links.main .lk i { display:none; }
 .ck.win .first ol.rich, .ck.win .first ul.rich { margin:0; padding-left:1.4em; }
 .ck.win details.more-d { margin:8px 16px 0; }
-.ck.win details.more-d summary { cursor:pointer; font-size:var(--fs-s); color:var(--focus); padding:8px 0; }
+.ck.win details.more-d summary { cursor:pointer; font-size:var(--fs-s); color:var(--focus); padding:8px 0; text-decoration:underline; text-underline-offset:3px; }
 .ck.win details.more-d .slots { display:grid; gap:8px; padding:4px 0 8px; font-size:var(--fs-s); }
 .ck.win .wdet > .other { margin:8px 16px 0; }
 .ck.win .dbtn { margin-top:auto; position:sticky; bottom:0; background:var(--surface); }
 .ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:8px 16px; }
-.ck.win .dh .crumbs .nxl { margin-left:auto; border:0; background:none; padding:0 4px; color:var(--focus); font-size:var(--fs-xs); white-space:nowrap; }
+.ck.win .dh .crumbs .nxl { margin-left:auto; border:0; background:none; padding:0 4px; color:var(--focus); font-size:var(--fs-xs); white-space:nowrap; text-decoration:underline; text-underline-offset:3px; }
 
 /*
  * 窓から質問する（R105）。欄は線で区切り（R111）、入力欄は 4 行（R90）。答えを待つ間・判断の記録の当たり・答えは同じ字の大きさで、
@@ -521,7 +523,7 @@ body { margin:0; }
 .ck.win .askfail { display:grid; gap:8px; }
 .ck.win .alk { border:0; background:none; padding:0; font:inherit; color:var(--focus); text-decoration:underline; text-underline-offset:3px; cursor:pointer; text-align:left; }
 .ck.win .athread .dh .crumbs { font-size:var(--fs-s); }
-.ck.win .athread .dh .crumbs .nxl { font-size:var(--fs-s); text-decoration:underline; text-underline-offset:3px; }
+.ck.win .athread .dh .crumbs .nxl { font-size:var(--fs-s); }
 .ck.win .wdet > .ask.conv { margin:12px 16px 0; padding-top:0; border-top:0; gap:16px; }
 .ck.win .askpick { display:grid; gap:8px; padding:12px; background:var(--sunk); }
 .ck.win .askpick > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
@@ -658,7 +660,8 @@ body { margin:0; }
 .ck.win .rqd .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
 .ck.win .lc .now { font-size:var(--fs-xs); font-weight:700; color:var(--focus); white-space:nowrap; }
 /* タスクの事実はラベルを左、値を右にそろえる。 */
-.ck.win .facts .fld { grid-template-columns:6.5em minmax(0,1fr); gap:12px; align-items:baseline; }
+/* ラベルの列は、詳細のラベルで一番長い「依頼していること」（8 字）が 1 行に収まる幅にそろえる。 */
+.ck.win .facts .fld { grid-template-columns:calc(var(--fs-xs) * 8.5) minmax(0,1fr); gap:12px; align-items:baseline; }
 .ck.win .facts .fld > .lb { font-size:var(--fs-xs); }
 /* 狭い幅では見出しを値の上に置き、値の列の幅を取る（Neon 初見 2 巡目）。 */
 @media (max-width:1100px) { .ck.win .facts .fld { grid-template-columns:minmax(0,1fr); gap:4px; } }

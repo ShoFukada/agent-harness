@@ -95,7 +95,7 @@ test('全体の仕事の行（追加 42）: 題は切らずに 1 行目に出し
   assert.doesNotMatch(rule, /nowrap|ellipsis/)
 })
 
-test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中の仕事） → 見張る の順に置き（仕事を先に）、見張るに届いた連絡を並べる。右に未対応の一覧を出さない（R91）', () => {
+test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中の仕事） → 見張る の順に置き（仕事を先に）、見張るに届いた連絡を並べる。右に未対応の一覧を出さない（R91）。区分の見出しは形と件数だけ（説明は出さない）', () => {
   const m = aoba((v) => {
     const s = v.cockpit!.streams
     s[0]!.form = 'delegate'
@@ -104,12 +104,13 @@ test('全体: 一緒に作る → 任せる → 形の無い仕事（進行中�
     v.cockpit!.requests = [{ id: 'r1', at: '2026-11-21T09:00:00+09:00', title: '配車画面を直す', tasks: ['t1'], legacy: true }]
   })
   const t = text(page(m, { tab: 'whole' }))
-  const order = ['一緒に作る 話しながら', '任せる 任せている', '進行中の仕事 1 件', '見張る 見回りと届いたもの'].map((x) => t.indexOf(x))
+  const order = ['一緒に作る 1 件', '任せる 1 件', '進行中の仕事 1 件', '見張る 1 件'].map((x) => t.indexOf(x))
   assert.ok(order.every((n) => n >= 0), t)
   assert.deepEqual([...order].sort((a, b) => a - b), order)
   assert.match(t, /届いた連絡 1 件/)
   assert.doesNotMatch(t, /件数外/, '意味の伝わらない語は出さない（初見 12）')
   assert.doesNotMatch(t, /未完了の依頼/)
+  assert.doesNotMatch(t, /話しながら進めているもの|任せている作業の進み具合|見回りと届いたもの/)
 })
 
 test('全体の仕事の行（追加 38・R188・R204）: 題・概要・状況。状況は状態の語のあとに窓口の書いた status を切らずに出し、next は出さない。タスクの行と詳細は概要（goal）と、事実から決めた状況', () => {
@@ -674,22 +675,23 @@ test('要対応の行の札は題の横に置かず（2 行に折り返した題
   const h = page(m) + page(aoba((v) => talk(v, 'd21')))
   const rowOf = (key: string) => h.match(new RegExp(`<[^>]*data-sel="${key}"[\\s\\S]*?</button>`))?.[0] ?? ''
   for (const key of ['/ws/aoba##cowork:s2', '/ws/aoba#d22', '/ws/aoba#d21']) assert.match(rowOf(key), /<span class="tl"><span class="ti">[^<]*<\/span><\/span>/, `${key} の題の行に札が無い`)
-  assert.match(rowOf('/ws/aoba##cowork:s2'), /<span class="crumb"><span class="tag miss">返事待ち（あなた）<\/span>・担当（AWS 構成案）があなたの返事を待っている<\/span>/)
+  assert.match(rowOf('/ws/aoba##cowork:s2'), /<span class="crumb"><span class="tag miss">返事待ち（あなた）<\/span>・担当（AWS 構成案）があなたの返事を待っている・1 分前から<\/span>/)
   assert.match(rowOf('/ws/aoba#d22'), /<span class="crumb"><span class="tag talk">協議中<\/span><\/span>/)
   // 決める行はおすすめの行が 2 行目なので、その先頭に置く（札だけの 3 行目を作らない）。
   assert.match(rowOf('/ws/aoba#d21'), /<span class="recm"><span class="tag talk">協議中<\/span>・おすすめ: [^<]+<\/span><\/span>/)
   assert.doesNotMatch(CSS, /\.cardrow \.tl \.tag/)
 })
 
-test('要対応の行の ID（追加 40）: 各行の右の列の下に、質問で打てる ID を補助の色で出す。Orca から作った行は指すタスク、無ければ仕事の id。対応済みの行には出さない', () => {
+test('要対応の行の番号（追加 40・R67）: 一覧の行には出さず、詳細の下に小さく置く。Orca から作った行は指すタスク、一緒に作る仕事の行は仕事の id。右の列は期限だけ', () => {
   const h = page(aoba())
-  for (const id of ['d22', 'd21', 'c4', 'r5']) assert.match(h, new RegExp(`data-sel="/ws/aoba#${id}"[\\s\\S]*?<span class="du">[\\s\\S]*?<span class="cid">番号<span class="cv">${id}</span></span></span></button>`))
+  const list = h.slice(h.indexOf('class="wpane"'), h.indexOf('aria-label="詳細"'))
+  assert.doesNotMatch(list, /class="cid"|番号/)
+  for (const id of ['d22', 'd21', 'c4', 'r5']) assert.match(page(aoba(), { sel: `/ws/aoba#${id}` }), new RegExp(`<p class="rid">番号<code>${id}</code></p>`))
+  assert.match(list, /data-sel="\/ws\/aoba#d22"[\s\S]*?<span class="du"><span class="due dover">期限切れ 08:00<\/span><\/span><\/button>/)
+  assert.match(list, /data-sel="\/ws\/aoba#c4"[\s\S]*?<span class="du"><\/span><\/button>/, '期限の無い行は右の列を空ける')
   assert.equal(rowId({ card: { id: '#agent:term_x', tasks: ['t5'], stream: 's1' } as never }), 't5')
   assert.equal(rowId({ card: { id: '#cowork:s2', stream: 's2', tasks: ['t1', 't2'] } as never }), 's2', '一緒に作る仕事の行は、先頭のタスクではなく仕事を指す')
   assert.equal(rowId({ card: { id: '#ask:msg_q1', stream: 's2' } as never }), undefined)
-  const done = page(aoba(), { tab: 'done' })
-  assert.doesNotMatch(done.slice(done.indexOf('class="wpane"')), /class="cid"/)
-  assert.match(CSS, /\.ck \.cid \{[^}]*user-select:text/)
 })
 
 test('放置の行（追加 35）: 要対応に「確認」の 1 行で何時間動いていないかを出し、詳細に最後の動き・worker と担当の今・帳簿の次と、タスクの詳細を開くボタン', () => {
@@ -707,7 +709,7 @@ test('放置の行（追加 35）: 要対応に「確認」の 1 行で何時間
   assert.match(det, /次にやること 帳票の列を決める/)
   assert.match(det, /対応のしかた 「担当と話す」で止まっている理由を聞き/)
   assert.match(h, /data-tab="whole" data-task="k9">タスクの詳細を開く/)
-  assert.match(h, /data-sel="\/ws\/aoba##idle:k9"[\s\S]*?<span class="cid">番号<span class="cv">k9<\/span>/, '放置の行の番号はタスクの id')
+  assert.match(h, /<p class="rid">番号<code>k9<\/code><\/p>/, '放置の行の番号はタスクの id')
 })
 
 test('見張る仕事の頻度（R152）: cron の 5 欄と RRULE の主な形を語にし、読めない形はそのまま出す', () => {
@@ -779,4 +781,14 @@ test('確認日の印（R142・R204 の date の待ち）: 済んでいないタ
   assert.match(h, /<b class="chk">確認日 11\/21\(土\)<\/b>/)
   assert.equal((h.match(/class="chk"/g) ?? []).length, 2, '済んだ t4 には出さない')
   assert.match(page(m, { tab: 'whole', task: 't2' }), /<div class="kl">.*<span class="chk">確認日 11\/24\(火\)<\/span><\/div>/s)
+})
+
+test('上の帯と詳細の小さな部品（t148）: 対応済み 0 件は数を出さない。枠の無いボタンは押せないときも枠を出さない。「次へ」と「詳細」は下線。事実の欄のラベルの列は 8 字が入る幅', () => {
+  const none = page(aoba((v) => { v.cockpit!.cards = v.cockpit!.cards.filter((x) => !x.resolved_at) ; v.archive = [] }))
+  assert.match(none, /data-tab="done" aria-selected="false">対応済み<\/button>/)
+  assert.match(page(aoba()), /data-tab="done" aria-selected="false">対応済み<span class="n z">1<\/span>/)
+  assert.match(CSS, /\.ck \.btn\.quiet:disabled \{[^}]*border-color:transparent;[^}]*text-decoration:none/)
+  assert.match(CSS, /\.ck\.win \.dh \.crumbs \.nxl \{[^}]*text-decoration:underline/)
+  assert.match(CSS, /\.ck\.win details\.more-d summary \{[^}]*text-decoration:underline/)
+  assert.match(CSS, /\.ck\.win \.facts \.fld \{ grid-template-columns:calc\(var\(--fs-xs\) \* 8\.5\)/)
 })

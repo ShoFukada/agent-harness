@@ -1,7 +1,7 @@
 import { actionVerb, COUNTED, COWORK_ID, IDLE_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, statusFallback, tokyoDay, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
-  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, sp, stripHtml, toastsHtml, rowIdHtml,
+  actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, sp, stripHtml, toastsHtml, rowId,
   type Board, type Model, type Theme, type Ui, type VRow
 } from './view.ts'
 import { markdown } from './markdown.ts'
@@ -107,18 +107,18 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
   // 返した答えは 1 行で切り、全文は詳細で読む（長い別の回答で行が伸びないように）。
   const right = closed
     ? `${outcome(r.how) ? `<span class="how" title="${esc(r.how ?? '')}">${esc(outcome(r.how))}</span>` : ''}<span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
-    : r.agent?.ask && c.since ? `<span class="mut">${esc(ago(c.since, now))}前</span>` : dueHtml(c.due, now)
-  // 番号はどの行でも右の列の 2 段目に置く（時刻の無い行で、時刻の位置に番号だけが来ないように。Neon・初見の目）。
+    : dueHtml(c.due, now)
+  // 右の列は期限だけにする（1 つの列に 1 種類の値。ui.md）。止まった問いの聞いてからの時間は 2 行目に回し、番号は詳細の下に置く（R67）。
   // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。動いていないタスクは、題にタスク名があるので止まっている手がかり。
-  const sub = r.agent?.ask?.from ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.wait?.what && `確かめること ${t.task.wait.what}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
+  const asked = r.agent?.ask?.from && c.since && !closed ? `・${ago(c.since, now)}前から` : ''
+  const sub = (r.agent?.ask?.from ? `${r.agent.ask.from}${asked}` : undefined) ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.wait?.what && `確かめること ${t.task.wait.what}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span></span>${subLinesHtml([markTag(mark), ...tags(r)], recOf(r), sub)}</span>
-    <span class="du${closed ? ' cl' : ''}">${right}${closed || !rowIdHtml(r) ? '' : `${right ? '' : '<span aria-hidden="true">&nbsp;</span>'}${rowIdHtml(r)}`}</span></button>`
+    <span class="du${closed ? ' cl' : ''}">${right}</span></button>`
 }
 
 const FORM_ORDER = FORMS
-const FORM_DESC: Record<StreamForm, string> = { cowork: '話しながら進めているもの', delegate: '任せている作業の進み具合', watch: '見回りと届いたもの' }
 const formChip = (f: StreamForm | undefined) => (f ? `<span class="fm f-${f}">${esc(FORM_LABEL[f])}</span>` : '')
 
 /** 仕事の見出し。件数はタブの要対応と同じ数え方（相談・報告は別に書く）にし、進み具合は右にそろえる。 */
@@ -323,7 +323,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
     ${closed ? '' : otherHtml(r, ui)}
     ${askOn(c) ? askBoxHtml(b, askOn(c)!, ui, now) : ''}
-    ${c.id.startsWith('#') ? '' : ridHtml(c.id)}
+    ${rowId(r) ? ridHtml(rowId(r)!) : ''}
     <div class="dbtn">${acts}</div></div>`
 }
 
@@ -670,7 +670,7 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   })
   const sec = (f: StreamForm, extra = '') => {
     const xs = live.filter((j) => form(j) === f)
-    return `<section class="fsec"><h3>${formChip(f)}<span class="mut">${esc(FORM_DESC[f])}</span>${xs.length ? `<span class="mut">${xs.length} 件</span>` : ''}</h3>${xs.map((j) => streamBox(b, j, ui, todo, now)).join('')}${extra}</section>`
+    return `<section class="fsec"><h3>${formChip(f)}${xs.length ? `<span class="mut">${xs.length} 件</span>` : ''}</h3>${xs.map((j) => streamBox(b, j, ui, todo, now)).join('')}${extra}</section>`
   }
   // 見張る仕事は、その Bot が結び付いた案件の窓にだけ出す（R190。ハーネスの窓にも全案件の分を集めない）。
   const watches = watchRows([b])
@@ -767,7 +767,7 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
   const orcaBtns = `<span class="orcab"><button class="btn quiet" type="button" data-orca="open">Orca で開く</button><button class="btn quiet" type="button" data-orca="sync"${!front || front.root === b.root ? ' disabled' : ''}>Orca に合わせる</button></span>`
   return `<div class="ck win${open ? ' side-open' : ''}" data-theme="${ui.dark ? 'dark' : 'light'}">
     <div class="wtop"><button class="sidebtn" type="button" data-side="toggle" aria-controls="wcases" aria-expanded="${open}">案件の一覧</button><span class="pj">${esc(b.v.cockpit!.workspace.name)}</span>
-      <div class="tabs" role="tablist">${tabBtn('todo', '要対応', total)}${tabBtn('whole', '全体')}${tabBtn('asks', 'やりとり', answered || undefined)}${tabBtn('done', '対応済み', b.d.closed.length, true)}</div>
+      <div class="tabs" role="tablist">${tabBtn('todo', '要対応', total)}${tabBtn('whole', '全体')}${tabBtn('asks', 'やりとり', answered || undefined)}${tabBtn('done', '対応済み', b.d.closed.length || undefined, true)}</div>
       <div class="flags">${stuck ? `<span class="err">停止中 ${stuck} 件</span>` : ''}
         ${orcaBtns}${theme}</div></div>
     <div class="wmain">${open ? `${casesSide(m, b, orcaBtns)}<button class="wscrim" type="button" data-side="close" aria-label="案件の一覧を閉じる"></button>` : ''}<div class="wcol">
