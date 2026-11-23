@@ -258,23 +258,63 @@ def settings_file(argv):
     return v if v and v[0] in "/~" else None
 
 
+# claude の引数の形。claude 2.1.321 の `claude --help` の書式（<x> は値を 1 つ、<x...> は続く値を全部、[x] は値を取ってもよい）に、
+# help に出ないが実物の引数に出るもの（--append-system-prompt-file・--permission-prompt-tool・--thinking-display など）を足した。
+# claude は commander で引数を読むので、続く値を全部取るものと値を取ってもよいものは、`-` で始まらない次の語を値にする。
+CLAUDE_FLAGS = {
+    "--allow-dangerously-skip-permissions", "--ax-screen-reader", "--bg", "--background", "--bare", "--brief", "--chrome", "-c",
+    "--continue", "--dangerously-skip-permissions", "--desktop", "--disable-slash-commands", "--exclude-dynamic-system-prompt-sections",
+    "--fork-session", "--forward-subagent-text", "-h", "--help", "--ide", "--include-hook-events", "--include-partial-messages",
+    "--no-chrome", "--no-session-persistence", "-p", "--print", "--replay-user-messages", "--restricted", "--safe-mode",
+    "--strict-mcp-config", "--tmux", "--verbose", "-v", "--version"}
+CLAUDE_ONE = {
+    "--agent", "--agents", "--append-system-prompt", "--autocompact", "--debug-file", "--effort", "--environment", "--fallback-model",
+    "--input-format", "--json-schema", "--max-budget-usd", "--model", "-n", "--name", "--output-format", "--permission-mode",
+    "--permission-prompts", "--plugin-dir", "--plugin-url", "--remote-control-session-name-prefix", "--session-id", "--setting-sources",
+    "--settings", "--system-prompt", "--system-prompt-snapshot",
+    "--append-system-prompt-file", "--system-prompt-file", "--permission-prompt-tool", "--thinking-display", "--max-turns"}
+CLAUDE_MANY = {"--add-dir", "--allowedTools", "--allowed-tools", "--betas", "--disallowedTools", "--disallowed-tools", "--file",
+               "--mcp-config", "--tools"}
+CLAUDE_MAYBE = {"--cloud", "-d", "--debug", "--from-pr", "--prompt-suggestions", "--remote-control", "-r", "--resume", "--teleport",
+                "-w", "--worktree"}
+# 会話を選ぶもの。起こし直すときは外し、実際に動いていた会話の --resume <会話 id> に替える
+SESSION_OPTS = {"--resume", "-r", "--continue", "-c", "--session-id", "--fork-session"}
+# 端末に打つ 1 行がこれより長いか改行を含めば、引数をファイルに書いて短い行で起こす。consult --ask の claude は最初の指示（7,000 字あまり・
+# 改行入り）を位置引数に持ち、それを残した行を打つと、zsh が `quote>` の続き入力になって文字が化けた（2026-11-23 16:2x の席の切り替え。
+# 使い捨ての端末で、改行入りの 6,764 字の行は同じく壊れ、改行の無い 3,022 字の行は通った）
+LONG_LINE = 1000
+
+
 def relaunch_args(argv):
-    """起こし直すときに引き継ぐ引数。会話を選ぶもの（--resume・--continue・--session-id・--fork-session）は外し、呼ぶ側が --resume <会話 id> を足す。"""
-    out, skip = [], False
-    for i, a in enumerate(argv):
-        if skip:
-            skip = False
+    """起こし直すときに引き継ぐ引数。会話を選ぶもの（SESSION_OPTS）と位置引数（最初の指示の文。残すと同じ会話にもう一度送られる）を外し、
+    呼ぶ側が --resume <会話 id> を足す。値を取るかが分からない引数の次に `-` で始まらない語があれば、値か位置引数かを決められないので
+    ValueError にする（取り違えると、オプションの値を落とすか、最初の指示をもう一度送る）。"""
+    out, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--":
+            break  # ここから先は位置引数
+        if not a.startswith("-") or a == "-":
+            i += 1  # 位置引数
             continue
-        if a in ("--resume", "-r"):
-            # --resume は値を取らずに会話の選び直しの画面を開くこともある
-            skip = i + 1 < len(argv) and bool(re.fullmatch(UUID, argv[i + 1]))
-            continue
-        if a == "--session-id":
-            skip = True
-            continue
-        if a in ("--continue", "-c", "--fork-session") or a.startswith(("--resume=", "--session-id=")):
-            continue
-        out.append(a)
+        name, inline = a.split("=", 1)[0], "=" in a
+        if not a.startswith("--") and len(a) > 2 and a[:2] in CLAUDE_ONE | CLAUDE_MANY | CLAUDE_MAYBE:
+            name, inline = a[:2], True  # `-n題` は -n の値を続けて書いたもの
+        take = 1
+        if not inline:
+            if name in CLAUDE_ONE:
+                take = 2
+            elif name in CLAUDE_MANY or name in CLAUDE_MAYBE:
+                # 値が要るもの（<x...>）は、最初の 1 語を `-` で始まっても値に取る
+                take += name in CLAUDE_MANY and i + 1 < len(argv)
+                while i + take < len(argv) and not argv[i + take].startswith("-") and (name in CLAUDE_MANY or take == 1):
+                    take += 1
+            elif name not in CLAUDE_FLAGS and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                raise ValueError("claude の引数 %s が値を取るか分からないので、%s が値か最初の指示かを決められない" % (
+                    name, shlex.quote(argv[i + 1][:40])))
+        if name not in SESSION_OPTS:
+            out += argv[i:i + take]
+        i += take
     return out
 
 
@@ -425,12 +465,29 @@ def flush_tells(now):
     sw.save(TELLS, left)
 
 
-def relaunch_command(rec, home):
+def relaunch_line(rec, home):
     """同じ端末で同じ会話を今の席で起こし直す行。引数は 1 つずつ引用する（`Application Support` の空白・JSON の --settings）。"""
     env = ["CLAUDE_CONFIG_DIR=" + home] if home else ["-u", "CLAUDE_CONFIG_DIR"]
     # sandbox の外で動く claude/bin の入口は denyRead を $ORCA_WORKER_SETTINGS から読むので、元のプロセスの値をそのまま渡す
     env += ["ORCA_WORKER_SETTINGS=" + rec["ws"]] if rec.get("ws") else []
     return shlex.join(["env", *env, "claude", *relaunch_args(rec["argv"]), "--resume", rec["session"]])
+
+
+def relaunch_file(key):
+    return os.path.join(HOME, "relaunch", key + ".sh")
+
+
+def relaunch_command(rec, home, key):
+    """端末に打つ行。LONG_LINE より長いか改行を含めば、行を STALLWATCH_HOME/relaunch/<handle>.sh に書き、`sh <そのファイル>` を返す
+    （exec で替わるので、claude の親は端末のシェルのまま）。"""
+    line = relaunch_line(rec, home)
+    if len(line) <= LONG_LINE and "\n" not in line:
+        return line
+    path = relaunch_file(key)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("exec " + line + "\n")
+    return shlex.join(["sh", path])
 
 
 class Mover:
@@ -480,6 +537,10 @@ class Mover:
                 return self.issue(key, label, "settings", why)
             if not row["session"]:
                 return self.issue(key, label, "session", "会話 id が分からないので起こし直せない（sessions/%d.json も --resume も無い）。手で起こし直す" % row["pid"])
+            try:
+                relaunch_args(row["argv"])
+            except ValueError as e:
+                return self.issue(key, label, "args", "%s。手で起こし直す" % e)
             lines = screen(key)
             if lines is None:
                 return self.issue(key, label, "busy", "端末の画面を読めない。次の回に見る")
@@ -504,7 +565,7 @@ class Mover:
                    **(disp or {})}
             if self.dry_run:
                 self.lines.append("  移す: %s: /exit → %s%s%s" % (
-                    label, relaunch_command(rec, self.home), "（続きを頼む）" if lim else "",
+                    label, relaunch_line(rec, self.home), "（続きを頼む）" if lim else "",
                     "（Dispatch %s が閉じたら%s）" % (disp["dispatch"], "続きを送る" if disp["coordinator"] else "coordinator に続きを頼む")
                     if disp else ""))
                 return
@@ -536,10 +597,17 @@ class Mover:
             self.save()
         if rec["stage"] == "launch":
             if key not in self.terms:
-                self.moves.pop(key)
+                return self.gone(key, rec)
+            try:
+                cmd = relaunch_command(rec, self.home, key)
+            except ValueError as e:  # 引数を確かめずに /exit した前の版の記録
+                rec.update(stage="failed", failed_at="launch", why="%s。会話 %s を手で起こし直す" % (e, rec["session"]))
                 self.save()
-                return self.issue(key, label, "gone", "claude を終えたあと端末が閉じた。会話 %s は `claude --resume` で開ける" % rec["session"])
-            if sw.orca("terminal", "send", "--terminal", key, "--text", relaunch_command(rec, self.home), "--enter")[0] is None:
+                return self.issue(key, label, "failed", rec["why"])
+            if sw.orca("terminal", "send", "--terminal", key, "--text", cmd, "--enter")[0] is None:
+                # この回の初めに読んだ一覧のあとに端末が閉じた（worktree を消したなど）なら、送れないのは当たり前なので片付ける
+                if not self.still_open(key):
+                    return self.gone(key, rec)
                 return self.retry(key, rec, "起こし直すコマンドを送れなかった（端末はシェルのまま）")
             rec.update(stage="launched", launched_at=self.now)
             self.save()
@@ -555,10 +623,12 @@ class Mover:
             return self.issue(key, label, "screen", "今の席で起こし直したが、確認の画面「%s」で止まっている（自動では答えない）。"
                                                     "端末で答える（答えたら続きを頼む）" % seen["screen"])
         if not new:
+            if not self.still_open(key):
+                return self.gone(key, rec)
             if self.now - rec.get("launched_at", self.now) < 3 * MIN:
                 return self.issue(key, label, "moving", "起こし直した claude がまだ起きていない")
             rec["stage"] = "launch"
-            return self.retry(key, rec, "起こし直すコマンドを送ったが claude が起きない。打ち直す: %s" % relaunch_command(rec, self.home))
+            return self.retry(key, rec, "起こし直すコマンドを送ったが claude が起きない。打ち直す")
         if len(new) > 1 or new[0]["seat"] != self.target or new[0]["session"] != rec["session"]:
             rec.update(stage="failed", failed_at="launched", why="この端末で起きた claude が、今の席で会話 %s を開き直したものと確かめられない（pid %s）。"
                        "続きは頼んでいない。端末を確かめて手で移す" % (rec["session"], ", ".join(str(r["pid"]) for r in new)))
@@ -593,6 +663,20 @@ class Mover:
              "to": self.email, "nudged": bool(nudge), "dispatch": rec.get("dispatch"), "follow_up": rec.get("follow_up"),
              "asked": bool(rec.get("asked"))})
         self.done.append(label)
+
+    def still_open(self, key):
+        """端末がいま Orca にあるか（一覧を読み直す）。読めなければあると見なす（次の回に見る）。"""
+        terms = (sw.orca("terminal", "list")[0] or {}).get("terminals")
+        return not isinstance(terms, list) or any(t.get("handle") == key and t.get("connected") for t in terms)
+
+    def gone(self, key, rec):
+        """移しかけの端末が閉じた。帯には出さず（閉じたのは帯に出し続ける終わりの条件）、会話 id を failover-history.jsonl に残して記録を消す。"""
+        if self.dry_run:
+            return self.lines.append("  片付ける: %s（端末が閉じた。会話 %s）" % (rec["label"], rec["session"]))
+        self.moves.pop(key)
+        self.save()
+        log({"event": "gone", "kind": "terminal", "handle": key, "label": rec["label"], "session": rec["session"],
+             "stage": rec.get("failed_at") or rec["stage"], "dispatch": rec.get("dispatch")})
 
     def live_dispatch(self, key):
         """端末が今受けている Dispatch の {"dispatch", "run", "coordinator"}。無ければ None。coordinator は Run の coordinator_handle で、
@@ -740,8 +824,10 @@ class Mover:
     def failed(self, key, rec, rows):
         """諦めたものは、手で直ったと分かるまで帯に出す。端末は今の席の claude が起きたか端末が閉じたら、チャットは古い claude が消えたら済。"""
         mine = [r for r in rows if key_of(r) == key]
+        if rec["kind"] == "terminal" and key not in self.terms:
+            return self.gone(key, rec)
         if rec["kind"] == "terminal":
-            fixed = key not in self.terms or (mine and all(r["seat"] == self.target for r in mine))
+            fixed = mine and all(r["seat"] == self.target for r in mine)
         else:
             fixed = not any(r["pid"] == rec["pid"] for r in mine)
         if fixed:
@@ -850,6 +936,11 @@ def converge(home, email, emails, now, dry_run):
     m.state["converge_told"] = sorted(need)
     if m.done:
         log({"event": "converge", "moved": m.done, "left": {k: v["text"] for k, v in seen.items()}})
+    # 移し終えた端末の、長い起こし直しの行のファイルを消す
+    rdir = os.path.dirname(relaunch_file("x"))
+    for name in os.listdir(rdir) if os.path.isdir(rdir) else []:
+        if name.endswith(".sh") and name[:-3] not in m.moves:
+            os.remove(os.path.join(rdir, name))
     if not seen:
         m.state.pop("converge", None)
         m.state.pop("converge_told", None)

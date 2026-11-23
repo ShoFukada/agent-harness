@@ -2,6 +2,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -121,10 +122,19 @@ elif cmd == "terminal send":
         if flag("exit-reply-lost"):  # 届いたが、応答だけが時間切れになった
             fail("timeout")
             sys.exit(0)
-    elif text.startswith("env "):
+    elif text.startswith(("env ", "sh ")):
+        if flag("launch-closes-terminal"):
+            save("terminals.json", [t for t in load("terminals.json", []) if t["handle"] != h])
+            fail("terminal not found")
+            sys.exit(0)
         if flag("launch-fails"):
             fail()
             sys.exit(0)
+        if text.startswith("sh "):
+            with open(shlex.split(text)[1]) as fh:
+                text = fh.read()
+            assert text.startswith("exec env ") and text.endswith("\n"), text
+            text = text[len("exec "):]
         words = shlex.split(text)
         env, i = {"ORCA_TERMINAL_HANDLE": h}, 1
         while "=" in words[i] or words[i] == "-u":
@@ -561,7 +571,7 @@ class ConvergeTest(FailoverTestBase):
                   argv=argv if argv is not None else ["--model", "opus", "--settings", self.settings, "--resume", S1], **kw)
 
     def launched(self, handle="term_1"):
-        return [t for t in self.typed(handle) if t.startswith("env ")]
+        return [t for t in self.typed(handle) if t.startswith(("env ", "sh "))]
 
     def test_a_terminal_left_by_a_manual_switch_is_moved_in_place(self):
         # 人が席を B に切り替えた。上限ではないので切り替えはしないが、A に残った端末は同じ端末で B に移す。
@@ -662,6 +672,134 @@ class ConvergeTest(FailoverTestBase):
         self.run_failover()
         self.assertEqual(shlex.split(self.launched()[0])[3:],
                          ["claude", "--plugin-dir", "/Users/x/Library/Application Support/orca/view", "--model", "opus", "--resume", S2])
+
+    def ask_argv(self, prompt):
+        """consult --ask が起こした claude の引数（2026-11-23 の「質問｜FitFounder AI 基盤｜ask2」と同じ形）。最後が最初の指示の位置引数。"""
+        return ["--resume", S2, "--fork-session", "--name", "質問｜FitFounder AI 基盤｜ask2", "--tools", "Read,Grep,Glob",
+                "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent",
+                "--permission-mode", "dontAsk", "--strict-mcp-config", "--system-prompt-snapshot", "off",
+                "--append-system-prompt-file", "/cfg/roles/ask.md", prompt]
+
+    def test_a_question_terminal_is_relaunched_without_its_first_instruction(self):
+        # 2026-11-23 16:2x: 7,000 字あまりの最初の指示を残した 8KB 近い行を打ち、zsh が `quote>` の続き入力になって壊れた。
+        # 最初の指示は外し（残すと同じ会話にもう一度送られる）、値を取るオプションの値は残す。
+        prompt = "【相談の知らせ】質問を始める。\n「窓口」の会話を写した。" + "背景の説明。" * 1200
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(argv=self.ask_argv(prompt), session=S1)
+        self.run_failover()
+        (line,) = self.launched()
+        self.assertLess(len(line), 1000)
+        self.assertEqual(shlex.split(line)[3:], [
+            "claude", "--name", "質問｜FitFounder AI 基盤｜ask2", "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
+            "--disallowedTools", "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent", "--permission-mode", "dontAsk",
+            "--strict-mcp-config", "--system-prompt-snapshot", "off", "--append-system-prompt-file", "/cfg/roles/ask.md", "--resume", S1])
+        self.assertEqual(self.processes()[0]["env"]["CLAUDE_CONFIG_DIR"], self.seat_dir(B))
+        self.assertEqual(self.state()["moves"], {})
+
+    def test_a_long_relaunch_line_is_written_to_a_file_and_started_with_a_short_one(self):
+        long_prompt = "役割の説明。" * 400
+        argv = ["--model", "opus", "--settings", self.settings, "--append-system-prompt", long_prompt, "--resume", S1]
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(argv=argv)
+        self.run_failover()
+        (line,) = self.launched()
+        self.assertLess(len(line), 300)
+        path = os.path.join(self.home, "relaunch", "term_1.sh")
+        self.assertEqual(shlex.split(line), ["sh", path])
+        (p,) = self.processes()
+        self.assertEqual(p["argv"], ["claude", "--model", "opus", "--settings", self.settings, "--append-system-prompt", long_prompt, "--resume", S1])
+        self.assertEqual(p["env"]["CLAUDE_CONFIG_DIR"], self.seat_dir(B))
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(self.state()["moves"], {})
+
+    def test_an_argument_whose_value_is_unclear_is_not_relaunched(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(argv=["--model", "opus", "--settings", self.settings, "--new-option", "x", "--resume", S1])
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        self.assertIn("claude の引数 --new-option が値を取るか分からない", self.band())
+
+    def test_a_terminal_closed_before_the_relaunch_is_cleared_without_a_band(self):
+        # 2026-11-23 16:25 の drop-sales-view-flag: 窓口が worktree を消して、/exit のあと端末が閉じた。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal()
+        self.flag("launch-closes-terminal")
+        self.run_failover()
+        self.assertEqual(self.status(), [])
+        self.assertEqual(self.state()["moves"], {})
+        gone = [h for h in self.history() if h["event"] == "gone"]
+        self.assertEqual([(g["handle"], g["session"], g["stage"]) for g in gone], [("term_1", S1, "launch")])
+        self.assertEqual(self.notes(), [])
+
+    def test_a_relaunched_terminal_that_closed_is_cleared_at_once(self):
+        # 起こし直すコマンドを打ったあとに端末が閉じた。3 分待って打ち直さず、すぐ片付ける。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.put("terminals.json", [])
+        self.put("agents.json", [])
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--resume", S1], "ws": None, "limited": False, "working": False,
+               "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "launched", "at": now_ms() - MIN,
+               "launched_at": now_ms() - MIN, "tries": 0}
+        self.edit_state(moves={"term_1": rec})
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        self.assertEqual(self.status(), [])
+        self.assertEqual(self.state()["moves"], {})
+        self.assertEqual(self.history()[-1]["event"], "gone")
+
+    def test_a_given_up_terminal_that_closed_is_cleared(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.put("terminals.json", [])
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--resume", S1], "ws": None, "limited": False, "working": False,
+               "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "failed", "failed_at": "launch",
+               "why": "起こし直すコマンドを送れなかった", "at": now_ms() - MIN, "tries": 3}
+        self.edit_state(moves={"term_1": rec})
+        self.run_failover()
+        self.assertEqual(self.status(), [])
+        self.assertEqual(self.state()["moves"], {})
+        self.assertEqual([(h["event"], h["stage"]) for h in self.history()][-1:], [("gone", "launch")])
+
+    def test_a_given_up_terminal_that_closed_is_only_shown_in_a_dry_run(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.put("terminals.json", [])
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--resume", S1], "ws": None, "limited": False, "working": False,
+               "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "failed", "failed_at": "launch",
+               "why": "起こし直すコマンドを送れなかった", "at": now_ms() - MIN, "tries": 3}
+        self.edit_state(moves={"term_1": rec})
+        out = self.run_failover("--dry-run")
+        self.assertIn("片付ける: 題 term_1（端末 term_1）（端末が閉じた。会話 %s）" % S1, out)
+        self.assertFalse(os.path.exists(os.path.join(self.home, "failover-history.jsonl")))
+        self.assertEqual(self.state()["moves"]["term_1"]["stage"], "failed")
+
+    def test_a_move_recorded_by_the_previous_version_with_an_unclear_argument_is_given_up(self):
+        # 前の版は引数を確かめずに /exit した。次の版で起こすコマンドを組めなくても、ほかの端末を止めずにその端末だけ名指しする
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.put("terminals.json", [terminal("term_1"), terminal("term_2")])
+        self.put("agents.json", [pane_agent("term_2")])
+        self.proc(102, seat=A, handle="term_2", session=S2, argv=["--model", "opus", "--settings", self.settings, "--resume", S2])
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--new-option", "x", "--resume", S1], "ws": None, "limited": False,
+               "working": False, "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "launch", "at": now_ms() - MIN, "tries": 0}
+        self.edit_state(moves={"term_1": rec})
+        self.run_failover()
+        self.assertEqual(self.typed("term_1"), [])
+        self.assertEqual(self.state()["moves"]["term_1"]["stage"], "failed")
+        self.assertIn("claude の引数 --new-option が値を取るか分からない", self.band())
+        self.assertIn("会話 %s を手で起こし直す" % S1, self.band())
+        self.assertEqual(len(self.launched("term_2")), 1)
+
+    def test_a_launched_move_of_the_previous_version_finishes_even_with_an_unclear_argument(self):
+        # 起こし直したあとの記録はコマンドを組まないので、引数が分からなくても済にする（Dispatch の付け直しや続きの頼みを飛ばさない）
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.put("terminals.json", [terminal("term_1")])
+        self.put("agents.json", [pane_agent("term_1")])
+        self.proc(201, seat=B, handle="term_1", session=S1, argv=["--new-option", "x", "--resume", S1])
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--new-option", "x", "--resume", S1], "ws": None, "limited": True,
+               "working": False, "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "launched", "at": now_ms() - MIN,
+               "launched_at": now_ms() - MIN, "tries": 0}
+        self.edit_state(moves={"term_1": rec})
+        self.run_failover()
+        (typed,) = self.typed("term_1")
+        self.assertIn("続けてください", typed)
+        self.assertEqual(self.state()["moves"], {})
 
     def test_a_terminal_at_a_startup_screen_is_named_and_not_answered(self):
         # 調査の D: 古い席の確認の画面（External imports）で止まった端末。Orca の一覧には claude として出ない。
@@ -1235,14 +1373,62 @@ class UnitTest(unittest.TestCase):
         rec = {"argv": ["--plugin-dir", "/Users/x/Library/Application Support/orca/view", "--settings", '{"fastMode":false}',
                         "--resume", S2, "-c", "--fork-session", "--session-id", S2, "--resume=" + S2, "-r", S2, "--effort", "high"],
                "ws": "/cfg/settings worker.json", "session": S1}
-        line = self.mod.relaunch_command(rec, "/Users/x/Library/Application Support/orca/claude-profiles/b/home")
+        line = self.mod.relaunch_line(rec, "/Users/x/Library/Application Support/orca/claude-profiles/b/home")
         self.assertEqual(shlex.split(line), [
             "env", "CLAUDE_CONFIG_DIR=/Users/x/Library/Application Support/orca/claude-profiles/b/home",
             "ORCA_WORKER_SETTINGS=/cfg/settings worker.json", "claude", "--plugin-dir", "/Users/x/Library/Application Support/orca/view",
             "--settings", '{"fastMode":false}', "--effort", "high", "--resume", S1])
         # 既定の席（~/.claude）へ戻すときは、受け継いだ CLAUDE_CONFIG_DIR を外す。
-        self.assertEqual(shlex.split(self.mod.relaunch_command(dict(rec, ws=None, argv=[]), None)),
+        self.assertEqual(shlex.split(self.mod.relaunch_line(dict(rec, ws=None, argv=[]), None)),
                          ["env", "-u", "CLAUDE_CONFIG_DIR", "claude", "--resume", S1])
+
+    def test_relaunch_args_drop_the_first_instruction_but_keep_option_values(self):
+        args = self.mod.relaunch_args
+        self.assertEqual(args(["--name", "-題-", "--model=opus", "最初の指示"]), ["--name", "-題-", "--model=opus"])
+        # 続く値を全部取るもの（commander の <x...>）は、次の `-` までを値にする。claude もそう読むので、元の claude でも値だった
+        self.assertEqual(args(["--add-dir", "/a", "/b", "--verbose", "指示"]), ["--add-dir", "/a", "/b", "--verbose"])
+        # 値を取ってもよいもの（[x]）は次の 1 語まで
+        self.assertEqual(args(["--debug", "hooks", "指示"]), ["--debug", "hooks"])
+        self.assertEqual(args(["--debug", "--verbose"]), ["--debug", "--verbose"])
+        # 会話を選ぶものは値ごと外す。値の無い --resume（選び直しの画面）も
+        self.assertEqual(args(["--resume", "--model", "opus", "-r", S1, "--fork-session", "--continue"]), ["--model", "opus"])
+        self.assertEqual(args(["--verbose", "--", "--model", "x"]), ["--verbose"])
+        self.assertEqual(args(["--new-flag", "--model", "opus"]), ["--new-flag", "--model", "opus"])
+        self.assertEqual(args(["--new-flag=1", "指示"]), ["--new-flag=1"])
+        with self.assertRaises(ValueError):
+            args(["--new-option", "x"])
+        # commander は `-n題` を -n の値と読み、値が要る <x...> の最初の 1 語は `-` で始まっても値に取る
+        self.assertEqual(args(["-n題", "指示"]), ["-n題"])
+        self.assertEqual(args(["--add-dir", "-archive", "--verbose"]), ["--add-dir", "-archive", "--verbose"])
+
+    def test_a_short_line_with_a_newline_is_also_started_from_a_file(self):
+        # 改行の入った行を端末に打つと zsh が続き入力になる。短くてもファイルに書く。短く改行も無ければそのまま打つ
+        rec = {"argv": ["--append-system-prompt", "1 行目\n2 行目"], "ws": None, "session": S1}
+        with mock.patch.object(self.mod, "HOME", self.tmp):
+            cmd = self.mod.relaunch_command(rec, "/h", "term_1")
+            path = os.path.join(self.tmp, "relaunch", "term_1.sh")
+            self.assertEqual(shlex.split(cmd), ["sh", path])
+            with open(path) as fh:
+                self.assertEqual(fh.read(), "exec " + self.mod.relaunch_line(rec, "/h") + "\n")
+            self.assertEqual(self.mod.relaunch_command(dict(rec, argv=["--model", "opus"]), "/h", "term_2"),
+                             self.mod.relaunch_line(dict(rec, argv=["--model", "opus"]), "/h"))
+
+    def test_the_claude_argument_table_matches_claude_help(self):
+        # claude を上げて引数が増えたり形が変わったりしたら、ここで気づく（表に無い引数の次に語があると、起こし直さずに名指しする）
+        try:
+            out = subprocess.run(["claude", "--help"], capture_output=True, text=True, timeout=60).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            self.skipTest("claude が無い")
+        m = self.mod
+        for line in out.splitlines():
+            got = re.match(r"^  (-[^ ].*?)(?:\s{2,}|$)", line)
+            if not got:
+                continue
+            spec = got.group(1)
+            names = re.findall(r"(?<![\w-])(--?[\w-]+)", spec.split(" <")[0].split(" [")[0])
+            kind = (m.CLAUDE_MANY if "...>" in spec else m.CLAUDE_ONE if "<" in spec else m.CLAUDE_MAYBE if "[" in spec else m.CLAUDE_FLAGS)
+            for n in names:
+                self.assertIn(n, kind, "claude --help の %s が表と合わない" % spec)
 
     def test_json_settings_are_not_a_worker_settings_file(self):
         self.assertIsNone(self.mod.settings_file(["--settings", '{"fastMode":false}']))

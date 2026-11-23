@@ -276,6 +276,8 @@ claude がどの席で動くかは、起動したときの環境変数 `CLAUDE_C
 2. 端末（worker を含む）: 入力待ち（Orca の状態が作業中・許可待ち・返事待ちでなく、`sessions/<pid>.json` の status も busy でない）か、会話の最後か画面に上限の 1 行が出ているときだけ移す。Orca の `terminal wait --for tui-idle` は、入力待ちの古い席の端末でも時間切れになった（2026-11-23 の実機。上限の「continuing automatically at …」を待つものも、そうでないものも）ので使わない
    - 移す前に `failover-state.json` の `moves` に、handle・元の pid・会話 id・引数・`ORCA_WORKER_SETTINGS`・段階・時刻・上限で止まっていたかを残してから `/exit` を送る
    - 元の pid が消え、その端末にほかの claude が起きていないのを確かめ、同じ端末に `env CLAUDE_CONFIG_DIR=<今の席> [ORCA_WORKER_SETTINGS=<元の値>] claude <元の引数> --resume <会話 id>` を打つ。引数は 1 つずつ引用し、会話を選ぶもの（`--resume`・`--continue`・`--session-id`・`--fork-session`）は外して、実際に動いていた会話 id の `--resume` に替える
+   - 元の引数の位置引数（consult --ask が渡した最初の指示の文など）は外す。残すと同じ会話に最初の指示がもう一度送られる。オプションの値と位置引数は、claudeの `--help` の書式（`<x>` は値を1つ、`<x...>` は次の `-` までの値を全部、`[x]` は `-` で始まらない次の1語を値に取る）と、helpに出ない `--append-system-prompt-file` などを足した表で分ける。表に無い引数の次に `-` で始まらない語があれば、値か最初の指示かを決められないので、`/exit` を打たずに名指しする。claudeを上げて表とずれたら `bin/account_failover_test.py` が落ちる
+   - 打つ行が1,000字を超えるか改行を含むときは、行を `STALLWATCH_HOME/relaunch/<handle>.sh` に `exec <行>` として書き、端末には `sh <そのファイル>` だけを打つ（claudeの親は端末のシェルのまま）。改行入りの長い行を直に打つと、zshが `quote>` の続き入力になり文字が化ける（2026-11-23 16:2xの切り替えで、consult --ask の質問の端末2つの起こし直しが7,166〜7,480字の最初の指示を残して壊れた。使い捨ての端末で、改行入りの6,764字の行は同じく壊れ、改行の無い3,022字の行は通った）。ファイルは移し終えたら消す
    - 起きた claude が入力待ち（status が idle）になったら済。上限で止まっていたものには「席の切り替えで、claude を今の席で起こし直した。止まったところから続けて」と送る
    - Dispatch を受けている worker（`worker-list` の outcome が in_progress）: Orca 1.4.271 は、端末の claude が終わった時点で Dispatch を failed（stage `process_exited`）で閉じ、coordinator に「Worker exited without reporting」を出す。同じ端末で同じ会話を起こし直しても開き直さない（2026-11-23 に使い捨ての worker で確かめた。2026-11-22 の T2 の「claude を替えても Dispatch は残る」は、この版では成り立たない）。そこで次のようにする
      - `/exit` の前に、Run の受信箱（`run:<run>`）へ worker の名で「立て直さない（worker-start で 2 つ目の worker を立てない）」と 1 通送る
@@ -285,6 +287,7 @@ claude がどの席で動くかは、起動したときの環境変数 `CLAUDE_C
      - `failover-history.jsonl` の `moved` に、閉じた Dispatch（`dispatch`）・新しい Dispatch（`follow_up`）・coordinator に頼んだか（`asked`）を残す
    - worker（引数に設定のファイルを指す `--settings` がある、か Dispatch を受けたことがある端末）で、設定のファイルを読めないか引数に無ければ、sandbox の外で動かさないよう触らずに名指しする。`ORCA_WORKER_SETTINGS` は Orca の中の claude がみな受け継いでいるので worker の印にはしない。Orca が claude に直に渡す JSON の `--settings`（`{"fastMode":false}` など）は worker の設定と見なさない
    - 途中で落ちたら、次の回が記録の段階（`exit`・`launch`・`launched`）から続ける。`launch` で端末にもう claude が起きていれば、コマンドは打ち直さない（起きた claude の入力欄に打たない）。`/exit` のあと claude が終わらなくても `/exit` は打ち直さない。同じ段階で 3 回うまくいかなければ諦め、印（段階 `failed`）を残して、今の席の claude がその端末で起きるか端末が閉じるまで帯に出し続ける
+   - 移しかけの端末が閉じた（窓口がworktreeを消したなど）ら、帯にも通知にも出さず、`failover-history.jsonl` に `gone`（handle・会話id・段階）を残して記録を消す。会話は `claude --resume <会話 id>` で開ける。その回の初めに読んだ端末の一覧のあとに閉じて、起こすコマンドを送れなかったときと、起こしたあとclaudeが見えないときは、端末の一覧を読み直して確かめる（2026-11-23 16:25の drop-sales-view-flag の3端末は、読み直さなかったので帯に「起こし直すコマンドを送れなかった」が1回出た）
    - 端末の画面を読めないとき、同じ端末に claude が 2 つ以上あるとき、起きた claude が今の席で同じ会話を開き直したものと確かめられないとき（会話 id を `sessions/<pid>.json` で照合する）は、文字を打たずに名指しする
 3. チャット（窓口・担当）: 作業中のターンが無い（Orca の状態が done など）か、会話の最後（`<席>/projects/<作業場所>/<会話 id>.jsonl` の最後の応答）が上限のエラーなら、裏の claude に SIGTERM を送る。Orca は次の発言で、今選ばれている席の claude を同じ会話のまま起こす（2026-11-22 の T1・T4 で確かめた）
    - working でも上限のエラーで止まっているもの（バックグラウンドの監視を抱えて上限のエラーを出し続けたもの。2026-11-22 の BW の窓口）は止める。監視も一緒に止まる
