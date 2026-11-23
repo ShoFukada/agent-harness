@@ -6,7 +6,7 @@ import {
 } from './view.ts'
 import { markdown } from './markdown.ts'
 import { answeredCount, askBoxHtml, viewAsks } from './window-asks.ts'
-import { answerHtml, answerWay } from './window-answer.ts'
+import { answerHtml, answerWay, withAnswerActs } from './window-answer.ts'
 import { fold, tag } from './window-parts.ts'
 import { MARK_LABEL, type Mark, type Since } from './since.ts'
 import type { AutomationFact } from './protocol.ts'
@@ -245,7 +245,9 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
             : `「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で止まっている理由を聞き、続けるか止めるかを伝えます。タスクが動けば、この行は消えます。`))
         ].join('')
       }
-      return [c.last ? fld('最後のやり取り', `<div class="quote">${esc(c.last.text)}</div>`) : '', fld('次', esc(c.next)), answerHtml(r, ui)].join('')
+      if (c.id.startsWith(COWORK_ID) && r.agent?.ask)
+        return [answerHtml(r, ui), c.last ? fld('直前の発言', `<div class="quote">${esc(c.last.text)}</div>`) : '', c.since ? fld('聞いた日時', esc(`${fmtDate(c.since)}（${ago(c.since, now)}前）`)) : ''].join('')
+      return [c.last ? fld('最後のやり取り', `<div class="quote">${esc(c.last.text)}</div>`) : '', fld('次', esc(c.next))].join('')
   }
 }
 
@@ -302,7 +304,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const first = closed ? '' : firstView(r, ui, svg, now)
   const more = (closed ? firstView(r, ui, svg, now) : '') + moreView(r, svg)
   const moreOpen = ui.open['detail-more'] ?? false
-  const acts = actsHtml(r, ui, true)
+  const acts = withAnswerActs(r, ui, actsHtml(r, ui, true))
   // 「次へ」は一覧を進む操作なので、答える操作の帯ではなく詳細の上に置く（1280 で帯が折り返さないように）。
   const nextBtn = next ? `<button class="nxl" type="button" data-sel="${esc(next)}">次へ（j）</button>` : ''
   const ops = sentOps([c], b.v.log, b.v.cockpit!.applied_ops)
@@ -315,15 +317,19 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
   const consult = consultHtml(b.v.consults?.find((m) => m.card === c.id), c)
   return `<div class="wdet k-${c.kind}">
     <div class="dh"><div class="crumbs">${crumbs.map((x) => `<span>${x}</span>`).join('<i>›</i>')}${nextBtn}</div>
-      <div class="kl"><span class="kd">${kindName(r)}</span>${dueHtml(c.due, now)}</div>
+      <div class="kl"><span class="kd">${r.agent?.ask && !closed ? (r.agent.ask.kind === 'permit' ? '許可待ち' : '返事待ち') : kindName(r)}</span>${dueHtml(c.due, now)}</div>
       <h2>${esc(c.title)}</h2><div>${r.agent?.ask?.from ? `<span class="owner">${esc(r.agent.ask.from)}</span>` : ownerHtml(r.owner, r.agent ? false : b.v.owners, s?.title)}</div></div>
     ${c.purpose ? `<p class="purp">${note(c.purpose)}</p>` : ''}${notes}${result}${first ? `<div class="first">${first}</div>` : ''}${consult ? `<div class="first">${consult}</div>` : ''}${sent}
     ${more ? `<details class="more-d" data-fold="detail-more"${moreOpen ? ' open' : ''}><summary>${closed ? '詳細（依頼内容・判断材料・出典）' : '詳細（判断材料・出典）'}</summary><div class="slots">${more}</div></details>` : ''}
     ${closed ? '' : otherHtml(r, ui)}
-    ${c.id.startsWith('#') ? '' : askBoxHtml(b, { kind: 'card', id: c.id }, ui, now)}
+    ${askOn(c) ? askBoxHtml(b, askOn(c)!, ui, now) : ''}
     ${c.id.startsWith('#') ? '' : ridHtml(c.id)}
     <div class="dbtn">${acts}</div></div>`
 }
+
+/** 詳細に置く質問の欄の結び先。帳簿のカードはカード、一緒に作る仕事の行は仕事、Orca から作った行は結んだタスク。 */
+const askOn = (c: Card): { kind: 'card' | 'task' | 'stream'; id: string } | undefined =>
+  !c.id.startsWith('#') ? { kind: 'card', id: c.id } : c.id.startsWith(COWORK_ID) && c.stream ? { kind: 'stream', id: c.stream } : c.tasks?.[0] && !c.id.startsWith(IDLE_ID) ? { kind: 'task', id: c.tasks[0] } : undefined
 
 /** 出した指示のうち、カードを閉じない操作（協議の開始・修正の依頼・戻す依頼）。 */
 const OPEN_ONLY: OpType[] = ['talk', 'revert']
@@ -687,26 +693,28 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const t = b.d.tasks.get(ui.task ?? '')
   const w = watches.find((x) => x.key === ui.watch)
   const j = b.d.jobs.find((x) => x.id === ui.stream)
-  const side = w ? watchDetail(w, now) : j ? streamDetail(b, j, ui, todo, now) : t ? taskDetail(b, t, ui, now) : ''
+  const side = w ? watchDetail(w, now) : j ? streamDetail(b, j, ui, now) : t ? taskDetail(b, t, ui, now) : ''
   return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${w ? '見張る仕事の詳細' : j ? '仕事の詳細' : 'タスクの詳細'}">${side}</aside>`
 }
 
-function streamDetail(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now: number): string {
+function streamDetail(b: Board, j: JobView, ui: Ui, now: number): string {
   const c = b.v.cockpit!
   const s = c.streams.find((x) => x.id === j.id)
-  const { status, owners } = streamFacts(b, j, todo)
+  // 概要と状況は中央の仕事の箱に出ているので重ねない。担当は担当の端末かチャットの題（仕事の名前ではなく）で、引けなければ出さない。
+  const names = (c.owners ?? []).filter((o) => o.stream === j.id && o.state !== 'done').map((o) =>
+    (o.session && b.v.owners?.find((x) => x.session === o.session)?.title) || (o.terminal && b.v.workers.find((w) => w.terminalId === o.terminal)?.title) || undefined)
+    .filter((x): x is string => !!x)
   const facts = [
     fld('形', s?.form ? esc(FORM_LABEL[s.form]) : ''),
-    fld('担当', esc(owners.length ? owners.join('・') : j.owner ? j.owner.title : '窓口')),
-    fld('概要', s?.summary?.trim() ? note(s.summary.trim()) : ''),
-    fld('状況', status)
+    fld('担当', names.length ? esc(names.join('・')) : '')
   ].join('')
-  const talk = `<button class="btn talk" type="button" data-talkstream="${esc(j.id)}">${j.owner ? '担当と協議' : '窓口と協議'}</button>`
+  const talk = `<div class="acts"><button class="btn talk" type="button" data-talkstream="${esc(j.id)}">${j.owner ? '担当と協議' : '窓口と協議'}</button></div>`
   return `<div class="wdet">
     <div class="dh"><div class="crumbs"><span>${esc(c.workspace.name)}</span></div><div class="kl"><span class="kd">仕事</span></div><h2>${esc(j.title)}</h2></div>
-    <div class="first facts">${facts}</div>
-    ${askBoxHtml(b, { kind: 'stream', id: j.id }, ui, now, talk)}
-    ${ridHtml(j.id)}</div>`
+    ${facts ? `<div class="first facts">${facts}</div>` : ''}
+    ${askBoxHtml(b, { kind: 'stream', id: j.id }, ui, now)}
+    ${ridHtml(j.id)}
+    <div class="dbtn">${talk}</div></div>`
 }
 
 function viewDone(b: Board, ui: Ui, now: number, svg: Svg): string {

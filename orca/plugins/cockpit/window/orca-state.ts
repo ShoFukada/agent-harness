@@ -251,7 +251,7 @@ export function screenAsk(lines: string[], kind: Ask['kind'] = 'question'): Ask 
   const text = kind === 'permit' && body.length >= 2 ? body.at(-1)! : question
   const ask: Ask = {
     kind, text, ...(choices.length && { options: choices.map((c) => c.label), choices }), ...(free && { free }),
-    ...(before.length && top >= 0 && { before: before.join('\n') }), ...(body.length && { body }), ...(kind === 'permit' && text !== question && { question })
+    ...(before.length && top >= 0 && { before: before.map((l) => l.replace(/^[⏺⎿]\s*/, '')).join('\n') }), ...(body.length && { body }), ...(kind === 'permit' && text !== question && { question })
   }
   // 許す中身（枠の中の行）が読めない許可の確認は、コマンドが変わっても印が同じになるので、窓から答えさせない（印を付けない）。
   return kind === 'permit' && !body.length ? ask : { ...ask, sig: screenSig(ask) }

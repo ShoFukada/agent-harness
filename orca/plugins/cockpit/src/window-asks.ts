@@ -187,7 +187,7 @@ function askFormHtml(b: Board, s: Exclude<AskScope, { kind: 'id' }>, ui: Ui, ext
   const w = ui.askWait[key]
   const busy = !!w && !w.error
   return `<div class="askin"><label class="lb" for="ask-${esc(scopeOf(key))}">${TARGET[s.kind]}</label>
-      <textarea id="ask-${esc(scopeOf(key))}" data-askdraft="${esc(key)}" rows="3" maxlength="${TEXT_MAX}">${esc(ui.askDraft[key] ?? '')}</textarea>
+      <textarea id="ask-${esc(scopeOf(key))}" data-askdraft="${esc(key)}" rows="2" maxlength="${TEXT_MAX}">${esc(ui.askDraft[key] ?? '')}</textarea>
       <div class="acts"><button class="btn${ui.askHits[key] ? '' : ' pri'}" type="button" data-ask="send" data-scope="${esc(key)}"${busy || !(ui.askDraft[key] ?? '').trim() ? ' disabled' : ''}>聞く</button>${extra}</div></div>
     ${askHitsHtml(key, ui.askHits[key])}`
 }
@@ -199,20 +199,25 @@ export function askBoxHtml(b: Board, s: { kind: 'card' | 'task' | 'stream'; id: 
   const ids = new Set(asksOf(b, s, ui).map((a) => a.id))
   const rows = askRows(b, ui).filter((r) => ids.has(r.id))
   const list = rows.length ? `<div class="lb">${BOX_LABEL[s.kind]}<span class="mut">${rows.length} 件</span></div><div class="arows">${rows.map((r) => rowHtml(b, r, undefined, now, true)).join('')}</div>` : ''
-  const open = s.kind === 'stream' || !!ui.askDraft[key] || !!ui.askHits[key] || !!ui.open[`aski:${key}`]
+  const open = !!ui.askDraft[key] || !!ui.askHits[key] || !!ui.open[`aski:${key}`]
   const form = open ? askFormHtml(b, s, ui, extra) : `<div class="acts"><button class="btn quiet" type="button" data-ask="open" data-scope="${esc(key)}">${TARGET[s.kind]}</button>${extra}</div>`
   return `<section class="ask" aria-label="やりとり">${list}${form}</section>`
 }
 
 /** 窓口に返したこと 1 つ（返し方・時刻・今の札と、返しの記録の決まったこと）。o が無いのは写しが自分で書いた返し。 */
-function returnedHtml(b: Board, a: AskThread, o: Op | undefined, ret: AskReturn | undefined): string {
+function returnedHtml(b: Board, a: AskThread, o: Op | undefined, ret: AskReturn | undefined, state: AskState, now: number): string {
   const rec = b.v.cockpit!.asks?.find((x) => x.id === a.id)
   const words = o && askWords(o)
-  const what = !o ? '窓口に返したこと' : o.choice ? `${esc(o.choice)} で返した` : words ? `「${esc(words.length > 40 ? `${words.slice(0, 40)}…` : words)}」と返した` : `${o.answer?.at ? `答え ${esc(o.answer.at)} を` : ''}窓口に返すよう依頼しました`
-  const [label, cls] = o ? PHASE_TAG[opPhase(b, a, o)] : (({ done: ['窓口が反映済み', ''], held: ['窓口が保留', 'wait'], open: ['窓口の反映待ち', 'wait'] } as const)[retState(b, a, ret!.return_id)])
+  const title = o?.choice ? a.choices?.find((c) => c.key === o.choice)?.title : undefined
+  const what = !o ? '' : o.choice ? `案 ${o.choice}${title ? `（${title}）` : ''}` : words || ''
+  const phase: OpPhase | 'open' = o ? opPhase(b, a, o) : (({ done: 'done', held: 'held', open: 'open' } as const)[retState(b, a, ret!.return_id)])
+  const [label, cls] = phase === 'open' ? PHASE_TAG.returned : PHASE_TAG[phase]
+  // 上の状態（反映待ち・反映済み）と同じことを言う札は重ねない。
+  const same = (state === 'reflecting' && (phase === 'returned' || phase === 'open')) || (state === 'done' && phase === 'done')
   const unsent = ret && rec?.notify?.some((n) => n.return_id === ret.return_id && !n.message_id) ? tag('担当へ未通知', 'wait') : ''
   const ds = (ret?.decisions ?? []).map((d) => d.text).filter((t): t is string => !!t)
-  return `<div class="askdone"><p><b>${what}</b>${o ? `<span class="mut">${esc(fmtDate(o.at))}</span>` : ''}${tag(label, cls)}${unsent}</p>${ds.length ? `<ul class="rich">${ds.map((t) => `<li>${mono(note(t))}</li>`).join('')}</ul>` : ''}</div>`
+  const head = `<span class="mut">${o ? `返した ${esc(nearDate(o.at, now))}` : '窓口に返したこと'}</span>${same ? '' : tag(label, cls)}${unsent}`
+  return `<div class="aq ret"><div class="ah2">${head}</div>${what ? `<div class="verb">${esc(what)}</div>` : ''}${ds.length ? `<ul class="rich">${ds.map((t) => `<li>${mono(note(t))}</li>`).join('')}</ul>` : ''}</div>`
 }
 
 function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
@@ -226,10 +231,22 @@ function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
   let n = a.answers - a.entries.filter((e) => e.kind === 'a').length
   const repo = b.v.cockpit!.tasks.find((t) => t.id === a.task)?.repo
   const placed = new Set<string>()
+  // 返した言葉への写しの答えは、返しの決まったことと同じ文になるので、返しが届いていれば出さない。
+  let echo = false
   const body = entries.map((e) => {
-    if (e.kind === 'n' || (e.kind === 'q' && e.time && words.has(e.text.trim()))) return ''
-    if (e.kind === 'q') return `<div class="aq"><span class="mut">${e.time ? `質問 ${esc(e.time)}` : '送った質問'}</span><div class="verb">${esc(e.text)}</div></div>`
+    if (e.kind === 'q' && e.time && words.has(e.text.trim())) {
+      const o = ops.find((x) => askWords(x) === e.text.trim())
+      echo = !!(o && retOf(a, o)?.decisions?.length)
+      return ''
+    }
+    if (e.kind === 'n') return ''
+    if (e.kind === 'q') {
+      echo = false
+      return `<div class="aq"><span class="mut">${e.time ? `質問 ${esc(e.time)}` : '送った質問'}</span><div class="verb">${esc(e.text)}</div></div>`
+    }
     n += 1
+    const skip = echo
+    echo = false
     const p = answerParts(e.text)
     const at = p.at ?? a.at
     const mine = ops.filter((o) => o.answer?.n === n)
@@ -238,9 +255,11 @@ function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
       if (r) placed.add(r.return_id)
     }
     const body = n === a.decide?.n && a.choices?.length ? withoutChoices(p.body) : p.body
-    return `<div class="aa"><span class="mut">答え ${esc(e.time)}${at ? `（窓口の ${esc(at)} までの会話から）` : ''}</span>${markdown(body, repo)}</div>${mine.map((o) => returnedHtml(b, a, o, retOf(a, o))).join('')}`
+    const said = mine.map((o) => returnedHtml(b, a, o, retOf(a, o), st.state, now)).join('')
+    if (skip) return said
+    return `<div class="aa"><span class="mut">答え ${esc(e.time)}${at ? `（窓口の ${esc(at)} までの会話から）` : ''}</span><div class="abody">${markdown(body, repo)}</div></div>${said}`
   }).join('')
-  const rest = a.returns.filter((r) => typeof r.return_id === 'string' && !placed.has(r.return_id)).map((r) => returnedHtml(b, a, ops.find((o) => String(o.op_id) === String(r.op)), r)).join('')
+  const rest = a.returns.filter((r) => typeof r.return_id === 'string' && !placed.has(r.return_id)).map((r) => returnedHtml(b, a, ops.find((o) => String(o.op_id) === String(r.op)), r, st.state, now)).join('')
   // 返せるのは最後の質問より後の答えだけ（続きの答えを待つあいだ、前の答えで返させない。Codex 重大 3）。控えの全文から常駐のプロセスが出す。
   const answer = pend ? undefined : a.decide
   const waiting = !!pend || unanswered(a.entries)
@@ -251,10 +270,10 @@ function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
   const picks = answer && !waiting && a.choices?.length
     ? `<div class="askpick"><span class="lb">案を選んで窓口に返す</span><ul role="list">${a.choices.map((c) => `<li>${sameAnswer.some((o) => o.choice === c.key)
       ? `<span class="mut">${esc(c.key)} で返しました</span>`
-      : `<button class="btn" type="button" data-ask="decide"${data} data-choice="${esc(c.key)}">${esc(c.key)} で返す</button>`}<span>${esc(c.title)}${c.pick ? tag('推し') : ''}</span></li>`).join('')}</ul></div>`
+      : `<button class="btn" type="button" data-ask="decide"${data} data-choice="${esc(c.key)}">${esc(c.key)} で返す</button>`}<span>${esc(c.title)}${c.pick ? tag('おすすめ') : ''}</span></li>`).join('')}</ul></div>`
     : ''
   const draft = (ui.askDraft[fk] ?? '').trim()
-  const input = waiting ? '' : `<div class="askin"><label class="lb" for="ask-${esc(scopeOf(fk))}">続けて聞く・書いたことを窓口に返す</label><textarea id="ask-${esc(scopeOf(fk))}" data-askdraft="${esc(fk)}" rows="3" maxlength="${TEXT_MAX}">${esc(ui.askDraft[fk] ?? '')}</textarea>
+  const input = waiting ? '' : `<div class="askin"><textarea id="ask-${esc(scopeOf(fk))}" data-askdraft="${esc(fk)}" rows="2" maxlength="${TEXT_MAX}" aria-label="続けて聞く・書いたことを窓口に返す">${esc(ui.askDraft[fk] ?? '')}</textarea>
       <div class="acts"><button class="btn" type="button" data-ask="send" data-scope="${esc(fk)}"${draft ? '' : ' disabled'}>続けて聞く</button>${answer ? `<button class="btn" type="button" data-ask="reply" data-scope="${esc(fk)}"${data}${draft ? '' : ' disabled'}>書いたことを窓口に返す</button>` : ''}</div></div>`
   return `<div class="wdet athread">
     <div class="dh"><div class="crumbs">${aboutLink(b, scopeOfThread(a))}<button class="nxl" type="button" data-ask="tab" data-id="${esc(a.id)}">写しの会話を開く</button></div>
@@ -262,7 +281,7 @@ function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
     <div class="ask conv">
     ${a.omitted ? `<p class="mut">これより前の ${a.omitted} 節は写しの会話で読めます</p>` : ''}
     ${body}${rest}${picks}
-    ${askWaitHtml(pend?.[1] ?? fail, now, fk, true)}${waiting && !pend ? '<p class="mut">まだ答えが届いていません</p>' : ''}
+    ${askWaitHtml(pend?.[1] ?? fail, now, fk, true)}
     ${input}</div>
     <p class="rid">番号<code>${esc(a.id)}</code></p></div>`
 }
@@ -276,10 +295,9 @@ function waitPane(b: Board, key: string, w: AskWait, now: number): string {
 export function viewAsks(b: Board, ui: Ui, now: number): string {
   const all = askRows(b, ui)
   const shown = all.filter((r) => ui.askAll || r.state !== 'done')
-  const open = all.filter((r) => r.state !== 'done').length
   const failed = Object.entries(ui.askWait).filter(([k, w]) => w.error && w.root === b.root && parseAskKey(k).scope.kind !== 'id')
     .map(([k, w]) => `<div class="askfail">${askWaitHtml(w, now, k)}<div class="aq"><span class="mut">${esc(aboutText(b, parseAskKey(k).scope))}への質問</span><div class="verb">${esc(w.q)}</div></div></div>`).join('')
-  const filter = `<div class="afil" role="group" aria-label="絞り込み"><button type="button" data-askall="0" aria-pressed="${!ui.askAll}">済んでいない ${open}</button><button type="button" data-askall="1" aria-pressed="${!!ui.askAll}">すべて ${all.length}</button></div>`
+  const filter = `<div class="afil" role="group" aria-label="絞り込み"><button type="button" data-askall="0" aria-pressed="${!ui.askAll}">済んでいない</button><button type="button" data-askall="1" aria-pressed="${!!ui.askAll}">すべて</button></div>`
   const list = shown.length ? `<div class="arows">${shown.map((r) => rowHtml(b, r, ui.thread, now)).join('')}</div>`
     : `<div class="calm"><b>${all.length ? '済んでいないやりとり 0 件' : 'やりとり 0 件'}</b></div>`
   const cur = all.find((r) => r.id === ui.thread)
@@ -289,6 +307,6 @@ export function viewAsks(b: Board, ui: Ui, now: number): string {
     : cur ? waitPane(b, Object.entries(ui.askWait).find(([, w]) => w.ask === cur.id)?.[0] ?? '', Object.values(ui.askWait).find((w) => w.ask === cur.id)!, now)
     : ''
   return `<div class="wpane" aria-label="やりとり"><section class="ask">${askFormHtml(b, { kind: 'whole' }, ui)}</section>${failed}
-    <section class="alist"><div class="ah"><h3>やりとり</h3>${filter}</div>${list}</section></div>
+    <section class="alist" aria-label="やりとりの一覧"><div class="ah">${filter}</div>${list}</section></div>
     <aside class="wside" aria-label="会話">${side}</aside>`
 }

@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { legacyWait, overlay, parseCockpit, waitMet, requestCards, stageOf, taskSig, type Card, type Cockpit, type Ruling, type TaskSeen, type UserLog } from './model.ts'
 import type { AgentRow, OwnerLive, QuestionFact } from './protocol.ts'
-import { bucketOf, byUrgency, coworkSessions, derive, judgeTasks, streamBasis, statusFallback, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, waitLabel, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
+import { bucketOf, permitTitle, byUrgency, coworkSessions, derive, judgeTasks, streamBasis, statusFallback, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, waitLabel, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
 import { chatHandles, liveChats } from '../window/orca-state.ts'
 import { orcaFacts } from '../window/state.ts'
@@ -946,4 +946,12 @@ test('状況の文の元（R204）: 仕事のタスクの判定と開いたカ�
   assert.notDeepEqual(basis(met), before)
   const tasks = [...judgeTasks(c, w.log, views, undefined, NOW).values()].filter((t) => t.task.stream === 's3')
   assert.match(statusFallback(tasks), /状況の文が古い/)
+})
+
+test('許可の確認の題は、何をするかが初見で分かる文にする（行の先頭の「許可」と重ねず、コマンドをそのまま題にしない）', () => {
+  assert.equal(permitTitle({ text: 'git push origin feature/log-summary', body: ['Bash command', 'Push', 'git push origin feature/log-summary'] }), 'feature/log-summary を origin に push する')
+  assert.equal(permitTitle({ text: 'Bash: git push -u origin main' }), 'main を origin に push する')
+  assert.equal(permitTitle({ text: 'echo kt3 > c.txt', body: ['Bash command', 'Write kt3', 'echo kt3 > c.txt'] }), 'echo kt3 > c.txt を実行する')
+  assert.equal(permitTitle({ text: 'src/a.ts', body: ['Edit file', 'src/a.ts'] }), 'src/a.ts を書き換える')
+  assert.equal(permitTitle({ text: 'mcp__x__y' }), 'mcp__x__y')
 })

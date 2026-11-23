@@ -89,7 +89,7 @@ test('やりとりの一覧: 答えあり → 答え待ち → 反映待ち → 
 
   const h = page(m, { tab: 'asks' })
   assert.match(h, /data-tab="asks" aria-selected="true">やりとり<span class="n">2<\/span>/, 'タブの数字は答えありの件数')
-  assert.match(text(h), /やりとり 済んでいない 4 すべて 5/)
+  assert.match(text(h), /済んでいない すべて 答えあり/, '中央の見出しは出さず、絞り込みに数を付けない（タブの数と並んで何の数か分からないため）')
   assert.match(h, /data-askall="0" aria-pressed="true"/)
   assert.doesNotMatch(h, /data-thread="ask5"/)
   assert.match(page(m, { tab: 'asks', askAll: true }), /data-thread="ask5" data-settled="1"/)
@@ -107,7 +107,7 @@ test('やりとりの会話: 何についての質問か（押すと詳細へ）
   const h = page(m, { tab: 'asks', thread: 'ask1' })
   const side = h.slice(h.indexOf('<aside class="wside" aria-label="会話">'))
   assert.match(side, /<button type="button" class="alk" data-tab="whole" data-task="t1">タスク「一覧の並べ替えと絞り込み」<\/button><button class="nxl" type="button" data-ask="tab" data-id="ask1">写しの会話を開く<\/button>/)
-  assert.match(text(side), /答えあり 質問 09:10 地図は？ 答え 09:11（窓口の 09:05 までの会話から） 2 案あります。 案を選んで窓口に返す A で返す 地図のタイルを 1 日分ためる 推し B で返す 見積もりを出す/)
+  assert.match(text(side), /答えあり 質問 09:10 地図は？ 答え 09:11（窓口の 09:05 までの会話から） 2 案あります。 案を選んで窓口に返す A で返す 地図のタイルを 1 日分ためる おすすめ B で返す 見積もりを出す/)
   assert.match(side, /data-ask="decide" data-id="ask1" data-at="09:11" data-head="2 案あります。" data-n="1" data-choice="A">A で返す/)
   assert.match(side, /data-ask="send" data-scope="\/ws\/aoba#id:ask1" disabled>続けて聞く<\/button><button class="btn" type="button" data-ask="reply" data-scope="\/ws\/aoba#id:ask1" data-id="ask1" data-at="09:11" data-head="2 案あります。" data-n="1" disabled>書いたことを窓口に返す/)
   assert.match(page(m, { tab: 'asks', thread: 'ask1', askDraft: { [`${R}#id:ask1`]: 'A で、ただし来週から' } }), /data-ask="reply"[^>]*data-n="1">書いたことを窓口に返す/, '書いたら押せる')
@@ -118,12 +118,13 @@ test('やりとりの会話: 何についての質問か（押すと詳細へ）
   const after = page(m, { tab: 'asks', thread: 'ask1' })
   assert.doesNotMatch(after, /data-choice="A"/)
   assert.match(text(after), /A で返しました 地図のタイルを 1 日分ためる/)
-  assert.match(text(after), /2 案あります。 A で返した 11\/21\(土\) 09:12 写しに届けました・返し待ち/)
+  assert.match(text(after), /2 案あります。 返した 09:12 写しに届けました・返し待ち 案 A（地図のタイルを 1 日分ためる）/)
   m.boards[0]!.v.asks![0] = answered('ask1', { task: 't1', answers: 2, entries: [q('09:10', '地図は？'), a('09:11', '2 案あります。'), q('09:12', '案 A で。'), a('09:13', '返しを書きました')], decide: { at: '09:13', head: '返しを書きました', n: 2 }, returns: [{ return_id: 'ask1-1', op: 9, decisions: [{ text: '地図はタイルをためる' }] }] })
   m.boards[0]!.v.cockpit!.asks = [{ id: 'ask1', from_returns: ['ask1-1'], notify: [{ return_id: 'ask1-1', task: 't1' }] }]
   const back = text(page(m, { tab: 'asks', thread: 'ask1', askAll: true }))
-  assert.match(back, /2 案あります。 A で返した 11\/21\(土\) 09:12 窓口が反映済み 担当へ未通知 地図はタイルをためる 答え 09:13/)
-  assert.doesNotMatch(back, /質問 09:12 案 A で。/)
+  // 上の状態（反映済み）と同じ札は重ねず、返しが届いた言葉への写しの答え（決まったことと同じ文）は出さない。
+  assert.match(back, /2 案あります。 返した 09:12 担当へ未通知 案 A 地図はタイルをためる 続けて聞く/)
+  assert.doesNotMatch(back, /質問 09:12 案 A で。|答え 09:13|窓口が反映済み/)
 })
 
 test('やりとりの会話: 古い op・写しが自分で書いた返し・保留・会話が先に進んで届いていない op を語で出す', () => {
@@ -133,7 +134,8 @@ test('やりとりの会話: 古い op・写しが自分で書いた返し・保
     v.log.ops.push(decide(9, 'ask1'))
   })
   const t = text(page(m, { tab: 'asks', thread: 'ask1' }))
-  assert.match(t, /答え 09:11 を窓口に返すよう依頼しました 11\/21\(土\) 09:12 窓口の反映待ち/)
+  assert.match(t, /返した 09:12 窓口に返したこと 窓口が反映済み/)
+  assert.doesNotMatch(t, /窓口の反映待ち/, '上の状態「反映待ち」と重なる札は出さない')
   assert.match(t, /窓口に返したこと 窓口が反映済み 入口は 1 つ 窓口に返したこと 窓口が保留 図は描き足さない/)
   const moved = aoba((v) => {
     v.asks = [answered('ask1', { answers: 2, entries: [q('09:10', '入口は？'), a('09:11', '2 案'), q('09:20', '別の話'), a('09:21', '別の答え')], decide: { at: '09:21', head: '別の答え', n: 2 } })]
@@ -141,7 +143,7 @@ test('やりとりの会話: 古い op・写しが自分で書いた返し・保
     v.askSent = []
   })
   const h = page(moved, { tab: 'asks', thread: 'ask1' })
-  assert.match(text(h), /B で返した 11\/21\(土\) 09:12 写しに届いていない・会話が先に進んだので窓口が控えから拾います/)
+  assert.match(text(h), /返した 09:12 写しに届いていない・会話が先に進んだので窓口が控えから拾います 案 B/)
   assert.match(h, /<span class="crumb miss">写しに届いていない<\/span>/)
 })
 
@@ -151,7 +153,7 @@ test('やりとりの会話: 答えを待つあいだは決めさせず続けて
   })
   const h = page(m, { tab: 'asks', thread: 'ask1' })
   assert.doesNotMatch(h, /data-ask="decide"|data-askdraft="\/ws\/aoba#id:ask1"/)
-  assert.match(text(h), /まだ答えが届いていません/)
+  assert.doesNotMatch(text(h), /まだ答えが届いていません/, '上の「答え待ち」で分かる')
   assert.doesNotMatch(h, /data-thread="ask2"/, '節も返しも無い控えは出さない')
   const key = `${R}#stream:s2`
   const ui = { ...newUi(), tab: 'asks' as const }
@@ -205,7 +207,7 @@ test('カード・タスクの詳細には会話を出さず、「質問する�
   assert.doesNotMatch(task, /data-wside|案件への質問/)
 })
 
-test('全体で仕事を押すと、右に仕事の詳細（題・形・担当・概要・状況）と、この仕事のやりとりと質問の欄を出す（R220）', () => {
+test('全体で仕事を押すと、右に仕事の詳細（題・形・担当の名前）と、この仕事のやりとりと「質問する」を出す。概要と状況は中央の箱と重ねない（R220）', () => {
   const m = aoba((v) => {
     v.cockpit!.streams.find((s) => s.id === 's2')!.summary = 'AWS の構成図と説明の本文を作る'
     v.asks = [ask('ask1', { stream: 's2', first: '入口を描くか相談したい', entries: [q('09:10', '入口を描くか相談したい')], updated: at(10) })]
@@ -213,10 +215,11 @@ test('全体で仕事を押すと、右に仕事の詳細（題・形・担当�
   const h = page(m, { tab: 'whole', stream: 's2' })
   assert.match(h, /<button type="button" class="t" data-stream="s2" data-toggle="s:s2" aria-expanded="true" aria-current="true">/)
   const side = h.slice(h.indexOf('<aside class="wside" aria-label="仕事の詳細">'))
-  assert.match(text(side), /仕事 AWS 構成案 担当 .* 概要 AWS の構成図と説明の本文を作る 状況 /)
+  assert.doesNotMatch(text(side), /概要|状況|AWS の構成図と説明の本文を作る/)
   assert.match(text(side), /この仕事のやりとり 1 件 答え待ち 入口を描くか相談したい 09:50/)
-  assert.match(side, /<textarea id="ask-stream:s2" data-askdraft="\/ws\/aoba#stream:s2"/)
-  assert.match(side, /data-ask="send" data-scope="\/ws\/aoba#stream:s2" disabled>聞く<\/button><button class="btn talk" type="button" data-talkstream="s2">/)
+  assert.match(side, /data-ask="open" data-scope="\/ws\/aoba#stream:s2">この仕事について質問する</)
+  assert.doesNotMatch(side, /data-askdraft/)
+  assert.match(side, /<div class="dbtn"><div class="acts"><button class="btn talk" type="button" data-talkstream="s2">/)
   const t = page(m, { tab: 'asks', thread: 'ask1' })
   assert.match(t, /<button type="button" class="alk" data-tab="whole" data-stream="s2">仕事「AWS 構成案」<\/button>/)
 })

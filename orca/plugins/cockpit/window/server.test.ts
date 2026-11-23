@@ -1407,7 +1407,7 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   const aoba = m.boards.find((b) => b.root === roots.aoba)!
   // 1 行目は問いそのもの、2 行目は誰が誰に聞いているか。
   assert.deepEqual(lines(aoba), [
-    ['キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', 'worker（朝の地図の遅さの調査）があなたに聞いている'],
+    ['キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', 'worker（朝の地図の遅さの調査）が端末で答えを待っている'],
     ['一覧の既定の並びを、配送日の降順にしますか、登録順のままにしますか', 'worker（一覧の並べ替えと絞り込み）が窓口に聞いたが、まだ答えが無い'],
     ['構成図は PowerPoint と draw.io のどちらで描きますか（田中さんが直すのは PowerPoint）', 'worker（AWS 構成案）が担当に聞いたが、まだ答えが無い']
   ])
@@ -1417,19 +1417,26 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   // 詳細: 題に収まった問いは本文を重ねず、選択肢は番号を付けずにどこで選ぶかを添える。
   const h = renderWindow(m, { ...newUi(), sel: keyOf(row('既定の並び')) }, now, (x) => x)
   assert.doesNotMatch(h, /聞かれていること/)
-  assert.match(h, /答える（聞いた worker に返す）.*data-pick="0"[^>]*>配送日の降順にする<\/button>.*data-pick="1"[^>]*>登録順のままにする<\/button>.*選択肢に無い答えを書く/s)
+  // 選択肢のボタンは下の固定の行に置き、開くボタンは枠の補助にする（塗りの主ボタンは 1 画面に 1 つまで）。
+  assert.match(h, /答える（聞いた worker に返す）.*選択肢に無い答えを書く/s)
+  assert.match(h, /<div class="dbtn"><div class="acts"><button class="btn" type="button" data-act="answer"[^>]*data-pick="0"[^>]*>配送日の降順にする<\/button><button class="btn" type="button" data-act="answer"[^>]*data-pick="1"[^>]*>登録順のままにする<\/button><button class="btn" type="button" data-act="focus"[^>]*>窓口の端末を開く</)
   assert.doesNotMatch(h, /選択肢（窓口に伝える）|答え方/)
-  assert.match(h, /聞いた日時.*>窓口の端末を開く</s)
+  assert.match(h, /<span class="kd">返事待ち<\/span>/)
   const hc = renderWindow(m, { ...newUi(), sel: keyOf(row('キャッシュ')) }, now, (x) => x)
-  assert.match(hc, /答える（端末に送る）.*data-choice="1"[^>]*>キャッシュを入れて直す<\/button><span class="mut">地図のタイルを 1 日分ためる（stg で 2 日）<\/span>.*data-choice="2"/s)
+  assert.match(hc, /答える（端末に送る）.*<li><b>キャッシュを入れて直す<\/b><span class="mut">地図のタイルを 1 日分ためる（stg で 2 日）<\/span><\/li>/s)
+  assert.match(hc, /<div class="dbtn"><div class="acts"><button class="btn" type="button" data-act="answer"[^>]*data-choice="1"[^>]*>キャッシュを入れて直す<\/button>[^]*data-choice="2"/)
+  // 停止の行に結んだタスクの「質問する」と、そのタスクに結んだやりとり。
+  assert.match(hc, /data-ask="open" data-scope="[^"]*#task:t5">このタスクについて質問する</)
   assert.match(hc, /選択肢に無い答えを書く/)
-  assert.match(hc, /直前の発言<\/span><div><div class="quote">⏺ 地図の遅さを測りました。/)
+  assert.match(hc, /直前の発言<\/span><div><div class="quote">地図の遅さを測りました。/)
   assert.doesNotMatch(hc, /選択肢（端末で選ぶ）/)
   const harness = m.boards.find((b) => b.root === roots.harness)!
-  assert.deepEqual(lines(harness), [['許可: git push origin feature/log-summary', 'worker（集計の分け方を直す）が許可を求めている']])
+  assert.deepEqual(lines(harness), [['feature/log-summary を origin に push する', 'worker（集計の分け方を直す）が端末で許可を待っている']])
   const hp = renderWindow({ ...m, focused: roots.harness }, { ...newUi(), filter: roots.harness, sel: keyOf(todoGroups(harness).flatMap(([, xs]) => xs).find((r) => r.agent?.ask)!) }, now, (x) => x)
   assert.match(hp, /許可を求めていること<\/span><div><div class="quote code">Bash command\nPush feature\/log-summary to origin\ngit push origin feature\/log-summary<\/div>/)
-  assert.match(hp, /class="btn pri" type="button" data-act="answer"[^>]*data-choice="1"[^>]*>Yes<\/button>.*data-choice="2"[^>]*>Yes, and don&#39;t ask again for git push commands in \/w\/harness<\/button>.*data-choice="3"[^>]*>No</s)
+  assert.match(hp, /<div class="acts"><button class="btn pri" type="button" data-act="answer"[^>]*data-choice="1"[^>]*>Yes<\/button><button class="btn" [^>]*data-choice="2"[^>]*>Yes, and don&#39;t ask again for git push commands in \/w\/harness<\/button><button class="btn" [^>]*data-choice="3"[^>]*>No<\/button><button class="btn" type="button" data-act="focus"/)
+  assert.equal(hp.match(/class="btn pri"/g)?.length, 1, '塗りの主ボタンは今回だけの許可の 1 つ')
+  assert.match(hp, /<span class="kd">許可待ち<\/span>/)
   assert.doesNotMatch(hp, /選択肢に無い答えを書く/)
 })
 

@@ -380,7 +380,7 @@ body { margin:0; }
 .ck.win .cardrow:hover { background:var(--sunk); }
 .ck.win .cardrow[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .cardrow.cl .ti, .ck.win .cardrow.cl .kd { color:var(--ink2); font-weight:400; }
-.ck.win .cardrow.k-stuck:not(.cl) .kd, .ck.win .cardrow.reply:not(.cl) .kd { color:var(--hot); }
+.ck.win .cardrow.reply:not(.cl) .kd { color:var(--hot); }
 .ck.win .kd { display:inline-flex; align-items:center; gap:4px; font-size:var(--fs-xs); font-weight:700; color:var(--kc); white-space:nowrap; }
 .ck.win .cardrow .kd { display:grid; grid-template-columns:auto 1fr; }
 .ck.win .cardrow .kd small { grid-column:1 / -1; font-weight:400; color:var(--ink3); }
@@ -442,13 +442,13 @@ body { margin:0; }
 .ck.win .askin { display:grid; gap:8px; }
 .ck.win .askin > .lb { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; font-size:var(--fs-s); font-weight:700; color:var(--ink); }
 .ck.win .askin > .lb .mut { font-size:var(--fs-xs); font-weight:400; }
-.ck.win .askin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(4lh + 18px); max-height:60vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
+.ck.win .askin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(2lh + 18px); max-height:60vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 12px; background:var(--surface); color:var(--ink); }
 .ck.win .askin textarea:focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
 .ck.win .answer { display:grid; gap:12px; }
-.ck.win .anspick { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
-.ck.win .anspick li { display:grid; gap:4px; justify-items:start; }
-.ck.win .anspick .btn { text-align:left; white-space:normal; overflow-wrap:anywhere; }
-.ck.win .anspick .mut { font-size:var(--fs-xs); padding-left:12px; }
+.ck.win .anslist { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.ck.win .anslist li { display:grid; gap:0; }
+.ck.win .anslist .mut { font-size:var(--fs-xs); }
+.ck.win .dbtn .acts .btn[data-act="answer"] { text-align:left; white-space:normal; overflow-wrap:anywhere; }
 .ck.win .ansin { display:grid; gap:8px; }
 .ck.win .ansin > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 .ck.win .ansin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(2lh + 18px); max-height:40vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 12px; background:var(--surface); color:var(--ink); }
@@ -473,7 +473,12 @@ body { margin:0; }
 .ck.win .hh .code { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; color:var(--ink); }
 .ck.win .aq, .ck.win .aa { display:grid; gap:4px; }
 .ck.win .aq > .mut, .ck.win .aa > .mut { font-size:var(--fs-xs); }
-.ck.win .aq .verb { white-space:pre-wrap; overflow-wrap:anywhere; font-weight:600; text-wrap:pretty; word-break:auto-phrase; }
+.ck.win .aq .verb { white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--fs-l); font-weight:600; line-height:1.5; text-wrap:pretty; word-break:auto-phrase; max-width:35em; }
+/* 答えの本文は和文 40 字ほどで折る（表と囲みのコードは欄の幅まで使う）。 */
+.ck.win .aa .abody p, .ck.win .aa .abody li, .ck.win .aa .abody .mdh, .ck.win .aa .abody blockquote { max-width:40em; }
+.ck.win .aq.ret .ah2 { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
+.ck.win .aq.ret .ah2 > .mut { font-size:var(--fs-xs); }
+.ck.win .aq.ret ul.rich { margin:0; padding-left:1.4em; }
 .ck.win .aa .rich p { margin:0 0 4px; }
 .ck.win .aa .rich ul { margin:0 0 4px; padding-left:1.4em; }
 /* 答え・見張る仕事の出力の Markdown（R167）。字の段は今の体系の中で選ぶ（見出しは本文と同じ大きさで太さだけ変える）。 */
@@ -518,9 +523,6 @@ body { margin:0; }
 .ck.win .athread .dh .crumbs { font-size:var(--fs-s); }
 .ck.win .athread .dh .crumbs .nxl { font-size:var(--fs-s); text-decoration:underline; text-underline-offset:3px; }
 .ck.win .wdet > .ask.conv { margin:12px 16px 0; padding-top:0; border-top:0; gap:16px; }
-.ck.win .askdone { display:grid; gap:4px; padding-left:12px; border-left:3px solid var(--rule); }
-.ck.win .askdone p { margin:0; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
-.ck.win .askdone ul.rich { margin:0; padding-left:1.4em; }
 .ck.win .askpick { display:grid; gap:8px; padding:12px; background:var(--sunk); }
 .ck.win .askpick > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 .ck.win .askpick ul { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
@@ -654,7 +656,7 @@ body { margin:0; }
 .ck.win .rqd { display:grid; gap:8px; }
 .ck.win .rqd .code, .ck.win .tid { margin-right:8px; }
 .ck.win .rqd .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
-.ck.win .lc .now { font-size:var(--fs-xs); font-weight:700; color:var(--ink); white-space:nowrap; }
+.ck.win .lc .now { font-size:var(--fs-xs); font-weight:700; color:var(--focus); white-space:nowrap; }
 /* タスクの事実はラベルを左、値を右にそろえる。 */
 .ck.win .facts .fld { grid-template-columns:6.5em minmax(0,1fr); gap:12px; align-items:baseline; }
 .ck.win .facts .fld > .lb { font-size:var(--fs-xs); }

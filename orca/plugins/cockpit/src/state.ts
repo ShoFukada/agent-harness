@@ -4,7 +4,7 @@ import {
   COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, isSynthetic, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, metCount, waitMet, worstState,
   type AskMark, type AskThread, type Card, type CardEffect, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type ShownWhy, type Stream, type StreamForm, type Task, type TaskSeen, type TaskShown, type TaskState, type UserLog, type Utterance, type Wait, type WaitKind
 } from './model.ts'
-import type { AgentRow, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
+import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
 
 export const STOP_LABEL: Record<StopReason, string> = {
   blocked: '許可待ち', waiting: '返事待ち', interrupted: '中断', error: 'エラー', dead: '落ちた', auth: 'ログイン切れ', limit: '利用枠の上限'
@@ -280,10 +280,11 @@ function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, writt
       const name = c.streams.find((s) => s.id === (task?.stream ?? ownStream))?.title ?? a.job ?? a.title ?? 'worker'
       // 問いが読めたら、題は問いそのものにし、誰が聞いているかは 2 行目に回す（行の頭が問いで始まり、切れても何を聞かれたか分かるように。初見 1）。
       const role = c.owners?.some((o) => (o.terminal && o.terminal === a.terminalId) || (o.session && o.session === a.session)) ? '担当' : 'worker'
-      const ask = a.ask && { ...a.ask, from: `${role}（${task?.title ?? name}）が${a.ask.kind === 'permit' ? '許可を求めている' : 'あなたに聞いている'}` }
+      // 2 行目で、どこで止まっているか（端末かチャット）と何を待っているかを語で言う（先頭の語の色で許可のカードと分けない。R91）。
+      const ask = a.ask && { ...a.ask, from: `${role}（${task?.title ?? name}）が${a.chat ? 'チャット' : '端末'}で${a.ask.kind === 'permit' ? '許可' : '答え'}を待っている` }
       const card: Card = {
         id: agentCardId(a), rev: a.since, kind: 'stuck', state: 'open',
-        title: ask ? `${ask.kind === 'permit' ? '許可: ' : ''}${askLine(ask.text)}` : `「${name}」が${STOP_LABEL[a.stop!]}`, since: new Date(a.since).toISOString(),
+        title: ask ? askLine(ask.kind === 'permit' ? permitTitle(ask) : ask.text) : `「${name}」が${STOP_LABEL[a.stop!]}`, since: new Date(a.since).toISOString(),
         reason: `${STOP_LABEL[a.stop!]}${a.reset ? `（${a.reset} に戻る）` : ''}`, answerable, unblock, stream: task?.stream, tasks: task ? [task.id] : undefined
       }
       return { card, status: 'mine' as const, pending: false, root, ws: c.workspace.name, owner: { title: name, how: a.chat ? 'chat' as const : 'terminal' as const, state: a.state, terminal: a.terminalId ?? undefined, session: a.session }, stream: c.streams.find((s) => s.id === task?.stream), agent: ask ? { ...a, ask } : a }
@@ -357,6 +358,20 @@ function coworkRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, queu
   return { rows, absorbed }
 }
 const OWNER_WORD: Partial<Record<AgentRow['state'], string>> = { blocked: '許可待ち', waiting: '入力待ち', done: '待機' }
+
+/**
+ * 許可の確認の題。何をするかが初見で分かる文にする（git push は「<ブランチ> を <リモート> に push する」、Bash は「<コマンド> を実行する」、
+ * ファイルの書き換えは「<パス> を書き換える」）。作れなければコマンドかパスだけ。全文は詳細の「許可を求めていること」に出す。
+ */
+export function permitTitle(a: Pick<Ask, 'text' | 'body'>): string {
+  const tool = a.body?.[0] ?? /^(\w+): /.exec(a.text)?.[1] ?? ''
+  const target = (a.body?.length ? a.text : a.text.replace(/^\w+: /, '')).trim()
+  const push = /^git push\s+(?:-\S+\s+)*(\S+)\s+(\S+)$/.exec(target)
+  if (push) return `${push[2]} を ${push[1]} に push する`
+  if (/bash/i.test(tool)) return `${target} を実行する`
+  if (/edit|write|create/i.test(tool)) return `${target} を書き換える`
+  return target
+}
 
 /** 問いの 1 行目を、一覧の行に収まる長さにする（全文は詳細に出す）。 */
 export const askLine = (text: string) => {

@@ -104,7 +104,7 @@ test('端末の画面の末尾から、選択肢の付いた問いを読む（�
   assert.deepEqual(q, {
     kind: 'question', text: 'キャッシュを入れて直しますか、それとも原因の調査報告だけにしますか？', options: ['キャッシュを入れて直す', '調査報告だけにする'],
     choices: [{ n: 1, label: 'キャッシュを入れて直す', note: '地図のタイルを 1 日分ためる（stg で 2 日）' }, { n: 2, label: '調査報告だけにする', note: '原因と直し方の見積もりを田中さんに出す' }],
-    free: 3, before: '⏺ 地図の遅さを測りました。朝 8 時台だけ 10 秒かかります。', body: ['☐ 対応の範囲']
+    free: 3, before: '地図の遅さを測りました。朝 8 時台だけ 10 秒かかります。', body: ['☐ 対応の範囲']
   })
   // 枠のすぐ上が利用者の入力（❯ と、その折り返し）なら、枠の上の段落は無い（使い捨ての端末で、入力の折り返しを拾っていた）。
   const typed = ['❯ AskUserQuestion の道具で 1 問だけ聞いて。選択肢は 2', '  つ。答えを受けたら終わって。', ...ASK_SCREEN.slice(2)]
@@ -124,7 +124,7 @@ test('端末の画面の末尾から、選択肢の付いた問いを読む（�
   assert.equal(p.question, 'Do you want to proceed?')
   assert.deepEqual(p.body, ['Bash command', 'Write kt1 into /tmp/keytest/a.txt', 'echo kt1 > /tmp/keytest/a.txt'])
   assert.deepEqual(p.choices!.map((c) => [c.n, c.label]), [[1, 'Yes'], [2, 'Yes, and always allow access to /tmp/keytest from this project'], [3, 'Yes, and switch to auto mode · auto mode handles these prompts for you'], [4, 'No']])
-  assert.equal(p.before, '⏺ Writing kt1 into /tmp/keytest/a.txt\n⎿  $ echo kt1 > /tmp/keytest/a.txt')
+  assert.equal(p.before, 'Writing kt1 into /tmp/keytest/a.txt\n$ echo kt1 > /tmp/keytest/a.txt')
   const bare = [' Bash command', '', '   git push origin main', '', ' Do you want to', ' proceed?', ' ❯ 1. Yes', "   2. Yes, and don't ask again for git push", '   3. No, and tell Claude what to do differently (esc)']
   assert.deepEqual(screenAsk(bare, 'permit')!.options, ['Yes', "Yes, and don't ask again for git push", 'No, and tell Claude what to do differently'])
   assert.equal(screenAsk(bare, 'permit')!.text, 'Do you want to proceed?')
