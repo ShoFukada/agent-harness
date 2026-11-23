@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>agent-harness の詳しい図（全体像・タスクの分類・処理の流れ）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  color-scheme:light;
+  --paper:#f6f7f9;--surface:#ffffff;--ink:#18202c;--ink-2:#4f5868;--ink-3:#6b7484;--rule:#dde1e8;--focus:#2c56c9;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --dg-bg:#ffffff;--dg-ink:#18202c;--dg-sub:#596579;--dg-line:#c3cbd6;--dg-link:#9aa6b6;--dg-soft:#f3f5f8;
+  --dg-a:#365fb5;--dg-a-bg:#edf2fb;--dg-b:#8a621e;--dg-b-bg:#f8f2e7;--dg-c:#26786d;--dg-c-bg:#edf5f2;--dg-w:#a34f39;--dg-w-bg:#faefea;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#8a94a5;--rule:#283141;--focus:#8ea9f2;
+  --dg-bg:#181e27;--dg-ink:#e6eaf1;--dg-sub:#abb5c5;--dg-line:#596679;--dg-link:#7d899b;--dg-soft:#222b37;
+  --dg-a:#8aa7e8;--dg-a-bg:#222e45;--dg-b:#d4b16c;--dg-b-bg:#342e23;--dg-c:#77bfb0;--dg-c-bg:#213630;--dg-w:#df9b83;--dg-w-bg:#3a2b26;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#0f131a;--surface:#161c25;--ink:#e6eaf1;--ink-2:#a8b1c0;--ink-3:#8a94a5;--rule:#283141;--focus:#8ea9f2;
+  --dg-bg:#181e27;--dg-ink:#e6eaf1;--dg-sub:#abb5c5;--dg-line:#596679;--dg-link:#7d899b;--dg-soft:#222b37;
+  --dg-a:#8aa7e8;--dg-a-bg:#222e45;--dg-b:#d4b16c;--dg-b-bg:#342e23;--dg-c:#77bfb0;--dg-c-bg:#213630;--dg-w:#df9b83;--dg-w-bg:#3a2b26;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.7;text-autospace:normal}
+.wrap{max-width:1100px;margin:0 auto;padding:40px 24px 80px}
+header{display:grid;gap:8px;margin-bottom:8px}
+h1{font-size:28px;line-height:1.35;margin:0}
+.meta{margin:0;color:var(--ink-2);font-size:13px}
+h2{font-size:22px;line-height:1.4;margin:48px 0 12px;padding-top:16px;border-top:1px solid var(--rule)}
+h3{font-size:17px;line-height:1.5;margin:32px 0 8px}
+.id{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-3);margin-right:8px}
+p,ul,ol{margin:0 0 12px}
+li{margin:2px 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--dg-soft);padding:1px 4px;border-radius:4px}
+figure{margin:16px 0 8px}
+.sc{overflow-x:auto}
+figure svg{display:block;width:100%;height:auto;background:var(--dg-bg);border:1px solid var(--rule);border-radius:8px}
+figcaption{font-size:13px;color:var(--ink-2);margin-top:8px}
+.answer{font-weight:600;margin:8px 0 12px}
+details{margin:0 0 16px;border-top:1px solid var(--rule);padding-top:8px}
+summary{cursor:pointer;color:var(--ink-2);font-size:14px}
+details[open] summary{margin-bottom:8px}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0 16px}
+th,td{text-align:left;vertical-align:top;padding:8px 12px;border-bottom:1px solid var(--rule)}
+th{font-size:13px;color:var(--ink-2);font-weight:600;border-bottom-color:var(--ink-3)}
+td{overflow-wrap:anywhere}
+td code{word-break:break-all}
+td.n{white-space:nowrap;font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+.note{color:var(--ink-2);font-size:13px}
+.qs{list-style:none;padding:0;margin:0}
+.qs li{padding:12px 0;border-bottom:1px solid var(--rule)}
+.qs b{display:block}
+.ks{list-style:none;padding:0;margin:0 0 12px}
+.ks li{padding:8px 0;border-bottom:1px solid var(--rule)}
+a{color:var(--focus)}
+/* 図の共通（diagrams skill の base.css を写したもの） */
+.dg{--_bg:var(--dg-bg,#ffffff);--_ink:var(--dg-ink,#18202c);--_sub:var(--dg-sub,#596579);--_line:var(--dg-line,#c3cbd6);--_link:var(--dg-link,#9aa6b6);--_soft:var(--dg-soft,#f3f5f8);--_a:var(--dg-a,#365fb5);--_a-bg:var(--dg-a-bg,#edf2fb);--_b:var(--dg-b,#8a621e);--_b-bg:var(--dg-b-bg,#f8f2e7);--_c:var(--dg-c,#26786d);--_c-bg:var(--dg-c-bg,#edf5f2);--_w:var(--dg-w,#a34f39);--_w-bg:var(--dg-w-bg,#faefea)}
+.dg text{fill:var(--_ink);font-size:13px;font-weight:400}
+.dg .bg{fill:var(--_bg)}
+.dg .g{font-size:16px;font-weight:600}
+.dg .h{font-size:14px;font-weight:600}
+.dg .s{font-size:12px;font-weight:400;fill:var(--_sub)}
+.dg .n{font-size:12px;font-weight:600;fill:var(--_a)}
+.dg .mid{text-anchor:middle}
+.dg .end{text-anchor:end}
+.dg .box{fill:var(--_bg);stroke:var(--_line);stroke-width:1}
+.dg .soft{fill:var(--_soft);stroke:none}
+.dg .fa{fill:var(--_a-bg);stroke:var(--_a);stroke-width:1.25}
+.dg .fb{fill:var(--_b-bg);stroke:var(--_b);stroke-width:1.25}
+.dg .fc{fill:var(--_c-bg);stroke:var(--_c);stroke-width:1.25}
+.dg .fw{fill:var(--_w-bg);stroke:var(--_w);stroke-width:1.25}
+.dg .pa{fill:var(--_a-bg);stroke:none}
+.dg .pb{fill:var(--_b-bg);stroke:none}
+.dg .pw{fill:var(--_w-bg);stroke:none}
+.dg .ta{fill:var(--_a)}
+.dg .tb{fill:var(--_b)}
+.dg .tc{fill:var(--_c)}
+.dg .tw{fill:var(--_w)}
+.dg .ln{stroke:var(--_line);stroke-width:1;fill:none}
+.dg .cn{stroke:var(--_link);stroke-width:1.5;fill:none}
+.dg .ar{stroke:var(--_sub);stroke-width:1.5;fill:none}
+.dg .em{stroke:var(--_a);stroke-width:2;fill:none}
+.dg .ew{stroke:var(--_w);stroke-width:1.5;fill:none}
+.dg .dash{stroke-dasharray:4 4}
+.dg .tip{fill:var(--_sub);fill:context-stroke}
+.dg .num{fill:var(--_bg);stroke:var(--_a);stroke-width:1.25}
+.dg .dot{fill:var(--_sub)}
+@media (max-width:600px){.wrap{padding:24px 12px 48px}h1{font-size:22px}th,td{padding:6px 8px}.sc svg{min-width:760px}.sc table.wide{min-width:680px}}
+</style>
+</head>
+<body>
+<svg class="dg" width="0" height="0" aria-hidden="true" style="position:absolute"><defs><marker id="dg-tip" viewBox="0 0 8 6" refX="8" refY="3" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="6" orient="auto-start-reverse"><path class="tip" d="M0,0 L8,3 L0,6 z"/></marker></defs></svg>
+<div class="wrap">
+<header>
+<h1>agent-harness の詳しい図（全体像・タスクの分類・処理の流れ）</h1>
+<p class="meta">2026-11-23作成。agent-harnessのmain（a7ad8a8）の判定の関数 <code>state.ts</code>・書く道具 <code>cockpit-write</code>・窓のサーバー・hook・見張りのスクリプトと、cockpit skill・worktree-flow skill・READMEから起こした。概観は<a href="harness-map.html">見取り図</a>にある。</p>
+</header>
+
+<h2 id="s1"><span class="id">1</span>背景と前提</h2>
+<p>agent-harnessは、Orcaで複数のエージェントを並べて動かすときに、深田さんが判断と大事な確認にだけ頭を使えるようにする道具の集まりです。13:05に入れた<a href="harness-map.html">見取り図</a>は、役と知らせの経路の概観に絞り、カードの種類・hook・ファイルごとの読み書きはREADMEとskillを指すだけにしていました（見取り図のQ3）。</p>
+<p>11/23 14:12の依頼「このハーネスの全体像とかタスクの分類とか処理フローとかを詳細まで図にして」を受けて、このページでは見取り図より細かく、誰がどのファイルを読み書きするか、タスクがどう分類されて状態がどう決まるか、発言から済までの流れを図にしました。欄の定義の全部はcockpit skillの <code>references/schema.md</code> が持つので、このページは図と流れだけを持ち、各節の「細部」から元の文書を指します。</p>
+<p>IDの頭の字は次のとおりです。章と節は数字、図は図1〜図14、結論はK、用語はV、ファイルはF、タスクの判定はJ、流れはA（発言から済）・B（窓の操作）・C（窓からの質問）・M（圧縮と再開）・S（席と帯）、書く道具の規則はW、確かめてほしいことはQ。</p>
+<table>
+<thead><tr><th>ID</th><th>語</th><th>何か</th></tr></thead>
+<tbody>
+<tr id="V1"><td class="n">V1</td><td>窓</td><td>操縦席の窓。左のディスプレイのブラウザのタブ（<code>127.0.0.1:47231</code>）で、要対応・全体・対応済みの3タブ。Orcaの右のサイドバーのパネルも同じ部品で出る</td></tr>
+<tr id="V2"><td class="n">V2</td><td>窓口</td><td>ワークスペースのメイン。深田さんと話し、帳簿を書く唯一のエージェント</td></tr>
+<tr id="V3"><td class="n">V3</td><td>担当</td><td>1つの仕事を終わりまで受け持つチャット。自分のRunを持ち、自分のworkerを立てる</td></tr>
+<tr id="V4"><td class="n">V4</td><td>worker</td><td>1つのworktreeの端末でコードを書くエージェント。worker用の設定（sandbox）で起こす</td></tr>
+<tr id="V5"><td class="n">V5</td><td>写しの会話</td><td>窓の「質問」から立つ、窓口の会話を写した相手（<code>claude --resume --fork-session</code>）。Read・Grep・Globだけを使い、帳簿に触れない</td></tr>
+<tr id="V6"><td class="n">V6</td><td>相談のタブ</td><td>担当のいないカードで「窓口と協議」を押すと立つ、そのカード専用の相談</td></tr>
+<tr id="V7"><td class="n">V7</td><td>郵便受けの端末</td><td>AIを動かさない端末（タブ名「操縦席｜郵便受け」）。窓や見張りのようなOrcaの外のプロセスが知らせを送るときの送り主</td></tr>
+<tr id="V8"><td class="n">V8</td><td>Run・Dispatch</td><td>Orcaのorchestrationの単位。Runは知らせで起こされる役（coordinator）が持ち、Dispatchはworkerや担当に渡した1回分の仕事</td></tr>
+<tr id="V9"><td class="n">V9</td><td>帳簿</td><td>各ワークスペースの <code>.orca/cockpit.json</code> と、その周りの記録（操作・判断・発言・知らせ）</td></tr>
+</tbody>
+</table>
+
+<h2 id="s2"><span class="id">2</span>結論</h2>
+<ul class="ks">
+<li id="K1"><span class="id">K1</span>どのファイルも書き手は1種類です。帳簿は窓口だけが <code>cockpit-write</code> で、操作の記録は窓だけ、発言と知らせの記録はhookだけ、窓の上の帯はstallwatchだけが書きます（図1・図2）。</li>
+<li id="K2"><span class="id">K2</span>タスクの状態は誰も手で書きません。手で書くのは「済んでいない（open）」と「完了（ok）」だけで、残りは <code>state.ts</code> の <code>judgeTasks</code> が10の判定を上から順に照らして、事実から決めます（図8）。</li>
+<li id="K3"><span class="id">K3</span>どの流れも「記録に残す → 1行の知らせで起こす → 窓口が記録を読んで帳簿に書く」の同じ形です。知らせが失われても、hookが記録から名指しして拾い直します（図9〜図12）。</li>
+<li id="K4"><span class="id">K4</span><code>cockpit-write</code> が断る規則は23の束で、受付・タスクの書き込み・操作の反映・文面・返しの反映の5か所で書き込みを止めます。通らなければ何も書かずに理由を返します（図14）。</li>
+</ul>
+
+<h2 id="s3"><span class="id">3</span>全体像</h2>
+
+<h3 id="s3-1"><span class="id">3.1</span>登場するもの</h3>
+<figure id="f1"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 456" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図1登場するものの層</title>
+<rect class="bg" width="1040" height="456"/>
+<line class="ln" x1="16" y1="96" x2="1024" y2="96"/><line class="ln" x1="16" y1="184" x2="1024" y2="184"/><line class="ln" x1="16" y1="272" x2="1024" y2="272"/><line class="ln" x1="16" y1="360" x2="1024" y2="360"/>
+<text class="h" x="16" y="46">人</text><text class="s" x="16" y="66">判断と確認</text>
+<text class="h" x="16" y="134">画面と会話</text><text class="s" x="16" y="154">深田さんが触る</text>
+<text class="h" x="16" y="222">Orca</text><text class="s" x="16" y="242">知らせと端末</text>
+<text class="h" x="16" y="310">会話の外の道具</text><text class="s" x="16" y="330">モデルを呼ばない</text>
+<text class="h" x="16" y="398">記録（.orca/）</text><text class="s" x="16" y="418">ワークスペースごと</text>
+<rect class="fb" x="144" y="16" width="212" height="72" rx="6"/><text class="h mid" x="250" y="46">深田さん</text><text class="s mid" x="250" y="68">窓で押し、チャットで話す</text>
+<text class="s" x="380" y="46">窓口・担当・写しの会話とはチャットで話し、カードは窓で押す。</text>
+<text class="s" x="380" y="68">止まったものは、窓の上の帯とmacOSの通知で知る。</text>
+<rect class="box" x="144" y="104" width="212" height="72" rx="6"/><text class="h mid" x="250" y="134">窓・パネル</text><text class="s mid" x="250" y="156">カードを出し、操作を記録</text>
+<rect class="fa" x="364" y="104" width="212" height="72" rx="6"/><text class="h mid" x="470" y="134">窓口</text><text class="s mid" x="470" y="156">帳簿を書く唯一の役</text>
+<rect class="box" x="584" y="104" width="212" height="72" rx="6"/><text class="h mid" x="690" y="134">担当</text><text class="s mid" x="690" y="156">仕事ごと。workerを立てる</text>
+<rect class="box" x="804" y="104" width="212" height="72" rx="6"/><text class="h mid" x="910" y="134">写しの会話・相談のタブ</text><text class="s mid" x="910" y="156">読むだけ。返しを書く</text>
+<rect class="box" x="144" y="192" width="432" height="72" rx="6"/><text class="h mid" x="360" y="222">orchestration（Run・Task・Dispatch）</text><text class="s mid" x="360" y="244">send・worker_done・askで相手を起こす</text>
+<rect class="box" x="584" y="192" width="212" height="72" rx="6"/><text class="h mid" x="690" y="222">worker</text><text class="s mid" x="690" y="244">worktreeごとの端末</text>
+<rect class="box" x="804" y="192" width="212" height="72" rx="6"/><text class="h mid" x="910" y="222">Bot（automation）</text><text class="s mid" x="910" y="244">1つの案件の連絡を見張る</text>
+<rect class="box" x="144" y="280" width="212" height="72" rx="6"/><text class="h mid" x="250" y="310">hook</text><text class="s mid" x="250" y="332">発言の記録・名指し・再開</text>
+<rect class="box" x="364" y="280" width="212" height="72" rx="6"/><text class="h mid" x="470" y="310">cockpit-write・state.ts</text><text class="s mid" x="470" y="332">書く道具と判定の関数</text>
+<rect class="box" x="584" y="280" width="432" height="72" rx="6"/><text class="h mid" x="800" y="310">見張り（launchd）</text><text class="s mid" x="800" y="332">stallwatch・account-failover・orca-watch・worktree-sweep</text>
+<rect class="fc" x="144" y="368" width="212" height="72" rx="6"/><text class="h mid" x="250" y="398">cockpit.json</text><text class="s mid" x="250" y="420">帳簿の本体</text>
+<rect class="fc" x="364" y="368" width="212" height="72" rx="6"/><text class="h mid" x="470" y="398">cockpit.user.json</text><text class="s mid" x="470" y="420">深田さんの操作</text>
+<rect class="fc" x="584" y="368" width="212" height="72" rx="6"/><text class="h mid" x="690" y="398">cockpit/*.jsonl</text><text class="s mid" x="690" y="420">判断・発言・知らせ</text>
+<rect class="fc" x="804" y="368" width="212" height="72" rx="6"/><text class="h mid" x="910" y="398">state.md・consult/</text><text class="s mid" x="910" y="420">作業メモ・相談と質問の控え</text>
+</svg></div>
+<figcaption><span class="id">図1</span>登場するものの層。1つの箱は1種類の役・道具・置き場所。黄土は深田さん、青は窓口、緑は記録。どれが何を読み書きするかは図2。</figcaption>
+</figure>
+<p class="answer">深田さんが触るのは「画面と会話」の層だけで、その下のOrca・道具・記録は、エージェントと道具のあいだで閉じています。</p>
+<details><summary>細部</summary>
+<ul>
+<li>担当とworkerを立てる人は窓口か担当で、知らせはみなOrcaのorchestrationを通る（見取り図の3.1・3.2）</li>
+<li>Botは1つの案件を受け持ち、その案件の窓口のRunにだけ送る（cockpit skillの SKILL.md「仕事の形」、R144）</li>
+<li>hookは <code>compaction-keep.py</code>（発言・知らせの記録、圧縮と再開）と <code>periodic-reminder.sh</code>（state.tsの <code>checks</code> を【操縦席】の行で流す）が主で、どちらもモデルを呼ばない</li>
+</ul>
+</details>
+
+<h3 id="s3-2"><span class="id">3.2</span>誰がどのファイルを読み書きするか</h3>
+<figure id="f2"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 476" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図2ファイルの読み書き</title>
+<rect class="bg" width="1040" height="476"/>
+<text class="h" x="16" y="36">ファイル（.orca/の下）</text>
+<text class="h mid" x="415" y="36">窓口</text><text class="h mid" x="525" y="36">窓・パネル</text><text class="h mid" x="635" y="36">hook</text><text class="h mid" x="745" y="36">相談・質問</text><text class="h mid" x="855" y="36">見張り</text><text class="h mid" x="965" y="36">担当・worker</text>
+<line class="ln" x1="16" y1="48" x2="1024" y2="48"/>
+<text class="n" x="16" y="71">F1</text><text x="52" y="71">cockpit.json<tspan class="s" dx="4">（帳簿の本体）</tspan></text>
+<rect class="fc" x="391" y="55" width="48" height="22" rx="11"/><text class="mid tc" x="415" y="71">書く</text><text class="s mid" x="525" y="71">読む</text><text class="s mid" x="635" y="71">読む</text>
+<line class="ln" x1="16" y1="84" x2="1024" y2="84"/>
+<text class="n" x="16" y="107">F2</text><text x="52" y="107">cockpit.user.json<tspan class="s" dx="4">（深田さんの操作）</tspan></text>
+<text class="s mid" x="415" y="107">読む</text><rect class="fc" x="501" y="91" width="48" height="22" rx="11"/><text class="mid tc" x="525" y="107">書く</text><text class="s mid" x="635" y="107">読む</text>
+<line class="ln" x1="16" y1="120" x2="1024" y2="120"/>
+<text class="n" x="16" y="143">F3</text><text x="52" y="143">cockpit/rulings.jsonl<tspan class="s" dx="4">（判断の記録）</tspan></text>
+<rect class="fc" x="391" y="127" width="48" height="22" rx="11"/><text class="mid tc" x="415" y="143">書く</text><text class="s mid" x="525" y="143">読む</text><text class="s mid" x="635" y="143">読む</text><text class="s mid" x="745" y="143">読む</text>
+<line class="ln" x1="16" y1="156" x2="1024" y2="156"/>
+<text class="n" x="16" y="179">F4</text><text x="52" y="179">cockpit/utterances.jsonl<tspan class="s" dx="4">（発言の原文）</tspan></text>
+<text class="s mid" x="415" y="179">読む</text><text class="s mid" x="525" y="179">読む</text><rect class="fc" x="611" y="163" width="48" height="22" rx="11"/><text class="mid tc" x="635" y="179">書く</text>
+<line class="ln" x1="16" y1="192" x2="1024" y2="192"/>
+<text class="n" x="16" y="215">F5</text><text x="52" y="215">cockpit/notices.jsonl<tspan class="s" dx="4">（Orcaの知らせ）</tspan></text>
+<text class="s mid" x="415" y="215">読む</text><text class="s mid" x="525" y="215">読む</text><rect class="fc" x="611" y="199" width="48" height="22" rx="11"/><text class="mid tc" x="635" y="215">書く</text>
+<line class="ln" x1="16" y1="228" x2="1024" y2="228"/>
+<text class="n" x="16" y="251">F6</text><text x="52" y="251">cockpit/state.md<tspan class="s" dx="4">（窓口の作業メモ）</tspan></text>
+<rect class="fc" x="391" y="235" width="48" height="22" rx="11"/><text class="mid tc" x="415" y="251">書く</text><text class="s mid" x="635" y="251">読む</text>
+<line class="ln" x1="16" y1="264" x2="1024" y2="264"/>
+<text class="n" x="16" y="287">F7</text><text x="52" y="287">consult/&lt;カードid&gt;.md<tspan class="s" dx="4">（相談のメモ）</tspan></text>
+<text class="s mid" x="415" y="287">読む</text><text class="s mid" x="525" y="287">読む</text><text class="s mid" x="635" y="287">読む</text><rect class="fc" x="721" y="271" width="48" height="22" rx="11"/><text class="mid tc" x="745" y="287">書く</text>
+<line class="ln" x1="16" y1="300" x2="1024" y2="300"/>
+<text class="n" x="16" y="323">F8</text><text x="52" y="323">consult/ask-*<tspan class="s" dx="4">（質問の控えと返し）</tspan></text>
+<text class="s mid" x="415" y="323">読む</text><rect class="fc" x="501" y="307" width="48" height="22" rx="11"/><text class="mid tc" x="525" y="323">書く</text><rect class="fc" x="611" y="307" width="48" height="22" rx="11"/><text class="mid tc" x="635" y="323">書く</text>
+<line class="ln" x1="16" y1="336" x2="1024" y2="336"/>
+<text class="n" x="16" y="359">F9</text><text x="52" y="359">cockpit/keep.jsonほか<tspan class="s" dx="4">（圧縮と再開）</tspan></text>
+<text class="s mid" x="525" y="359">読む</text><rect class="fc" x="611" y="343" width="48" height="22" rx="11"/><text class="mid tc" x="635" y="359">書く</text>
+<line class="ln" x1="16" y1="372" x2="1024" y2="372"/>
+<text class="n" x="16" y="395">F10</text><text x="52" y="395">alerts.json<tspan class="s" dx="4">（窓の上の帯）</tspan></text>
+<text class="s mid" x="525" y="395">読む</text><rect class="fc" x="831" y="379" width="48" height="22" rx="11"/><text class="mid tc" x="855" y="395">書く</text>
+<line class="ln" x1="16" y1="408" x2="1024" y2="408"/>
+<rect class="fc" x="16" y="424" width="48" height="22" rx="11"/><text class="mid tc" x="40" y="440">書く</text><text class="s" x="72" y="440">その列が書き手（1行に1つ）</text>
+<text class="s" x="280" y="440">読む</text><text class="s" x="312" y="440">その列が読む</text>
+<text class="s" x="16" y="466">担当・workerの列が空なのは、帳簿と記録を読み書きしない決まりのため。hookの列は、hookと決まったコマンド（compaction-keep.py・consult）を含む。</text>
+</svg></div>
+<figcaption><span class="id">図2</span>ファイルの読み書き。1行は1つのファイル（F10だけは <code>~/Library/Application Support/cockpit/</code> に置く）。相談・質問の列は、相談のタブと写しの会話。</figcaption>
+</figure>
+<p class="answer">どの行も書き手は1つで、担当とworkerは帳簿と記録を読み書きしません。決まったことは窓口に知らせで届き、窓口が書きます。</p>
+<details><summary>細部</summary>
+<ul>
+<li>F1は <code>cockpit-write</code> だけで書く。Write・Editで書こうとするとhook（<code>compaction-keep.py</code> のPreToolUse）が断り、書く道具を案内する</li>
+<li>F3は窓口が <code>compaction-keep.py rule</code> で1行ずつ足す。撤回も置き換えの行で書き、消さない</li>
+<li>F8の控え（<code>ask-&lt;質問id&gt;.md</code>）の頭は窓が立てる <code>consult --ask</code> が書き、質問と答えはhookが足す。返し（<code>.returns.jsonl</code>）はhookだけが書き、窓口とstate.tsは返しをここだけから読む</li>
+<li>F9は <code>compactions.jsonl</code>・<code>keep.json</code>・<code>handoff.json</code>・<code>main-session.json</code>。窓は引き継いだことを1日出すために <code>handoff.json</code> を読む</li>
+<li>F10は見張りの3つのプロセスのうちstallwatchだけが書き、ほかの2つは自分のファイルに書いてstallwatchに合流させる（5.5）</li>
+<li>元の文書: cockpit skillの <code>references/schema.md</code>「ファイル」</li>
+</ul>
+</details>
+
+<h2 id="s4"><span class="id">4</span>タスクの分類</h2>
+
+<h3 id="s4-1"><span class="id">4.1</span>仕事の3つの形</h3>
+<figure id="f3"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 396" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図3仕事の3つの形</title>
+<rect class="bg" width="1040" height="396"/>
+<text class="s" x="16" y="40">仕事の形（form）</text>
+<text class="h mid" x="328" y="40">任せる（delegate）</text><text class="h mid" x="608" y="40">一緒に作る（cowork）</text><text class="h mid" x="888" y="40">見張る（watch）</text>
+<line class="ln" x1="16" y1="56" x2="1024" y2="56"/>
+<text class="h" x="16" y="90">深田さんの関わり</text>
+<text x="204" y="90">決めることと出来上がりの確認だけ</text><text x="484" y="90">担当のチャットで話しながら作る</text><text x="764" y="90">届いたものを見て、返事を決める</text>
+<line class="ln" x1="16" y1="116" x2="1024" y2="116"/>
+<text class="h" x="16" y="150">窓での出し方</text>
+<text x="204" y="140">私の番のカード</text><text x="204" y="160">（判断・確認など）</text>
+<text x="484" y="140">返事待ちでなくても要対応に</text><text x="484" y="160">「共同作業中」の行が出る</text>
+<text x="764" y="140">受信のカードを件数に入れず、</text><text x="764" y="160">全体のタブの「見張る」に並べる</text>
+<line class="ln" x1="16" y1="176" x2="1024" y2="176"/>
+<text class="h" x="16" y="210">進める役</text>
+<text x="204" y="210">担当かworker</text><text x="484" y="210">担当（必ず立てる）</text><text x="764" y="210">Bot（1つの案件に1つ）</text>
+<line class="ln" x1="16" y1="236" x2="1024" y2="236"/>
+<text class="h" x="16" y="270">帳簿に書くもの</text>
+<text x="204" y="270">form: delegate</text>
+<text x="484" y="260">form: cowork</text><text x="484" y="280">共同作業の行のカードは書かない</text>
+<text x="764" y="260">form: watchと、watchに</text><text x="764" y="280">Botのid・見張る対象・送り先</text>
+<line class="ln" x1="16" y1="296" x2="1024" y2="296"/>
+<text class="h" x="16" y="330">例</text>
+<text x="204" y="330">操縦席の窓の作り直し</text><text x="484" y="330">顧客への提案書</text><text x="764" y="330">案件のSlack・メールの見張り</text>
+<line class="ln" x1="16" y1="356" x2="1024" y2="356"/>
+<text class="s" x="16" y="384">迷ったら、外に出るものを深田さんの言葉で作るなら一緒に作る、それ以外は任せる。タスクは仕事の形を引き継ぐ（タスクに欄は無い）。</text>
+</svg></div>
+<figcaption><span class="id">図3</span>仕事の3つの形。1列は1つの形、1行は見る観点。カードの種類（確認・許可など）とは別の軸。</figcaption>
+</figure>
+<p class="answer">仕事は形で深田さんの関わり方が決まり、形はその仕事のタスクに引き継がれます（R51）。</p>
+<details><summary>細部</summary>
+<ul>
+<li>共同作業中の行は、担当のチャットの様子からstate.tsが作る。担当がまだ問いを送っていない仕事も出るので、窓口はこの行のためにカードを書かない（R145）</li>
+<li>見張る仕事の <code>watch</code> には、Orcaのautomationのid・対象・送り先だけを書く。頻度・前回の結果はOrcaが持つので写さない（R152）</li>
+<li>形の無い仕事は <code>checks.no_form</code> で名指しされる</li>
+<li>元の文書: cockpit skillの SKILL.md「仕事の形」</li>
+</ul>
+</details>
+
+<h3 id="s4-2"><span class="id">4.2</span>5つの工程</h3>
+<figure id="f4"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 188" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図4タスクの5つの工程</title>
+<rect class="bg" width="1040" height="188"/>
+<text class="s" x="16" y="24">タスクの工程（phase）。5つで固定し、案件ごとに変えない（R83・R135）</text>
+<rect class="box" x="16" y="40" width="180" height="64" rx="6"/><text class="h mid" x="106" y="66">調査</text><text class="s mid" x="106" y="88">分かったこと</text>
+<rect class="box" x="220" y="40" width="180" height="64" rx="6"/><text class="h mid" x="310" y="66">決定</text><text class="s mid" x="310" y="88">決まったこと</text>
+<rect class="box" x="424" y="40" width="180" height="64" rx="6"/><text class="h mid" x="514" y="66">作成</text><text class="s mid" x="514" y="88">動くもの・書いたもの</text>
+<rect class="box" x="628" y="40" width="180" height="64" rx="6"/><text class="h mid" x="718" y="66">確認</text><text class="s mid" x="718" y="88">確認した結果</text>
+<rect class="box" x="832" y="40" width="180" height="64" rx="6"/><text class="h mid" x="922" y="66">反映</text><text class="s mid" x="922" y="88">main・本番・相手に届いたこと</text>
+<line class="ar" x1="197" y1="72" x2="219" y2="72" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="401" y1="72" x2="423" y2="72" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="605" y1="72" x2="627" y2="72" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="809" y1="72" x2="831" y2="72" marker-end="url(#dg-tip)"/>
+<text class="s mid" x="106" y="128">例：停止の原因の調査</text><text class="s mid" x="310" y="128">例：構成図の描き方の決定</text><text class="s mid" x="514" y="128">例：図のページの作成</text><text class="s mid" x="718" y="128">例：幅と明暗の撮影で確認</text><text class="s mid" x="922" y="128">例：mainへの反映と公開</text>
+<text class="s" x="16" y="168">済は工程ではない。タスクのstateがokか、確認のカードの承認で済になる（図8のJ1）。前からある名前（調べる・作る・確かめるなど）は窓が読み替える。</text>
+</svg></div>
+<figcaption><span class="id">図4</span>タスクの5つの工程。箱の下の小さな字は、その工程が終わったときにできているもの。</figcaption>
+</figure>
+<p class="answer">工程は5つで固定し、タスクが終わったときに何ができているかで1つ選びます。</p>
+<details><summary>細部</summary>
+<ul>
+<li>5つの工程に無い名前は <code>checks.unknown_phase</code>、仕事に入っていないタスクは <code>checks.loose_tasks</code> で名指しされる</li>
+<li>見張る仕事のタスクは工程を省いてよい</li>
+<li>元の文書: cockpit skillの <code>references/schema.md</code> の <code>tasks[]</code> の <code>phase</code></li>
+</ul>
+</details>
+
+<h3 id="s4-3"><span class="id">4.3</span>カードの8種類と、私の番に数える5種類</h3>
+<figure id="f5"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 424" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図5カードの種類</title>
+<rect class="bg" width="1040" height="424"/>
+<text class="s" x="408" y="20">種類（kind）</text><text class="s" x="616" y="20">主なボタン</text><text class="s" x="840" y="20">押したあと、結んだタスクは</text>
+<path class="cn" d="M168,226 H184 M184,138 V314 M184,138 H200 M184,314 H200"/>
+<path class="cn" d="M376,138 H392 M392,50 V226 M392,50 H408 M392,94 H408 M392,138 H408 M392,182 H408 M392,226 H408"/>
+<path class="cn" d="M376,314 H392 M392,270 V358 M392,270 H408 M392,314 H408 M392,358 H408"/>
+<rect class="box" x="16" y="198" width="152" height="56" rx="6"/><text class="h mid" x="92" y="222">カード</text><text class="s mid" x="92" y="242">cards[]・8種類</text>
+<rect class="fb" x="200" y="114" width="176" height="48" rx="6"/><text class="h mid" x="288" y="135">私の番に数える</text><text class="s mid" x="288" y="153">5種類。期限順の1列</text>
+<rect class="box" x="200" y="290" width="176" height="48" rx="6"/><text class="h mid" x="288" y="311">数えない</text><text class="s mid" x="288" y="329">3種類</text>
+<rect class="box" x="408" y="32" width="184" height="36" rx="6"/><text class="h" x="424" y="55">停止</text><text class="s" x="500" y="55">stuck</text><text x="616" y="55">決定・担当を開く・別の回答</text><text x="840" y="55">閉じると着手できる</text>
+<rect class="box" x="408" y="76" width="184" height="36" rx="6"/><text class="h" x="424" y="99">許可</text><text class="s" x="500" y="99">permit</text><text x="616" y="99">許可・一任する・却下</text><text x="840" y="99">閉じると着手できる</text>
+<rect class="box" x="408" y="120" width="184" height="36" rx="6"/><text class="h" x="424" y="143">判断</text><text class="s" x="500" y="143">decide</text><text x="616" y="143">決定・直しを伝える</text><text x="840" y="143">閉じると着手できる</text>
+<rect class="box" x="408" y="164" width="184" height="36" rx="6"/><text class="h" x="424" y="187">送信前</text><text class="s" x="500" y="187">send</text><text x="616" y="187">コピー・送信済みにする</text><text x="840" y="187">送ったら相手待ちか着手</text>
+<rect class="box" x="408" y="208" width="184" height="36" rx="6"/><text class="h" x="424" y="231">確認</text><text class="s" x="500" y="231">review</text><text x="616" y="231">承認・直しを伝える</text><text class="tc" x="840" y="231">承認で済になる</text>
+<rect class="box" x="408" y="252" width="184" height="36" rx="6"/><text class="h" x="424" y="275">相談</text><text class="s" x="500" y="275">consult</text><text x="616" y="275">担当と協議</text><text x="840" y="275">閉じると着手できる</text>
+<rect class="box" x="408" y="296" width="184" height="36" rx="6"/><text class="h" x="424" y="319">受信</text><text class="s" x="500" y="319">inbox</text><text x="616" y="319">担当と協議・返信不要</text><text x="840" y="319">変わらない</text>
+<rect class="box" x="408" y="340" width="184" height="36" rx="6"/><text class="h" x="424" y="363">報告</text><text class="s" x="500" y="363">report</text><text x="616" y="363">既読にする・戻させる</text><text x="840" y="363">変わらない</text>
+<text class="s" x="16" y="404">1枚に「済になるタスク」と「着手するタスク」が混ざるときだけ、カードのeffectsで結び付きごとに上書きする（done・start・none）。</text>
+</svg></div>
+<figcaption><span class="id">図5</span>カードの種類。左から、全体・数えるか・種類と、その種類の主なボタンと押したあとの結んだタスクの変わり方。黄土は深田さんの番に数えるもの。</figcaption>
+</figure>
+<p class="answer">私の番に数えるのは停止・許可・判断・送信前・確認の5種類で、結んだタスクを済にするのは確認の「承認」だけです。</p>
+<details><summary>細部</summary>
+<ul>
+<li>相談は要対応に並ぶが数えない。受信は全体のタブの「見張る」、報告は要対応の下の「報告（参照のみ）」に並ぶ</li>
+<li>判断・許可・確認・送信前の「直しを伝える」は、カードを閉じずに本文つきの操作として担当に届く。そのあいだタスクは「修正中」で、件数から外れる（図8のJ6）</li>
+<li>Orcaで止まったworkerや担当は、窓口が書かなくても窓が停止の票にする。窓口が停止のカードを書くのは、担当が質問で止まったときだけ</li>
+<li>出す範囲は、外に出るもの・戻せないもの・要件や設計が変わるものの3種に絞る（R52）。元の文書: cockpit skillの <code>references/cards.md</code>「何を私の番に出すか」と <code>references/schema.md</code>「カード」</li>
+</ul>
+</details>
+
+<h3 id="s4-4"><span class="id">4.4</span>依頼・仕事・タスク・カードの結び</h3>
+<figure id="f6"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 352" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図6依頼・仕事・タスク・カードの結び</title>
+<rect class="bg" width="1040" height="352"/>
+<rect class="box" x="16" y="40" width="176" height="64" rx="6"/><text class="h mid" x="104" y="66">発言 u-160</text><text class="s mid" x="104" y="88">utterances.jsonl</text>
+<rect class="fb" x="256" y="24" width="264" height="112" rx="6"/><text class="h" x="272" y="50">依頼r30（requests[]）</text><text class="s" x="272" y="74">done_when: 済の条件1〜3</text><text class="s" x="272" y="94">evidence: commit・url・op・answer</text><text class="s" x="272" y="114">check・tasks</text>
+<rect class="box" x="600" y="24" width="232" height="88" rx="6"/><text class="h" x="616" y="50">仕事s1（streams[]）</text><text class="s" x="616" y="74">form: 3つの形</text><text class="s" x="616" y="94">status: 窓口が書く状況の文</text>
+<rect class="fa" x="600" y="200" width="232" height="136" rx="6"/><text class="h" x="616" y="226">タスクt58（tasks[]）</text><text class="s" x="616" y="250">stream・phase</text><text class="s" x="616" y="270">state: openかok</text><text class="s" x="616" y="290">wait・after</text><text class="s" x="616" y="310">worker: run_id・task_id</text>
+<rect class="box" x="256" y="216" width="264" height="112" rx="6"/><text class="h" x="272" y="242">カードv91（cards[]）</text><text class="s" x="272" y="266">kind・rev・state</text><text class="s" x="272" y="286">stream・tasks・request_id</text><text class="s" x="272" y="306">effects（任意）</text>
+<rect class="box" x="16" y="232" width="176" height="80" rx="6"/><text class="h mid" x="104" y="258">操作op 812</text><text class="s mid" x="104" y="280">cockpit.user.json</text><text class="s mid" x="104" y="300">item_id・item_rev</text>
+<rect class="box" x="888" y="216" width="136" height="88" rx="6"/><text class="h mid" x="956" y="244">Orca</text><text class="s mid" x="956" y="266">Run・Task</text><text class="s mid" x="956" y="286">今のDispatch</text>
+<line class="ar" x1="193" y1="72" x2="255" y2="72" marker-end="url(#dg-tip)"/><text class="s mid" x="224" y="64">id</text>
+<path class="ar" d="M521,100 H556 Q560,100 560,104 V224 Q560,228 564,228 H599" marker-end="url(#dg-tip)"/><text class="s end" x="552" y="168">tasks</text>
+<line class="ar" x1="521" y1="288" x2="599" y2="288" marker-end="url(#dg-tip)"/><text class="s mid" x="578" y="280">tasks</text>
+<line class="ar" x1="716" y1="199" x2="716" y2="113" marker-end="url(#dg-tip)"/><text class="s" x="724" y="160">stream</text>
+<line class="ar" x1="388" y1="215" x2="388" y2="137" marker-end="url(#dg-tip)"/><text class="s" x="396" y="180">request_id</text>
+<line class="ar" x1="193" y1="272" x2="255" y2="272" marker-end="url(#dg-tip)"/><text class="s mid" x="224" y="264">item_id</text>
+<line class="ar" x1="833" y1="268" x2="887" y2="268" marker-end="url(#dg-tip)"/><text class="s mid" x="860" y="260">worker</text>
+<path class="ar dash" d="M255,120 H112 Q108,120 108,124 V231" marker-end="url(#dg-tip)"/><text class="s" x="116" y="180">evidence（op）</text>
+</svg></div>
+<figcaption><span class="id">図6</span>依頼・仕事・タスク・カードの結び。矢印は「この欄で、その行を指す」。点線は証拠としての参照。カードもstreamで仕事を指す（図では省いた）。idは <code>references/schema.md</code> の例。</figcaption>
+</figure>
+<p class="answer">依頼は元の発言を指し、タスクは依頼とカードから指されて自分の仕事を指します。どの結びも帳簿のidで書きます。</p>
+<details><summary>細部</summary>
+<ul>
+<li>依頼は1つの発言から2件起こしてよく、それぞれに引用の範囲を書く。発言の記録で結べない依頼は <code>source</code> に出典を書く</li>
+<li>タスクの <code>worker</code> には、立てたときの最初のTaskのidを書き、あとから書き換えない。続きを頼むとOrcaはTaskとDispatchを新しく作るが、state.tsが続き（<code>follow_up_of</code>）をたどって今のDispatchを引く</li>
+<li>カードの中身（選択肢・対象・本文・期限）を変えたら <code>rev</code> を1上げる。操作は押したときの <code>item_rev</code> を持ち、古いrevへの操作は反映されない</li>
+<li>元の文書: cockpit skillの <code>references/schema.md</code>「cockpit.json の形」「依頼の帳簿」</li>
+</ul>
+</details>
+
+<h3 id="s4-5"><span class="id">4.5</span>依頼と仕事の状態</h3>
+<figure id="f7"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 264" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図7依頼と仕事の状態</title>
+<rect class="bg" width="1040" height="264"/>
+<text class="s" x="16" y="20">依頼（requests[]）の状態。state.tsが証拠から決め、帳簿には書かない</text>
+<rect class="box" x="16" y="32" width="156" height="40" rx="20"/><text class="h mid" x="94" y="57">受付</text>
+<rect class="box" x="300" y="32" width="156" height="40" rx="20"/><text class="h mid" x="378" y="57">進行中</text>
+<rect class="fb" x="584" y="32" width="156" height="40" rx="20"/><text class="h mid" x="662" y="57">確認待ち</text>
+<rect class="fc" x="868" y="32" width="156" height="40" rx="20"/><text class="h mid" x="946" y="57">済</text>
+<line class="ar" x1="173" y1="52" x2="299" y2="52" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="457" y1="52" x2="583" y2="52" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="741" y1="52" x2="867" y2="52" marker-end="url(#dg-tip)"/>
+<text class="s" x="16" y="94">結んだタスク・証拠・</text><text class="s" x="16" y="112">カードがまだ無い</text>
+<text class="s" x="300" y="94">タスクか証拠か</text><text class="s" x="300" y="112">カードがある</text>
+<text class="s" x="584" y="94">開いた確認のカードがあるか、</text><text class="s" x="584" y="112">checkの依頼が承認の前</text>
+<text class="s" x="868" y="94">済の条件ごとに証拠がある</text><text class="s" x="868" y="112">checkは今のrevの承認も要る</text>
+<line class="ln" x1="16" y1="132" x2="1024" y2="132"/>
+<text class="s" x="16" y="152">仕事の行（jobs[]）。左から順に照らし、最初に当たったものになる。窓の「案件の今」とOrcaのサイドバーに出る</text>
+<rect class="fb" x="16" y="164" width="132" height="40" rx="6"/><text class="h mid" x="82" y="189">私待ち</text>
+<rect class="fw" x="162" y="164" width="132" height="40" rx="6"/><text class="h mid" x="228" y="189">止まっている</text>
+<rect class="box" x="308" y="164" width="132" height="40" rx="6"/><text class="h mid" x="374" y="189">作業中</text>
+<rect class="box" x="454" y="164" width="132" height="40" rx="6"/><text class="h mid" x="520" y="189">顧客待ち</text>
+<rect class="box" x="600" y="164" width="132" height="40" rx="6"/><text class="h mid" x="666" y="189">出来事待ち</text>
+<rect class="box" x="746" y="164" width="132" height="40" rx="6"/><text class="h mid" x="812" y="189">未着手</text>
+<rect class="fc" x="892" y="164" width="132" height="40" rx="6"/><text class="h mid" x="958" y="189">済</text>
+<text class="s" x="16" y="226">数えるカードか、</text><text class="s" x="16" y="244">共同作業の返事待ち</text>
+<text class="s" x="162" y="226">止まったタスク</text>
+<text class="s" x="308" y="226">作業中か</text><text class="s" x="308" y="244">着手できるタスク</text>
+<text class="s" x="454" y="226">相手待ちのカードか</text><text class="s" x="454" y="244">personの待ち</text>
+<text class="s" x="600" y="226">eventかdateの待ち</text>
+<text class="s" x="746" y="226">順番・前提待ちと</text><text class="s" x="746" y="244">ほかの待ち</text>
+<text class="s" x="892" y="226">全部のタスクが済</text>
+</svg></div>
+<figcaption><span class="id">図7</span>依頼と仕事の状態。上は依頼の一生（左から右へ進む）、下は仕事の行の語（左ほど優先）。黄土は深田さんの番、赤茶は止まり、緑は済。</figcaption>
+</figure>
+<p class="answer">依頼と仕事の状態は帳簿に書かず、証拠・タスク・カードからstate.tsが決めます。</p>
+<details><summary>細部</summary>
+<ul>
+<li>依頼の済は、済の条件（<code>done_when</code>）の1つ1つに証拠が1つ以上あるとき。質問（<code>kind: question</code>）は結論と根拠を書いた回答（<code>answer</code>）の証拠も要る（R47）。タスクが0件でも、空のまま済にはならない</li>
+<li>確認が要る依頼（<code>check: true</code>）は、今のカードの <code>rev</code> に押された取り消されていない「承認」が証拠にあるときだけ済。成果物を改訂して <code>rev</code> を上げると、古い承認は証拠にならない</li>
+<li>仕事の状況の文（<code>status</code>）は窓口が書くが、元の事実が変わると <code>cockpit-write</code> が書き直しを求める（6章のW18）</li>
+<li>元の文書: <code>state.ts</code> の <code>requestViews</code>・<code>jobViews</code>、cockpit skillの <code>references/schema.md</code>「依頼の帳簿」「仕事の行の語」</li>
+</ul>
+</details>
+
+<h3 id="s4-6"><span class="id">4.6</span>タスクの状態の決まり方</h3>
+<figure id="f8"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 560" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図8タスクの状態の決まり方</title>
+<rect class="bg" width="1040" height="560"/>
+<text class="s" x="24" y="20">ID</text><text class="s" x="64" y="20">条件（上から順に照らし、最初に当たった行で決まる）</text><text class="s" x="600" y="20">state</text><text class="s" x="704" y="20">窓の1行の例</text>
+<rect class="soft" x="16" y="32" width="1008" height="32" rx="4"/><text class="n" x="24" y="53">J1</text><text x="64" y="53">stateがok、または結んだ確認のカードが承認された</text><text class="h tc" x="600" y="53">ok</text><text x="704" y="53">完了</text>
+<rect class="pw" x="16" y="68" width="1008" height="32" rx="4"/><text class="n" x="24" y="89">J2</text><text x="64" y="89">結んだ開いた停止のカードがある</text><text class="h tw" x="600" y="89">stop</text><text x="704" y="89">止まっている（w1）</text>
+<rect class="pb" x="16" y="104" width="1008" height="52" rx="4"/><text class="n" x="24" y="125">J3</text><text x="64" y="125">結んだ開いた私の番のカード（許可・判断・送信前・確認・相談）がある</text><text class="s" x="64" y="145">workerが動いていても・終わっていても、こちらが勝つ</text><text class="h tb" x="600" y="125">wait</text><text x="704" y="125">深田さんの判断待ち（d21）</text><text class="s" x="704" y="145">協議中なら「深田さんと協議中（d21）」</text>
+<rect class="pw" x="16" y="160" width="1008" height="32" rx="4"/><text class="n" x="24" y="181">J4</text><text x="64" y="181">workerがOrcaで止まった・見つからない</text><text class="h tw" x="600" y="181">stop</text><text x="704" y="181">workerがOrcaに見つからない</text>
+<rect class="soft" x="16" y="196" width="1008" height="52" rx="4"/><text class="n" x="24" y="217">J5</text><text x="64" y="217">workerがworker_doneを返した</text><text x="64" y="237">workerが動いている</text><text class="h" x="600" y="217">wait</text><text class="h" x="600" y="237">run</text><text x="704" y="217">workerの結果の取り込み待ち</text><text x="704" y="237">workerが作業中</text>
+<rect class="soft" x="16" y="252" width="1008" height="32" rx="4"/><text class="n" x="24" y="273">J6</text><text x="64" y="273">確認などのカードで「直しを伝える」が押された</text><text class="h" x="600" y="273">run</text><text x="704" y="273">修正中（v91の直し）</text>
+<rect class="soft" x="16" y="288" width="1008" height="32" rx="4"/><text class="n" x="24" y="309">J7</text><text x="64" y="309">送ったあと返事を待つカード（state: waiting）がある</text><text class="h" x="600" y="309">wait</text><text x="704" y="309">田中さんの返事待ち（利用上限の回答）</text>
+<rect class="soft" x="16" y="324" width="1008" height="128" rx="4"/><text class="n" x="24" y="345">J8</text><text x="64" y="345">解けていない待ち（wait）がある。種類で分かれる</text>
+<text x="88" y="369">person: 外の相手の返事</text><text class="h" x="600" y="369">wait</text><text x="704" y="369">先方の担当者の返事待ち（認証情報）</text>
+<text x="88" y="393">event: 人の返事でない出来事（need件で解ける）</text><text class="h" x="600" y="393">wait</text><text x="704" y="393">Botが次の知らせを送るを待つ（1/3件届いた）</text>
+<text x="88" y="417">date: 確かめる日の前</text><text class="h" x="600" y="417">wait</text><text x="704" y="417">12/4に確かめる: 通知が出たか</text>
+<text x="88" y="441">slot: 空き枠が無い（窓口が外すまで）</text><text class="h" x="600" y="441">idle</text><text x="704" y="441">空き枠の順番待ち（workerの上限）</text>
+<rect class="soft" x="16" y="456" width="1008" height="32" rx="4"/><text class="n" x="24" y="477">J9</text><text x="64" y="477">afterのタスクが済んでいない</text><text class="h" x="600" y="477">idle</text><text x="704" y="477">前提待ち（t104「…」）</text>
+<rect class="soft" x="16" y="492" width="1008" height="52" rx="4"/><text class="n" x="24" y="513">J10</text><text x="64" y="513">上のどれでもない</text><text class="s" x="64" y="533">dateの日が来たものもここ（日付は済の証拠にしない）</text><text class="h" x="600" y="513">run</text><text x="704" y="513">着手できる</text><text class="s" x="704" y="533">日が来たら「確かめる日が来た: 通知が出たか」</text>
+</svg></div>
+<figcaption><span class="id">図8</span>タスクの状態の決まり方（<code>state.ts</code> の <code>judgeTasks</code>）。1行は1つの判定。stateの値は、ok（完了）・stop（止まっている）・wait（待ち）・run（作業中・着手できる）・idle（未着手）。赤茶は止まり、黄土は深田さんの番、緑は済。</figcaption>
+</figure>
+<p class="answer">窓口がタスクに手で書くのはopenとokだけで、それ以外は上の10の判定の順で、事実から決まります（R204）。窓・パネル・hook・書く道具がみな同じこの関数を通します。</p>
+<details><summary>細部</summary>
+<ul>
+<li>J3が4・5より上にあるのは、workerが動いていても終わっていても、次に動くのが深田さんだから。worker_doneの取り込み待ちより深田さん待ちが勝つ</li>
+<li>J5のworkerの様子は、Orcaの今のDispatch（<code>orca orchestration worker-show</code>）から窓とhookが引く。書く道具とパネルはOrcaの様子を入れずに判定する</li>
+<li>待ちは4種類だけ書ける。深田さんを待つものは <code>wait</code> に書かず、頼むカードの <code>tasks</code> から指す。person・eventの待ちを解いた事実は、発言・知らせ・操作・議事録を <code>wait.met[]</code> の <code>by</code> で指して書く</li>
+<li>カードの効果は図5の右の列。J1の「承認」は、窓口がまだ反映していない今のrevへの取り消されていない承認か、窓口が深田さんの操作で閉じたカードの今のrevへの承認</li>
+<li>元の文書: cockpit skillの <code>references/schema.md</code>「タスクの今の決まり方」（ここと同じ10の判定で書いてある）</li>
+</ul>
+</details>
+
+<h2 id="s5"><span class="id">5</span>処理の流れ</h2>
+
+<h3 id="s5-1"><span class="id">5.1</span>発言から済まで</h3>
+<figure id="f9"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 488" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図9発言から済までの流れ</title>
+<rect class="bg" width="1040" height="488"/>
+<rect class="fb" x="24" y="12" width="144" height="36" rx="6"/><text class="h mid" x="96" y="35">深田さん</text>
+<rect class="box" x="192" y="12" width="144" height="36" rx="6"/><text class="h mid" x="264" y="35">hook</text>
+<rect class="fa" x="360" y="12" width="144" height="36" rx="6"/><text class="h mid" x="432" y="35">窓口</text>
+<rect class="fc" x="528" y="12" width="144" height="36" rx="6"/><text class="h mid" x="600" y="35">記録（.orca/）</text>
+<rect class="box" x="696" y="12" width="144" height="36" rx="6"/><text class="h mid" x="768" y="35">担当・worker</text>
+<rect class="box" x="864" y="12" width="144" height="36" rx="6"/><text class="h mid" x="936" y="35">main（git）</text>
+<line class="ln dash" x1="96" y1="48" x2="96" y2="472"/><line class="ln dash" x1="264" y1="48" x2="264" y2="472"/><line class="ln dash" x1="432" y1="48" x2="432" y2="472"/><line class="ln dash" x1="600" y1="48" x2="600" y2="472"/><line class="ln dash" x1="768" y1="48" x2="768" y2="472"/><line class="ln dash" x1="936" y1="48" x2="936" y2="472"/>
+<line class="ar" x1="96" y1="88" x2="263" y2="88" marker-end="url(#dg-tip)"/><circle class="num" cx="114" cy="74" r="9"/><text class="n mid" x="114" y="78">1</text><text class="s" x="130" y="79">発言する</text>
+<line class="ar" x1="264" y1="128" x2="599" y2="128" marker-end="url(#dg-tip)"/><circle class="num" cx="282" cy="114" r="9"/><text class="n mid" x="282" y="118">2</text><text class="s" x="298" y="119">u-&lt;n&gt;を追記</text>
+<line class="ar" x1="264" y1="168" x2="431" y2="168" marker-end="url(#dg-tip)"/><circle class="num" cx="282" cy="154" r="9"/><text class="n mid" x="282" y="158">3</text><text class="s" x="298" y="159">仕分けていない発言</text>
+<line class="ar" x1="432" y1="208" x2="599" y2="208" marker-end="url(#dg-tip)"/><circle class="num" cx="450" cy="194" r="9"/><text class="n mid" x="450" y="198">4</text><text class="s" x="466" y="199">依頼とタスクを書く</text>
+<line class="ar" x1="432" y1="248" x2="767" y2="248" marker-end="url(#dg-tip)"/><circle class="num" cx="450" cy="234" r="9"/><text class="n mid" x="450" y="238">5</text><text class="s" x="466" y="239">briefを渡す</text>
+<line class="ar dash" x1="768" y1="288" x2="433" y2="288" marker-end="url(#dg-tip)"/><circle class="num" cx="450" cy="274" r="9"/><text class="n mid" x="450" y="278">6</text><text class="s" x="466" y="279">worker_done</text>
+<line class="ar" x1="432" y1="328" x2="935" y2="328" marker-end="url(#dg-tip)"/><circle class="num" cx="450" cy="314" r="9"/><text class="n mid" x="450" y="318">7</text><text class="s" x="466" y="319">照らしてmainに入れる</text>
+<line class="ar" x1="432" y1="368" x2="599" y2="368" marker-end="url(#dg-tip)"/><circle class="num" cx="450" cy="354" r="9"/><text class="n mid" x="450" y="358">8</text><text class="s" x="466" y="359">証拠を結ぶ</text>
+<line class="ar" x1="96" y1="408" x2="599" y2="408" marker-end="url(#dg-tip)"/><circle class="num" cx="114" cy="394" r="9"/><text class="n mid" x="114" y="398">9</text><text class="s" x="130" y="399">承認（図10）</text>
+<circle class="num" cx="508" cy="444" r="11"/><text class="n mid" x="508" y="448">10</text><rect class="fc" x="528" y="430" width="144" height="28" rx="4"/><text class="s mid" x="600" y="449">state.tsが済と判定</text>
+</svg></div>
+<figcaption><span class="id">図9</span>発言から済までの流れ。左から右へ登場するもの、上から下へ時刻の順。実線は送る・書く、点線は戻り。番号は下の表のA1〜A10。</figcaption>
+</figure>
+<p class="answer">発言は届いた時点でhookが記録し、窓口が依頼にしてから、済の条件ごとの証拠がそろうまで済になりません。</p>
+<table>
+<thead><tr><th>ID</th><th>何が起きるか</th><th>抜けたときに拾うもの</th></tr></thead>
+<tbody>
+<tr id="A1"><td class="n">A1</td><td>深田さんが窓口のチャットで発言する</td><td>なし</td></tr>
+<tr id="A2"><td class="n">A2</td><td>hook（<code>compaction-keep.py</code> のUserPromptSubmit）が発言の原文に <code>u-&lt;行番号&gt;</code> を付けて <code>utterances.jsonl</code> に足す。Orcaの知らせは <code>notices.jsonl</code> に <code>n-&lt;行番号&gt;</code> で残す</td><td>モデルを通さないので落ちない</td></tr>
+<tr id="A3"><td class="n">A3</td><td>hook（<code>periodic-reminder.sh</code>）がstate.tsの <code>checks.unsorted</code> を【操縦席】の行で流す。窓口はそのターンのうちに、新しい依頼・既存の依頼への追記・依頼でない、のどれかに仕分ける</td><td>仕分けずに終えようとするとStopのhookが1回止める</td></tr>
+<tr id="A4"><td class="n">A4</td><td>窓口が依頼（<code>done_when</code>・<code>kind</code>・<code>check</code>）とタスクを書き、<code>intake.through</code> を進める</td><td>またいだ発言があれば <code>cockpit-write</code> が断る（W6）</td></tr>
+<tr id="A5"><td class="n">A5</td><td>窓口が <code>orca-launch --cockpit-task</code> でworkerを立てる。briefの先頭にworkerの決まり、末尾に依頼の済の条件が自動で付く。受け取ったRunとTaskのidをタスクの <code>worker</code> に書く</td><td>線を越えて動いていないタスクは <code>checks.idle_tasks</code></td></tr>
+<tr id="A6"><td class="n">A6</td><td>workerが <code>worker_done</code>（確かめたコマンドと出力・commitのSHA）を送り、Orcaが窓口を起こす</td><td>取り込み待ちが10分を超えるとhookが名指しする（<code>checks.intake</code>）</td></tr>
+<tr id="A7"><td class="n">A7</td><td>窓口が、workerの「仮定」からではなく済の条件を起点に証拠を照らし、<code>git merge --ff-only</code> でmainに入れる。条件を変えて済ませたものは判断のカードに回す</td><td>なし</td></tr>
+<tr id="A8"><td class="n">A8</td><td>窓口が依頼の <code>evidence</code> にcommitを結び、タスクをokにする。深田さんの確認が要るものは、openのまま確認のカードで指す</td><td>証拠の無い済の条件は <code>checks.unproven</code>、取り込んだのにopenのタスクは <code>checks.stale_tasks</code></td></tr>
+<tr id="A9"><td class="n">A9</td><td>深田さんが確認のカードで「承認」を押す（5.2の流れ）。窓口はそのopを依頼の <code>evidence</code> に結ぶ</td><td>未反映の操作として名指し（<code>checks.pending_ops</code>）</td></tr>
+<tr id="A10"><td class="n">A10</td><td>state.tsが、済の条件ごとに証拠がそろい、確認が要るものは今のrevへの承認もあるときに、依頼を済と出す</td><td>なし</td></tr>
+</tbody>
+</table>
+<details><summary>細部</summary>
+<ul>
+<li>窓口が自分で引き受けた仕事（「直します」と返したもの）も依頼として受け、<code>source</code> に窓口の返事の原文を書く</li>
+<li>担当を立てる仕事では、A5〜A6のworkerが担当になり、担当がさらに自分のworkerを立てる。担当から窓口へは <code>worker_done</code> と「判断: &lt;題&gt;」の2つが届く</li>
+<li>都合での先送り（「別PRで」「落ち着いてから」）は、Stopのhookと <code>worker_done</code> の送信前のhook（<code>defer-guard.py</code>）が1回差し戻す（R193）</li>
+<li>元の文書: cockpit skillの <code>references/intake.md</code>、worktree-flow skillの SKILL.md「窓口・担当・worker」</li>
+</ul>
+</details>
+
+<h3 id="s5-2"><span class="id">5.2</span>窓の操作が帳簿に入るまで</h3>
+<figure id="f10"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 384" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図10窓の操作が帳簿に入るまで</title>
+<rect class="bg" width="1040" height="384"/>
+<rect class="fb" x="20" y="8" width="152" height="48" rx="6"/><text class="h mid" x="96" y="37">深田さん</text>
+<rect class="box" x="188" y="8" width="152" height="48" rx="6"/><text class="h mid" x="264" y="29">窓・パネル</text><text class="s mid" x="264" y="47">127.0.0.1:47231</text>
+<rect class="fc" x="356" y="8" width="152" height="48" rx="6"/><text class="h mid" x="432" y="29">操作の記録</text><text class="s mid" x="432" y="47">cockpit.user.json</text>
+<rect class="box" x="524" y="8" width="152" height="48" rx="6"/><text class="h mid" x="600" y="29">郵便受けの端末</text><text class="s mid" x="600" y="47">AIを動かさない</text>
+<rect class="fa" x="692" y="8" width="152" height="48" rx="6"/><text class="h mid" x="768" y="29">窓口</text><text class="s mid" x="768" y="47">窓口のRun</text>
+<rect class="fc" x="860" y="8" width="152" height="48" rx="6"/><text class="h mid" x="936" y="29">帳簿</text><text class="s mid" x="936" y="47">cockpit.json</text>
+<line class="ln dash" x1="96" y1="56" x2="96" y2="368"/><line class="ln dash" x1="264" y1="56" x2="264" y2="368"/><line class="ln dash" x1="432" y1="56" x2="432" y2="368"/><line class="ln dash" x1="600" y1="56" x2="600" y2="368"/><line class="ln dash" x1="768" y1="56" x2="768" y2="368"/><line class="ln dash" x1="936" y1="56" x2="936" y2="368"/>
+<line class="ar" x1="96" y1="96" x2="263" y2="96" marker-end="url(#dg-tip)"/><circle class="num" cx="114" cy="82" r="9"/><text class="n mid" x="114" y="86">1</text><text class="s" x="130" y="87">承認を押す</text>
+<line class="ar" x1="264" y1="136" x2="431" y2="136" marker-end="url(#dg-tip)"/><circle class="num" cx="282" cy="122" r="9"/><text class="n mid" x="282" y="126">2</text><text class="s" x="298" y="127">opを追記</text>
+<circle class="num" cx="174" cy="172" r="9"/><text class="n mid" x="174" y="176">3</text><rect class="box" x="192" y="158" width="144" height="28" rx="4"/><text class="s mid" x="264" y="177">10秒の取り消しの猶予</text>
+<line class="ar" x1="264" y1="224" x2="767" y2="224" marker-end="url(#dg-tip)"/><circle class="num" cx="282" cy="210" r="9"/><text class="n mid" x="282" y="214">4</text><text class="s" x="298" y="215">未反映の操作があります</text><circle class="dot" cx="600" cy="224" r="4"/><text class="s" x="608" y="242">--fromにする</text>
+<line class="ar dash" x1="432" y1="272" x2="767" y2="272" marker-end="url(#dg-tip)"/><circle class="num" cx="450" cy="258" r="9"/><text class="n mid" x="450" y="262">5</text><text class="s" x="466" y="263">未反映のopを読む</text>
+<line class="ar" x1="768" y1="312" x2="935" y2="312" marker-end="url(#dg-tip)"/><circle class="num" cx="786" cy="298" r="9"/><text class="n mid" x="786" y="302">6</text><text class="s" x="802" y="303">反映を1回で書く</text>
+<line class="ar dash" x1="936" y1="352" x2="265" y2="352" marker-end="url(#dg-tip)"/><circle class="num" cx="282" cy="338" r="9"/><text class="n mid" x="282" y="342">7</text><text class="s" x="298" y="343">判定して描き直す</text>
+</svg></div>
+<figcaption><span class="id">図10</span>窓の操作が帳簿に入るまで。番号は下の表のB1〜B7。窓は操作の中身を送らず、1行の知らせだけを送る。</figcaption>
+</figure>
+<p class="answer">窓は押した操作を記録に足して1行の知らせで窓口を起こし、窓口が記録を読んで、カードの変更と反映した操作の番号を1回で書きます。</p>
+<table>
+<thead><tr><th>ID</th><th>何が起きるか</th><th>抜けたときに拾うもの</th></tr></thead>
+<tbody>
+<tr id="B1"><td class="n">B1</td><td>深田さんが窓かパネルでボタンを押す（例: 確認の「承認」）</td><td>なし</td></tr>
+<tr id="B2"><td class="n">B2</td><td>窓が <code>cockpit.user.json</code> に操作を足す（<code>op_id</code>・<code>item_id</code>・<code>item_rev</code>・<code>type</code>）。古いrevのカードへの操作は画面が断る</td><td>なし</td></tr>
+<tr id="B3"><td class="n">B3</td><td>押してから10秒は「この操作を元に戻す」で取り消せる。取り消した組は窓口に送らない</td><td>なし</td></tr>
+<tr id="B4"><td class="n">B4</td><td>窓が郵便受けの端末を送り主にして、窓口のRunへ「【操縦席】未反映の操作があります」を <code>orca orchestration send</code> で送る（R191）。どこまで送ったかは窓が <code>notified.json</code> に持つ</td><td>帳簿に <code>main.run_id</code> が無いと送れず、窓の上の帯に理由が出る</td></tr>
+<tr id="B5"><td class="n">B5</td><td>窓口が <code>applied_ops</code> に無い操作を集め、取り消しの組を外し、今の <code>rev</code> と違うrevへの操作は適用しない</td><td>届かなくても、hookが発言のたびに未反映の件数を出す（<code>checks.pending_ops</code>）</td></tr>
+<tr id="B6"><td class="n">B6</td><td>窓口が操作の種類ごとに反映し、カード・タスク・依頼の変更と <code>applied_ops</code> を <code>cockpit-write</code> の1回で書く</td><td>2回に分けると、間に読んだ画面とhookが同じ操作を未反映と数える</td></tr>
+<tr id="B7"><td class="n">B7</td><td>窓とパネルが帳簿を読み直し、state.tsの判定で描き直す</td><td>なし</td></tr>
+</tbody>
+</table>
+<details><summary>細部</summary>
+<ul>
+<li>操作の種類（<code>type</code>）: 決定 <code>decide</code>・承認と許可 <code>accept</code>・送信済み <code>sent</code>・却下 <code>skip</code>・一任 <code>delegate</code>・協議と直し <code>talk</code>・既読 <code>ack</code>・戻させる <code>revert</code>・取り消し <code>undo</code>・記録の再読 <code>repeat</code>・停止の票を片付ける <code>dismiss</code>・質問の答えを返す <code>ask_decide</code>。種類ごとの反映はcockpit skillの <code>references/ops.md</code></li>
+<li>「直しを伝える」は本文つきの <code>talk</code>。窓口は本文を担当に <code>send --to dispatch:</code> で送り、<code>applied_ops</code> に足すだけにする。カードの <code>rev</code> を上げると直す前に私の番に戻るので上げない。直したものができたら <code>rev</code> を上げ、私の番に戻る</li>
+<li><code>dismiss</code> と、質問の <code>ask_decide</code> はこの知らせを送らない（<code>ask_decide</code> は返しが届いてから5.3の流れで反映する）</li>
+</ul>
+</details>
+
+<h3 id="s5-3"><span class="id">5.3</span>窓からの質問</h3>
+<figure id="f11"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 552" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図11窓からの質問の流れ</title>
+<rect class="bg" width="1040" height="552"/>
+<rect class="fb" x="24" y="8" width="128" height="48" rx="6"/><text class="h mid" x="88" y="37">深田さん</text>
+<rect class="box" x="168" y="8" width="128" height="48" rx="6"/><text class="h mid" x="232" y="29">窓</text><text class="s mid" x="232" y="47">質問の欄</text>
+<rect class="box" x="312" y="8" width="128" height="48" rx="6"/><text class="h mid" x="376" y="29">写しの会話</text><text class="s mid" x="376" y="47">読むだけ</text>
+<rect class="box" x="456" y="8" width="128" height="48" rx="6"/><text class="h mid" x="520" y="29">hook</text><text class="s mid" x="520" y="47">控えと返し</text>
+<rect class="fa" x="600" y="8" width="128" height="48" rx="6"/><text class="h mid" x="664" y="29">窓口</text><text class="s mid" x="664" y="47">窓口のRun</text>
+<rect class="fc" x="744" y="8" width="128" height="48" rx="6"/><text class="h mid" x="808" y="29">記録</text><text class="s mid" x="808" y="47">判断・帳簿</text>
+<rect class="box" x="888" y="8" width="128" height="48" rx="6"/><text class="h mid" x="952" y="29">担当・worker</text><text class="s mid" x="952" y="47">今のDispatch</text>
+<line class="ln dash" x1="88" y1="56" x2="88" y2="540"/><line class="ln dash" x1="232" y1="56" x2="232" y2="540"/><line class="ln dash" x1="376" y1="56" x2="376" y2="540"/><line class="ln dash" x1="520" y1="56" x2="520" y2="540"/><line class="ln dash" x1="664" y1="56" x2="664" y2="540"/><line class="ln dash" x1="808" y1="56" x2="808" y2="540"/><line class="ln dash" x1="952" y1="56" x2="952" y2="540"/>
+<line class="ar" x1="88" y1="94" x2="231" y2="94" marker-end="url(#dg-tip)"/><circle class="num" cx="106" cy="80" r="9"/><text class="n mid" x="106" y="84">1</text><text class="s" x="122" y="85">質問を打つ</text>
+<line class="ar" x1="232" y1="132" x2="375" y2="132" marker-end="url(#dg-tip)"/><circle class="num" cx="250" cy="118" r="9"/><text class="n mid" x="250" y="122">2</text><text class="s" x="266" y="123">consult --ask</text>
+<line class="ar" x1="376" y1="170" x2="519" y2="170" marker-end="url(#dg-tip)"/><circle class="num" cx="394" cy="156" r="9"/><text class="n mid" x="394" y="160">3</text><text class="s" x="410" y="161">答え（Stop）</text>
+<line class="ar dash" x1="520" y1="208" x2="233" y2="208" marker-end="url(#dg-tip)"/><circle class="num" cx="250" cy="194" r="9"/><text class="n mid" x="250" y="198">4</text><text class="s" x="266" y="199">控えを出す</text>
+<line class="ar" x1="88" y1="246" x2="231" y2="246" marker-end="url(#dg-tip)"/><circle class="num" cx="106" cy="232" r="9"/><text class="n mid" x="106" y="236">5</text><text class="s" x="122" y="237">窓口に返す</text>
+<line class="ar" x1="232" y1="284" x2="375" y2="284" marker-end="url(#dg-tip)"/><circle class="num" cx="250" cy="270" r="9"/><text class="n mid" x="250" y="274">6</text><text class="s" x="266" y="275">返しを依頼</text>
+<line class="ar" x1="376" y1="322" x2="519" y2="322" marker-end="url(#dg-tip)"/><circle class="num" cx="394" cy="308" r="9"/><text class="n mid" x="394" y="312">7</text><text class="s" x="410" y="313">【窓口への返し】</text>
+<line class="ar" x1="520" y1="360" x2="663" y2="360" marker-end="url(#dg-tip)"/><circle class="num" cx="538" cy="346" r="9"/><text class="n mid" x="538" y="350">8</text><text class="s" x="554" y="351">保存して知らせる</text>
+<circle class="num" cx="580" cy="396" r="9"/><text class="n mid" x="580" y="400">9</text><rect class="box" x="592" y="382" width="144" height="28" rx="4"/><text class="s mid" x="664" y="401">ask-contextで照らす</text>
+<line class="ar" x1="664" y1="448" x2="807" y2="448" marker-end="url(#dg-tip)"/><circle class="num" cx="682" cy="434" r="11"/><text class="n mid" x="682" y="438">10</text><text class="s" x="698" y="439">判断と帳簿を書く</text>
+<line class="ar" x1="664" y1="486" x2="951" y2="486" marker-end="url(#dg-tip)"/><circle class="num" cx="682" cy="472" r="11"/><text class="n mid" x="682" y="476">11</text><text class="s" x="698" y="477">決定を送る</text>
+<line class="ar dash" x1="664" y1="524" x2="377" y2="524" marker-end="url(#dg-tip)"/><circle class="num" cx="394" cy="510" r="11"/><text class="n mid" x="394" y="514">12</text><text class="s" x="410" y="515">反映済み</text>
+</svg></div>
+<figcaption><span class="id">図11</span>窓からの質問の流れ。番号は下の表のC1〜C12。写しの会話は窓口の会話を写した別のclaudeで、窓口の本線の会話は質問で長くならない。</figcaption>
+</figure>
+<p class="answer">写しの会話は読むだけで、決まったことは返しの記録を経て、窓口が判断の記録と帳簿に書き、担当とworkerに伝えたときにだけ作業に反映されます。</p>
+<table>
+<thead><tr><th>ID</th><th>何が起きるか</th><th>抜けたときに拾うもの</th></tr></thead>
+<tbody>
+<tr id="C1"><td class="n">C1</td><td>深田さんが窓の「質問」の欄（全体のタブの上・カードの詳細・タスクの詳細）に打つ。hookが発言の記録に <code>ask</code> 付きで残す</td><td>ほかの発言と同じく仕分けの対象（A3）</td></tr>
+<tr id="C2"><td class="n">C2</td><td>窓が <code>consult --ask</code> で、<code>main-session.json</code> の窓口の会話を写した相手を窓口のworktreeのタブに立てる。タブは前に出さない</td><td>窓口がまだ発言していないと立たず、窓が「窓口の会話が分かりません」と出す</td></tr>
+<tr id="C3"><td class="n">C3</td><td>相手はRead・Grep・Globだけで答える。hookがStopで答えを控え <code>ask-&lt;質問id&gt;.md</code> に足す</td><td>なし</td></tr>
+<tr id="C4"><td class="n">C4</td><td>窓が控えを読み、右の欄に答えを出す</td><td>なし</td></tr>
+<tr id="C5"><td class="n">C5</td><td>深田さんが「この答えを窓口に返す」を押す。窓が <code>ask_decide</code> の操作を書く</td><td>操作が残るので、相手が止まっても窓口が拾える</td></tr>
+<tr id="C6"><td class="n">C6</td><td>窓が相手のタブに「返しを書いて（op &lt;番号&gt;）」を送る（<code>orca terminal send</code>。相手は <code>check</code> を打てないので知らせの経路の例外）</td><td>返しが無いあいだは <code>checks.unreflected_returns</code> が名指し</td></tr>
+<tr id="C7"><td class="n">C7</td><td>相手が答えの末尾に【窓口への返し】のJSON（決まったこと・新しい依頼・残る論点・影響するタスク）を書く</td><td>なし</td></tr>
+<tr id="C8"><td class="n">C8</td><td>hookが返しを <code>ask-&lt;質問id&gt;.returns.jsonl</code> に保存し、窓口のRunに「質問 &lt;id&gt;: 返し &lt;return_id&gt;」を送る</td><td>知らせが失われても、返しの記録から名指しされる</td></tr>
+<tr id="C9"><td class="n">C9</td><td>窓口が <code>compaction-keep.py ask-context</code> で、質問のあとに増えた判断と、有効な判断との食い違いを照らす。増えていれば保留、食い違えば判断のカードで深田さんに聞く</td><td>なし</td></tr>
+<tr id="C10"><td class="n">C10</td><td>窓口が <code>rule</code> で判断の記録に書き（<code>from_return</code> 付き）、<code>cockpit-write</code> で <code>asks[].from_returns</code>・新しい依頼・操作の番号を書く</td><td>記録か帳簿の片方だけなら <code>checks.unreflected_returns</code></td></tr>
+<tr id="C11"><td class="n">C11</td><td>影響するタスクに作業中の担当かworkerがいれば、<code>send --to dispatch:</code> で決まったことを送り、返ってきたmessageのidを <code>notify[].message_id</code> に書く</td><td>idの無い行は「担当への通知」として名指し</td></tr>
+<tr id="C12"><td class="n">C12</td><td>窓口が相手のタブに「反映済み &lt;return_id&gt;」を送る</td><td>なし</td></tr>
+</tbody>
+</table>
+<details><summary>細部</summary>
+<ul>
+<li>カードの相談（担当のいないカードの「窓口と協議」）も同じ形。違いは、相談がそのカード専用のタブで、返しがカードの <code>rev</code> と選んだ選択肢を持ち、窓口がカードの今の <code>rev</code> と照らす点と、反映の印がカードの <code>from_returns</code> である点</li>
+<li>相談と質問の返しは、どれも「判断の記録に書く → 帳簿の印を書く」の順で、帳簿の印が最後の書き込み（反映し終えた印）になる</li>
+<li>元の文書: cockpit skillの <code>references/consult.md</code></li>
+</ul>
+</details>
+
+<h3 id="s5-4"><span class="id">5.4</span>圧縮と再開の確かめ</h3>
+<figure id="f12"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 376" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図12圧縮と再開の確かめ</title>
+<rect class="bg" width="1040" height="376"/>
+<text class="n" x="16" y="30">M1</text><text class="n" x="264" y="30">M2</text><text class="n" x="512" y="30">M3</text><text class="n" x="760" y="30">M4</text>
+<rect class="box" x="16" y="40" width="224" height="104" rx="6"/><text class="h" x="32" y="66">圧縮の前（PreCompact）</text><text class="s" x="32" y="90">見出しを決めた薄い要約を</text><text class="s" x="32" y="110">書かせる。記録は写させない</text>
+<rect class="box" x="264" y="40" width="224" height="104" rx="6"/><text class="h" x="280" y="66">圧縮の直後（PostCompact）</text><text class="s" x="280" y="90">要約を記録と照らし、</text><text class="s" x="280" y="110">撤回したID・却下した案・</text><text class="s" x="280" y="130">落ちたパスを記録する</text>
+<rect class="box" x="512" y="40" width="224" height="104" rx="6"/><text class="h" x="528" y="66">組み直し（SessionStart）</text><text class="s" x="528" y="90">作業メモ・開いたカード・</text><text class="s" x="528" y="110">判断の原文・発言10件・</text><text class="s" x="528" y="130">届いた知らせの見出しを流す</text>
+<rect class="fa" x="760" y="40" width="224" height="104" rx="6"/><text class="h" x="776" y="66">再開の確かめ（resume）</text><text class="s" x="776" y="90">次にやること・判断のID・許可・</text><text class="s" x="776" y="110">worker・編集中のパスを</text><text class="s" x="776" y="130">JSONで答える</text>
+<line class="ar" x1="241" y1="92" x2="263" y2="92" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="489" y1="92" x2="511" y2="92" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="737" y1="92" x2="759" y2="92" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="872" y1="145" x2="872" y2="175" marker-end="url(#dg-tip)"/>
+<polygon class="box" points="872,176 952,216 872,256 792,216"/><text class="mid" x="872" y="221">記録と合うか</text>
+<text class="s" x="16" y="204">通るまで、hookが担当とworkerへの新しい指示</text>
+<text class="s" x="16" y="224">（send・worker-start・orca-launch）を止める</text>
+<text class="n" x="512" y="182">M5</text>
+<rect class="fc" x="512" y="188" width="224" height="56" rx="6"/><text class="h mid" x="624" y="212">作業に戻る</text><text class="s mid" x="624" y="232">止めていた指示が通る</text>
+<line class="ar" x1="791" y1="216" x2="737" y2="216" marker-end="url(#dg-tip)"/><text class="s mid" x="764" y="208">合う</text>
+<line class="ar" x1="872" y1="257" x2="872" y2="287" marker-end="url(#dg-tip)"/><text class="s" x="880" y="276">合わない</text>
+<text class="n" x="760" y="282">M6</text>
+<rect class="box" x="760" y="288" width="224" height="56" rx="6"/><text class="h mid" x="872" y="312">指摘の箇所を読み直す</text><text class="s mid" x="872" y="332">hookが食い違いを返す</text>
+<path class="ar dash" d="M985,316 H1004 Q1008,316 1008,312 V96 Q1008,92 1004,92 H985" marker-end="url(#dg-tip)"/><text class="s end" x="1000" y="272">出し直す</text>
+<text class="n" x="16" y="278">M7</text>
+<rect class="fw" x="16" y="284" width="464" height="76" rx="6"/><text class="h" x="32" y="310">新しいチャットへ引き継ぐ</text><text class="s" x="32" y="332">2回続けて合わないか、「記録の再読を依頼」が</text><text class="s" x="32" y="350">2回押されたら、翌日の最初の発言の前に行う</text>
+<line class="ew dash" x1="759" y1="316" x2="481" y2="316" marker-end="url(#dg-tip)"/><text class="s mid" x="620" y="308">2回続けて合わない</text>
+</svg></div>
+<figcaption><span class="id">図12</span>圧縮と再開の確かめ。M1〜M3はhookが自動で行い、M4は窓口が答える。赤茶は引き継ぎの道、緑は作業に戻る道。</figcaption>
+</figure>
+<p class="answer">圧縮のあとは記録から原文を流し直し、窓口が照合に通るまで、担当とworkerへの新しい指示をhookが止めます。</p>
+<table>
+<thead><tr><th>ID</th><th>何が起きるか</th><th>使うもの</th></tr></thead>
+<tbody>
+<tr id="M1"><td class="n">M1</td><td>圧縮の前に、決まった見出しの薄い要約を書かせる指示を出す。決定・制約・原文は会話の外の記録にあるので要約に写させない</td><td><code>compaction-keep.py</code> のPreCompact</td></tr>
+<tr id="M2"><td class="n">M2</td><td>圧縮の直後に、要約を記録と照らし、撤回された判断のID・却下した案・落ちたパスを <code>compactions.jsonl</code> に残す</td><td>PostCompact</td></tr>
+<tr id="M3"><td class="n">M3</td><td>作業メモ・開いているカードと済んでいないタスク・有効な判断の原文・深田さんの直近の発言10件・最後の発言より後に届いた知らせの見出しを流し直す。流す文は約9,500字に収め、削ったところには「全文は …」が付く</td><td>SessionStart（compact）</td></tr>
+<tr id="M4"><td class="n">M4</td><td>窓口が、次にやること・有効な判断のID・許可の対象と値・済んでいないタスクのworker・編集中のパスをJSONで渡す</td><td><code>compaction-keep.py resume</code></td></tr>
+<tr id="M5"><td class="n">M5</td><td>合えば、止めていた <code>orca orchestration send</code>・<code>worker-start</code>・<code>orca-launch</code> が通る</td><td>PreToolUse（Bash）</td></tr>
+<tr id="M6"><td class="n">M6</td><td>合わなければ、hookが撤回・置き換え済みのID・許可の食い違い・却下した案・落ちたworkerとパスを指摘し、窓口が記録と帳簿を読み直して出し直す</td><td>同上</td></tr>
+<tr id="M7"><td class="n">M7</td><td>2回続けて合わないか、窓の「記録の再読を依頼」が2回押されると、翌日の最初の発言を受けた時点で同じワークスペースに新しいチャットを起こして引き継ぐ。窓には引き継いだことが1日出る</td><td><code>keep.json</code>・<code>handoff.json</code></td></tr>
+</tbody>
+</table>
+<details><summary>細部</summary>
+<ul>
+<li>開始・再開（圧縮でないもの）でも、<code>periodic-reminder.sh</code> が窓口の役割の文書と全体の1行、作業メモを流す</li>
+<li>引き継いだ新しいチャットも、同じ組み直しを受けて同じ確かめに答える</li>
+<li>元の文書: cockpit skillの <code>references/resume.md</code>・<code>references/checks.md</code>「開始・再開のときに流す文が長いとき」</li>
+</ul>
+</details>
+
+<h3 id="s5-5"><span class="id">5.5</span>席の切り替えと見張りの帯</h3>
+<figure id="f13"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 352" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図13見張りの知らせが帯に出るまで</title>
+<rect class="bg" width="1040" height="352"/>
+<rect class="box" x="16" y="24" width="224" height="96" rx="6"/><text class="h" x="32" y="50">account-failover</text><text class="s" x="32" y="72">launchd・1分おき</text><text class="s" x="32" y="92">上限なら席を替え、</text><text class="s" x="32" y="112">古い席のclaudeを移す</text>
+<rect class="box" x="16" y="144" width="224" height="96" rx="6"/><text class="h" x="32" y="170">orca-watch</text><text class="s" x="32" y="192">常駐・1分おき</text><text class="s" x="32" y="212">落ちたOrcaを起動し直す</text><text class="s" x="32" y="232">（1時間に3回まで）</text>
+<rect class="box" x="16" y="264" width="224" height="72" rx="6"/><text class="h" x="32" y="290">見る対象</text><text class="s" x="32" y="312">Orca・各窓口・窓のサーバー・</text><text class="s" x="32" y="330">launchdの定時ジョブ</text>
+<rect class="fc" x="288" y="48" width="208" height="48" rx="6"/><text class="h mid" x="392" y="77">failover.json</text>
+<rect class="fc" x="288" y="168" width="208" height="48" rx="6"/><text class="h mid" x="392" y="197">orca-watch.json</text>
+<rect class="fa" x="560" y="136" width="208" height="104" rx="6"/><text class="h" x="576" y="162">stallwatch</text><text class="s" x="576" y="184">launchd・5分おき</text><text class="s" x="576" y="204">止まったものを見つけ、</text><text class="s" x="576" y="224">知らせを1つにまとめる</text>
+<rect class="box" x="816" y="24" width="208" height="64" rx="6"/><text class="h" x="832" y="50">窓の上の帯</text><text class="s" x="832" y="72">alerts.jsonを窓が読む</text>
+<rect class="box" x="816" y="156" width="208" height="64" rx="6"/><text class="h" x="832" y="182">macOSの通知</text><text class="s" x="832" y="204">3つのプロセスが出す</text>
+<rect class="box" x="816" y="264" width="208" height="64" rx="6"/><text class="h" x="832" y="290">窓口のRun</text><text class="s" x="832" y="312">cockpit-mailで送る</text>
+<line class="ar" x1="241" y1="72" x2="287" y2="72" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="241" y1="192" x2="287" y2="192" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M497,72 H520 Q524,72 524,76 V156 Q524,160 528,160 H559" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="497" y1="192" x2="559" y2="192" marker-end="url(#dg-tip)"/>
+<path class="ar dash" d="M241,300 H520 Q524,300 524,296 V228 Q524,224 528,224 H559" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M769,160 H788 Q792,160 792,156 V60 Q792,56 796,56 H815" marker-end="url(#dg-tip)"/><text class="s end" x="784" y="104">alerts.json</text>
+<line class="ar" x1="769" y1="188" x2="815" y2="188" marker-end="url(#dg-tip)"/>
+<path class="ar" d="M769,216 H788 Q792,216 792,220 V292 Q792,296 796,296 H815" marker-end="url(#dg-tip)"/><text class="s end" x="784" y="262">窓口の判断が要るとき</text>
+</svg></div>
+<figcaption><span class="id">図13</span>見張りの知らせが帯に出るまで。左が見張りのプロセスと見る対象、中が書くファイル、右が知らせの出口。青は帯の唯一の書き手、緑はファイル。実線は書く・送る、点線は読む。窓口のRunへ送るのは、workerが止まったあと窓口が動いていないときだけ。</figcaption>
+</figure>
+<p class="answer">見張りのプロセスはそれぞれ自分のファイルに書き、窓の上の帯へはstallwatchだけがまとめて書きます。窓口の会話へは、窓口の判断が要るときだけ送ります。</p>
+<table>
+<thead><tr><th>ID</th><th>何が起きるか</th><th>使うもの</th></tr></thead>
+<tbody>
+<tr id="S1"><td class="n">S1</td><td>今の席の5時間の枠か週の枠が100%なら、優先度の順に空いている席へ切り替える。全部の席が上限なら切り替えず、最初に戻る席と時刻を出す</td><td><code>account-failover</code>・<code>orca account select</code></td></tr>
+<tr id="S2"><td class="n">S2</td><td>切り替えたかに関わらず、claudeを席ごとに数え、今の席と違うものを移す。端末（workerを含む）は入力待ちのときに <code>/exit</code> して同じ端末で <code>--resume</code>、窓口と担当のチャットは手が空いていれば止め、次の発言で今の席で起きる</td><td>同上（README「利用枠の上限で席を切り替える」）</td></tr>
+<tr id="S3"><td class="n">S3</td><td>切り替えたこと・移せなかったもの・全部の席が上限なことを <code>failover.json</code> に書き、通知を出す</td><td><code>STALLWATCH_HOME</code></td></tr>
+<tr id="S4"><td class="n">S4</td><td>人のいないあいだにOrcaが落ちていたら起動し直し、<code>orca-watch.json</code> に書く。人が自分で終えたときは起動し直さない</td><td><code>orca-watch</code></td></tr>
+<tr id="S5"><td class="n">S5</td><td>Orca・各ワークスペースの窓口・窓のサーバー・定時ジョブの停止を見つけ、S3とS4のファイルと合わせて <code>alerts.json</code> に書く</td><td><code>stallwatch</code></td></tr>
+<tr id="S6"><td class="n">S6</td><td>窓が <code>alerts.json</code> を読み、上の帯に「止まっている: …」を出す</td><td>窓のサーバー</td></tr>
+<tr id="S7"><td class="n">S7</td><td>workerが止まったのに窓口が動いていないときだけ、窓口のRunへ知らせる。窓口自身が止まった知らせは送らない</td><td><code>bin/cockpit-mail</code>（郵便受けの端末を送り主にする）</td></tr>
+</tbody>
+</table>
+<details><summary>細部</summary>
+<ul>
+<li>Orcaの設定「When you switch accounts while Claude is running in terminals」は「Never restart」にしておく前提。「Always restart」だと端末が開き直されてworkerのDispatchがlostになる</li>
+<li>確認の画面（ログイン・フォルダの信頼など）で止まった端末には自動で答えず、席・端末・画面の名前を帯と通知で名指しする</li>
+<li>席の切り替えの分岐は<a href="harness-map.html#s3-5">見取り図の3.5</a>（図7）、細部はREADME「利用枠の上限で席を切り替える」</li>
+</ul>
+</details>
+
+<h2 id="s6"><span class="id">6</span>cockpit-write が断る規則</h2>
+<figure id="f14"><div class="sc">
+<svg class="dg" viewBox="0 0 1040 368" role="img" font-family="'Hiragino Sans','Noto Sans JP',sans-serif">
+<title>図14書き込みの場面と、かかる規則</title>
+<rect class="bg" width="1040" height="368"/>
+<rect class="box" x="16" y="24" width="336" height="56" rx="6"/><text class="h" x="32" y="48">受付と仕分け（A4）</text><text class="s" x="32" y="68">W6・W7・W8・W14・W21</text>
+<rect class="box" x="16" y="92" width="336" height="56" rx="6"/><text class="h" x="32" y="116">タスクを書く・済にする（A5・A8）</text><text class="s" x="32" y="136">W9〜W18</text>
+<rect class="box" x="16" y="160" width="336" height="56" rx="6"/><text class="h" x="32" y="184">操作を反映する（B6）</text><text class="s" x="32" y="204">W2・W16〜W21</text>
+<rect class="box" x="16" y="228" width="336" height="56" rx="6"/><text class="h" x="32" y="252">送信前・確認の文面を書く</text><text class="s" x="32" y="272">W22</text>
+<rect class="box" x="16" y="296" width="336" height="56" rx="6"/><text class="h" x="32" y="320">相談と質問の返しを反映する（C10）</text><text class="s" x="32" y="340">W7・W23</text>
+<line class="ar" x1="353" y1="52" x2="415" y2="52" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="353" y1="120" x2="415" y2="120" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="353" y1="188" x2="415" y2="188" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="353" y1="256" x2="415" y2="256" marker-end="url(#dg-tip)"/>
+<line class="ar" x1="353" y1="324" x2="415" y2="324" marker-end="url(#dg-tip)"/>
+<rect class="fa" x="416" y="24" width="224" height="328" rx="6"/><text class="h mid" x="528" y="156">cockpit-write</text><text class="s mid" x="528" y="180">どの書き込みにも</text><text class="s mid" x="528" y="200">W1（形と参照）・W2（rev）</text><text class="s mid" x="528" y="220">W3（main.run_id）</text><text class="s mid" x="528" y="240">W4（語調）・W5（名前）</text>
+<rect class="fc" x="704" y="96" width="320" height="72" rx="6"/><text class="h" x="720" y="124">cockpit.jsonに書く</text><text class="s" x="720" y="146">全部の検査を通ったときだけ</text>
+<rect class="fw" x="704" y="216" width="320" height="72" rx="6"/><text class="h" x="720" y="244">書かずに理由を返す</text><text class="s" x="720" y="266">窓口が直して渡し直す</text>
+<line class="ar" x1="641" y1="132" x2="703" y2="132" marker-end="url(#dg-tip)"/>
+<line class="ew" x1="641" y1="252" x2="703" y2="252" marker-end="url(#dg-tip)"/>
+</svg></div>
+<figcaption><span class="id">図14</span>書き込みの場面と、かかる規則。左は5章の流れのどこで書くか、中の青は書く道具、右は結果。番号は下の表のW1〜W23。</figcaption>
+</figure>
+<p class="answer"><code>cockpit-write</code> は全部の検査を通った変更だけを書き、1つでも通らなければ理由を並べて返し、何も書きません。</p>
+<div class="sc"><table class="wide">
+<thead><tr><th>ID</th><th>断るもの</th><th>かかる場面</th><th>断りの文の例</th><th>決まり</th></tr></thead>
+<tbody>
+<tr id="W1"><td class="n">W1</td><td>形と参照: 欄の型・書けない欄・仕事・タスク・担当・依頼・afterのidが帳簿に無い</td><td>どれでも</td><td>「カード d21: タスクt99が無い」</td><td>schema.md</td></tr>
+<tr id="W2"><td class="n">W2</td><td>rev: 中身を変えたのに1上げない・下げる・片付けるだけで上げる</td><td>B6・カードを書くとき</td><td>「中身を変えたらrevを3にする（古い版に押された操作を効かせないため）」</td><td>なし</td></tr>
+<tr id="W3"><td class="n">W3</td><td>窓口のRun（<code>main.run_id</code>）が無い帳簿への書き込み</td><td>どれでも</td><td>「main.run_id が無い。窓口のRunを…一緒に書く」</td><td>R191</td></tr>
+<tr id="W4"><td class="n">W4</td><td>柔らかい言い回し（ておきました・ですね・かも）をカード・タスク・仕事の人が読む欄に書く。深田さんと相手の原文は見ない</td><td>どれでも</td><td>「柔らかい言い回しstatus「ですね」。業務文書の語調に直す」</td><td>R84</td></tr>
+<tr id="W5"><td class="n">W5</td><td>案件の名前が「顧客｜案件」の形でない。版3へ移す書き込みだけ断り、ほかは注意を出す</td><td>移し替え</td><td>なし</td><td>R165</td></tr>
+<tr id="W6"><td class="n">W6</td><td>どの依頼にもnoneにも結んでいない発言をまたいで <code>intake.through</code> を進める</td><td>A4</td><td>「intake.throughを進める前に、発言 u-170 を依頼かnoneに結ぶ」</td><td>R33</td></tr>
+<tr id="W7"><td class="n">W7</td><td>依頼の欄: 発言か出典・済の条件（1〜3）・種類が無い、stateを書く、発言が記録に無い</td><td>A4・C10</td><td>「依頼 r30: done_when（済の条件1〜3）が無い」</td><td>R33</td></tr>
+<tr id="W8"><td class="n">W8</td><td>開いた相手・出来事の待ちがあるのに、またいだ発言と知らせを <code>wait.met</code> か <code>intake.no_wait</code> で照らしていない</td><td>A4</td><td>「開いた待ちt3（…）と照らしていない発言・知らせがある」</td><td>R204</td></tr>
+<tr id="W9"><td class="n">W9</td><td>タスクのstateがopenとok以外、廃止した欄（<code>status</code>・<code>waiting_on</code>・<code>check_on</code> など）</td><td>A4・A8</td><td>「stateはopenかok（動いている・待ち・止まりは state.ts が事実から決める）」</td><td>R204</td></tr>
+<tr id="W10"><td class="n">W10</td><td>済のタスクに待ちや新しい次の手を書く</td><td>A8</td><td>「済にするタスクにnextを書かない。残りの確認は別のタスクにする」</td><td>R204</td></tr>
+<tr id="W11"><td class="n">W11</td><td>待ちの相手に深田さんを書く・待ちの文にカードのidを書く</td><td>A4</td><td>「深田さんを待つものは書かない。頼むカードを作り、カードのtasksから指す」</td><td>R204</td></tr>
+<tr id="W12"><td class="n">W12</td><td>何を待つかが無い、日付・期間だけの待ちの文（「12月」「来週」）</td><td>A4</td><td>「日付・期間だけ（「12月」）では何を待つかが分からない」</td><td>R193</td></tr>
+<tr id="W13"><td class="n">W13</td><td>待ちの文と次の手に、都合での先送りの言い回しがある（<code>defer-guard.py</code> にかけ、検査できなければ断る）</td><td>A4</td><td>「都合での先送り「落ち着いてから」。外の理由を書くか、今進める」</td><td>R193</td></tr>
+<tr id="W14"><td class="n">W14</td><td>待ちを解いた事実（<code>met.by</code>）が発言・知らせ・操作の記録に無い、同じ証拠を2回書く</td><td>A4</td><td>「wait.met: u-999 が発言・知らせ・操作の記録に無い」</td><td>R204</td></tr>
+<tr id="W15"><td class="n">W15</td><td>workerの結びを <code>{run_id, task_id}</code> 以外で書く（<code>dispatch_id</code> は書かない）</td><td>A5</td><td>「workerは { run_id, task_id } で書く」</td><td>なし</td></tr>
+<tr id="W16"><td class="n">W16</td><td>証拠の番号に当たる済の条件が無い、操作の証拠が記録に無いか、押したカードとrevが違う</td><td>A8・B6</td><td>「証拠の操作812はカードv90の版2に押したもの」</td><td>R33</td></tr>
+<tr id="W17"><td class="n">W17</td><td>新しく済になったタスクの、同じ仕事とafter・next・goalで指す開いたタスクを、直しも <code>unaffected</code> への列挙もしていない</td><td>A8・B6</td><td>「t5「…」が済になった。前提が変わったかを見直す: …」</td><td>R204</td></tr>
+<tr id="W18"><td class="n">W18</td><td>仕事の状況の文: 元の事実が変わったのに書き直さない・前と同じ文・無い・100字を超える・控え（<code>status_basis</code>）を手で変える</td><td>A8・B6など</td><td>「仕事s1「…」の状況の文が古くなった（…）。statusを今の事実に合わせて書き直す」</td><td>R204・R187</td></tr>
+<tr id="W19"><td class="n">W19</td><td><code>applied_ops</code> に、操作の記録に無い番号を書く</td><td>B6</td><td>「applied_ops の900は cockpit.user.json に無い操作」</td><td>なし</td></tr>
+<tr id="W20"><td class="n">W20</td><td>要素のあるカードの承認を、全部の番号の行き先（<code>element_map</code>）を書く前に取り込む</td><td>B6</td><td>「op 812を取り込む前に、要素2・3の行き先を element_map に書く」</td><td>なし</td></tr>
+<tr id="W21"><td class="n">W21</td><td>依頼の書き換えで、カードの <code>element_map</code> が指す済の条件が無くなる・変わる</td><td>A4・B6</td><td>「要素2の行き先r30#2の済の条件が無くなる」</td><td>なし</td></tr>
+<tr id="W22"><td class="n">W22</td><td>送る文面に <code>draft.format</code> が無い・宛先と合わない・<code>draft-format-lint</code> に違反する（検査できなければ断る）</td><td>カードを書くとき</td><td>「draft.formatが無い。slack・teams・mailのどれかで書く」</td><td>R161・R162</td></tr>
+<tr id="W23"><td class="n">W23</td><td>質問の返しの印（<code>asks</code>）の形が違う。<code>from_returns</code>・<code>held_returns</code> は &lt;質問id&gt;-&lt;数&gt; だけ</td><td>C10</td><td>「質問 ask3: from_returns は ask3-&lt;数&gt; の配列」</td><td>なし</td></tr>
+</tbody>
+</table></div>
+<details><summary>細部</summary>
+<ul>
+<li>W8・W17・W18は、待ちと済を事実から決める形に移した帳簿（<code>facts_since</code> のある帳簿）だけで検査する（R204）</li>
+<li>W13とW22は外のコマンドに文を渡して検査する。ロックの外で先に検査し、コマンドが無い・起動できないときはその文を含む変更を断る</li>
+<li>必須の欄が欠けたカードは書くが、注意で名指しし、窓には出さない。30分たっても欠けたままなら、窓の要対応の一番上「帳簿の未記入」に出る</li>
+<li>書く前に検査だけするときは <code>cockpit-write --dry-run</code>。元の文書: <code>orca/plugins/cockpit/README.md</code>「書く道具（cockpit-write）」と <code>src/write.ts</code></li>
+</ul>
+</details>
+
+<h2 id="s7"><span class="id">7</span>深田さんに確かめてほしいこと</h2>
+<ol class="qs">
+<li id="Q1"><span class="id">Q1</span><b>このページの粒度で足りるか</b>流れは5本（発言から済・窓の操作・窓からの質問・圧縮と再開・席と帯）、規則は23の束にした。担当の立て方やBotの流れのように、図で見たい流れがほかにあれば足す。</li>
+<li id="Q2"><span class="id">Q2</span><b>このページも見取り図と同じ時機に直してよいか</b>今の決まり（cockpit skillの <code>references/workers.md</code>、R216）は、設計が変わる取り込みのたびに見取り図だけを直す。図8・図14のように実物の順番を写した図は、state.tsや書く道具が変わるとすぐ古くなるので、同じ決まりにこのページを足すかを決めてほしい。</li>
+<li id="Q3"><span class="id">Q3</span><b>図8のJ3の優先は感覚と合っているか</b>workerが動いていても終わっていても、深田さんのカードを結んだタスクは「深田さん待ち」と出る（取り込み待ち・作業中より先）。窓でworkerの様子より深田さんの番を先に見せる、という並びで困っていないか。</li>
+</ol>
+</div>
+</body>
+</html>

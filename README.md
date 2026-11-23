@@ -331,6 +331,7 @@ claude がどの席で動くかは、起動したときの環境変数 `CLAUDE_C
 | `bin/worktree-sweep`・`bin/worktree_sweep_test.py` | 使い終わった worktree の見回りとそのテスト。結果の書き出し先は `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`） |
 | `claude/` | Claude Codeに読ませるskill・agent・hookと、workerのsandboxの外で動くスクリプト（下の「claude/」） |
 | `docs/harness-map.html` | 見取り図。役・知らせの経路・帳簿の読み書き・状態の決め方・席の切り替えを図で示す1つのHTML。設計が変わる取り込みのたびに直す（cockpit skillの references/workers.md） |
+| `docs/harness-detail.html` | 詳しい図。ファイルごとの読み書き・仕事の形と工程・カードの種類・タスクの状態の決まり方・処理の流れ5本・書く道具が断る規則を図で示す1つのHTML |
 
 ## claude/
 

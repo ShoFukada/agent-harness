@@ -26,7 +26,7 @@
   --dg-a:#8aa7e8;--dg-a-bg:#222e45;--dg-b:#d4b16c;--dg-b-bg:#342e23;--dg-c:#77bfb0;--dg-c-bg:#213630;--dg-w:#df9b83;--dg-w-bg:#3a2b26;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.7}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.7;text-autospace:normal}
 .wrap{max-width:1100px;margin:0 auto;padding:40px 24px 80px}
 header{display:grid;gap:8px;margin-bottom:8px}
 h1{font-size:28px;line-height:1.35;margin:0}
@@ -93,7 +93,7 @@ a{color:var(--focus)}
 <div class="wrap">
 <header>
 <h1>agent-harness の見取り図（版3）</h1>
-<p class="meta">2026-11-23作成。agent-harness のmain（5a1b0f1）のREADME・cockpit skill・worktree-flow skill・操縦席のプラグインの今の実物から起こした。取り込みで設計が変わったら直す（決まりはcockpit skillの references/workers.md）。</p>
+<p class="meta">2026-11-23作成。agent-harness のmain（5a1b0f1）のREADME・cockpit skill・worktree-flow skill・操縦席のプラグインの今の実物から起こした。取り込みで設計が変わったら直す（決まりはcockpit skillの references/workers.md）。ファイルごとの読み書き・タスクの分類・処理の流れの細部は<a href="harness-detail.html">詳しい図</a>にある。</p>
 </header>
 
 <h2 id="s1"><span class="id">1</span>背景と前提</h2>
@@ -236,6 +236,7 @@ a{color:var(--focus)}
 <li>Orcaの外のプロセス（窓・見張り）は送り主の端末を持たないので、AIを動かさない郵便受けの端末（タブ名「操縦席｜郵便受け」）を <code>--from</code> にする。launchdからは <code>bin/cockpit-mail</code> を使う</li>
 <li>担当は <code>ask</code> を使わず、窓口は担当に <code>reply</code> しない（入れ子のcoordinatorには <code>reply</code> が届かない）</li>
 <li>決まりの本文は worktree-flow skillの references/notify.md「知らせの経路」</li>
+<li>窓の操作と窓からの質問が窓口に届く順番は、<a href="harness-detail.html#s5-2">詳しい図の5.2</a>・<a href="harness-detail.html#s5-3">5.3</a></li>
 </ul>
 </details>
 
@@ -277,7 +278,7 @@ a{color:var(--focus)}
 <li>帳簿をWrite・Editで書こうとするとhookが断り、書く道具を案内する。書く道具は型・参照・<code>rev</code>・仕分け・言い回しを検査し、通らなければ書かずに理由を返す</li>
 <li>窓口も状態は <code>node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts &lt;root&gt;</code> の出力で読む（2026-11-16に、手書きの状態を数えて済んだ依頼2件を作業中と思い込んだため）</li>
 <li>hook（periodic-reminder.sh・compaction-keep.py）は、判定の <code>checks</code> から直させることを窓口の発言のたびに流し、圧縮のあとに判断の記録と発言の原文を流し直す</li>
-<li>欄と書き手の一覧はcockpit skillの references/schema.md「ファイル」</li>
+<li>欄と書き手の一覧はcockpit skillの references/schema.md「ファイル」。ファイルごとの読み書きの図は<a href="harness-detail.html#s3-2">詳しい図の3.2</a></li>
 </ul>
 </details>
 
@@ -327,6 +328,7 @@ a{color:var(--focus)}
 <li>仕事の状況の文（<code>streams[].status</code>）は、元の事実が変わったのに書き直さないと書く道具が断る。窓は古い文の代わりに事実の文を出す</li>
 <li>タスクを済にしたら、同じ仕事と前提でつながる開いたタスクを同じ書き込みで直すか、関係ないと確かめて <code>unaffected</code> に並べる</li>
 <li>深田さんの確認が要る依頼（<code>check: true</code>）は、今の版のカードに押された「承認」の操作も証拠に要る</li>
+<li>判定の各行の窓の文と待ちの4種類は<a href="harness-detail.html#s4-6">詳しい図の4.6</a>、書く道具が断る規則の一覧は<a href="harness-detail.html#s6">6章</a></li>
 </ul>
 </details>
 
@@ -362,6 +364,7 @@ a{color:var(--focus)}
 <li>Dispatchを持つチャット（担当）を止める前に、窓口のRunの受信箱へ「席の切り替えで止めた。立て直さない」を1通送る</li>
 <li>全部の席が上限なら切り替えず、最初に戻る席と時刻を帯に出す。そのあいだは新しいworkerを立てない</li>
 <li>Orcaの設定「When you switch accounts while Claude is running in terminals」は「Never restart」（値は<code>keep</code>）にしておく（「Always restart」だと端末が開き直されてDispatchがlostになる）</li>
+<li>見張りの知らせが帯と窓口に届く経路は<a href="harness-detail.html#s5-5">詳しい図の5.5</a></li>
 </ul>
 </details>
 
@@ -381,7 +384,7 @@ a{color:var(--focus)}
 <ol class="qs">
 <li id="Q1"><span class="id">Q1</span><b>図1の見え方は、毎日使っている感覚と合っているか</b>深田さんが触るのは窓（経路1）と担当のチャット（経路9）と、見張りの帯・通知（経路8）だけ、という描き方にした。ほかに日常で触っている経路があれば図に足す。</li>
 <li id="Q2"><span class="id">Q2</span><b>このページを直す時機を「agent-harness の取り込みで設計が変わったとき」に絞ってよいか</b>cockpit skillの references/workers.md に、担当・workerの結果を取り込んで役・知らせの経路・帳簿の読み書き・状態の決め方・席の切り替え・見張りが変わったら、同じ取り込みの中でこのページを直す、と書いた。案件の仕事の取り込みでは直さない。</li>
-<li id="Q3"><span class="id">Q3</span><b>載せる粒度はこれで足りるか</b>カードの種類・hookの一つずつ・決まりの置き場所の表は載せず、READMEとskillの該当の節を指すだけにした（同じ内容を2か所に持たないため）。図で見たいものがあれば部分の図を足す。</li>
+<li id="Q3"><span class="id">Q3</span><b>載せる粒度はこれで足りるか</b>カードの種類・hookの一つずつ・決まりの置き場所の表は載せず、READMEとskillの該当の節を指すだけにした（同じ内容を2か所に持たないため）。図で見たいものがあれば部分の図を足す。11/23の依頼を受けて、細部は<a href="harness-detail.html">詳しい図</a>に分けた。</li>
 </ol>
 </div>
 </body>
