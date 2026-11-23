@@ -318,6 +318,29 @@ Dispatch の開いている担当のチャットは、Orca が新しい席へ移
 5. 同じ Task に生きた担当のチャットは 1 つに保つ。同じ worktree に別の生きた担当のチャット（`structworker_` の in_progress の Dispatch）があれば出し直さない。出し直しの途中の印（`STALLWATCH_HOME/failover-handoffs.json`）が 15 分より新しければ待つ。`--after-switch` は launchd と同じロックを取る
 6. 出し直したこと（古いチャットと Dispatch → 新しいチャット・Task・Dispatch）は、`--after-switch` の出力（coordinator 自身が読む）と `failover-history.jsonl` の `handoff` に残す
 
+## 決まりの置き場所
+
+運用の決まりは、領域ごとに次の 1 か所だけに書く。ほかの文書は中身を写さず、ここに挙げた文書の節を指す。名前の形・工程名・カードの種類・必須の欄のように形で決まるものは、入口の道具のコード（cockpit-write・state.ts・orca-launch）が検査する。値を挙げる文書は下の置き場所だけにし、ほかの文書には写さない。決めたことを反映する手順は cockpit skill の references/rulings.md「決めたとき」。
+
+| 領域 | 置き場所 |
+|---|---|
+| ハーネスの目指すもの（決まりを足す・直すときの拠り所） | `~/.config/agent-harness/README.md`「目指すもの」 |
+| 今やる作業と、待ってよい理由（先送りの禁止） | `~/.config/nix-darwin/agents/common.md`「判断」の「聞かずにやる」 |
+| 帳簿（cockpit.json）の欄・必須の欄・どの事実をどこが持つか | cockpit skill の references/schema.md |
+| カードの書き方・深田に回す範囲・一任した操作 | cockpit skill の references/cards.md |
+| 判断の記録と、決めたときに直す手順 | cockpit skill の references/rulings.md |
+| 仕事の形（任せる・一緒に作る・見張る）と、一緒に作る仕事の受け方 | cockpit skill の SKILL.md「仕事の形」 |
+| 名前（案件・仕事・タスク・窓口・タブ）と親子・サイドバーの状態 | worktree-flow skill の references/sidebar.md |
+| 担当・worker の立て方・親の worktree・知らせ（窓口に送るもの）・同時に動かす数 | worktree-flow skill の SKILL.md「窓口・担当・worker」（知らせの経路と受け方は references/notify.md、担当の立て方は references/launch.md） |
+| worker の囲い（使える道具・使えないもの） | worktree-flow skill の references/worker-env.md |
+| 席の切り替えと、切り替えたあとの続き | `~/.config/agent-harness/README.md`「利用枠の上限で席を切り替える」 |
+| メインの作業メモの中身と「今の順番」の形 | cockpit skill の references/memo.md |
+| 担当だけの動き方 | `~/.config/nix-darwin/claude/roles/lead.md` |
+| 日本語の語の選び方（業務の漢語など） | dev-standards の rules/docs/writing.md |
+| 外に出す文面の書式 | dev-standards の rules/docs/message-formats.md |
+| 従量課金の LLM API の使い方 | dev-standards の rules/dev/principles.md「AI の使い方」 |
+| Bot の受け持ちと動き | `~/.orca/bots/<名前>/SOUL.md`（帳簿への載せ方は cockpit skill の SKILL.md「仕事の形」） |
+
 ## 入っているもの
 
 | 場所 | 中身 |
