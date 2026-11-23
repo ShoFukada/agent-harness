@@ -34,12 +34,12 @@ body { margin:0; }
 .ck .tally { display:flex; align-items:baseline; gap:10px; }
 .ck .tally b { font-size:var(--fs-xxl); line-height:1; font-weight:700; letter-spacing:-.01em; }
 .ck .tally span { font-size:var(--fs-s); color:var(--ink2); }
-.ck .flags { margin-left:auto; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; font-size:var(--fs-s); color:var(--ink2); }
+.ck .flags { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; font-size:var(--fs-s); color:var(--ink2); }
 .ck .flag { display:inline-flex; gap:6px; align-items:center; border:0; background:none; padding:2px 0; color:inherit; }
 .ck .flag.warn { color:var(--ink); font-weight:600; text-decoration:underline; text-underline-offset:3px; }
 .ck .flag.err { color:var(--hot); font-weight:600; }
 .ck .seg { display:inline-flex; border:1px solid var(--ink3); border-radius:6px; overflow:hidden; }
-.ck .seg button { border:0; background:none; padding:1px 9px; font-size:var(--fs-xs); color:var(--ink2); }
+.ck .seg button { border:0; background:none; padding:0 8px; font-size:var(--fs-xs); color:var(--ink2); }
 .ck .seg button[aria-pressed="true"] { background:var(--ink); color:var(--surface); }
 
 /* ── 3 つの列 ── */
@@ -94,7 +94,7 @@ body { margin:0; }
 .ck .now-line span { text-align:right; font-size:var(--fs-xs); font-weight:700; color:var(--focus); }
 .ck .now-line i { height:2px; background:var(--focus); border-radius:1px; }
 /* 票は区切り線で並べ、囲みの箱にしない（R111）。 */
-.ck .strips { display:grid; margin:6px 0; min-width:0; border-block:1px solid var(--rule); }
+.ck .strips { display:grid; margin:8px 0; min-width:0; border-block:1px solid var(--rule); }
 /* 票は地の上に線で区切って並べ、開いた票だけ面の色で浮かせる（白い箱を並べない。追加 22）。 */
 .ck .strip[aria-expanded="true"] { background:var(--surface); }
 @container (max-width:520px) { .ck .lane { grid-template-columns:minmax(0,1fr); } .ck .when { text-align:left; padding:10px 0 0; } .ck .when::after { display:none; }
@@ -107,17 +107,17 @@ body { margin:0; }
 .ck .strip + .strip { border-top:1px solid var(--rule2); }
 .ck .strip[aria-expanded="true"] { box-shadow:inset 3px 0 0 var(--focus); }
 .ck .strip.hot { --hotline:var(--hot); }
-.ck .strip .head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:1px 12px; width:100%; text-align:left; border:0; background:none; padding:8px 14px; }
+.ck .strip .head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 12px; width:100%; text-align:left; border:0; background:none; padding:8px 16px; }
 .ck .sp > .pt + .pt { margin-left:.9em; }
 .ck .pl { font-weight:600; color:var(--ink2); margin-right:.6em; }
 /* 種類・案件・仕事は 1 行に固定し、長い仕事の名前は末尾を省く（題の書き出しの位置をそろえる）。 */
-.ck .strip .meta { display:flex; flex-wrap:nowrap; align-items:center; gap:2px 10px; font-size:var(--fs-xs); color:var(--ink3); min-width:0; white-space:nowrap; overflow:hidden; }
+.ck .strip .meta { display:flex; flex-wrap:nowrap; align-items:center; gap:4px 8px; font-size:var(--fs-xs); color:var(--ink3); min-width:0; white-space:nowrap; overflow:hidden; }
 .ck .strip .meta > * { flex-shrink:0; }
 /* 行の ID は質問で打つために写せるようにする（行はボタンなので、字だけ選べるように戻す）。 */
 .ck .cid { color:var(--ink3); font-weight:400; user-select:text; -webkit-user-select:text; cursor:text; }
 .ck .cid .cv { margin-left:.35em; }
 .ck .strip .meta > :last-child:not(.kind) { flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.ck .strip .kind { display:inline-flex; align-items:center; gap:5px; color:var(--kc); font-weight:700; }
+.ck .strip .kind { display:inline-flex; align-items:center; gap:4px; color:var(--kc); font-weight:700; }
 .ck .strip .ws { color:var(--ink2); font-weight:600; max-width:45%; overflow:hidden; text-overflow:ellipsis; }
 .ck .strip .title { grid-column:1 / -1; font-size:var(--fs-l); font-weight:600; line-height:1.45; color:var(--ink); }
 .ck .strip .due { grid-row:1; grid-column:2; align-self:start; text-align:right; font-size:var(--fs-s); font-weight:400; color:var(--ink2); white-space:nowrap; }
@@ -129,57 +129,57 @@ body { margin:0; }
 .ck .k-permit { --kc:var(--k-permit); } .ck .k-stuck { --kc:var(--k-stuck); } .ck .k-talk { --kc:var(--k-talk); } .ck .k-report { --kc:var(--k-report); } .ck .k-consult { --kc:var(--k-consult); }
 
 /* 開いた票の中身 */
-.ck .body { padding:0 16px 14px 14px; display:grid; gap:12px; min-width:0; }
-.ck .fld { display:grid; gap:2px; min-width:0; }
+.ck .body { padding:0 16px 16px 16px; display:grid; gap:12px; min-width:0; }
+.ck .fld { display:grid; gap:4px; min-width:0; }
 .ck .fld > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 .ck .fld > div, .ck .fld > p { margin:0; overflow-wrap:anywhere; }
-.ck .ctx { display:grid; grid-template-columns:11em minmax(0,1fr); gap:6px 14px; margin:0; font-size:var(--fs-s); }
+.ck .ctx { display:grid; grid-template-columns:11em minmax(0,1fr); gap:8px 16px; margin:0; font-size:var(--fs-s); }
 .ck .ctx dt { color:var(--ink3); font-weight:600; font-size:var(--fs-xs); }
 .ck .ctx dd { margin:0; overflow-wrap:anywhere; }
-@container (max-width:520px) { .ck .ctx { grid-template-columns:minmax(0,1fr); gap:0; } .ck .ctx dd { margin-bottom:6px; } }
-.ck .rich ul { margin:2px 0; padding-left:1.2em; }
+@container (max-width:520px) { .ck .ctx { grid-template-columns:minmax(0,1fr); gap:0; } .ck .ctx dd { margin-bottom:8px; } }
+.ck .rich ul { margin:4px 0; padding-left:1.2em; }
 .ck .rich p { margin:0 0 4px; }
-.ck .msg { border:1px solid var(--rule); border-radius:10px; background:var(--sunk); padding:10px 12px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--fs-s); max-height:22em; overflow:auto; }
+.ck .msg { border:1px solid var(--rule); border-radius:10px; background:var(--sunk); padding:8px 12px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--fs-s); max-height:22em; overflow:auto; }
 .ck .msg-to { font-size:var(--fs-xs); color:var(--ink2); }
 .ck .cmd { display:flex; gap:8px; align-items:flex-start; }
 .ck .cmd pre { margin:0; flex:1; min-width:0; }
 .ck .msg-to b { color:var(--ink); }
-.ck .quote { border-left:3px solid var(--rule); padding:2px 0 2px 10px; color:var(--ink2); font-size:var(--fs-s); white-space:pre-wrap; overflow-wrap:anywhere; }
-.ck .opts { display:grid; gap:6px; margin:0; padding:0; border:0; min-width:0; }
-.ck .opt { display:grid; grid-template-columns:26px minmax(0,1fr); gap:0 10px; align-items:start; text-align:left; width:100%;
+.ck .quote { border-left:3px solid var(--rule); padding:4px 0 4px 8px; color:var(--ink2); font-size:var(--fs-s); white-space:pre-wrap; overflow-wrap:anywhere; }
+.ck .opts { display:grid; gap:8px; margin:0; padding:0; border:0; min-width:0; }
+.ck .opt { display:grid; grid-template-columns:26px minmax(0,1fr); gap:0 8px; align-items:start; text-align:left; width:100%;
   border:1px solid var(--ink3); border-radius:8px; background:var(--surface); padding:8px 12px 8px 8px; }
 .ck .opt:hover { border-color:var(--ink); }
 .ck .opt[aria-checked="true"] { border-color:var(--kc); box-shadow:inset 0 0 0 1px var(--kc); }
 .ck .opt .key { font-size:var(--fs-xs); font-weight:700; color:var(--ink3); border:1px solid var(--ink3); border-radius:5px; height:22px; display:grid; place-items:center; }
 .ck .opt[aria-checked="true"] .key { background:var(--kc); border-color:var(--kc); color:var(--surface); }
 .ck .opt .lbl { font-weight:600; }
-.ck .opt .rec { font-size:var(--fs-xs); font-weight:600; color:var(--ok); margin-left:6px; }
+.ck .opt .rec { font-size:var(--fs-xs); font-weight:600; color:var(--ok); margin-left:8px; }
 .ck .opt .ex { display:block; font-size:var(--fs-s); color:var(--ink2); }
 .ck details.more { border-top:1px solid var(--rule2); padding-top:8px; }
 .ck details.more summary { cursor:pointer; font-size:var(--fs-s); color:var(--ink2); font-weight:600; }
-.ck details.more > div { display:grid; gap:10px; margin-top:8px; }
+.ck details.more > div { display:grid; gap:8px; margin-top:8px; }
 .ck .fig svg { max-width:100%; height:auto; }
 .ck table.cmp { border-collapse:collapse; font-size:var(--fs-s); }
 .ck table.cmp th, .ck table.cmp td { border:1px solid var(--rule); padding:4px 8px; text-align:left; vertical-align:top; }
 .ck .tblwrap { overflow-x:auto; }
-.ck .links { display:flex; flex-wrap:wrap; gap:6px; }
+.ck .links { display:flex; flex-wrap:wrap; gap:8px; }
 .ck .msg + .links { margin-top:8px; }
-.ck .lk { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--ink3); background:var(--surface); border-radius:6px; padding:1px 8px; font-size:var(--fs-s); color:var(--ink); max-width:100%; }
+.ck .lk { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--ink3); background:var(--surface); border-radius:6px; padding:0 8px; font-size:var(--fs-s); color:var(--ink); max-width:100%; }
 .ck .lk i { font-style:normal; font-size:var(--fs-xs); font-weight:700; color:var(--ink3); }
 .ck .lk span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ck a.inl, .ck button.inl { border:0; background:none; padding:0; color:var(--focus); text-decoration:underline; text-underline-offset:2px; }
 .ck .owner { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; font-size:var(--fs-xs); color:var(--ink3); }
 .ck .owner b { color:var(--ink2); font-weight:600; }
-.ck .done-list { display:grid; gap:6px; margin:0; padding:0; list-style:none; }
-.ck .done-list li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; align-items:start; border-bottom:1px solid var(--rule2); padding-bottom:6px; }
+.ck .done-list { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.ck .done-list li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 8px; align-items:start; border-bottom:1px solid var(--rule2); padding-bottom:8px; }
 .ck .done-list small { grid-column:1; color:var(--ink3); font-size:var(--fs-xs); }
-.ck .other textarea { width:100%; field-sizing:content; min-height:calc(6lh + 18px); max-height:50vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
+.ck .other textarea { width:100%; field-sizing:content; min-height:calc(6lh + 18px); max-height:50vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 8px; background:var(--surface); color:var(--ink); }
 .ck .other .cnt { font-size:var(--fs-xs); color:var(--ink3); }
 
 /* 返答の列。低い窓でも見えるよう、開いた票の下に留める。 */
-.ck .acts { position:sticky; bottom:0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:10px 14px; margin:0 -14px -12px -12px;
+.ck .acts { position:sticky; bottom:0; display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 16px; margin:0 -16px -12px -12px;
   background:var(--surface); border-top:1px solid var(--rule2); border-radius:0 0 8px 8px; }
-.ck .btn { white-space:nowrap; border:1px solid var(--ink3); background:var(--surface); border-radius:7px; padding:5px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
+.ck .btn { white-space:nowrap; border:1px solid var(--ink3); background:var(--surface); border-radius:7px; padding:4px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink); }
 .ck .btn:hover { border-color:var(--ink); }
 .ck .btn.pri { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink2); cursor:default; }
@@ -231,13 +231,13 @@ body { margin:0; }
 .ck .pane details[open] > summary h2::before { content:"－"; }
 
 /* 空のとき・知らせ */
-.ck .calm { display:grid; gap:6px; padding:40px 8px; text-align:left; }
+.ck .calm { display:grid; gap:8px; padding:40px 8px; text-align:left; }
 .ck .calm b { font-size:var(--fs-xl); }
 .ck .calm p { margin:0; color:var(--ink2); }
 .ck .calm.warn b { color:var(--k-permit); }
 .ck .notes { grid-column:1 / -1; display:grid; gap:4px; margin-bottom:12px; }
-.ck .notes div { background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); color:var(--ink2); }
-.ck .notes.warn { background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--k-permit); border-radius:6px; padding:8px 12px; gap:2px; font-size:var(--fs-s); }
+.ck .notes div { background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:8px 8px; font-size:var(--fs-s); color:var(--ink2); }
+.ck .notes.warn { background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--k-permit); border-radius:6px; padding:8px 12px; gap:4px; font-size:var(--fs-s); }
 .ck .notes.warn > b { color:var(--k-permit); }
 .ck .notes.warn div { background:none; border:0; padding:0; }
 /* 切り替えのタブと同じ段に並ぶので、枠を付けずタブと見分ける（押せることは下線で示す。初見 2 巡目の追加）。 */
@@ -249,7 +249,7 @@ body { margin:0; }
 .ck .errs div { background:var(--hot-bg); color:var(--hot); border-radius:6px; padding:6px 10px; font-size:var(--fs-s); font-weight:600; }
 .ck .toasts { position:fixed; left:16px; bottom:calc(10px + env(safe-area-inset-bottom, 0px)); z-index:10; width:max-content; max-width:min(440px, calc(100vw - 32px)); }
 .ck .toast {
-  display:flex; flex-wrap:wrap; align-items:center; gap:2px 10px; background:var(--ink); color:var(--surface); border-radius:8px; padding:6px 10px; font-size:var(--fs-xs); box-shadow:0 6px 20px rgba(0,0,0,.22); }
+  display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; background:var(--ink); color:var(--surface); border-radius:8px; padding:8px 8px; font-size:var(--fs-xs); box-shadow:0 6px 20px rgba(0,0,0,.22); }
 .ck .toast .tm { display:flex; flex:1 1 0; min-width:0; overflow:hidden; white-space:nowrap; }
 .ck .toast .tm > span { flex:0 1 auto; min-width:2em; overflow:hidden; text-overflow:ellipsis; }
 /* 動詞と届け先は縮めず、題を先に縮める。 */
@@ -258,7 +258,7 @@ body { margin:0; }
 .ck .toast .tx { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .ck .toast .more { order:3; flex-basis:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.8; }
 .ck .toast .tm > span:last-child { flex:none; min-width:0; }
-.ck .toast button { flex:none; border:1px solid currentColor; background:none; color:inherit; border-radius:6px; padding:1px 8px; font-weight:600; font-size:var(--fs-xs); }
+.ck .toast button { flex:none; border:1px solid currentColor; background:none; color:inherit; border-radius:6px; padding:0 8px; font-weight:600; font-size:var(--fs-xs); }
 .ck.win .toasts { --tl:16px; --td:max(420px, 44vw); left:var(--tl); bottom:max(16px, env(safe-area-inset-bottom, 0px)); max-width:min(560px, calc(100vw - var(--tl) - var(--td) - 16px)); }
 .ck.win.side-open .toasts { --tl:236px; }
 @media (max-width:1100px) { .ck.win .toasts { --td:380px; } }
@@ -266,7 +266,7 @@ body { margin:0; }
 .ck:not(.win):has(.toasts) .strip .acts { padding-bottom:calc(76px + env(safe-area-inset-bottom, 0px)); }
 @media (max-width:900px) {
   .ck.win .toasts, .ck.win.side-open .toasts { --tl:16px; --td:0px; bottom:calc(10px + env(safe-area-inset-bottom, 0px)); }
-  .ck.win:has(.toasts) .dbtn { padding-bottom:calc(70px + env(safe-area-inset-bottom, 0px)); } }
+  .ck.win:has(.toasts) .dbtn { padding-bottom:calc(72px + env(safe-area-inset-bottom, 0px)); } }
 @media (prefers-reduced-motion:no-preference) {
   .ck .strip { transition:box-shadow .15s ease; }
   .ck .toast { animation:ck-up .18s ease-out; }
@@ -302,23 +302,23 @@ body { margin:0; }
   height:100vh; min-height:0; display:flex; flex-direction:column; overflow:hidden; line-height:1.7; }
 .ck.win .pad { padding:16px; }
 .ck.win .hotc { color:var(--hot); }
-.ck.win .wtop { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; padding:12px 16px 0; border-bottom:1px solid var(--rule); background:var(--bg); }
+.ck.win .wtop { display:flex; flex-wrap:wrap; align-items:center; gap:8px 24px; padding:12px 16px 0; border-bottom:1px solid var(--rule); background:var(--bg); }
 .ck.win .pj { font-weight:700; font-size:var(--fs-l); line-height:1.5; padding-bottom:12px; }
-.ck.win .tabs { display:flex; gap:2px; align-self:end; }
-.ck.win .tabs button { border:0; background:none; padding:8px 16px; font-size:var(--fs-m); color:var(--ink2); border-bottom:3px solid transparent; display:flex; gap:7px; align-items:center; }
+.ck.win .tabs { display:flex; gap:4px; align-self:end; }
+.ck.win .tabs button { border:0; background:none; padding:8px 16px; font-size:var(--fs-m); color:var(--ink2); border-bottom:3px solid transparent; display:flex; gap:8px; align-items:center; }
 .ck.win .tabs button[aria-selected="true"] { color:var(--ink); font-weight:700; border-bottom-color:var(--ink); }
 .ck.win .tabs .n { font-size:var(--fs-s); color:var(--ink); font-weight:700; }
 .ck.win .tabs .n.z { background:none; color:var(--ink3); font-weight:400; }
 .ck.win .flags { padding-bottom:12px; }
 .ck.win .flags .err { color:var(--hot); font-weight:600; }
-.ck.win .werrs { display:grid; gap:2px; padding:6px 18px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
+.ck.win .werrs { display:grid; gap:4px; padding:8px 16px; background:var(--hot-bg); color:var(--hot); font-size:var(--fs-s); border-bottom:1px solid var(--rule); }
 .ck.win .wsince { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); }
 .ck.win .wsince b { font-weight:600; color:var(--ink); margin-right:8px; }
 .ck.win .wnotes { padding:4px 16px; font-size:var(--fs-s); color:var(--ink2); border-bottom:1px solid var(--rule); background:var(--sunk); }
 .ck.win .wmain { display:flex; flex:1; min-height:0; position:relative; }
 .ck.win .wcol { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; }
-.ck.win .wcases { flex:none; width:220px; overflow-y:auto; border-right:1px solid var(--rule); background:var(--bg); padding:6px 0 24px; display:grid; align-content:start; }
-.ck.win .wcase { border:0; border-radius:0; background:none; text-align:left; padding:8px 16px; display:grid; gap:1px; color:var(--ink); }
+.ck.win .wcases { flex:none; width:220px; overflow-y:auto; border-right:1px solid var(--rule); background:var(--bg); padding:8px 0 24px; display:grid; align-content:start; }
+.ck.win .wcase { border:0; border-radius:0; background:none; text-align:left; padding:8px 16px; display:grid; gap:0; color:var(--ink); }
 .ck.win .wcase:hover { background:var(--sunk); }
 /* サイドバーの地（--bg）の上では --sunk の差が小さいので、選んだ行は本文の地（--surface）にする。 */
 .ck.win .wcase[aria-current="true"] { background:var(--surface); font-weight:700; box-shadow:inset 3px 0 0 var(--focus); }
@@ -327,7 +327,7 @@ body { margin:0; }
 /* 開閉で語も幅も変えず、開いているときは押し込んだ見た目にする（R179: 押す場所を動かさない）。 */
 .ck.win .sidebtn { align-self:center; margin-bottom:12px; flex:none; border:1px solid var(--ink3); border-radius:6px; background:var(--surface); color:var(--ink); padding:4px 12px; font-size:var(--fs-s); font-weight:600; }
 .ck.win .sidebtn[aria-expanded="true"] { background:var(--sunk); border-color:var(--focus); color:var(--focus); box-shadow:inset 0 0 0 1px var(--focus); }
-.ck.win .orcab { display:inline-flex; gap:6px; margin-right:12px; }
+.ck.win .orcab { display:inline-flex; gap:8px; margin-right:12px; }
 .ck.win .orcab .btn:disabled { color:var(--ink3); text-decoration:none; cursor:default; }
 .ck.win .wcorca, .ck.win .wscrim { display:none; }
 .ck.win .wbody { display:grid; flex:1; min-height:0; background:var(--surface); }
@@ -349,7 +349,7 @@ body { margin:0; }
   .ck.win .wcorca .orcab { display:grid; gap:8px; margin:0; justify-items:start; }
   .ck.win .wbody.split { grid-template-columns:minmax(0,1fr); }
   .ck.win .wside { border-left:0; border-top:1px solid var(--rule); }
-  .ck.win .wpane { padding-bottom:20px; } }
+  .ck.win .wpane { padding-bottom:24px; } }
 
 /* 要対応・対応済み: 仕事のまとまりと行 */
 .ck.win .sgrp { display:grid; gap:4px; }
@@ -359,8 +359,8 @@ body { margin:0; }
 .ck.win details.sgrp[open] > summary .gh::before { content:"－"; }
 .ck.win details.sgrp[open] > summary { margin-bottom:4px; }
 /* 開閉の印の付いた見出しの下は、行の左端を見出しの文字にそろえる（全体の仕事の中身と同じ下げ幅。Neon 初見 2 巡目）。 */
-.ck.win details.sgrp > .rows { margin-left:26px; }
-.ck.win .gh { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:var(--fs-s); padding:2px 2px 0; }
+.ck.win details.sgrp > .rows { margin-left:24px; }
+.ck.win .gh { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:var(--fs-s); padding:4px 4px 0; }
 .ck.win .gh .pbar { min-width:0; }
 /* 仕事の名前だけを題の段にする（工程の今の段の太字 b.sc は工程の行の大きさのまま）。 */
 .ck.win .gh > b { font-size:var(--fs-l); line-height:1.5; }
@@ -377,11 +377,11 @@ body { margin:0; }
 .ck.win .cardrow[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 .ck.win .cardrow.cl .ti, .ck.win .cardrow.cl .kd { color:var(--ink2); font-weight:400; }
 .ck.win .cardrow.k-stuck:not(.cl) .kd, .ck.win .cardrow.reply:not(.cl) .kd { color:var(--hot); }
-.ck.win .kd { display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:700; color:var(--kc); white-space:nowrap; }
+.ck.win .kd { display:inline-flex; align-items:center; gap:4px; font-size:var(--fs-xs); font-weight:700; color:var(--kc); white-space:nowrap; }
 .ck.win .cardrow .kd { display:grid; grid-template-columns:auto 1fr; }
 .ck.win .cardrow .kd small { grid-column:1 / -1; font-weight:400; color:var(--ink3); }
 .ck.win .cardrow .tt { min-width:0; }
-.ck.win .cardrow .tl { display:flex; align-items:baseline; gap:6px; min-width:0; }
+.ck.win .cardrow .tl { display:flex; align-items:baseline; gap:8px; min-width:0; }
 /* 題は行で一番知りたい文なので 2 行まで見せ、3 行目から切る（ui.md。利用者役の初見で「題名が途中で切れる」）。 */
 .ck.win .cardrow .tl .ti { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; overflow-wrap:anywhere; line-height:1.5; min-width:0; }
 .ck.win .cardrow .tl .tag { flex:none; }
@@ -397,35 +397,35 @@ body { margin:0; }
 .ck.win .tag.talk { color:var(--focus); font-weight:600; }
 .ck.win .tag.miss { color:var(--hot); }
 /* 状態の印は押せる語（青の文字・下線）と見分けるよう、薄い地の小さな札にする（Neon 24）。 */
-.ck.win .tag.new { color:var(--focus); background:var(--run-bg); border-radius:4px; padding:0 5px; font-weight:600; }
+.ck.win .tag.new { color:var(--focus); background:var(--run-bg); border-radius:4px; padding:0 4px; font-weight:600; }
 .ck.win .tn .tag.new { margin-left:8px; }
 
 /* 詳細（要対応・対応済みの右） */
 /* 縦の flex にして、操作の帯をいつも詳細の下端に置く（短い詳細で本文のすぐ下に上がらないように。初見 2 巡目 4）。 */
 .ck.win .wdet { display:flex; flex-direction:column; min-height:100%; }
 .ck.win .dh { padding:12px 16px; border-bottom:1px solid var(--rule2); display:grid; gap:4px; position:sticky; top:0; background:var(--surface); z-index:1; }
-.ck.win .dh .crumbs { font-size:var(--fs-xs); color:var(--ink3); display:flex; gap:6px; flex-wrap:wrap; }
+.ck.win .dh .crumbs { font-size:var(--fs-xs); color:var(--ink3); display:flex; gap:8px; flex-wrap:wrap; }
 .ck.win .dh .crumbs i { font-style:normal; }
-.ck.win .dh .kl { display:flex; gap:10px; align-items:center; font-size:var(--fs-xs); flex-wrap:wrap; }
+.ck.win .dh .kl { display:flex; gap:8px; align-items:center; font-size:var(--fs-xs); flex-wrap:wrap; }
 .ck.win .dh h2 { margin:0; font-size:var(--fs-l); line-height:1.5; }
-.ck.win .note { margin:8px 16px 0; padding:8px 10px; border-radius:6px; background:var(--sunk); font-size:var(--fs-s); }
+.ck.win .note { margin:8px 16px 0; padding:8px 8px; border-radius:6px; background:var(--sunk); font-size:var(--fs-s); }
 .ck.win .note.wait { background:var(--amber-bg); } .ck.win .note.wait b { color:var(--amber); }
 /* 詳細の塊は囲まず、塊の間を線で区切る（R111。囲みと引用の線が二重にならない。初見 13）。 */
 .ck.win .first { margin:12px 16px 0; padding:0; border:0; display:grid; gap:12px; font-size:var(--fs-s); }
 .ck.win .first + .first, .ck.win .wdet > .first + .sent, .ck.win .wdet > .sent + .first { border-top:1px solid var(--rule2); padding-top:12px; }
 /* 番号の行は、下に貼り付く操作の帯に隠れないよう下にも余白を取る。 */
-.ck.win .rid { margin:14px 16px 20px; font-size:var(--fs-xs); color:var(--ink3); }
+.ck.win .rid { margin:16px 16px 24px; font-size:var(--fs-xs); color:var(--ink3); }
 .ck.win .rid code { margin-left:.5em; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
-.ck.win .links.main .lk { border-color:var(--ink3); padding:5px 14px; font-size:var(--fs-s); font-weight:600; border-radius:7px; }
+.ck.win .links.main .lk { border-color:var(--ink3); padding:4px 16px; font-size:var(--fs-s); font-weight:600; border-radius:7px; }
 .ck.win .links.main .lk i { display:none; }
 .ck.win .first ol.rich, .ck.win .first ul.rich { margin:0; padding-left:1.4em; }
-.ck.win details.more-d { margin:6px 16px 0; }
-.ck.win details.more-d summary { cursor:pointer; font-size:var(--fs-s); color:var(--focus); padding:6px 0; }
-.ck.win details.more-d .slots { display:grid; gap:10px; padding:4px 0 8px; font-size:var(--fs-s); }
+.ck.win details.more-d { margin:8px 16px 0; }
+.ck.win details.more-d summary { cursor:pointer; font-size:var(--fs-s); color:var(--focus); padding:8px 0; }
+.ck.win details.more-d .slots { display:grid; gap:8px; padding:4px 0 8px; font-size:var(--fs-s); }
 .ck.win .wdet > .other { margin:8px 16px 0; }
 .ck.win .dbtn { margin-top:auto; position:sticky; bottom:0; background:var(--surface); }
-.ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:10px 16px; }
-.ck.win .dh .crumbs .nxl { margin-left:auto; border:0; background:none; padding:0 2px; color:var(--focus); font-size:var(--fs-xs); white-space:nowrap; }
+.ck.win .dbtn .acts { position:static; margin:0; border-radius:0; padding:8px 16px; }
+.ck.win .dh .crumbs .nxl { margin-left:auto; border:0; background:none; padding:0 4px; color:var(--focus); font-size:var(--fs-xs); white-space:nowrap; }
 
 /*
  * 窓から質問する（R105）。欄は線で区切り（R111）、入力欄は 4 行（R90）。答えを待つ間・判断の記録の当たり・答えは同じ字の大きさで、
@@ -456,7 +456,7 @@ body { margin:0; }
 .ck.win .hl { list-style:none; margin:0; padding:0; display:grid; }
 .ck.win .hl li { display:grid; gap:4px; padding:8px 0; border-top:1px solid var(--rule2); }
 .ck.win .hl li:first-child { border-top:0; padding-top:0; }
-.ck.win .hh { display:flex; gap:10px; align-items:baseline; font-size:var(--fs-xs); }
+.ck.win .hh { display:flex; gap:8px; align-items:baseline; font-size:var(--fs-xs); }
 .ck.win .hh .code { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; color:var(--ink); }
 .ck.win .asks { list-style:none; margin:0; padding:0; display:grid; }
 .ck.win .askt { display:grid; gap:8px; padding:12px 0; border-top:1px solid var(--rule2); }
@@ -467,11 +467,11 @@ body { margin:0; }
 .ck.win .aa .rich ul { margin:0 0 4px; padding-left:1.4em; }
 /* 答え・見張る仕事の出力の Markdown（R167）。字の段は今の体系の中で選ぶ（見出しは本文と同じ大きさで太さだけ変える）。 */
 .ck .md ol { margin:0 0 4px; padding-left:1.6em; }
-.ck .md .mdh { margin:10px 0 4px; font-size:var(--fs-m); font-weight:700; line-height:1.5; color:var(--ink); }
+.ck .md .mdh { margin:8px 0 4px; font-size:var(--fs-m); font-weight:700; line-height:1.5; color:var(--ink); }
 .ck .md h6.mdh { font-size:var(--fs-s); font-weight:600; color:var(--ink2); }
 .ck .md > .mdh:first-child { margin-top:0; }
 .ck .md strong { font-weight:700; color:var(--ink); }
-.ck .md blockquote { margin:4px 0; border-left:3px solid var(--rule); padding:2px 0 2px 10px; color:var(--ink2); }
+.ck .md blockquote { margin:4px 0; border-left:3px solid var(--rule); padding:4px 0 4px 8px; color:var(--ink2); }
 .ck .md hr { border:0; border-top:1px solid var(--rule2); margin:8px 0; }
 .ck .md .mdtbl { overflow-x:auto; margin:4px 0 8px; }
 .ck .md table { border-collapse:collapse; font-size:var(--fs-s); min-width:100%; }
@@ -479,7 +479,7 @@ body { margin:0; }
 /* 狭い右の欄で列が細くなり 1〜2 字だけ次の行に落ちないよう、文節で折り返し（auto-phrase は lang=ja の文節）、列に幅の下限を置く。足りなければ表だけが横に動く（Neon 36）。 */
 .ck .md td { min-width:7em; }
 .ck .md th { background:var(--sunk); font-weight:600; white-space:nowrap; }
-.ck .md .mdpre { margin:4px 0 8px; padding:8px 10px; background:var(--sunk); border:1px solid var(--rule2); border-radius:6px; overflow-x:auto; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); line-height:1.55; white-space:pre; }
+.ck .md .mdpre { margin:4px 0 8px; padding:8px 8px; background:var(--sunk); border:1px solid var(--rule2); border-radius:6px; overflow-x:auto; font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:var(--fs-xs); line-height:1.55; white-space:pre; }
 /* 全体の右の欄の切り替え（タスクの詳細｜案件への質問。R166） */
 .ck.win .wsw { position:sticky; top:0; z-index:2; display:flex; gap:8px; padding:12px 16px; background:var(--surface); border-bottom:1px solid var(--rule2); }
 .ck.win .wsw button { flex:1 1 0; min-width:0; border:1px solid var(--ink3); background:none; border-radius:7px; padding:4px 12px; font-size:var(--fs-s); font-weight:600; color:var(--ink2); display:inline-flex; justify-content:center; align-items:center; gap:6px; }
@@ -495,7 +495,7 @@ body { margin:0; }
 /* 仕事の形は見出しの語だけで分ける（色の四角を付けない。初見 11）。 */
 .ck.win .fm { display:inline-flex; align-items:center; font-size:var(--fs-s); font-weight:700; color:var(--ink); white-space:nowrap; }
 .ck.win .fsec { display:grid; gap:8px; }
-.ck.win .fsec > h3 { margin:0; font-size:var(--fs-m); display:flex; gap:10px; align-items:baseline; }
+.ck.win .fsec > h3 { margin:0; font-size:var(--fs-m); display:flex; gap:8px; align-items:baseline; }
 .ck.win .fsec > h3 .mut { font-weight:400; font-size:var(--fs-xs); }
 .ck.win .fsec > p { margin:0; font-size:var(--fs-s); }
 /* 仕事は線で区切った一覧の 1 行（箱にしない。R111）。 */
@@ -521,7 +521,7 @@ body { margin:0; }
 .ck.win .st .t .nm { min-width:0; overflow-wrap:anywhere; }
 /* 題・中身・タスクの題は文節で折り返し、1〜2 字だけ次の行に落とさない（Neon t123。auto-phrase は lang=ja の文節）。列より長い文節は字で折る（Codex t123）。 */
 .ck.win .st .t .nm, .ck.win .st .sx > .sv, .ck.win .task .tn { word-break:auto-phrase; text-wrap:pretty; overflow-wrap:anywhere; }
-.ck.win .st .right { display:flex; align-items:center; gap:10px; }
+.ck.win .st .right { display:flex; align-items:center; gap:8px; }
 .ck.win .st .meta { grid-column:1 / -1; font-size:var(--fs-xs); color:var(--ink3); }
 /* 状況の頭の状態の語。色は要対応と停止だけ（初見 4・11）。 */
 .ck.win .pst { font-weight:400; }
@@ -541,7 +541,7 @@ body { margin:0; }
   .ck.win .pbar .stg-now { display:inline; }
 }
 .ck.win .prog { display:inline-flex; align-items:center; gap:8px; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
-.ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:1px 9px; white-space:nowrap; }
+.ck.win .pill { display:inline-flex; align-items:center; font-size:var(--fs-xs); font-weight:600; border-radius:999px; padding:0 8px; white-space:nowrap; }
 .ck.win .pill.mine { background:var(--mine); color:var(--surface); }
 .ck.win .pill.stopped { background:var(--hot); color:var(--surface); }
 .ck.win .pill.working { background:var(--run-bg); color:var(--focus); }
@@ -549,7 +549,7 @@ body { margin:0; }
 .ck.win .pill.idle { background:var(--sunk); color:var(--ink2); }
 .ck.win .pill.done { background:var(--ok-bg); color:var(--ok); }
 /* 開いた中身は、開閉の印の幅だけ下げて仕事の名前より左に出さない。 */
-.ck.win .st .inner { padding:0 4px 12px 28px; display:grid; gap:0; }
+.ck.win .st .inner { padding:0 4px 12px 24px; display:grid; gap:0; }
 .ck.win .phase { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; letter-spacing:.04em; padding:12px 0 4px; display:flex; gap:8px; align-items:center; }
 .ck.win .inner > .phase:first-child { padding-top:8px; }
 .ck.win .task { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; font-size:var(--fs-s); margin:0 -12px; padding-right:12px; }
@@ -565,15 +565,15 @@ body { margin:0; }
 .ck.win .chk { margin-left:.6em; font-size:var(--fs-xs); color:var(--ink2); white-space:nowrap; }
 .ck.win b.chk { color:var(--ink); }
 .ck.win .cardrow .kd small, .ck.win .task .id { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; }
-.ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:6px; }
+.ck.win .task .id { color:var(--ink3); font-size:var(--fs-xs); margin-right:8px; }
 .ck.win .task .nx { color:var(--ink2); font-size:var(--fs-xs); overflow-wrap:anywhere; }
 .ck.win .task .nx.gl { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
-.ck.win .task .wk { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+.ck.win .task .wk { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 /* 状態の印は押せる見た目にしない（枠を付けない）。枠を持つのは押せるもの（.act と仕事のカードへ移る .kc）だけ。 */
 .ck.win .chip { display:inline-flex; gap:4px; align-items:center; font-size:var(--fs-xs); border:0; padding:0; background:none; color:var(--ink2); white-space:nowrap; }
 .ck.win .chip.live { color:var(--ink); font-weight:600; }
 .ck.win .chip.bad { color:var(--hot); font-weight:600; }
-.ck.win .chip.kc { border:1px solid var(--ink3); border-radius:5px; padding:0 6px; color:var(--ink); background:var(--surface); font-weight:600; }
+.ck.win .chip.kc { border:1px solid var(--ink3); border-radius:5px; padding:0 8px; color:var(--ink); background:var(--surface); font-weight:600; }
 .ck.win .act { border:1px solid var(--ink3); background:var(--surface); border-radius:5px; padding:0 8px; font-size:var(--fs-xs); color:var(--ink); white-space:nowrap; line-height:1.9; }
 .ck.win .act:hover { border-color:var(--ink); }
 .ck.win .act.talk { border-color:var(--focus); color:var(--focus); }
@@ -581,8 +581,8 @@ body { margin:0; }
 .ck.win .task .act.talk { visibility:hidden; }
 .ck.win .task:hover .act.talk, .ck.win .task:focus-within .act.talk { visibility:visible; }
 .ck.win .donebox { font-size:var(--fs-xs); color:var(--ink3); padding:8px 0 0; }
-.ck.win .wmore { border:0; background:none; color:var(--focus); font-size:var(--fs-s); padding:2px 0; text-align:left; justify-self:start; }
-.ck.win .watch { display:grid; gap:6px; }
+.ck.win .wmore { border:0; background:none; color:var(--focus); font-size:var(--fs-s); padding:4px 0; text-align:left; justify-self:start; }
+.ck.win .watch { display:grid; gap:8px; }
 /* 見張る仕事の行（R152）。押すと右に詳細。線で区切り、色は足さない。 */
 .ck.win ul.wrows { margin:0; padding:0; list-style:none; border-top:1px solid var(--rule2); }
 .ck.win .wrow { display:grid; gap:4px; padding:8px 12px; border-bottom:1px solid var(--rule2); cursor:pointer; font-size:var(--fs-s); }
@@ -604,7 +604,7 @@ body { margin:0; }
 .ck.win .watch .strip .title { font-size:var(--fs-m); font-weight:400; }
 
 /* 全体の右: タスクの詳細 */
-.ck.win .wk2 { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; }
+.ck.win .wk2 { display:flex; flex-wrap:wrap; gap:8px 8px; align-items:center; }
 .ck.win .lc { display:grid; grid-template-columns:3.4em minmax(0,1fr) auto; gap:8px; align-items:baseline; width:100%; text-align:left; border:0; background:none; padding:4px 8px; margin:0 -8px; border-radius:5px; font:inherit; color:inherit; }
 .ck.win button.lc:hover { background:var(--sunk); }
 .ck.win .lc .ti { overflow-wrap:anywhere; }
@@ -612,18 +612,18 @@ body { margin:0; }
 /* 済んだカードは弱く、要対応・修正待ちだけを目立たせる。 */
 .ck.win .lc.cl, .ck.win .lc.cl .kd { color:var(--ink3); font-weight:400; }
 .ck.win .lc .kd.hotc { color:var(--hot); }
-.ck.win .rqd { display:grid; gap:6px; }
-.ck.win .rqd .code, .ck.win .tid { margin-right:6px; }
+.ck.win .rqd { display:grid; gap:8px; }
+.ck.win .rqd .code, .ck.win .tid { margin-right:8px; }
 .ck.win .rqd .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
 .ck.win .lc .now { font-size:var(--fs-xs); font-weight:700; color:var(--ink); white-space:nowrap; }
 /* タスクの事実はラベルを左、値を右にそろえる。 */
 .ck.win .facts .fld { grid-template-columns:6.5em minmax(0,1fr); gap:12px; align-items:baseline; }
 .ck.win .facts .fld > .lb { font-size:var(--fs-xs); }
 /* 狭い幅では見出しを値の上に置き、値の列の幅を取る（Neon 初見 2 巡目）。 */
-@media (max-width:1100px) { .ck.win .facts .fld { grid-template-columns:minmax(0,1fr); gap:2px; } }
+@media (max-width:1100px) { .ck.win .facts .fld { grid-template-columns:minmax(0,1fr); gap:4px; } }
 .ck.win .kl .num { margin:0 .3em; }
 .ck.win .rqd + .rqd { border-top:1px solid var(--rule2); padding-top:8px; margin-top:4px; }
-.ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:2px; }
+.ck.win .dw { margin:0; padding:0; list-style:none; display:grid; gap:4px; }
 .ck.win .dw li { display:grid; grid-template-columns:1.6em minmax(0,1fr); align-items:baseline; color:var(--ink); }
 .ck.win .dw li.ok { color:var(--ink2); }
 /* 済の条件のチェックの形。済は塗り、未は枠だけ。 */
@@ -632,20 +632,20 @@ body { margin:0; }
 .ck.win .dw li.ok .cb::after { content:""; position:absolute; left:3px; top:0; width:3px; height:7px; border:solid var(--surface); border-width:0 2px 2px 0; transform:rotate(45deg); }
 .ck.win .purp { margin:8px 16px 0; font-size:var(--fs-s); color:var(--ink2); line-height:1.6; }
 .ck.win .recm { display:block; min-width:0; font-size:var(--fs-xs); color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ck.win details.cont summary { cursor:pointer; font-size:var(--fs-xs); color:var(--focus); padding:2px 0; }
+.ck.win details.cont summary { cursor:pointer; font-size:var(--fs-xs); color:var(--focus); padding:4px 0; }
 .ck.win .ntr { font-size:var(--fs-s); color:var(--ink2); }
 .ck.win .ntr summary { cursor:pointer; color:var(--focus); }
-.ck.win .ntr ul { margin:4px 0 0; padding:0; list-style:none; display:grid; gap:2px; font-size:var(--fs-s); }
-.ck.win .ntr .code { margin-right:6px; }
+.ck.win .ntr ul { margin:4px 0 0; padding:0; list-style:none; display:grid; gap:4px; font-size:var(--fs-s); }
+.ck.win .ntr .code { margin-right:8px; }
 .ck.win .ntr .rst { white-space:nowrap; margin-left:8px; color:var(--ink3); font-size:var(--fs-xs); }
 .ck.win .wk2 + .wk2 { margin-top:4px; }
 /* 出した指示（新しい順） */
-.ck.win .wdet > .sent { margin:10px 16px 0; }
+.ck.win .wdet > .sent { margin:8px 16px 0; }
 .ck.win .sent ol { margin:0; padding:0; list-style:none; display:grid; }
 .ck.win .sent li { display:grid; gap:4px; padding:4px 0; font-size:var(--fs-s); }
 .ck.win .sent li + li { border-top:1px solid var(--rule2); }
 .ck.win .sent button.code { border:0; background:none; padding:0; font:inherit; color:inherit; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
-.ck.win .sent .sl { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; }
+.ck.win .sent .sl { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:center; }
 .ck.win .sent .tm { font-size:var(--fs-xs); color:var(--ink3); font-variant-numeric:tabular-nums; min-width:8.5em; }
 /* 1366 以下では操作の帯のキーの説明を外し、「次へ」まで 1 行に収める。 */
 @media (max-width:1366px) { .ck.win .dbtn .acts .hint { display:none; } }

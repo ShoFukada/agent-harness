@@ -41,6 +41,21 @@ test('タスクの詳細の worker の「端末を開く」は、開いた知ら
   assert.match(page(m, { tab: 'whole', task: 't1' }), /<div class="wk2">[\s\S]*?data-term="term_w" data-wt="" data-who="作業｜一覧の改修の worker">端末を開く<\/button>/)
 })
 
+test('窓の余白（padding・margin・gap）は 4・8・12・16・24px の刻みから選び、32px 以上は 4 の倍数にする（ui.md）', () => {
+  const off: string[] = []
+  for (const m of CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = m[1]!.replace(/\/\*[\s\S]*?\*\//g, '').trim()
+    // 質問の欄（案件への質問・右の欄の切り替え）は別の作業（t138）が直している最中なので、ここでは見ない。
+    if (!/\.ck\.win/.test(sel) || /\.(ask\w*|aa|aq|hits|hl|ht|wsw)\b/.test(sel)) continue
+    for (const p of m[2]!.matchAll(/(?<![-\w])((?:padding|margin)(?:-[a-z-]+)?|gap|row-gap|column-gap)\s*:\s*([^;}]+)/g))
+      for (const v of p[2]!.matchAll(/(\d+)px/g)) {
+        const n = Number(v[1])
+        if (n && ![4, 8, 12, 16, 24].includes(n) && !(n >= 32 && n % 4 === 0)) off.push(`${sel.split('\n').pop()} ${p[1]}:${n}px`)
+      }
+  }
+  assert.deepEqual(off, [])
+})
+
 test('要対応の行の題は「…」で 1 行に切らず、2 行まで折り返して 3 行目から切る（ui.md。利用者役の初見で題が切れて読めなかった）', () => {
   const h = page(aoba())
   assert.match(h, /class="cardrow[^"]*"[^>]*>[\s\S]*?<span class="tl"><span class="ti">/)
