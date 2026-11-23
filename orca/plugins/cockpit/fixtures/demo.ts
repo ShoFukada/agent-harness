@@ -171,7 +171,7 @@ export function writeAskSample(root: string, now = Date.now()): void {
   memo('ask5', '- タスク: t1\n', 300, `### 質問 ${hhmm(now - 290 * 60_000)}（u-30）\n一覧の既定の並びは、配送日の降順でいい？\n\n### 答え ${hhmm(now - 289 * 60_000)}\n${head(300)}\n降順がよい見込みです。配車の担当は当日と翌日の便から見ます。\n\n【選べる案】\n- A: 配送日の降順（推し）\n- B: 登録順のまま\n\n`
     + `### 質問 ${hhmm(now - 288 * 60_000)}（u-31）\n案 A で。\n\n### 答え ${hhmm(now - 288 * 60_000)}\n${head(300)}\n配送日の降順で窓口に返します。\n\n`)
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask5.returns.jsonl'), JSON.stringify({ return_id: 'ask5-1', op: 9001, rulings_seen: 'R31', decisions: [{ text: '一覧の既定の並びは配送日の降順', quote: '案 A で。', utterance: 'u-31' }], requests: [], open: [], affects: ['t1'], ask: 'ask5' }) + '\n')
-  appendFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.md'), `### 質問 ${hhmm(now - 33 * 60_000)}（u-42）\nじゃあ構成案は前日までに送っておいて\n\n### 答え ${hhmm(now - 33 * 60_000)}\n${head(40)}\n構成案を定例の前日までに田中さんへ共有する、と窓口に返します。\n\n`)
+  appendFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.md'), `### 質問 ${hhmm(now - 33 * 60_000)}（u-42）\nじゃあ構成案は前日までに送っておいて\n\n### 答え ${hhmm(now - 33 * 60_000)}\n${head(40)}\n構成案は定例の前日までに田中さんへ共有する。\n返しの案を書いた（窓口が反映すると効く）。\n\n`)
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.returns.jsonl'), JSON.stringify({ return_id: 'ask1-1', op: 9000, rulings_seen: 'R33', decisions: [{ text: '構成案は定例の前日までに田中さんへ共有する', quote: 'じゃあ構成案は前日までに送っておいて', utterance: 'u-42' }], requests: [], open: [], affects: [], ask: 'ask1' }) + '\n')
   const log = path.join(root, '.orca', 'cockpit.user.json')
   const ops = (JSON.parse(readFileSync(log, 'utf8')) as { ops: unknown[] }).ops

@@ -366,10 +366,12 @@ const OWNER_WORD: Partial<Record<AgentRow['state'], string>> = { blocked: '許�
 export function permitTitle(a: Pick<Ask, 'text' | 'body'>): string {
   const tool = a.body?.[0] ?? /^(\w+): /.exec(a.text)?.[1] ?? ''
   const target = (a.body?.length ? a.text : a.text.replace(/^\w+: /, '')).trim()
-  // 文にするのは、ブランチを送るだけの形（-u は付いてよい）。削除・強制・refspec の形は、文にすると取り違えるのでコマンドのまま出す。
-  const push = /^git push\s+(?:(?:-u|--set-upstream)\s+)?(\w[\w./-]*)\s+(\w[\w./-]*)$/.exec(target)
+  // 文にするのは、1 行でブランチを送るだけの形（-u は付いてよい）。削除・強制・refspec・改行で続く別のコマンドは、文にすると取り違えるのでコマンドのまま出す。
+  const push = /^git push[ \t]+(?:(?:-u|--set-upstream)[ \t]+)?(\w[\w./-]*)[ \t]+(\w[\w./-]*)$/.exec(target)
   if (push) return `${push[2]} を ${push[1]} に push する`
-  if (/bash/i.test(tool)) return `${target} を実行する`
+  // 一覧の題は 1 行目だけを出すので、複数行のコマンドは 1 行目と残りの行数にする。
+  const lines = target.split('\n').filter((l) => l.trim())
+  if (/bash/i.test(tool)) return lines.length > 1 ? `${lines[0]!.trim()} ほか ${lines.length - 1} 行を実行する` : `${target} を実行する`
   if (/edit|write|create/i.test(tool)) return `${target} を書き換える`
   return target
 }

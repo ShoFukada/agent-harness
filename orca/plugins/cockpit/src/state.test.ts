@@ -962,4 +962,6 @@ test('許可の確認の題は、何をするかが初見で分かる文にす�
   assert.equal(permitTitle({ text: 'Bash: git push --force origin' }), 'git push --force origin を実行する')
   assert.equal(permitTitle({ text: 'Bash: git push origin +main' }), 'git push origin +main を実行する')
   assert.equal(permitTitle({ text: 'Bash: git push origin :old' }), 'git push origin :old を実行する')
+  // 改行のあとは別のコマンドなので、1 つの push として読まない（Codex 2 回目 3）。
+  assert.equal(permitTitle({ text: 'git push origin\nmain', body: ['Bash command', 'git push origin\nmain'] }), 'git push origin ほか 1 行を実行する')
 })

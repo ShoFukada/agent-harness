@@ -218,14 +218,19 @@ function choiceTitle(a: AskThread, o: Op): string | undefined {
 }
 
 /**
- * 返しを受けた写しの答えが、返しの決まったことの言い直しと返しの知らせだけか。ほかのことが 1 文でもあれば出す（移行日は未定、などを落とさない）。
- * 文ごとに、返しの知らせ（「返し」を含む 40 字までの文）か、決まったことと空白・句読点を除いて一方が他方を含むかを見る。
+ * 返しを受けた写しの答えが、返しの決まったことと同じ文と返しの知らせだけか。ほかのことが 1 文でもあれば出す（「移行日は未定」「その前に承認が要る」を落とさない）。
+ * 文ごとに、空白・句読点を除いて決まったことと全文が同じか、返しの知らせの決まった形（「<決まったこと>と窓口に返します」「返しの案を書いた」など）かを見る。
+ * 言い回しが少し違うだけの文は出す（同じ話が 2 度見えるほうが、話を落とすより害が小さい）。
  */
 function echoOnly(body: string, decisions: string[]): boolean {
-  const flat = (t: string) => t.replace(/[\s、。，．・「」『』*_`#>-]/g, '')
-  const ds = decisions.map(flat).filter(Boolean)
+  const flat = (t: string) => t.replace(/[\s、。，．・「」『』（）()*_`#>-]/g, '')
+  const ds = new Set(decisions.map(flat).filter(Boolean))
+  const notice = (x: string) => {
+    const m = /^(.*?)と?窓口に返(?:します|しました)$/.exec(x)
+    return (m && (!m[1] || ds.has(m[1]))) || /^返し(?:の案)?を書(?:いた|きました)(?:窓口が反映すると効く)?$/.test(x)
+  }
   const ss = body.split(/[。\n]/).map(flat).filter(Boolean)
-  return ss.length > 0 && ss.every((x) => (x.includes('返し') && x.length <= 40) || ds.some((d) => d.includes(x) || x.includes(d)))
+  return ss.length > 0 && ss.every((x) => ds.has(x) || notice(x))
 }
 
 /** 窓口に返したこと 1 つ（返し方・時刻・今の札と、返しの記録の決まったこと）。o が無いのは写しが自分で書いた返し。 */
@@ -281,7 +286,7 @@ function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
     }
     const body = n === a.decide?.n && a.choices?.length ? withoutChoices(p.body) : p.body
     const said = mine.map((o) => returnedHtml(b, a, o, retOf(a, o), st.state, now)).join('')
-    if (ds && echoOnly(withoutChoices(p.body), ds)) return said
+    if (ds && echoOnly(body, ds)) return said
     return `<div class="aa"><span class="mut">答え ${esc(e.time)}${at ? `（窓口の ${esc(at)} までの会話から）` : ''}</span><div class="abody">${markdown(body, repo)}</div></div>${said}`
   }).join('')
   const rest = a.returns.filter((r) => typeof r.return_id === 'string' && !placed.has(r.return_id)).map((r) => returnedHtml(b, a, ops.find((o) => String(o.op_id) === String(r.op)), r, st.state, now)).join('')
