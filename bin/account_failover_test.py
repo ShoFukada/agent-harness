@@ -70,12 +70,37 @@ elif cmd == "terminal read" and flag("read-fails"):
     fail()
 elif cmd == "terminal read":
     ok({"terminal": {"tail": load("screens.json", {}).get(val("--terminal"), [])}})
+elif cmd == "orchestration worker-list" and flag("list-fails"):
+    fail()
+elif cmd == "orchestration worker-list" and load("workers-late", 0) > 0:
+    # 最初の n 回の一覧のあとに Dispatch が届いた（移している間に coordinator が送った）
+    save("workers-late", load("workers-late") - 1)
+    ok({"workers": []})
 elif cmd == "orchestration worker-list":
     ok({"workers": load("workers.json", [])})
 elif cmd == "orchestration worker-show":
     ok(load("shows.json", {}).get(val("--dispatch"), {}))
+elif cmd == "orchestration run-show":
+    ok(load("runs.json", {}).get(val("--id"), {}))
 elif cmd == "orchestration send" and flag("send-fails"):
     fail()
+elif cmd == "orchestration send" and val("--to").startswith("dispatch:"):
+    # 実物（Orca 1.4.271）: 閉じた Dispatch あてに、その Run の coordinator が送ると follow-up の Dispatch になる。
+    # worker 自身の名だと Run の受信箱に回る（2026-11-23 に確かめた）
+    old, shows = val("--to")[len("dispatch:"):], load("shows.json", {})
+    run = shows.get(old, {}).get("runId")
+    if not flag("follow-up-refused") and shows.get(old, {}).get("state") == "failed" and load("runs.json", {}).get(run, {}).get("run", {}).get("coordinator_handle") == val("--from"):
+        workers = load("workers.json", [])
+        new = "ctx_f%d" % (sum(1 for w in workers if w["dispatchId"].startswith("ctx_f")) + 1)
+        shows[new] = {"dispatchId": new, "runId": run, "state": "ready", "followUpOf": old, "terminal": shows[old].get("terminal")}
+        save("shows.json", shows)
+        save("workers.json", workers + [{"dispatchId": new, "state": "ready", "outcome": "in_progress", "terminal": shows[old].get("terminal")}])
+        if flag("follow-up-reply-lost"):  # 作って端末に打ったが、応答だけが時間切れになった
+            fail("timeout")
+            sys.exit(0)
+        ok({"delivery": "follow_up", "followUpOf": old, "dispatchId": new, "runId": run, "state": "ready"})
+    else:
+        ok({"messageId": "msg_1"})
 elif cmd == "orchestration send":
     ok({"messageId": "msg_1"})
 elif cmd == "terminal send":
@@ -84,6 +109,15 @@ elif cmd == "terminal send":
     if text == "/exit":
         if not flag("exit-hangs"):
             save("processes.json", [p for p in procs if p["env"].get("ORCA_TERMINAL_HANDLE") != h])
+            if flag("exit-closes-dispatch"):  # Orca 1.4.271: claude が終わると、その端末の Dispatch を failed で閉じる
+                workers, shows = load("workers.json", []), load("shows.json", {})
+                for w in workers:
+                    if w["terminal"] == h and w.get("outcome") == "in_progress":
+                        w.pop("outcome")
+                        w["state"] = "failed"
+                        shows[w["dispatchId"]]["state"] = "failed"
+                save("workers.json", workers)
+                save("shows.json", shows)
         if flag("exit-reply-lost"):  # 届いたが、応答だけが時間切れになった
             fail("timeout")
             sys.exit(0)
@@ -765,6 +799,206 @@ class ConvergeTest(FailoverTestBase):
         self.run_failover()
         self.assertEqual(self.typed(), [])
         self.assertIn("端末の画面を読めない", self.band())
+
+    def worker(self, coordinator="structworker_lead", **kw):
+        """Dispatch を受けている worker の端末。Orca 1.4.271 と同じく、claude が終わると Dispatch を failed で閉じる。"""
+        self.old_terminal(**kw)
+        self.put("workers.json", [{"dispatchId": "ctx_w", "taskId": "task_w", "state": "ready", "outcome": "in_progress", "terminal": "term_1"}])
+        self.put("shows.json", {"ctx_w": {"dispatchId": "ctx_w", "taskId": "task_w", "runId": "run_w", "state": "ready", "terminal": "term_1"}})
+        # 実物の `orca orchestration run-show --id <run> --full --json` の result の形（2026-11-23 に確かめた）。窓口のチャットが coordinator なら null
+        self.put("runs.json", {"run_w": {"run": {"id": "run_w", "coordinator_handle": coordinator}}})
+        self.flag("exit-closes-dispatch")
+
+    def test_a_worker_whose_dispatch_orca_closed_gets_a_follow_up_from_its_coordinator(self):
+        # 2026-11-23 15:18 の ask-thread-tab の worker: 起こし直しても Dispatch は閉じたままで、担当が手で続きを送った（t143）。
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.worker(preview=LIMIT_LINE)
+        self.assertIn("（Dispatch ctx_w が閉じたら続きを送る）", self.run_failover("--dry-run"))
+        self.run_failover()
+        (notice, follow) = self.sent()
+        # 先に Run の受信箱へ、立て直さないよう知らせる（Orca が「Worker exited without reporting」を出すため）
+        self.assertEqual(notice[:2], ("term_1", "run:run_w"))
+        self.assertIn("Dispatch ctx_w を failed で閉じ「Worker exited without reporting」を出すが、worker-start で立て直さない", notice[3])
+        self.assertEqual(follow[:2], ("structworker_lead", "dispatch:ctx_w"))
+        self.assertIn("この Dispatch の id で worker_done を送る", follow[3])
+        order = [" ".join(c[:2]) + ("" if c[:2] != ["terminal", "send"] else ":" + c[c.index("--text") + 1].split()[0]) for c in self.calls()
+                 if c[:2] in (["terminal", "send"], ["orchestration", "send"])]
+        self.assertEqual(order, ["orchestration send", "terminal send:/exit", "terminal send:env", "orchestration send"])
+        self.assertEqual(len(self.typed("term_1")), 2)
+        moved = [h for h in self.history() if h["event"] == "moved"][0]
+        self.assertEqual((moved["dispatch"], moved["follow_up"], moved["nudged"]), ("ctx_w", "ctx_f1", False))
+        self.assertEqual(self.state()["moves"], {})
+
+    def test_a_worker_of_a_chat_coordinator_is_continued_and_its_coordinator_is_asked(self):
+        # Orca はチャットを --from で名乗らせない（session_caller_chat_not_declarable）。
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.worker(coordinator=None, preview=LIMIT_LINE)
+        self.run_failover()
+        (notice, ask) = self.sent()
+        self.assertIn("起き直したと知らせたら `orca orchestration send --to dispatch:ctx_w` で続きを送る", notice[3])
+        self.assertEqual(ask[:2], ("term_1", "run:run_w"))
+        self.assertIn("`orca orchestration send --to dispatch:ctx_w --subject <題> --body <続きの指示>` で続き", ask[3])
+        self.assertIn("続けてください", self.typed("term_1")[2])
+        moved = [h for h in self.history() if h["event"] == "moved"][0]
+        self.assertEqual((moved["follow_up"], moved["asked"], moved["nudged"]), (None, True, True))
+
+    def test_a_follow_up_that_orca_turns_into_mail_falls_back_to_asking_the_coordinator(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker(reply=LIMIT_LINE)
+        self.flag("follow-up-refused")
+        self.run_failover()
+        tos = [(f, t) for f, t, _s, _b in self.sent()]
+        self.assertEqual(tos, [("term_1", "run:run_w"), ("structworker_lead", "dispatch:ctx_w"), ("term_1", "run:run_w")])
+        self.assertIn("続けてください", self.typed("term_1")[2])
+        self.assertTrue([h for h in self.history() if h["event"] == "moved"][0]["asked"])
+
+    def test_a_follow_up_whose_reply_was_lost_is_not_sent_twice(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker(reply=LIMIT_LINE)
+        self.flag("follow-up-reply-lost")
+        self.run_failover()
+        self.assertEqual([to for _f, to, _s, _b in self.sent()], ["run:run_w", "dispatch:ctx_w"])
+        self.assertEqual(len(self.typed("term_1")), 2)
+        self.assertEqual([h for h in self.history() if h["event"] == "moved"][0]["follow_up"], "ctx_f1")
+
+    def test_a_follow_up_sent_before_a_crash_is_not_sent_again(self):
+        # 前の回が続きを送ったあと、記録する前に落ちた。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker(reply=LIMIT_LINE)
+        self.put("processes.json", [])
+        self.proc(201, seat=B, handle="term_1", session=S1, argv=["--resume", S1])
+        # 続きはもう済んでいる（worker_done を送った）
+        self.put("workers.json", [{"dispatchId": "ctx_w", "state": "failed", "terminal": "term_1"},
+                                  {"dispatchId": "ctx_f1", "state": "succeeded", "terminal": "term_1"},
+                                  {"dispatchId": "ctx_other", "state": "succeeded", "terminal": "term_1"}])
+        shows = self.get("shows.json")
+        shows["ctx_w"]["state"] = "failed"
+        shows["ctx_f1"] = {"dispatchId": "ctx_f1", "state": "succeeded", "followUpOf": "ctx_w"}
+        shows["ctx_other"] = {"dispatchId": "ctx_other", "state": "succeeded", "followUpOf": None}
+        self.put("shows.json", shows)
+        self.edit_state(moves={"term_1": self.launched_worker()})
+        self.run_failover()
+        self.assertEqual(self.sent(), [])
+        self.assertEqual(self.typed(), [])
+        self.assertEqual(self.history()[0]["follow_up"], "ctx_f1")
+
+    def test_a_worker_is_not_exited_until_its_run_has_been_told(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker(reply=LIMIT_LINE)
+        self.flag("send-fails")
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        self.assertIn("先の知らせを run:run_w に送れなかったので、まだ移していない", self.band())
+        self.flag("send-fails", False)
+        self.run_failover()
+        self.assertEqual(self.typed("term_1")[0], "/exit")
+        # 断られた 1 通は送り直さない（次の回に改めて 1 通送る）
+        self.assertEqual([to for _f, to, _s, _b in self.sent()], ["run:run_w", "run:run_w", "dispatch:ctx_w"])
+
+    def launched_worker(self):
+        """起こし直したあと、Dispatch を付け直す前に落ちた記録。"""
+        return {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--resume", S1], "ws": None, "limited": True, "working": False,
+                "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "launched", "at": now_ms() - MIN,
+                "launched_at": now_ms() - MIN, "tries": 0, "dispatch": "ctx_w", "run": "run_w", "coordinator": "structworker_lead"}
+
+    def test_a_dispatch_that_cannot_be_checked_after_the_move_waits_for_the_next_round(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker(reply=LIMIT_LINE)
+        self.put("processes.json", [])
+        self.proc(201, seat=B, handle="term_1", session=S1, argv=["--resume", S1])
+        self.put("workers.json", [{"dispatchId": "ctx_w", "state": "failed", "terminal": "term_1"}])
+        shows = self.get("shows.json")
+        shows["ctx_w"]["state"] = "failed"
+        self.put("shows.json", shows)
+        self.edit_state(moves={"term_1": self.launched_worker()})
+        self.flag("list-fails")
+        self.run_failover()
+        self.assertEqual((self.sent(), self.typed()), ([], []))
+        self.assertIn("Dispatch ctx_w を確かめられない", self.band())
+        self.assertEqual(self.state()["moves"]["term_1"]["stage"], "launched")
+        self.flag("list-fails", False)
+        self.run_failover()
+        self.assertEqual([to for _f, to, _s, _b in self.sent()], ["dispatch:ctx_w"])
+        self.assertEqual(self.state()["moves"], {})
+
+    def test_a_dispatch_still_open_is_left_alone_even_if_another_on_the_terminal_is_live(self):
+        # 同じ端末で別件の Dispatch が動いていても、それを続きと見なさない。旧 Dispatch が開いていれば何も送らない
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker(reply=LIMIT_LINE)
+        self.flag("exit-closes-dispatch", False)
+        workers = self.get("workers.json")
+        self.put("workers.json", workers + [{"dispatchId": "ctx_other", "state": "ready", "outcome": "in_progress", "terminal": "term_1"}])
+        shows = self.get("shows.json")
+        shows["ctx_other"] = {"dispatchId": "ctx_other", "state": "ready", "followUpOf": None}
+        self.put("shows.json", shows)
+        self.run_failover()
+        self.assertEqual([to for _f, to, _s, _b in self.sent()], ["run:run_w"])
+        self.assertIsNone(self.history()[0]["follow_up"])
+
+    def test_a_worker_relaunched_by_hand_on_the_current_seat_still_gets_its_dispatch_back(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker(reply=LIMIT_LINE)
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--resume", S1], "ws": None, "limited": True, "working": False,
+               "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "exit", "at": now_ms() - MIN, "tries": 0,
+               "dispatch": "ctx_w", "run": "run_w", "coordinator": "structworker_lead"}
+        self.edit_state(moves={"term_1": rec})
+        self.put("processes.json", [])
+        self.proc(201, seat=B, handle="term_1", session=S1, argv=["--resume", S1])
+        workers = self.get("workers.json")
+        workers[0].update(state="failed")
+        workers[0].pop("outcome")
+        self.put("workers.json", workers)
+        shows = self.get("shows.json")
+        shows["ctx_w"]["state"] = "failed"
+        self.put("shows.json", shows)
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        self.assertEqual([to for _f, to, _s, _b in self.sent()], ["dispatch:ctx_w"])
+
+    def test_a_dispatch_orca_kept_open_is_not_followed_up(self):
+        # Orca 1.4.271 より前（2026-11-22 の T2）は、claude を替えても Dispatch が残った。そのときは続きを送らず、端末に続きを打つ。
+        self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
+        self.worker(preview=LIMIT_LINE)
+        self.flag("exit-closes-dispatch", False)
+        self.run_failover()
+        self.assertEqual([to for _f, to, _s, _b in self.sent()], ["run:run_w"])
+        self.assertIn("続けてください", self.typed("term_1")[2])
+
+    def test_a_dispatch_given_while_others_were_moved_is_followed_up(self):
+        # 2026-11-23 の ui-verify-loop の worker: 移す順を待つ間（15:19:51）に担当が続きを送り、その Dispatch が /exit で閉じた。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.worker()
+        self.put("workers-late", 1)
+        self.run_failover()
+        self.assertEqual([to for _f, to, _s, _b in self.sent()], ["run:run_w", "dispatch:ctx_w"])
+
+    def test_limited_terminals_are_moved_before_idle_ones(self):
+        # 端末は 1 つ 10 秒ほどかかる。上限で止まった端末（と Dispatch を受けている端末）を、手の空いた端末より先に移す。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.put("terminals.json", [terminal("term_a"), terminal("term_b"), terminal("term_c", preview=LIMIT_LINE)])
+        self.put("agents.json", [pane_agent("term_a"), pane_agent("term_b"), pane_agent("term_c")])
+        for pid, h in ((101, "term_a"), (102, "term_b"), (103, "term_c")):
+            self.proc(pid, seat=A, handle=h, session=S1, argv=["--settings", self.settings, "--resume", S1])
+        self.put("workers.json", [{"dispatchId": "ctx_b", "taskId": "task_b", "state": "ready", "outcome": "in_progress", "terminal": "term_b"}])
+        self.put("shows.json", {"ctx_b": {"dispatchId": "ctx_b", "runId": "run_b", "state": "ready"}})
+        self.put("runs.json", {"run_b": {"run": {"id": "run_b", "coordinator_handle": "structworker_lead"}}})
+        self.run_failover()
+        exits = [h for h, t in self.typed() if t == "/exit"]
+        self.assertEqual(exits, ["term_c", "term_b", "term_a"])
+
+    def test_a_dispatch_given_during_another_move_moves_that_terminal_next(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.put("terminals.json", [terminal(h) for h in ("term_a", "term_b", "term_z")])
+        self.put("agents.json", [pane_agent(h) for h in ("term_a", "term_b", "term_z")])
+        for pid, h in ((101, "term_a"), (102, "term_b"), (103, "term_z")):
+            self.proc(pid, seat=A, handle=h, session=S1, argv=["--settings", self.settings, "--resume", S1])
+        self.put("workers.json", [{"dispatchId": "ctx_z", "taskId": "task_z", "state": "ready", "outcome": "in_progress", "terminal": "term_z"}])
+        self.put("shows.json", {"ctx_z": {"dispatchId": "ctx_z", "runId": "run_z", "state": "ready"}})
+        self.put("runs.json", {"run_z": {"run": {"id": "run_z", "coordinator_handle": "structworker_lead"}}})
+        # 1 回目は順を選ぶとき、2 回目は term_a を /exit する直前。term_a を移している間に term_z が Dispatch を受けた
+        self.put("workers-late", 2)
+        self.run_failover()
+        self.assertEqual([h for h, t in self.typed() if t == "/exit"], ["term_a", "term_z", "term_b"])
 
     def test_a_chat_without_a_turn_is_stopped(self):
         # 窓口のチャットは ORCA_TERMINAL_HANDLE を持たない。作業中のターンが無いので裏の claude を止める（次の発言で今の席に起きる）。
