@@ -826,7 +826,7 @@ test('追加 25: 見てのカードに見本（draft）があれば、窓とパ�
   }
 })
 
-test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ちなら先頭が「答える」で札が付き、開くボタンは担当のチャット。全体の仕事とタスクの状態も「返事待ち（あなた）」', () => {
+test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ちなら先頭が「チャットで答える」（窓では答えられない。R225）で札が付き、開くボタンは担当のチャット。全体の仕事とタスクの状態も「返事待ち（あなた）」', () => {
   const m = (state: 'working' | 'done') => aoba((v) => {
     v.cockpit!.streams.find((x) => x.id === 's2')!.form = 'cowork'
     v.cockpit!.cards = v.cockpit!.cards.filter((x) => x.stream !== 's2')
@@ -834,7 +834,8 @@ test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ち�
   })
   const asked = page(m('done'), { sel: '/ws/aoba##cowork:s2' })
   const rowOf = (h: string) => h.match(/<[^>]*data-sel="\/ws\/aoba##cowork:s2"[\s\S]*?<\/button>/)?.[0] ?? ''
-  assert.match(rowOf(asked), /<span class="kd">答える<\/span>/)
+  assert.match(rowOf(asked), /<span class="kd">チャットで答える<\/span>/)
+  assert.match(asked, /data-sel="\/ws\/aoba#r5"[^>]*>\s*<span class="kd">承認・直し<\/span>/)
   assert.match(text(rowOf(asked)), /入口は社内向けにも描きますか？/)
   assert.match(rowOf(asked), /class="tag miss">返事待ち（あなた）</)
   assert.match(asked, /data-act="focus"[^>]*>担当のチャットを開く</)

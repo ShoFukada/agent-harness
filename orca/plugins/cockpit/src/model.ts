@@ -25,13 +25,14 @@ export const KIND_LABEL: Record<CardKind, string> = {
 /** 要対応の行の先頭に出す、深田さんがすること（R115）。種類の名前ではなく動作の語にする。 */
 export function actionVerb(c: Pick<Card, 'kind' | 'manual'> & { id?: string }, ask?: 'question' | 'permit'): string {
   if (c.kind === 'stuck') return ask === 'question' ? '答える' : ask === 'permit' ? '許可' : '再開'
-  if (c.id?.startsWith(COWORK_ID)) return ask === 'question' ? '答える' : '確認'
+  // 一緒に作る仕事の問いは窓では答えられず、担当のチャットで答える（R225）。
+  if (c.id?.startsWith(COWORK_ID)) return ask === 'question' ? 'チャットで答える' : '確認'
   if (c.id?.startsWith(IDLE_ID)) return '確認'
   if (c.kind === 'permit' && c.manual) return '対応'
   return ACTION_VERB[c.kind]
 }
 const ACTION_VERB: Record<CardKind, string> = {
-  inbox: '返信', send: '送る', decide: '決める', review: '承認', permit: '許可', stuck: '再開', consult: '相談', talk: '協議', report: '見る'
+  inbox: '返信', send: '送る', decide: '決める', review: '承認・直し', permit: '許可', stuck: '再開', consult: '相談', talk: '協議', report: '見る'
 }
 
 export type Milestone = { date: string; label: string }
