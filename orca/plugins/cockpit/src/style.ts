@@ -374,8 +374,8 @@ body { margin:0; }
  * 選んでいる行は、薄い地の色と左の細い線で示す（枠で囲まない）。
  */
 .ck.win .rows { display:grid; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule2); }
-/* 先頭の語の欄は、いちばん長い語（「チャットで答える」の 8 字）が 1 行に収まる幅で固定する。行ごとに別の grid なので auto では題の書き出しがそろわない。 */
-.ck.win .cardrow { display:grid; grid-template-columns:calc(var(--fs-xs) * 8) minmax(0,1fr) auto; gap:12px; align-items:center; border:0; border-radius:0; padding:8px 12px; background:none; text-align:left; width:100%; }
+/* 先頭の語の欄は、いちばん長い語（「承認・直し」の 5 字）が 1 行に収まる幅で固定する。行ごとに別の grid なので auto では題の書き出しがそろわない。 */
+.ck.win .cardrow { display:grid; grid-template-columns:calc(var(--fs-xs) * 6) minmax(0,1fr) auto; gap:12px; align-items:center; border:0; border-radius:0; padding:8px 12px; background:none; text-align:left; width:100%; }
 .ck.win .cardrow + .cardrow { border-top:1px solid var(--rule2); }
 /* 一覧が狭いと語の欄の幅で題が細くなりすぎるので、語を題の上の 1 行に置く。 */
 @container wpane (max-width:520px) { .ck.win .cardrow { grid-template-columns:minmax(0,1fr) auto; row-gap:4px; } .ck.win .cardrow .kd { grid-column:1 / -1; } }

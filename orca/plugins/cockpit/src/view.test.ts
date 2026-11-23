@@ -315,12 +315,12 @@ test('パネルの詳細（判断材料・出典）は開閉を覚え、描き�
   assert.match(html(model(), { ...newUi(), sel: k, open: { [`more:${k}`]: true } }), /data-fold="more:\/ws\/aoba#d21" open>/)
 })
 
-test('要対応の行の先頭は深田さんがすることの語（R115）。確認は直しも伝えられる「承認・直し」、一緒に作る仕事の問いはチャットで答える（R225）。対応済みの行は種類の名前のまま', () => {
+test('要対応の行の先頭は深田さんがすることの語（R115）。確認は直しも伝えられる「承認・直し」、一緒に作る仕事の問いも窓で答える（d209）。対応済みの行は種類の名前のまま', () => {
   const verb = (kind: string, extra: Record<string, unknown> = {}, ask?: 'question' | 'permit') => actionVerb({ kind, ...extra } as never, ask)
   assert.deepEqual(['decide', 'review', 'send', 'permit', 'inbox', 'consult', 'talk', 'report'].map((k) => verb(k)), ['決める', '承認・直し', '送る', '許可', '返信', '相談', '協議', '見る'])
   assert.equal(verb('permit', { manual: { check: 'x' } }), '対応')
   assert.deepEqual([verb('stuck', {}, 'question'), verb('stuck', {}, 'permit'), verb('stuck')], ['答える', '許可', '再開'])
-  assert.deepEqual([verb('talk', { id: '#cowork:s2' }, 'question'), verb('talk', { id: '#cowork:s2' })], ['チャットで答える', '確認'])
+  assert.deepEqual([verb('talk', { id: '#cowork:s2' }, 'question'), verb('talk', { id: '#cowork:s2' })], ['答える', '確認'])
   const h = html(model(), newUi())
   assert.match(h, /aria-label="確認: 配車画面の一覧（並べ替えと絞り込み）">\n      <span class="meta"><span class="kind">承認・直し<\/span>/)
   assert.match(h, /<span class="kind">送る<\/span>/)

@@ -25,8 +25,8 @@ export const KIND_LABEL: Record<CardKind, string> = {
 /** 要対応の行の先頭に出す、深田さんがすること（R115）。種類の名前ではなく動作の語にする。 */
 export function actionVerb(c: Pick<Card, 'kind' | 'manual'> & { id?: string }, ask?: 'question' | 'permit'): string {
   if (c.kind === 'stuck') return ask === 'question' ? '答える' : ask === 'permit' ? '許可' : '再開'
-  // 一緒に作る仕事の問いは窓では答えられず、担当のチャットで答える（R225）。
-  if (c.id?.startsWith(COWORK_ID)) return ask === 'question' ? 'チャットで答える' : '確認'
+  // 一緒に作る仕事の問いも、窓の右の欄から担当に返事を送れる（d209 で「チャットで答える」から戻した）。
+  if (c.id?.startsWith(COWORK_ID)) return ask === 'question' ? '答える' : '確認'
   if (c.id?.startsWith(IDLE_ID)) return '確認'
   if (c.kind === 'permit' && c.manual) return '対応'
   return ACTION_VERB[c.kind]
