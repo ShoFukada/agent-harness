@@ -335,9 +335,13 @@ function askDecidedHtml(b: Board, a: AskThread): { html: string; n?: number } {
   const ops = b.v.log.ops.filter((o) => o.type === 'ask_decide' && o.item_id === askItem(a.id) && !undone.has(o.op_id))
   const o = ops.at(-1)
   if (!o) return { html: '' }
-  // 窓に分かるのは返しの記録があるかだけ（知らせが届いたかは分からない。Codex 軽微 3）。
+  // 返しの記録があるか、窓が写しのタブに「返しを書いて」を届けたか（askSent。読めなかった窓は返し待ちとだけ出す）。
   const got = a.returns.some((r) => String(r.op) === String(o.op_id))
-  return { html: `<p class="askdone"><b>${o.answer?.at ? `答え ${esc(o.answer.at)} を` : ''}窓口に返すよう依頼しました</b><span class="mut">${esc(fmtDate(o.at))}</span>${got ? tag('写しが返しました') : tag('写しからの返し待ち', 'wait')}</p>`, n: o.answer?.n }
+  const state = got ? tag('写しが返しました')
+    : !b.v.askSent ? tag('写しからの返し待ち', 'wait')
+    : b.v.askSent.includes(o.op_id) ? tag('写しに届けました・返し待ち', 'wait')
+    : tag('写しにまだ届いていません・届けられるようになったら窓が送り直します', 'wait')
+  return { html: `<p class="askdone"><b>${o.answer?.at ? `答え ${esc(o.answer.at)} を` : ''}窓口に返すよう依頼しました</b><span class="mut">${esc(fmtDate(o.at))}</span>${state}</p>`, n: o.answer?.n }
 }
 
 function askThreadHtml(b: Board, a: AskThread, ui: Ui, now: number): string {

@@ -658,9 +658,15 @@ test('返しの札と「これで決める」: 帳簿の asks[] で反映済み�
   assert.doesNotMatch(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }), /data-ask="decide"/, '同じ答えでもう決めたら、ボタンを出さない')
   m.boards[0]!.v.log.ops.pop()
   assert.match(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } }), /data-ask="decide" data-id="ask1" data-at="09:11" data-head="1 つにする" data-n="1"/)
-  // 押したが返しがまだ無ければ、返し待ちとだけ出す（知らせが届いたかは窓に分からない）。
+  // 押したが返しがまだ無ければ、届けた記録を読めない窓は返し待ちとだけ出す。
   m.boards[0]!.v.log.ops.push({ op_id: 10, at: '2026-11-21T09:13:00+09:00', item_id: '#ask:ask1', item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
-  assert.match(text(page(m, { tab: 'whole', askMine: { '/ws/aoba#ask1': true } })), /答え 09:11 を窓口に返すよう依頼しました 11\/21\(土\) 09:13 写しからの返し待ち/)
+  const mine = { tab: 'whole' as const, askMine: { '/ws/aoba#ask1': true } }
+  assert.match(text(page(m, mine)), /答え 09:11 を窓口に返すよう依頼しました 11\/21\(土\) 09:13 写しからの返し待ち/)
+  // 届けた記録があれば、写しに届いたか・まだかを語で出す。
+  m.boards[0]!.v.askSent = []
+  assert.match(text(page(m, mine)), /09:13 写しにまだ届いていません・届けられるようになったら窓が送り直します/)
+  m.boards[0]!.v.askSent = [10]
+  assert.match(text(page(m, mine)), /09:13 写しに届けました・返し待ち/)
 })
 
 test('質問の欄は案件ごと: 別の案件の下書き・当たり・待ちを出さない（Codex 重大 2）', () => {

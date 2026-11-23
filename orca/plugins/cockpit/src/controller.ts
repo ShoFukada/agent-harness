@@ -522,7 +522,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       case 'decide':
         if (root && d.id && t.askDecide)
           void t.askDecide(root, d.id, { at: d.at ?? '', head: d.head ?? '', n: Number(d.n) }).then(
-            (x) => toast(x.again ? 'この答えはもう窓口に返すよう依頼しています' : x.sent ? '窓口に返すよう依頼しました' : '記録しました'),
+            (x) => toast(x.again ? 'この答えはもう窓口に返すよう依頼しています' : x.sent ? '窓口に返すよう依頼しました'
+              : `窓口に返す記録はしました。写しの会話に届けられなかったので、届けられるようになったら窓が送り直します${x.reason ? `（${x.reason}）` : ''}`),
             fail
           )
         return

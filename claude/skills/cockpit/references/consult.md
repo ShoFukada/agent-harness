@@ -33,8 +33,8 @@ cockpit skill の SKILL.md から分けた手順。カードの相談・窓か�
 - 質問 id は `ask<数>`（カードの id は種類の頭文字に連番で、相談は `q3` のように q を使うので、ぶつからないよう ask にした）。質問と答えの控え `.orca/consult/ask-<質問 id>.md`（頭に結んだカードとタスク）と、返しの記録 `.orca/consult/ask-<質問 id>.returns.jsonl` は consult と hook が書く。窓口は控えから返しを探さず、返しの記録だけを読む
 - 質問の中の深田の発言（窓で打った最初の質問も）は、hook が発言の記録に `ask`（質問 id）付きで残す。ほかの発言と同じく仕分ける（references/intake.md の「受付と仕分け」）
 - 返しの知らせは件名「質問 <質問 id>: 返し <return_id>」で、本文の末尾に返しの JSON が付く。JSON はカードの相談の返しから `card`・`rev`・`choice` を除いた形で、窓の「この答えを窓口に返す」に答えた返しは `op`（その op_id）を持つ: `{"return_id": "ask3-1", "rulings_seen": "R80", "op": 812, "decisions": [{"text", "quote", "utterance"}], "requests": [{"quote", "utterance"}], "open": [...], "affects": ["t50"]}`
-- 窓の「この答えを窓口に返す」: 窓が先に `ask_decide` の op（`item_id: "#ask:<質問 id>"`。references/ops.md）を書き、そのあと相手に `【相談の知らせ】返しを書いて（op <op_id>）` を送る。相手が書く前に止まっても、op が残るので窓口が拾える
-- 質問のタブへの知らせは、カードの相談の 7 と同じ書式で `orca terminal send --terminal <タブの handle> --text "..." --enter` で送る。質問の相手は Read・Grep・Glob しか使えず `check` を打てないので、orchestration の知らせにしない（worktree-flow skill の「知らせの経路」の例外）。タブの handle は `orca terminal list --worktree path:<root>` のタブ名「質問｜<案件名>｜<質問 id>」
+- 窓の「この答えを窓口に返す」: 窓が先に `ask_decide` の op（`item_id: "#ask:<質問 id>"`。references/ops.md）を書き、そのあと相手に `【相談の知らせ】返しを書いて（op <op_id>）` を送る。タブが見つからず届けられなかった知らせは、窓が 1 分ごとの見回りで送り直す（届けた op は窓の置き場所の `asksent.json` に覚え、2 回送らない）。相手が書く前に止まっても、op が残るので窓口が拾える
+- 質問のタブへの知らせは、カードの相談の 7 と同じ書式で `orca terminal send --terminal <タブの handle> --text "..." --enter` で送る。質問の相手は Read・Grep・Glob しか使えず `check` を打てないので、orchestration の知らせにしない（worktree-flow skill の「知らせの経路」の例外）。タブの handle は `orca terminal list --worktree path:<root> --include-visual-layouts` の `visualLayouts` のタブ名「質問｜<案件名>｜<質問 id>」で探す。Orca を開き直したあと画面がまだその worktree を開いていないと `visualLayouts` に出ないので、そのときだけ `terminals[]` の同じ worktree・同じ題の端末を使う（端末の題は中のプログラムが書き換えうるので、layouts があればそちらを使う）
 
 返しを受けたら、「カードの相談」の 1〜7 を次のように読み替えて反映する。帳簿の `asks[]` の、その質問の行の `from_returns` に return_id を足すのが最後の書き込み。
 1. 重複を見る: その質問の行の `from_returns` で見る。行が無ければ、6 の書き込みで `asks[]` に `{"id": "<質問 id>", "card": "<結んだカード id>", "task": "<結んだタスク id>", "memo": ".orca/consult/ask-<質問 id>.md"}` を足す（結び先は控えの頭の「- カード:」「- タスク:」の行）
@@ -47,5 +47,5 @@ cockpit skill の SKILL.md から分けた手順。カードの相談・窓か�
 
 `compaction-keep.py unreflected <root>` と state.ts の `checks.unreflected_returns` には、質問の分が `ask` 付きで並ぶ。
 - `{ "id": "<return_id>", "ask": "<質問 id>", "missing": [...] }`: `判断の記録`・`帳簿`（質問の行の `from_returns` に無い）は上の手順で反映する。`保留` は差し戻しを送り直して返し直しを待つ。`担当への通知`（`notify[]` に `message_id` の無い行。`tasks` にタスクの id）は 7 をやり直す。Run が替わっても新しい窓口がここから拾う
-- `{ "id": null, "ask": "<質問 id>", "op": <op_id>, "missing": ["返し"] }`: 「この答えを窓口に返す」が押されたのに、その op に結ばれた返しが無い。タブが開いていれば `【相談の知らせ】返しを書いて（op <op_id>）` を送り直す。相手が止まって書けないときは、控えの答えを読んで判断のカードで深田に確かめ、窓口が上の 5・6 で書いて op を `applied_ops` に足す
+- `{ "id": null, "ask": "<質問 id>", "op": <op_id>, "missing": ["返し"] }`: 「この答えを窓口に返す」が押されたのに、その op に結ばれた返しが無い。`【相談の知らせ】返しを書いて（op <op_id>）` は窓が届くまで送り直すので、窓口は送らない（窓の質問の行に「写しに届けました・返し待ち」か「写しにまだ届いていません」が出る）。届いたのに相手が止まって書けないとき・タブが閉じていて届かないときは、控えの答えを読んで判断のカードで深田に確かめ、窓口が上の 5・6 で書いて op を `applied_ops` に足す
 - 質問のタブは窓口が閉じない（深田が続きを聞く）。閉じられても、控えと返しの記録は残り、同じ質問 id で聞くと窓口の今の会話を写して立て直す

@@ -124,6 +124,8 @@ export type CockpitView = {
   questions?: QuestionFact[]
   /** 窓からの質問（控えの節は新しいものだけに絞る）。パネルは持たない。 */
   asks?: AskThread[]
+  /** 窓が質問のタブに「返しを書いて（op n）」を届けた op。読めなければ無い（届いたかを出さない）。パネルは持たない。 */
+  askSent?: number[]
   /** 閉じていないカードの文面を宛先の書式で検査した結果（カード id ごと）。コピーは結果の無い・違反のある文面を入れない。 */
   drafts?: Record<string, DraftCheck>
   /**

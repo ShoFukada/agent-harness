@@ -788,12 +788,92 @@ test('質問のタブを自動で閉じる（R180）: 窓のブラウザが開�
 })
 
 test('質問のタブは、root の worktree のタブだけから、繋がっている端末を題で引く（consult の live_thread と同じ読み方）', () => {
-  const layouts = [
+  const visualLayouts = [
     { worktreePath: '/ws/a', root: { type: 'split', children: [{ tabs: [{ title: '質問｜案件A｜ask1', panes: [{ type: 'terminal', handle: 'term_1' }, { type: 'terminal', handle: 'term_gone', connected: false }] }] }] } },
     { worktreePath: '/ws/b', tabs: [{ title: '質問｜案件A｜ask1', panes: [{ type: 'terminal', handle: 'term_b' }] }] }
   ]
-  assert.deepEqual(tabsOf(layouts, '/ws/a'), [{ title: '質問｜案件A｜ask1', handles: ['term_1'] }])
+  // 端末の題は中のプログラムが書き換えうるので、layouts があれば terminals[] は見ない。
+  const terminals = [{ handle: 'term_1', worktreePath: '/ws/a', title: '✳ 書き換わった題', connected: true }]
+  assert.deepEqual(tabsOf({ visualLayouts, terminals }, '/ws/a'), [{ title: '質問｜案件A｜ask1', handles: ['term_1'] }])
   assert.deepEqual(askTitle('案件｜A', 'ask2'), '質問｜案件 A｜ask2')
+})
+
+test('質問のタブ: Orca を開き直して画面がまだその worktree を開いていない（layouts が無い）ときは、terminals[] の同じ worktree の端末を題で引く', () => {
+  // 11/23 の medurance-web-docs と同じ形（orphaned でも繋がっていて送れる端末）。
+  const terminals = [
+    { handle: 'term_ask1', worktreePath: '/ws/a', title: '質問｜案件A｜ask1', orphaned: true, connected: true, writable: true },
+    { handle: 'term_shell', worktreePath: '/ws/a', title: '~/ws/a', orphaned: true, connected: true },
+    { handle: 'term_gone', worktreePath: '/ws/a', title: '質問｜案件A｜ask2', connected: false },
+    { handle: 'term_b', worktreePath: '/ws/b', title: '質問｜案件A｜ask1', connected: true }
+  ]
+  const other = [{ worktreePath: '/ws/b', tabs: [{ title: '質問｜案件A｜ask1', panes: [{ type: 'terminal', handle: 'term_b' }] }] }]
+  assert.deepEqual(tabsOf({ visualLayouts: other, terminals }, '/ws/a'), [
+    { title: '質問｜案件A｜ask1', handles: ['term_ask1'], loose: true },
+    { title: '~/ws/a', handles: ['term_shell'], loose: true }
+  ])
+  assert.deepEqual(tabsOf({ visualLayouts: [], terminals: [] }, '/ws/a'), [])
+  assert.deepEqual(tabsOf(undefined, '/ws/a'), [])
+})
+
+test('これで決める: layouts が無く terminals[] にだけ題の端末があっても、質問のタブに「返しを書いて」を送る（11/23 の op 233）', async () => {
+  const { a, rows } = workspaces()
+  const memo = path.join(a, '.orca/consult/ask-ask3.md')
+  mkdirSync(path.dirname(memo), { recursive: true })
+  writeFileSync(memo, '# 質問｜案件A｜ask3\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n')
+  const list = { visualLayouts: [], terminals: [{ handle: 'term_ask3', worktreePath: a, title: askTitle('案件A', 'ask3'), orphaned: true, connected: true, writable: true }] }
+  const { s, port, post, calls, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs: async (root) => tabsOf(list, root) })
+  await listen(port, s.token).until((v) => !!board(v, a)?.asks?.find((x) => x.id === 'ask3')?.decide)
+  const r = await post('askdecide', { root: a, ask: 'ask3', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  assert.equal(r.body.sent, true)
+  assert.deepEqual(calls.filter((x) => x[0] === 'send'), [['send', 'term_ask3', askNotice(r.body.op)]])
+  assert.deepEqual(JSON.parse(readFileSync(path.join(wdir, 'asksent.json'), 'utf8')), { [a]: [r.body.op] }, '届けた op を窓の置き場所に覚える')
+})
+
+test('届けられなかった「返しを書いて」は、常駐のプロセスの見回りがタブを見つけたときに 1 回だけ送り直す。取り消した op・返しのある op は送らない', async () => {
+  const { a, rows } = workspaces()
+  const dir = path.join(a, '.orca/consult')
+  mkdirSync(dir, { recursive: true })
+  const qa = (id: string) => writeFileSync(path.join(dir, `ask-${id}.md`), `# 質問｜案件A｜${id}\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n`)
+  for (const id of ['ask1', 'ask2', 'ask3']) qa(id)
+  // ask2 の op 51 は取り消し済み、ask3 の op 52 は返しが届いている。ask1 の op 50 だけが返し待ちで、まだ届けていない。
+  const decide = (op_id: number, ask: string) => ({ op_id, at: '2026-11-23T05:06:59.989Z', item_id: `#ask:${ask}`, item_rev: 0, type: 'ask_decide', answer: { at: '09:11', head: '1 つにする', n: 1 } })
+  writeFileSync(path.join(a, '.orca/cockpit.user.json'), JSON.stringify({ ops: [decide(50, 'ask1'), decide(51, 'ask2'), { op_id: 53, at: '2026-11-23T05:07:30.000Z', item_id: '#ask:ask2', item_rev: 0, type: 'undo', undo_of: 51 }, decide(52, 'ask3')] }))
+  writeFileSync(path.join(dir, 'ask-ask3.returns.jsonl'), JSON.stringify({ return_id: 'ask3-1', ask: 'ask3', op: 52, decisions: [] }) + '\n')
+  // 初めは Orca がどのタブも返さない（開き直した直後で、端末の一覧も読めていない）。
+  let list: unknown = { visualLayouts: [], terminals: [] }
+  const { s, port, calls, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs: async (root) => tabsOf(list, root) })
+  const ev = listen(port, s.token)
+  await ev.until((v) => (board(v, a)?.asks ?? []).length === 3)
+  const now = Date.now()
+  await s.sweepAsks(now)
+  assert.deepEqual(calls.filter((x) => x[0] === 'send'), [], 'タブが無ければ送らない')
+  assert.deepEqual(board(await ev.until((v) => board(v, a)?.askSent !== undefined), a)!.askSent, [], '窓には、まだどの op も届けていないと渡す')
+  const term = (id: string) => ({ handle: `term_${id}`, worktreePath: a, title: askTitle('案件A', id), connected: true })
+  list = { visualLayouts: [], terminals: ['ask1', 'ask2', 'ask3'].map(term) }
+  await s.sweepAsks(now)
+  assert.deepEqual(calls.filter((x) => x[0] === 'send'), [['send', 'term_ask1', askNotice(50)]])
+  assert.deepEqual(JSON.parse(readFileSync(path.join(wdir, 'asksent.json'), 'utf8')), { [a]: [50] })
+  await ev.until((v) => !!board(v, a)?.askSent?.includes(50))
+  await s.sweepAsks(now)
+  assert.equal(calls.filter((x) => x[0] === 'send').length, 1, '届けた op は 2 回送らない')
+})
+
+test('質問のタブを自動で閉じる（R180）: terminals[] から引いたときも、asktabs.json に覚えた handle と同じ端末だけを閉じる（開き直して handle が変わったものは閉じない）', async () => {
+  const { a, rows } = workspaces()
+  const dir = path.join(a, '.orca/consult')
+  mkdirSync(dir, { recursive: true })
+  const now = Date.now()
+  const old = new Date(now - 2 * 3600_000)
+  for (const id of ['ask1', 'ask2']) {
+    writeFileSync(path.join(dir, `ask-${id}.md`), `# 質問｜案件A｜${id}\n\n### 質問 09:10（u-1）\n入口は？\n\n### 答え 09:11\n1 つにする\n\n`)
+    utimesSync(path.join(dir, `ask-${id}.md`), old, old)
+  }
+  // ask1 は開き直して handle が変わった端末、ask2 は窓が立てたままの端末。
+  const list = { visualLayouts: [], terminals: [{ handle: 'term_new_ask1', worktreePath: a, title: askTitle('案件A', 'ask1'), orphaned: true, connected: true }, { handle: 'term_ask2', worktreePath: a, title: askTitle('案件A', 'ask2'), orphaned: true, connected: true }] }
+  const { s, calls, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs: async (root) => tabsOf(list, root) })
+  writeFileSync(path.join(wdir, 'asktabs.json'), JSON.stringify({ [a]: { ask1: 'term_old_ask1', ask2: 'term_ask2' } }))
+  await s.sweepAsks(now)
+  assert.deepEqual(calls.filter((x) => x[0] === 'close'), [['close', 'term_ask2']])
 })
 
 test('窓に送る質問は、控えの新しい節と返しの表示に使う欄に絞る', async () => {

@@ -589,6 +589,34 @@ export async function writeAskTab(dir: string, root: string, id: string, handle:
   }
 }
 
+/**
+ * 窓が質問のタブに「返しを書いて（op n）」を届けた op（窓の置き場所の asksent.json、案件ごとに op_id の並び）。
+ * 届けられなかった op を窓が送り直すときに、同じ op を 2 回送らないために読む。
+ */
+export async function readAskSent(dir: string): Promise<Record<string, number[]>> {
+  try {
+    const v = JSON.parse(await fsp.readFile(path.join(dir, 'asksent.json'), 'utf8'))
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  } catch (e) {
+    // 無い・壊れたものは空から作り直す（失うのは届けた記録だけで、返しの無い op にもう一度知らせが届くだけ）。読めなかったときは、書き込みで他の案件の記録を消さないよう投げる。
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT' || e instanceof SyntaxError) return {}
+    throw e
+  }
+}
+
+export async function addAskSent(dir: string, root: string, op: number): Promise<void> {
+  const file = path.join(dir, 'asksent.json')
+  const release = await lock(`${file}.lock`)
+  try {
+    const v = await readAskSent(dir)
+    const mine = Array.isArray(v[root]) ? v[root] : []
+    if (!mine.includes(op)) v[root] = [...mine, op]
+    await writeAtomic(file, JSON.stringify(v) + '\n')
+  } finally {
+    await release()
+  }
+}
+
 /** 「path:12」を ファイルと行に分ける。行の無いパスと、名前に : を含むだけのパスはそのまま。 */
 export function splitLine(href: string): { file: string; line?: number } {
   const m = /^(.*\S):(\d+)$/.exec(href)

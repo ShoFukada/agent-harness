@@ -12,13 +12,13 @@ import { ASK_ID, askItem, escapeAskSections, requestCards, OP_TYPES, overlay, te
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
 import type { Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
-import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks } from '../src/state.ts'
+import { coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks, unreflectedAsks } from '../src/state.ts'
 import {
   currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { sendFromMailbox, type MailOrca } from './mail.ts'
-import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readAskTabs, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAskTab, writeNotified, type Files, type SendRun } from '../src/store.ts'
+import { addAskSent, appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readAskSent, readAskTabs, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAskTab, writeNotified, type Files, type SendRun } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
 const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts', 'src/markdown.ts', 'src/since.ts'])
@@ -69,8 +69,8 @@ export type Orca = {
   taskLink(task: string): Promise<TaskLink>
   /** orchestration inbox の新しい 300 通。止まった理由（escalation の failureKind）と、答えの無い question を読む。 */
   inbox?(): Promise<InboxMessage[]>
-  /** worktree のタブ（題と、その中の端末の handle）。窓からの質問のタブを題で探す（題は --title で付けたまま残る）。 */
-  tabs?(root: string): Promise<{ title: string; handles: string[] }[]>
+  /** worktree のタブ（tabsOf）。窓からの質問のタブを題で探す（タブの題は --title で付けたまま残る）。 */
+  tabs?(root: string): Promise<AskTabRow[]>
   /** チャットが Orca に開いているか（orca agent show の result.places が空でない）。無い session は false、読めなければ投げる。 */
   chatOpen?(handle: string): Promise<boolean>
   /** チャットの最後の返事の全文（orca agent show の lastAssistantMessage）。無ければ null、読めなければ投げる。 */
@@ -168,10 +168,7 @@ export function orcaCli(bin = 'orca'): Orca {
       return { dispatch: d?.id ?? null, followUpOf: d?.follow_up_of_dispatch_id ?? null }
     },
     inbox: async () => ((await run(['orchestration', 'inbox', '--full', '--limit', '300'])).messages ?? []) as InboxMessage[],
-    tabs: async (root) => {
-      const r = await run(['terminal', 'list', '--worktree', `path:${root}`, '--include-visual-layouts'])
-      return tabsOf(r.visualLayouts, root)
-    },
+    tabs: async (root) => tabsOf(await run(['terminal', 'list', '--worktree', `path:${root}`, '--include-visual-layouts']), root),
     chatLast: async (handle) => ((await run(['agent', 'show', handle])).places as { lastAssistantMessage?: string | null }[] | undefined)?.[0]?.lastAssistantMessage ?? null,
     chatOpen: (handle) =>
       run(['agent', 'show', handle]).then(
@@ -200,18 +197,33 @@ export function orcaCli(bin = 'orca'): Orca {
   }
 }
 
-/** terminal list --include-visual-layouts の visualLayouts から、root の worktree のタブを抜く（consult の live_thread と同じ読み方）。 */
-export function tabsOf(layouts: unknown, root: string): { title: string; handles: string[] }[] {
+/**
+ * worktree のタブ（題と、その中の繋がっている端末の handle）。loose は、題をタブ名ではなく端末の題（terminals[].title）から読んだもの。
+ * 端末の題は中の Claude・シェルが書き換えうるので、題が合わなくても端末が無いとは言い切れない。
+ */
+export type AskTabRow = { title: string; handles: string[]; loose?: true }
+
+/**
+ * terminal list --include-visual-layouts の結果から、root の worktree のタブを抜く。visualLayouts（consult の live_thread と同じ読み方）を先に使い、
+ * その worktree の layouts が無いとき（Orca を開き直したあと、画面がまだその worktree を開いていない）だけ、terminals[] の同じ worktree の端末を 1 つずつタブとして返す。
+ */
+export function tabsOf(list: unknown, root: string): AskTabRow[] {
+  const rec = (n: unknown): n is Record<string, unknown> => typeof n === 'object' && n !== null && !Array.isArray(n)
   const terms = (n: unknown): string[] =>
-    Array.isArray(n) ? n.flatMap(terms) : typeof n === 'object' && n !== null
-      ? [...((n as Record<string, unknown>).type === 'terminal' && typeof (n as Record<string, unknown>).handle === 'string' && (n as Record<string, unknown>).connected !== false ? [(n as Record<string, string>).handle] : []), ...Object.values(n).flatMap(terms)]
+    Array.isArray(n) ? n.flatMap(terms) : rec(n)
+      ? [...(n.type === 'terminal' && typeof n.handle === 'string' && n.connected !== false ? [n.handle] : []), ...Object.values(n).flatMap(terms)]
       : []
   const tabs = (n: unknown): Record<string, unknown>[] =>
-    Array.isArray(n) ? n.flatMap(tabs) : typeof n === 'object' && n !== null
-      ? [...(Array.isArray((n as Record<string, unknown>).tabs) ? ((n as Record<string, unknown>).tabs as Record<string, unknown>[]) : []), ...Object.values(n).flatMap(tabs)]
+    Array.isArray(n) ? n.flatMap(tabs) : rec(n)
+      ? [...(Array.isArray(n.tabs) ? (n.tabs as Record<string, unknown>[]) : []), ...Object.values(n).flatMap(tabs)]
       : []
-  const mine = (Array.isArray(layouts) ? layouts : []).filter((l) => typeof l === 'object' && l !== null && path.resolve(String((l as Record<string, unknown>).worktreePath ?? '/')) === path.resolve(root))
-  return tabs(mine).filter((t) => typeof t.title === 'string').map((t) => ({ title: t.title as string, handles: [...new Set(terms(t.panes))] }))
+  const here = (x: unknown): x is Record<string, unknown> => rec(x) && path.resolve(String(x.worktreePath ?? '/')) === path.resolve(root)
+  const r = rec(list) ? list : {}
+  const mine = (Array.isArray(r.visualLayouts) ? r.visualLayouts : []).filter(here)
+  if (mine.length) return tabs(mine).filter((t) => typeof t.title === 'string').map((t) => ({ title: t.title as string, handles: [...new Set(terms(t.panes))] }))
+  return (Array.isArray(r.terminals) ? r.terminals : [])
+    .filter((t): t is Record<string, unknown> => here(t) && typeof t.title === 'string' && typeof t.handle === 'string' && t.connected !== false)
+    .map((t) => ({ title: t.title as string, handles: [t.handle as string], loose: true as const }))
 }
 
 type Ws = {
@@ -408,7 +420,7 @@ export function createServer(opts: Options) {
       root, cockpit, log: files.log, figures: files.figures, errors: files.errors,
       archive,
       workers: root ? workersOf(root, files) : [], dispatches: root ? facts.get(root) : undefined, current: root ? currents.get(root) : undefined, owners, ownersStale: ownersStale || undefined,
-      notifiedOp: root ? await readNotified(opts.dir, root) : 0, signal: ws?.signal, handoff: files.handoff,
+      notifiedOp: root ? await readNotified(opts.dir, root) : 0, askSent: root ? await readAskSent(opts.dir).then((v) => v[root] ?? [], () => undefined) : undefined, signal: ws?.signal, handoff: files.handoff,
       // 仕分けの検査は intake の位置より後と結ばれていない行だけを見るので、本文は頭だけ送る。
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen, taskSeen: files.taskSeen,
       returned: files.cockpit ? returnedUtterances(files.cockpit, files.rulings, files.consults, files.asks) : undefined,
@@ -762,8 +774,9 @@ export function createServer(opts: Options) {
           const hit = tabs.filter((t) => t.title === askTitle(ws.files.cockpit!.workspace.name, id))
           const done = () => (ws.askChecked ??= new Map()).set(id, at)
           // タブが無い（もう閉じた）なら、控えが変わるまで探し直さない。題はあるが端末が繋がっていないときは、次の回にもう一度見る。
+          // 端末の題から読んだとき（画面がまだその worktree を開いていない）は、題が書き換わっただけかもしれないので、次の回にもう一度見る。
           if (!hit.length) {
-            done()
+            if (!tabs.some((t) => t.loose)) done()
             continue
           }
           const handles = hit.flatMap((t) => t.handles)
@@ -799,17 +812,67 @@ export function createServer(opts: Options) {
         ps = rows
         await sync()
       }
+      if (stopped) return
+      await resendAsks().catch((e: Error) => console.error(`質問のタブへの送り直し: ${e.message}`))
       if (!stopped) await sweepAsks(now)
     })().finally(() => (ticking = undefined)))
   }
 
-  /** 質問のタブの端末（題で探す）。閉じていれば理由。 */
-  async function askTab(ws: Ws, id: string): Promise<{ handle: string } | { reason: string }> {
+  /** 質問のタブの端末（題「質問｜<案件名>｜<質問 id>」の完全一致で探す。tabs を渡せば Orca に聞き直さない）。閉じていれば理由。 */
+  async function askTab(ws: Ws, id: string, tabs?: AskTabRow[]): Promise<{ handle: string } | { reason: string }> {
     const closed = { reason: '写しの会話は閉じています。続けて聞くと、窓口の今の会話から写し直します' }
     if (!orca.tabs || !ws.files.cockpit) return closed
     const title = askTitle(ws.files.cockpit.workspace.name, id)
-    const handle = (await orca.tabs(ws.root)).find((t) => t.title === title)?.handles[0]
+    const handle = (tabs ?? (await orca.tabs(ws.root))).find((t) => t.title === title && t.handles.length)?.handles[0]
     return handle ? { handle } : closed
+  }
+
+  /** 「返しを書いて（op n）」を質問のタブに送り、届けた op を窓の置き場所に覚える。案件の順番（inQueue）の中で呼ぶ。 */
+  async function deliverAsk(ws: Ws, id: string, op: number, tabs?: AskTabRow[]): Promise<{ sent: true } | { sent: false; reason: string }> {
+    const tab = await askTab(ws, id, tabs).catch((e: Error) => ({ reason: `タブを探せませんでした: ${e.message}` }))
+    if ('reason' in tab) return { sent: false, reason: tab.reason }
+    try {
+      await orca.send(tab.handle, askNotice(op))
+    } catch (e) {
+      return { sent: false, reason: `写しの会話に送れませんでした: ${(e as Error).message}` }
+    }
+    // 覚えられなければ次の見回りでもう一度送る（知らせが 2 回届くだけで、返しは op ごとに 1 つ）。
+    await addAskSent(opts.dir, ws.root, op).catch((e: Error) => console.error(`asksent.json: ${e.message}`))
+    return { sent: true }
+  }
+
+  /** 返しの無い「この答えを窓口に返す」のうち、まだ質問のタブに届けていない op（state.ts の unreflected_returns の「返し」の行。取り消し・窓口が反映済みは入らない）。 */
+  function undelivered(ws: Ws, sent: readonly number[]): { id: string; op: number }[] {
+    const c = ws.files.cockpit
+    if (!c) return []
+    return unreflectedAsks({ root: ws.root, threads: ws.files.asks, marks: ws.files.askMarks, log: ws.files.log, applied: c.applied_ops ?? [] }, new Set())
+      .flatMap((x) => (x.id === null && typeof x.op === 'number' && !sent.includes(x.op) ? [{ id: x.ask, op: x.op }] : []))
+  }
+
+  /**
+   * 届けられなかった「返しを書いて」を送り直す（Orca を開き直した直後でタブが見つからなかった、送るのに失敗した）。常駐のプロセスが POLL_MS ごとに呼ぶ。
+   * 窓から聞く・窓口に返す・タブを閉じる処理と同じ案件の順番に並べ、順番が来たら控え・返し・操作と届けた記録を読み直す。
+   */
+  async function resendAsks(): Promise<void> {
+    if (!orca.tabs) return
+    const sentOf = async (root: string) => (await readAskSent(opts.dir))[root] ?? []
+    for (const ws of wss.values()) {
+      if (!undelivered(ws, await sentOf(ws.root)).length) continue
+      await inQueue(ws.root, async () => {
+        await reload(ws)
+        const due = undelivered(ws, await sentOf(ws.root))
+        if (!due.length) return
+        const tabs = await orca.tabs!(ws.root)
+        let any = false
+        for (const { id, op } of due) {
+          if (stopped) return
+          if (!(await deliverAsk(ws, id, op, tabs)).sent) continue
+          any = true
+          console.error(`返しを書いての知らせを送り直した: ${ws.root} ${id} op ${op}`)
+        }
+        if (any) broadcast()
+      }).catch((e: Error) => console.error(`質問のタブへの送り直し: ${e.message}`))
+    }
   }
 
   const liveTerminal = (t: string | null | undefined): t is string => !!t && (t.startsWith(CHAT_HANDLE) ? chats.has(t) : [...terms.values()].includes(t))
@@ -984,7 +1047,7 @@ export function createServer(opts: Options) {
       const q = str(b.q) ?? ''
       return { hits: matchRulings(ws.files.rulings, q).map((r) => ({ id: r.id, at: r.at, kind: r.kind, text: r.text!, quote: r.quote })) }
     },
-    /** 「これで決める」。op を先に書き、そのあと質問のタブに「返しを書いて」を送る（タブが閉じていても op は残り、窓口が拾う）。 */
+    /** 「これで決める」。op を先に書き、そのあと質問のタブに「返しを書いて」を送る（タブが見つからなくても op は残り、窓が見回りで送り直す）。 */
     async askdecide(b): Promise<AskDecideResult> {
       const ws = knownWs(b.root)
       const id = str(b.ask)
@@ -1003,14 +1066,10 @@ export function createServer(opts: Options) {
         const op = added.op_id
         ws.files = { ...ws.files, log }
         broadcast()
-        const tab = await askTab(ws, id).catch((e: Error) => ({ reason: `タブを探せませんでした: ${e.message}` }))
-        if ('reason' in tab) return { op, sent: false, reason: tab.reason }
-        try {
-          await orca.send(tab.handle, askNotice(op))
-          return { op, sent: true }
-        } catch (e) {
-          return { op, sent: false, reason: `写しの会話に送れませんでした: ${(e as Error).message}` }
-        }
+        // 届けられなければ、常駐のプロセスの見回り（resendAsks）がタブを見つけたときに送り直す。
+        const r = await deliverAsk(ws, id, op)
+        if (r.sent) broadcast()
+        return { op, ...r }
       })
     },
     /** 質問のタブを前に出す。閉じていれば立て直さずに理由を返す（立て直すと窓口の会話をもう一度読み込むため、続きを聞いたときだけ立てる）。 */
