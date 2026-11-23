@@ -311,6 +311,7 @@ claude がどの席で動くかは、起動したときの環境変数 `CLAUDE_C
 | worker の囲い（使える道具・使えないもの） | worktree-flow skill の references/worker-env.md |
 | 席の切り替えと、切り替えたあとの続き | `~/.config/agent-harness/README.md`「利用枠の上限で席を切り替える」 |
 | メインの作業メモの中身と「今の順番」の形 | cockpit skill の references/memo.md |
+| 窓口（ワークスペースのメイン）だけの動き方 | `~/.config/nix-darwin/claude/roles/main.md` |
 | 担当だけの動き方 | `~/.config/nix-darwin/claude/roles/lead.md` |
 | 日本語の語の選び方（業務の漢語など） | dev-standards の rules/docs/writing.md |
 | 外に出す文面の書式 | dev-standards の rules/docs/message-formats.md |

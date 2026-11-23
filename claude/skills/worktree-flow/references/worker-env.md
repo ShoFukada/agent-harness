@@ -37,6 +37,12 @@ worktree-flow skill の SKILL.md から分けた細部。worker の作業が san
 
 ## settings.worker.json
 - settings.worker.json は tldv・backlog・chrome-devtools など窓口でしか使わない MCP を止め、セッションごとに増えるプロセスを減らす。worker でそれらが要る作業は窓口か担当が受け持つ。Slack の MCP は worker でも使え、brief に書かれたスレッドを worker が自分で読み返せる。送る・予約する・下書き・canvas とリストの作成と更新・リアクション・チャンネル作成・ファイルのアップロードの道具は `permissions.deny` で止めてある（bypassPermissions でも止まる）。Slack の MCP に道具が増えたら、読むだけのもの以外をこの deny に足す。顧客の Slack の MCP（slack-<顧客>）は、その顧客のリポジトリとその worktree でだけ起動する（`claude/mcp.projects.json`）。effort は settings.json の modelSettings が決めるので付けない
+- worker の 1 回の呼び出しに毎回入る道具の定義を減らすため、worker が使っていない道具と MCP を外してある（7 日のログで呼んだ回数が 0 か、窓口と担当が受け持つもの）:
+  - `deniedMcpServers` に xmcp・notion・beeper
+  - `disableClaudeAiConnectors: true`（claude.ai のコネクタ（Gmail・Drive・Calendar・Docs・Figma など）を全部止める）
+  - `enableArtifact: false`（artifact の公開は担当と窓口が受け持つ）
+  - `permissions.deny` に AskUserQuestion（worker は coordinator に `orca orchestration ask` で聞く）・Workflow・ScheduleWakeup
+  - 残したのは Slack（ローカルの slack の MCP）と Claude in Chrome。Notion・Gmail などの中身が要る作業は、brief に中身を貼って渡す
 
 ## sandbox
 - settings.worker.json は Claude Code の sandbox を有効にしている（2026-11 から試行中）。worker が読んだ文に仕込まれた指示に従っても、鍵を外の宛先に送れないようにするため
