@@ -132,6 +132,8 @@ export type CockpitView = {
   consults?: ConsultMemo[]
   /** この案件の worker と担当が出した、答えの無い orchestration の question。パネルは持たない。 */
   questions?: QuestionFact[]
+  /** 一緒に作る仕事の担当の handle → その担当の Run で終わっていない worker の Dispatch（state.ts の OrcaFacts.coordinating）。パネルは持たない。 */
+  coordinating?: Record<string, string[]>
   /** 窓からの質問（控えの節は新しいものだけに絞る）。パネルは持たない。 */
   asks?: AskThread[]
   /** 窓が質問のタブに「返しを書いて（op n）」を届けた op。読めなければ無い（届いたかを出さない）。パネルは持たない。 */

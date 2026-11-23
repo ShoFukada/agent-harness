@@ -12,10 +12,10 @@ import { ASK_ID, askItem, askWords, COWORK_ID, escapeAskSections, isAnswerItem, 
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
 import type { AnswerResult, Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
-import { agentCardId, coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks, unreflectedAsks } from '../src/state.ts'
+import { agentCardId, coworkIdle, coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks, unreflectedAsks } from '../src/state.ts'
 import {
-  currentDispatches, descendants, failuresOf, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
-  type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunTask, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
+  carryLast, coordinating, currentDispatches, descendants, failuresOf, readRuns, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
+  type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunPage, type RunTask, type RunWorker, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { deliverAnswer, type AnswerPlan } from './answer.ts'
 import { mailboxOf, sendFromMailbox, type MailOrca } from './mail.ts'
@@ -78,6 +78,10 @@ export type Orca = {
   runTasks(run: string): Promise<RunTask[]>
   /** orchestration dispatch-show --task。タスクの Dispatch と、それが何の続きか。 */
   taskLink(task: string): Promise<TaskLink>
+  /** orchestration run-list --full の 1 ページ（新しい順）。Run と、それを作った担当の handle。 */
+  runs?(cursor?: string): Promise<RunPage>
+  /** orchestration worker-list --run --full。その Run の worker の Dispatch・状態・受け口とチャットのセッション（新しい順に全ページ）。 */
+  runWorkers?(run: string): Promise<RunWorker[]>
   /** orchestration inbox の新しい 300 通。止まった理由（escalation の failureKind）と、答えの無い question を読む。 */
   inbox?(): Promise<InboxMessage[]>
   /** worktree のタブ（tabsOf）。窓からの質問のタブを題で探す（タブの題は --title で付けたまま残る）。 */
@@ -183,6 +187,33 @@ export function orcaCli(bin = 'orca'): Orca {
     taskLink: async (task) => {
       const d = (await run(['orchestration', 'dispatch-show', '--task', task])).dispatch as { id?: string; follow_up_of_dispatch_id?: string | null } | null
       return { dispatch: d?.id ?? null, followUpOf: d?.follow_up_of_dispatch_id ?? null }
+    },
+    runs: async (cursor) => {
+      const r = await run(['orchestration', 'run-list', '--full', '--limit', '100', ...(cursor ? ['--cursor', cursor] : [])])
+      const rows = (r.runs ?? []) as { id: string; coordinator_handle?: string | null }[]
+      return { runs: rows.map((x) => ({ id: x.id, coordinator: x.coordinator_handle ?? null })), ...(typeof r.nextCursor === 'string' && { next: r.nextCursor }) }
+    },
+    runWorkers: async (runId) => {
+      type Listed = { dispatchId: string; workerState: string; agentTerminalHandle?: string | null; resource?: { endpointIncarnation?: string | null } | null; projection?: { liveness?: { verdict?: string } | null } | null }
+      const out: RunWorker[] = []
+      let cursor: string | undefined
+      // 1 ページは新しい 100 件。窓口の Run は担当の Dispatch が古いページに沈むので、続きも読む。
+      for (let i = 0; ; i++) {
+        // 途中で切った一覧を「worker はいない」と読ませない（読めなかった担当は返事待ちに倒れる）。
+        if (i >= 20) throw new Error(`worker-list --run ${runId} が 20 ページで終わらない`)
+        const r = await run(['orchestration', 'worker-list', '--run', runId, '--limit', '100', '--full', ...(cursor ? ['--cursor', cursor] : [])])
+        for (const w of (r.workers ?? []) as Listed[]) {
+          const inc = w.resource?.endpointIncarnation
+          out.push({
+            dispatchId: w.dispatchId, state: w.workerState, liveness: w.projection?.liveness?.verdict,
+            ...(w.agentTerminalHandle && { handle: w.agentTerminalHandle }), ...(inc?.startsWith('structured:') && { session: inc.slice('structured:'.length) })
+          })
+        }
+        const page = r.page as { hasMore?: boolean; nextCursor?: string } | undefined
+        if (!page?.hasMore || !page.nextCursor) break
+        cursor = page.nextCursor
+      }
+      return out
     },
     inbox: async () => ((await run(['orchestration', 'inbox', '--full', '--limit', '300'])).messages ?? []) as InboxMessage[],
     tabs: async (root) => tabsOf(await run(['terminal', 'list', '--worktree', `path:${root}`, '--include-visual-layouts']), root),
@@ -376,6 +407,10 @@ export function createServer(opts: Options) {
   const currents = new Map<string, Record<string, string>>()
   /** Orca のタスク → その Dispatch と、何の続きか（変わらないので覚えておく）。 */
   const links = new Map<string, TaskLink>()
+  /** Run → それを作った担当の handle（変わらないので覚えておく）。 */
+  const runsBy = new Map<string, string | null>()
+  /** ワークスペースの root → 一緒に作る仕事の担当の id → その担当の Run で終わっていない worker の Dispatch。 */
+  let coordinatingBy = new Map<string, Record<string, string[]>>()
   /** stallwatch が書く alerts.json の、Orca の監督の外で止まったもの。 */
   let alerts: string[] = []
   let focus: Focus = {}
@@ -449,7 +484,7 @@ export function createServer(opts: Options) {
       utterances: files.utterances.map((u) => ({ ...u, prompt: u.prompt?.slice(0, 80) })), firstSeen: files.firstSeen, taskSeen: files.taskSeen,
       returned: files.cockpit ? returnedUtterances(files.cockpit, files.rulings, files.consults, files.asks) : undefined,
       terminals: lastRefresh && !orcaError ? [...terms.values(), ...chats] : undefined, terminalsPartial: terms.size >= TERMINAL_LIMIT || undefined,
-      consults: consultsFor(files.consults, cockpit, archive), questions: root ? questionsBy.get(root) : undefined, automations: autoFacts(files.cockpit),
+      consults: consultsFor(files.consults, cockpit, archive), questions: root ? questionsBy.get(root) : undefined, coordinating: root ? coordinatingBy.get(root) : undefined, automations: autoFacts(files.cockpit),
       asks: slimAsks(files.asks), drafts: await drafts
     }
   }
@@ -581,11 +616,26 @@ export function createServer(opts: Options) {
       const k = `${a.session}@${a.updatedAt}`
       const last = lasts.get(k) ?? (await orca.chatLast!(`${CHAT_HANDLE}${a.session}`).then((x) => x ?? '', () => undefined))
       if (last === undefined) return a
-      next.set(k, last)
+      // 空の返事と時刻の無いターンは覚えず、次の読み直しで聞き直す（返事を読めないと返事待ちに倒すので、取り違えを長引かせない）。
+      if (last && a.updatedAt !== undefined) next.set(k, last)
       return last ? { ...a, last } : a
     }))
     lasts = next
     return out
+  }
+
+  /**
+   * 一緒に作る仕事の担当が worker を待っているか（担当の Run の worker-list）。
+   * run-list を読めなければ覚えている Run で決める。Dispatch を読んだあとに呼ぶ（担当の handle を済んでいないタスクの Dispatch から引くため）。
+   */
+  async function readCoordinating(): Promise<void> {
+    const idle = [...wss.values()].map((ws) => [ws, coworkIdle(ws.files.cockpit, { workers: workersOf(ws.root, ws.files), dispatches: facts.get(ws.root), current: currents.get(ws.root), owners })] as const)
+    const next = new Map<string, Record<string, string[]>>()
+    if (idle.some(([, o]) => o.length) && orca.runs && orca.runWorkers) {
+      await readRuns(orca.runs, runsBy).catch((e: Error) => console.error(`run-list: ${e.message}`))
+      for (const [ws, o] of idle) if (o.length) next.set(ws.root, await coordinating(o, runsBy, orca.runWorkers, ws.files.cockpit?.main?.run_id))
+    }
+    coordinatingBy = next
   }
 
   function refreshOrca(): Promise<void> {
@@ -594,7 +644,7 @@ export function createServer(opts: Options) {
         const [rowsNow, tl, plugins, ags] = await Promise.all([orca.ps(), orca.terminals(), orca.plugins().catch(() => undefined), orca.agents().catch(() => undefined)])
         // 窓には深田さんの手が要るもの（承認待ち・入っていない・止まった）だけを出す。写しの入れ直しと開発用の読み込みは窓口の仕事（初見 8）。
         pluginNote = plugins && pluginProblem(plugins, true)
-        if (ags) owners = ags
+        if (ags) owners = carryLast(ags, owners)
         ownersStale = !ags
         ps = rowsNow
         terms = new Map(tl.map((t) => [`${t.tabId}:${t.leafId}`, t.handle]))
@@ -634,6 +684,7 @@ export function createServer(opts: Options) {
           }
         }
       if (ended.size) questions = questions.filter((q) => !ended.has(q.id))
+      if (!orcaError) await readCoordinating()
       if (!orcaError && !ownersStale) owners = await withLast(owners)
       broadcast()
     })().finally(() => {

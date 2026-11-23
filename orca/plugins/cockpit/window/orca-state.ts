@@ -2,6 +2,7 @@
 // 窓の常駐のプロセスと CLI（state.ts）が使う。
 import path from 'node:path'
 import type { Cockpit } from '../src/model.ts'
+import type { IdleOwner } from '../src/state.ts'
 import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from '../src/protocol.ts'
 
 export type PsAgent = {
@@ -430,6 +431,64 @@ export async function orcaDispatches(c: Cockpit | undefined, show: (dispatch: st
   const ids = [...new Set((c?.tasks ?? []).filter((t) => t.worker && t.state !== 'ok').map((t) => current[t.id] ?? t.worker!.dispatch_id).filter((x): x is string => !!x))]
   const rows = await Promise.all(ids.map(async (id) => [id, await show(id)] as const))
   return Object.fromEntries(rows.map(([id, r]) => [id, r ? { ...dispatchFact(r), ...(status[id] && { taskStatus: status[id] }) } : null]))
+}
+
+/**
+ * 読み直した agent list の行に、同じターン（session と updatedAt）の前の最後の返事を写す。最後の返事は読み直しの終わりに読み直すので、
+ * 写さないとその間に届いた配信だけ返事の無い行になり、窓の一緒に作る行の題が返事の段落と「返事を待っている」の間で入れ替わった（2026-11-23）。
+ */
+export const carryLast = (next: OwnerLive[], prev: OwnerLive[]): OwnerLive[] =>
+  next.map((a) => {
+    if (a.last || a.state !== 'done' || a.updatedAt === undefined) return a
+    const last = prev.find((p) => p.session === a.session && p.state === 'done' && p.updatedAt === a.updatedAt)?.last
+    return last ? { ...a, last } : a
+  })
+
+/** orca orchestration run-list --full の 1 行（使う欄だけ）。coordinator は Run を作った担当の handle（窓口が作った Run は null）。 */
+export type RunRow = { id: string; coordinator: string | null }
+export type RunPage = { runs: RunRow[]; next?: string }
+/** orca orchestration worker-list --run --full の 1 行（使う欄だけ）。handle は worker の受け口、session はチャットの worker のセッション。 */
+export type RunWorker = { dispatchId: string; state: string; liveness?: string; handle?: string; session?: string }
+/** worker-list の state のうち、終わったもの。2026-11-23 に Orca で見た state は succeeded・failed・stopped・ready の 4 つで、ほかは名前からの推測。 */
+const SETTLED = new Set(['succeeded', 'failed', 'stopped', 'abandoned', 'cancelled', 'canceled'])
+/** 終わっていない worker。端末が消えた（exited）ものは報告が来ないので外す（server.ts の答えの宛先と同じ判定）。 */
+export const busyWorker = (w: RunWorker) => !SETTLED.has(w.state) && w.liveness !== 'exited'
+
+/**
+ * Run の coordinator は変わらず、run-list は新しい順なので、知っている Run が出たページで止める。
+ * 途中のページで失敗したか上限で終わらなければ何も覚えない（覚えた 1 ページ目で次から止まり、その先を読み直さなくなるため）。
+ */
+export async function readRuns(list: (cursor?: string) => Promise<RunPage>, cache: Map<string, string | null>, pages = 50): Promise<void> {
+  const got: RunRow[] = []
+  let cursor: string | undefined
+  for (let i = 0; ; i++) {
+    if (i >= pages) throw new Error(`run-list が ${pages} ページで終わらない`)
+    const page = await list(cursor)
+    got.push(...page.runs)
+    if (page.runs.some((r) => cache.has(r.id)) || !page.next) break
+    cursor = page.next
+  }
+  for (const r of got) cache.set(r.id, r.coordinator)
+}
+
+/**
+ * 一緒に作る仕事の担当（id）→ その担当の Run で終わっていない worker の Dispatch。読めなかった担当は入れない（分からないものを「待っていない」と言い切らない）。
+ * handle の引けないチャットの担当は、窓口の Run（mainRun）の worker から session で引く（担当は窓口の Run の worker として立つ。
+ * 帳簿のタスクが済になると担当の Dispatch を読まなくなるため。2026-11-23 の INTLOOP の担当がこれだった）。
+ */
+export async function coordinating(owners: IdleOwner[], runs: Map<string, string | null>, workers: (run: string) => Promise<RunWorker[]>, mainRun?: string): Promise<Record<string, string[]>> {
+  const out: Record<string, string[]> = {}
+  const read = new Map<string, Promise<RunWorker[] | undefined>>()
+  const once = (run: string) => read.get(run) ?? (read.set(run, workers(run).catch(() => undefined)), read.get(run)!)
+  const main = mainRun && owners.some((o) => !o.handle && o.session) ? await once(mainRun) : undefined
+  await Promise.all(owners.map(async (o) => {
+    const h = o.handle ?? main?.find((w) => !!o.session && w.session === o.session)?.handle
+    if (!h) return
+    const got = await Promise.all([...runs].filter(([, c]) => c === h).map(([id]) => once(id)))
+    if (got.some((x) => !x)) return
+    out[o.id] = got.flatMap((x) => x!.filter(busyWorker).map((w) => w.dispatchId))
+  }))
+  return out
 }
 
 /** orca plugin list の 1 行（使う欄だけ）。 */

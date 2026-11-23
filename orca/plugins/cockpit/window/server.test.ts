@@ -78,7 +78,7 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; notifyRun?: Orca['notifyRun']; mailbox?: Orca['mailbox']; mailboxFile?: string; tailnetHosts?: string[]; lint?: Options['lint'] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; notifyRun?: Orca['notifyRun']; mailbox?: Orca['mailbox']; mailboxFile?: string; tailnetHosts?: string[]; lint?: Options['lint']; runs?: Orca['runs']; runWorkers?: Orca['runWorkers'] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
@@ -89,6 +89,8 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
   if (more.chatLast) fake.orca.chatLast = more.chatLast
   if (more.notifyRun) fake.orca.notifyRun = more.notifyRun
   if (more.mailbox) fake.orca.mailbox = more.mailbox
+  if (more.runs) fake.orca.runs = more.runs
+  if (more.runWorkers) fake.orca.runWorkers = more.runWorkers
   if (more.mailboxFile) writeFileSync(path.join(dir, 'mailbox.json'), more.mailboxFile)
   const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts, lint: more.lint })
   servers.push(s)
@@ -406,6 +408,27 @@ test('一緒に作る仕事の担当がターンを終えたら、最後の返�
   const w = await listen(port, s.token).until((v) => !!board(v, a)?.owners?.some((o) => o.last))
   assert.deepEqual(board(w, a)?.owners?.map((o) => [o.session, o.last]), [['sess-aws', '下書きです。\n\n入口も描きますか？'], ['sess-other', undefined]])
   assert.deepEqual([...new Set(asked)], ['orca_session_id:sess-aws'])
+})
+
+test('一緒に作る仕事の担当がターンを終えたら、担当の Run の終わっていない worker を読んで窓に送る。作業中の担当の Run は読まない（t153）', async () => {
+  const sample0 = JSON.parse(cockpit('案件A')) as { streams: { id: string; form?: string }[]; owners: { id: string; terminal?: string }[] }
+  sample0.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  sample0.owners.find((o) => o.id === 'o1')!.terminal = 'structworker_aws'
+  const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(sample0) })
+  const rows: PsRow[] = [{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main')] }]
+  const read: string[] = []
+  const runs: Orca['runs'] = async () => ({ runs: [{ id: 'run_aws', coordinator: 'structworker_aws' }, { id: 'run_main', coordinator: null }] })
+  const runWorkers: Orca['runWorkers'] = async (run) => (read.push(run), [{ dispatchId: 'ctx_w', state: 'ready', liveness: 'live' }])
+  const done: OwnerLive[] = [{ session: 'sess-aws', kind: 'chat', state: 'done', updatedAt: 5 }]
+  const { s, port } = await start(rows, a, undefined, done, undefined, undefined, { runs, runWorkers })
+  const w = await listen(port, s.token).until((v) => !!board(v, a)?.coordinating?.o1)
+  assert.deepEqual(board(w, a)?.coordinating, { o1: ['ctx_w'] })
+  assert.deepEqual([...new Set(read)], ['run_aws'])
+
+  read.length = 0
+  const busy = await start(rows, a, undefined, [{ ...done[0]!, state: 'working' }], undefined, undefined, { runs, runWorkers })
+  const w2 = await listen(busy.port, busy.s.token).until((v) => !!board(v, a)?.owners?.length)
+  assert.deepEqual([board(w2, a)?.coordinating, read], [undefined, []])
 })
 
 test('担当と協議: 最初の連打でも記録は 1 つ。相談に回すときも、consult が失敗して窓口に回すときも（Codex 2 回目 中 1・2）', async () => {

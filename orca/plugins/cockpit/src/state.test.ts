@@ -7,9 +7,9 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { legacyWait, overlay, parseCockpit, waitMet, requestCards, stageOf, taskSig, type Card, type Cockpit, type Ruling, type TaskSeen, type UserLog } from './model.ts'
 import type { AgentRow, OwnerLive, QuestionFact } from './protocol.ts'
-import { bucketOf, permitTitle, byUrgency, coworkSessions, derive, judgeTasks, streamBasis, statusFallback, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, waitLabel, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type Row } from './state.ts'
+import { bucketOf, permitTitle, byUrgency, coworkIdle, coworkSessions, derive, judgeTasks, streamBasis, statusFallback, fmtDate, lastParagraph, lookupTerms, tokyoDay, tokyoStart, waitLabel, matchRulings, NAME_MAX, ownerName, streamName, workerName, ORCA_STATUS, REPLY_LABEL, report, routeProblem, unreflectedReturns, workspaceNameOk, WORKSPACE_NAME_FORM, type OrcaFacts, type Row } from './state.ts'
 import { emptyFiles, loadFiles, parseAskMemo, parseRulings } from './store.ts'
-import { chatHandles, liveChats } from '../window/orca-state.ts'
+import { chatHandles, liveChats, type RunWorker } from '../window/orca-state.ts'
 import { orcaFacts } from '../window/state.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -641,6 +641,99 @@ test('一緒に作る仕事は、カードの有無に関わらず要対応に�
   assert.deepEqual(row(derive(w.cockpit, w.log, [], '/a', { workers: [] }, NOW)), [])
   assert.deepEqual(coworkSessions(w.cockpit), ['sess-aws'])
   assert.equal(lastParagraph('a\n\n  \n\nb\nc\n'), 'b c')
+})
+
+test('一緒に作る仕事の担当が自分の Run の worker を待っているあいだは、ターンを終えても返事待ちにしない。担当の問いの停止は返事待ちのまま、worker が報告したら返事待ちに戻す（t153・R128）', () => {
+  const w = ws(0)
+  w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  w.cockpit.cards = w.cockpit.cards.filter((x) => x.stream !== 's2')
+  // 2026-11-23 18:07 の INTLOOP の場面: 担当は worker に直しを送り、問いの無い報告でターンを終えた。
+  const last = 'worker に直しを送りました。\n\nworker の報告が来たら PDF を差し替えます。'
+  const facts = (state: AgentRow['state'], coordinating?: Record<string, string[]>, workers: AgentRow[] = [], text = last): OrcaFacts => ({
+    workers, owners: [{ session: 'sess-aws', kind: 'chat', state, worktree: '/ws/aoba-aws', updatedAt: NOW - 60_000, last: text }],
+    dispatches: { ctx_owner: { state: 'ready', terminal: 'structworker_aws', session: 'sess-aws' } }, ...(coordinating && { coordinating })
+  })
+  const row = (d: ReturnType<typeof derive>) => d.queue.find((r) => r.card.id === '#cowork:s2')!
+  const job = (d: ReturnType<typeof derive>) => d.jobs.find((j) => j.id === 's2')!
+
+  const busy = derive(w.cockpit, w.log, [], '/a', facts('done', { o1: ['ctx_worker'] }), NOW)
+  assert.deepEqual([row(busy).card.title, row(busy).agent?.ask, row(busy).card.next, row(busy).card.since],
+    ['共同作業中（担当は worker の作業待ち）', undefined, '担当は worker の報告を待っている。報告が届くと担当が続ける', undefined])
+  assert.equal(row(busy).card.last?.text, last, '題に使っていない最後の段落も詳細から削らない（Codex 4）')
+  assert.notEqual(job(busy).label.includes(REPLY_LABEL), true)
+  assert.notEqual(report(w.cockpit, w.log, [], facts('done', { o1: ['ctx_worker'] }), 'ok', NOW).jobs.find((j) => j.id === 's2')!.orca.status, ORCA_STATUS.mine)
+  assert.deepEqual(coworkIdle(w.cockpit, facts('done')), [{ id: 'o1', session: 'sess-aws', handle: 'structworker_aws' }])
+  assert.deepEqual(coworkIdle(w.cockpit, { ...facts('done'), dispatches: {} }), [{ id: 'o1', session: 'sess-aws' }])
+  assert.deepEqual(coworkIdle(w.cockpit, facts('working')), [])
+
+  // worker_done が届いて worker が終わった（Run に終わっていない worker が無い）なら、ターンの終わりは返事待ち。
+  const settled = derive(w.cockpit, w.log, [], '/a', facts('done', { o1: [] }), NOW)
+  assert.deepEqual([row(settled).card.title, row(settled).agent?.ask?.kind, job(settled).label], ['worker の報告が来たら PDF を差し替えます。', 'question', REPLY_LABEL])
+  // 担当の Run を読めなかったときは、今までどおり返事待ち（問いで止まっているのに出ない R128 の不具合を戻さない）。
+  assert.equal(job(derive(w.cockpit, w.log, [], '/a', facts('done'), NOW)).label, REPLY_LABEL)
+  // ほかの担当の worker は数えない。
+  assert.equal(job(derive(w.cockpit, w.log, [], '/a', facts('done', { o2: ['ctx_x'] }), NOW)).label, REPLY_LABEL)
+
+  // worker を待っていても、ターンの最後の段落が問いなら深田さんの番（R128 の場面に worker を足したもの。Codex 1）。
+  const question = '下書きができました。\n\n次の 3 点を教えてください。**表紙の題**はこのままでよいですか？'
+  const back = derive(w.cockpit, w.log, [], '/a', facts('done', { o1: ['ctx_worker'] }, [], question), NOW)
+  assert.deepEqual([row(back).card.title, row(back).agent?.ask?.kind, row(back).card.last?.text, job(back).label], ['次の 3 点を教えてください。表紙の題はこのままでよいですか？', 'question', '下書きができました。', REPLY_LABEL])
+  const options = '方針を 2 つ用意しました。\n\n【選べる案】\n- A: 今の版で送る\n- B: 直してから送る'
+  assert.equal(job(derive(w.cockpit, w.log, [], '/a', facts('done', { o1: ['ctx_worker'] }, [], options), NOW)).label, REPLY_LABEL)
+  // ？の無い回答の依頼も問いと読む（Codex 2 巡目 1）。報告で終わったターンは worker 待ちのまま。
+  for (const t of ['worker に送りました。\n\n送付先を教えてください。', 'worker に送りました。\n\n宛先の確認をお願いします', '直しました。\n\nこの順で進めてよいですか。'])
+    assert.equal(job(derive(w.cockpit, w.log, [], '/a', facts('done', { o1: ['ctx_worker'] }, [], t), NOW)).label, REPLY_LABEL, t)
+  // 担当の最後の返事を読めなかったら、問いで終わったかが分からないので返事待ちに倒す（Codex 2 巡目 2）。
+  const unread = derive(w.cockpit, w.log, [], '/a', { ...facts('done', { o1: ['ctx_worker'] }), owners: [{ session: 'sess-aws', kind: 'chat', state: 'done', updatedAt: NOW - 60_000 }] }, NOW)
+  assert.equal(job(unread).label, REPLY_LABEL)
+  // worker が作業中でも、担当自身の問いの停止（AskUserQuestion）は深田さんの番（R128）。
+  const ask = agent({ terminalId: null, chat: true, session: 'sess-aws', state: 'waiting', stop: 'waiting', ask: { kind: 'question', text: 'A と B のどちらにしますか？' } })
+  const asked = derive(w.cockpit, w.log, [], '/a', facts('waiting', { o1: ['ctx_worker'] }, [ask]), NOW)
+  assert.deepEqual([row(asked).card.title, row(asked).agent?.ask?.kind, job(asked).label], ['A と B のどちらにしますか？', 'question', REPLY_LABEL])
+
+  // 話し中の印が残ったカードがあっても、worker を待っているあいだは返事待ちにしない（印が消えずに残る場合）。
+  const review: Card = { id: 'r2', rev: 1, kind: 'review', state: 'open', at: new Date(NOW - 600_000).toISOString(), stream: 's2', title: '構成図の確認', purpose: 'x', fallback: 'x', due: new Date(NOW + 3_600_000).toISOString(), request: 'x', href: 'https://example.com/r2', look_for: ['x'], evidence: ['x'] }
+  const tlog = { ops: [...w.log.ops, { op_id: 9, at: new Date(NOW - 3_600_000).toISOString(), item_id: 'r2', item_rev: 1, type: 'talk' as const }] }
+  const talked = { ...w.cockpit, cards: [...w.cockpit.cards, review] }
+  assert.equal(!!row(derive(talked, tlog, [], '/a', facts('done', { o1: ['ctx_worker'] }), NOW)).agent?.ask, false)
+  assert.equal(!!row(derive(talked, tlog, [], '/a', facts('done', { o1: [] }), NOW)).agent?.ask, true)
+
+  const term = structuredClone(w.cockpit)
+  term.owners = [{ id: 'o1', title: 'AWS 構成案', stream: 's2', agent: 'claude', terminal: 'term_aws' }]
+  const tfacts = (coordinating: Record<string, string[]>): OrcaFacts => ({ workers: [agent({ terminalId: 'term_aws', state: 'done' })], owners: [], coordinating })
+  assert.deepEqual(coworkIdle(term, tfacts({})), [{ id: 'o1', handle: 'term_aws' }])
+  assert.equal(row(derive(term, w.log, [], '/a', tfacts({ o1: ['ctx_worker'] }), NOW)).card.title, '共同作業中（担当は worker の作業待ち）')
+  assert.equal(!!row(derive(term, w.log, [], '/a', tfacts({ o1: [] }), NOW)).agent?.ask, true)
+})
+
+test('hook の CLI（orcaFacts）も、作業中でない一緒に作る担当の Run の worker を読み、読めなければ分からないまま渡す（t153）', async () => {
+  const w = ws(0)
+  w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  // 担当の Dispatch のタスクが済になり、帳簿からは handle を引けない（2026-11-23 の INTLOOP）。窓口の Run の worker から session で引く。
+  w.cockpit.owners = [{ id: 'o1', title: 'AWS 構成案', stream: 's2', session: 'sess-aws' }]
+  w.cockpit.main = { ...w.cockpit.main, run_id: 'run_main' }
+  const read: string[] = []
+  const byRun: Record<string, RunWorker[]> = {
+    run_main: [{ dispatchId: 'ctx_owner', state: 'succeeded', handle: 'structworker_aws', session: 'sess-aws' }],
+    run_owner: [{ dispatchId: 'ctx_w', state: 'ready', liveness: 'live' }, { dispatchId: 'ctx_old', state: 'succeeded', liveness: 'live' }]
+  }
+  const runs = {
+    list: async () => ({ runs: [{ id: 'run_owner', coordinator: 'structworker_aws' }, { id: 'run_main', coordinator: null }] }),
+    workers: async (run: string) => (read.push(run), byRun[run] ?? [])
+  }
+  const cli = (state: AgentRow['state'], r = runs) =>
+    orcaFacts('/ws', w.cockpit, async () => [], async () => [], async () => null, undefined, undefined, undefined, async () => [{ session: 'sess-aws', kind: 'chat' as const, state }], r).then((x) => x.facts!)
+  const facts = await cli('done')
+  assert.deepEqual([facts.coordinating, read], [{ o1: ['ctx_w'] }, ['run_main', 'run_owner']])
+  const title = (f: OrcaFacts) => derive(w.cockpit, w.log, [], '/a', f, NOW).queue.find((r) => r.card.id === '#cowork:s2')!.card.title
+  assert.equal(title(facts), '担当「AWS 構成案」が返事を待っている', '最後の返事を読めなければ返事待ちに倒す')
+  // worker を待つ担当は最後の返事を読み、報告で終わっていれば worker 待ち、問いで終わっていれば窓と同じく返事待ちにする。
+  const lasts: string[] = []
+  const said = (text: string) => cli('done', { ...runs, last: async (h: string) => (lasts.push(h), text) })
+  assert.equal(title(await said('送りました。\n\nworker の報告が来たら差し替えます。')), '共同作業中（担当は worker の作業待ち）')
+  assert.deepEqual([lasts[0], title(await said('送りました。\n\n宛先はこの 2 名でよいですか？'))], ['orca_session_id:sess-aws', '宛先はこの 2 名でよいですか？'])
+  assert.equal((await cli('working')).coordinating, undefined, '作業中の担当は問い合わせない')
+  assert.equal((await cli('done', { ...runs, list: async () => { throw new Error('orca が無い') } })).coordinating, undefined)
 })
 
 test('Orca の名前（R146）: 仕事と担当は頭に形（一緒に｜・任せる｜・見張る｜）、worker は 作業｜。20 字の上限は頭の語も含めて数える', () => {

@@ -73,7 +73,7 @@ export function boardsOf(views: CockpitView[], now: number): Board[] {
   return views
     .filter((v): v is CockpitView & { root: string; cockpit: NonNullable<CockpitView['cockpit']> } => !!v.root && !!v.cockpit)
     .map((v) => {
-      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, ownersStale: v.ownersStale, current: v.current, terminals: v.terminals, terminalsPartial: v.terminalsPartial, questions: v.questions }
+      const facts: OrcaFacts = { workers: v.workers, dispatches: v.dispatches, owners: v.owners, ownersStale: v.ownersStale, current: v.current, terminals: v.terminals, terminalsPartial: v.terminalsPartial, questions: v.questions, coordinating: v.coordinating }
       return { root: v.root, v, d: derive(v.cockpit, v.log, v.archive, v.root, facts, now, { utterances: v.utterances, returned: v.returned, firstSeen: v.firstSeen, taskSeen: v.taskSeen }) }
     })
 }

@@ -96,7 +96,11 @@ export const isHot = (due: string | undefined, now: number) => !!due && !Number.
  * terminals は Orca にある端末の handle（読めていなければ無い。カードの相談のタブの生死に使う）。terminalsPartial は一覧が上限で切れているかもしれない印で、
  * そのときは一覧に無い handle を「閉じた」と言い切らない（一覧にある handle は生きていると使える）。
  */
-export type OrcaFacts = { automations?: { id: string; name: string }[]; workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; ownersStale?: boolean; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean; questions?: QuestionFact[] }
+/**
+ * coordinating は一緒に作る仕事の担当（帳簿の owners の id）→ その担当が自分の Run で動かしている、終わっていない worker の Dispatch。
+ * 読めた担当だけが入る（読めなかった担当は、worker を待っているか分からないものとして扱う）。
+ */
+export type OrcaFacts = { automations?: { id: string; name: string }[]; workers: AgentRow[]; dispatches?: Record<string, DispatchFact | null>; owners?: OwnerLive[]; ownersStale?: boolean; current?: Record<string, string>; terminals?: string[]; terminalsPartial?: boolean; questions?: QuestionFact[]; coordinating?: Record<string, string[]> }
 
 /** タスクの今の Dispatch。run_id だけの記録で続きを引けていなければ undefined。 */
 export const currentDispatch = (t: Task, facts: OrcaFacts | undefined): string | undefined => (t.worker ? facts?.current?.[t.id] ?? t.worker.dispatch_id : undefined)
@@ -301,6 +305,26 @@ const coworkOwners = (c: Cockpit) => (c.owners ?? []).filter((o) => o.state !== 
 export const coworkSessions = (c: Cockpit | undefined, facts?: OrcaFacts) =>
   c ? coworkOwners(c).map((o) => ownerOf(c, { owner: o.id, stream: o.stream }, facts).session).filter((x): x is string => !!x) : []
 
+/**
+ * 担当が worker を立てるときの自分の handle（Orca の Run の coordinator_handle）。端末の担当は端末の handle、worker-start --agent で立てたチャットの担当は
+ * 受け取りの handle（structworker_…）。帳簿に無ければ、済んでいないタスクの Dispatch から session で引く（引けなければ読む側が窓口の Run から引く）。
+ */
+const coordinatorOf = (owner: OwnerRef, facts: OrcaFacts | undefined) =>
+  owner.owner?.terminal || (owner.session ? Object.values(facts?.dispatches ?? {}).find((f) => f?.session === owner.session)?.terminal : undefined) || undefined
+
+const coworkState = (owner: OwnerRef, facts: OrcaFacts | undefined) =>
+  owner.how === 'terminal' ? owner.state : owner.session ? facts?.owners?.find((x) => x.session === owner.session)?.state : undefined
+
+export type IdleOwner = { id: string; session?: string; handle?: string }
+/** 作業中の担当は返事待ちにならないので、作業中でない担当だけを返す。 */
+export const coworkIdle = (c: Cockpit | undefined, facts?: OrcaFacts): IdleOwner[] =>
+  c ? coworkOwners(c).flatMap((o) => {
+    const owner = ownerOf(c, { owner: o.id, stream: o.stream }, facts)
+    if (coworkState(owner, facts) === 'working') return []
+    const handle = coordinatorOf(owner, facts)
+    return [{ id: o.id, ...(owner.session && { session: owner.session }), ...(handle && { handle }) }]
+  }) : []
+
 /** 返事の最後の段落（担当が深田さんに返した問いの本文）。空行で区切った最後のまとまりを、改行を空白にして 1 行にする。 */
 export const lastParagraph = (text: string | undefined) =>
   (text ?? '').split(/\n\s*\n/).map((p) => p.replace(/\*\*/g, '').replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean).at(-1)
@@ -310,6 +334,7 @@ export const lastParagraph = (text: string | undefined) =>
  * 深田さんの返事待ちは同じ行で示す: 担当がターンを終えて開いたまま（orca agent list の state が done）、担当の問いの詰まり（AskUserQuestion・許可の確認）、
  * または仕事の話し中のカード・協議中のカード（担当が作業に戻っていないもの）。問いの詰まりと話し中のカード（kind talk）はこの行に寄せて 2 行にしない。
  * 協議中のほかの種類のカードは承認などの返答が要るので残す。利用枠・ログイン切れ・エラーで止まった担当は、その詰まりの行を残し、返事待ちにしない。
+ * 担当が自分の Run で立てた worker が終わっていないあいだは、ターンの終わりも話し中のカードも返事待ちにせず「worker の作業待ち」と出す（問いの停止は除く）。
  * 任せる・見張るの担当は出さない（担当は窓口に status や worker_done を返してターンを終えるので、ターンの終わりが深田さんの番ではない）。
  * 担当の様子を読めない場所（パネル・hook の state）では作らない。absorbed はこの行に寄せた行。
  */
@@ -321,7 +346,7 @@ function coworkRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, queu
     if (queue.some((r) => r.card.id === `${COWORK_ID}${s.id}`)) return []
     const owner = ownerOf(c, { owner: o.id, stream: s.id }, facts)
     const live = owner.session ? facts.owners!.find((x) => x.session === owner.session) : undefined
-    const state = owner.how === 'terminal' ? owner.state : live?.state
+    const state = coworkState(owner, facts)
     const self = (a: Pick<AgentRow, 'session' | 'terminalId'>) => (!!owner.session && a.session === owner.session) || (!!owner.terminal && a.terminalId === owner.terminal)
     // 担当自身の停止（Orca の端末・チャットから作った行）だけを見る。担当宛てに届いた worker の question の行は、宛先の handle を持つが担当の問いではない。
     const asked = queue.find((r) => r.card.id.startsWith('#agent:') && !!r.agent?.ask && self(r.agent))
@@ -330,22 +355,29 @@ function coworkRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, queu
     const talks = queue.filter((r) => r.card.stream === s.id && r.card.kind === 'talk')
     const talking = all.some((r) => r.card.stream === s.id && r.status === 'mine' && !!r.talking)
     for (const r of [asked, ...talks]) if (r) absorbed.add(r)
-    const waiting = !failed && (state === 'done' || !!asked || ((talks.length > 0 || talking) && state !== 'working'))
+    const busy = !!facts.coordinating?.[o.id]?.length
     const text = asked?.agent?.ask?.text ?? (state === 'done' ? live?.last : undefined) ?? talks.find((r) => r.card.last?.text)?.card.last?.text
     const question = lastParagraph(text)
+    // worker を待っていても、ターンの最後の段落が問い・回答の依頼なら深田さんの番（R128。worker を送りつつ別のことを聞いて止まる担当がいる）。
+    // 見分けは文末の形だけで行う。外れたときに返事待ちへ倒れる向きに広く取る（worker 宛ての指示の引用も問いと読む）。
+    const asksBack = !!question && (ASKS_BACK.test(question) || /【選べる案】/.test(text ?? ''))
+    // ターンを終えたチャットの担当の返事を読めなければ、問いで終わったかが分からないので返事待ちに倒す。
+    const unread = state === 'done' && owner.how !== 'terminal' && !text
+    const waiting = !failed && (!!asked || ((!busy || asksBack || unread) && (state === 'done' || ((talks.length > 0 || talking) && state !== 'working'))))
     // 詳細の「最後のやり取り」には、題にした最後の段落より前だけを出す（同じ文を 2 度出さない。Neon）。題で切れた長い問いは全文を残す。
     const paras = (text ?? '').split(/\n\s*\n/).filter((p) => p.trim())
-    const context = question && question.length <= 120 ? paras.slice(0, -1).join('\n\n') : text
+    const context = waiting && question && question.length <= 120 ? paras.slice(0, -1).join('\n\n') : text
     const at = asked?.card.since ?? (live?.updatedAt ? new Date(live.updatedAt).toISOString() : undefined)
     const card: Card = {
       id: `${COWORK_ID}${s.id}`, rev: live?.updatedAt ?? 0, kind: 'talk', state: 'open', stream: s.id,
       ...(waiting && at && { since: at }),
-      title: !waiting ? `共同作業中（担当は${state === 'working' ? '作業中' : state ? (OWNER_WORD[state] ?? '入力待ち') : '状態不明'}）`
+      title: !waiting ? `共同作業中（担当は${state === 'working' ? '作業中' : busy && !failed ? ' worker の作業待ち' : state ? (OWNER_WORD[state] ?? '入力待ち') : '状態不明'}）`
         : asked?.agent?.ask?.kind === 'permit' ? asked.card.title : question ? askLine(question) : talks[0]?.card.title ?? `担当「${owner.title}」が返事を待っている`,
       tasks: [...new Set(c.tasks.filter((t) => t.stream === s.id && t.state !== 'ok').map((t) => t.id))],
       ...(context && { last: { text: context, by: '担当', ...(at && { at }) } }),
       // 返事の本文が読めたときは、開くボタンで足りるので「次」を書かない（Neon）。
-      next: !waiting ? (failed ? '担当が止まっている。止まった行の直し方を確認する' : '担当が作業中。開くと途中の様子を確認できる')
+      next: !waiting ? (failed ? '担当が止まっている。止まった行の直し方を確認する'
+        : busy && state !== 'working' ? '担当は worker の報告を待っている。報告が届くと担当が続ける' : '担当が作業中。開くと途中の様子を確認できる')
         : text || talks.length ? undefined : `${owner.how === 'terminal' ? '端末' : 'チャット'}から返事の本文を読めませんでした。開いて確認してください`
     }
     const agent: AgentRow = asked?.agent ?? {
@@ -358,6 +390,7 @@ function coworkRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, queu
   return { rows, absorbed }
 }
 const OWNER_WORD: Partial<Record<AgentRow['state'], string>> = { blocked: '許可待ち', waiting: '入力待ち', done: '待機' }
+const ASKS_BACK = /(?:[？?]|ください|下さい|お願いします|お願いいたします|ますか|ですか|でしょうか)[。.」』）)\s]*$/
 
 /**
  * 許可の確認の題。何をするかが初見で分かる文にする（git push は「<ブランチ> を <リモート> に push する」、Bash は「<コマンド> を実行する」、

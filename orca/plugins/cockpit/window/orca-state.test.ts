@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { currentDispatches, openQuestions, orcaAgents, pluginProblem, questionFacts, screenAsk, toolAsk, type PluginRow, type PsAgent, type PsRow, type TaskLink, type WorkerShow } from './orca-state.ts'
+import { busyWorker, carryLast, coordinating, currentDispatches, openQuestions, readRuns, orcaAgents, pluginProblem, questionFacts, screenAsk, toolAsk, type PluginRow, type PsAgent, type PsRow, type RunPage, type RunWorker, type TaskLink, type WorkerShow } from './orca-state.ts'
 
 const row = (o: Partial<PluginRow>): PluginRow => ({ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false, ...o })
 
@@ -193,4 +193,61 @@ test('同じ thread の追質問では先の問いを消さない。終わった
   const ended = new Set<string>()
   assert.deepEqual(await questionFacts(c, '/w', ps, openQuestions([a]), { ctx_1: null }, {}, [], async () => null, new Map(), ended), [])
   assert.deepEqual([...ended], ['a'])
+})
+
+test('担当の Run の worker: Run は新しい順に読み、知っている Run が出たページで止める。終わっていない worker だけを数え、読めなかった担当は入れない（t153）', async () => {
+  const pages: Record<string, RunPage> = {
+    first: { runs: [{ id: 'run_new', coordinator: 'structworker_a' }, { id: 'run_mid', coordinator: null }], next: 'p2' },
+    p2: { runs: [{ id: 'run_old', coordinator: 'term_b' }] }
+  }
+  const asked: (string | undefined)[] = []
+  const list = async (cursor?: string) => (asked.push(cursor), pages[cursor ?? 'first']!)
+  const cache = new Map<string, string | null>()
+  await readRuns(list, cache)
+  assert.deepEqual([asked, [...cache]], [[undefined, 'p2'], [['run_new', 'structworker_a'], ['run_mid', null], ['run_old', 'term_b']]])
+  asked.length = 0
+  await readRuns(list, cache)
+  assert.deepEqual(asked, [undefined], '2 回目は知っている Run が 1 ページ目に出るので止める')
+  // 途中のページで失敗したら何も覚えず、次は 1 ページ目から読み直す（Codex 2）。
+  const fresh = new Map<string, string | null>()
+  await assert.rejects(readRuns(async (c) => (c ? Promise.reject(new Error('読めない')) : pages.first!), fresh))
+  assert.equal(fresh.size, 0)
+  // 上限のページで終わらなければ、途中までの一覧を確定しない（Codex 2 巡目 4）。
+  const endless = async (c?: string) => ({ runs: [{ id: `run_${c ?? 0}`, coordinator: null }], next: `${Number(c ?? 0) + 1}` })
+  await assert.rejects(readRuns(endless, fresh, 3))
+  assert.equal(fresh.size, 0)
+
+  const workers: Record<string, RunWorker[]> = {
+    run_new: [
+      { dispatchId: 'ctx_run', state: 'ready', liveness: 'live' }, { dispatchId: 'ctx_chat', state: 'ready', liveness: 'unverifiable' },
+      { dispatchId: 'ctx_done', state: 'succeeded', liveness: 'live' }, { dispatchId: 'ctx_dead', state: 'ready', liveness: 'exited' },
+      { dispatchId: 'ctx_fail', state: 'failed' }, { dispatchId: 'ctx_stop', state: 'stopped' }
+    ],
+    run_mid: [{ dispatchId: 'ctx_a', state: 'ready', handle: 'structworker_a', session: 'sess-a' }]
+  }
+  const calls: string[] = []
+  const read = async (run: string) => {
+    calls.push(run)
+    if (run === 'run_old') throw new Error('読めない')
+    return workers[run] ?? []
+  }
+  const owners = [{ id: 'o1', session: 'sess-a' }, { id: 'o2', handle: 'term_b' }, { id: 'o3', handle: 'term_none' }, { id: 'o4', session: 'sess-unknown' }]
+  // handle の無い担当は窓口の Run（run_mid）の worker から session で引く。窓口の Run は 1 回だけ読む。
+  assert.deepEqual(await coordinating(owners, cache, read, 'run_mid'), { o1: ['ctx_run', 'ctx_chat'], o3: [] })
+  assert.deepEqual(calls.filter((r) => r === 'run_mid'), ['run_mid'])
+  assert.deepEqual(await coordinating([{ id: 'o1', session: 'sess-a' }], cache, read), {}, '窓口の Run が無ければ handle を引けない')
+  assert.equal(busyWorker({ dispatchId: 'x', state: 'dispatched' }), true)
+})
+
+test('読み直した担当の行には、同じターンの最後の返事を写す。ターンが変われば写さない（窓の題の入れ替わり。2026-11-23）', () => {
+  // 本物の窓で、同じ state と updatedAt のまま last が有ると無いを行き来した値の組。
+  const prev = [{ session: 'f75b', kind: 'chat' as const, state: 'done' as const, updatedAt: 1795423218378, last: '鍵の単位を足しました。\n\n前の URL は使えなくなりました。' }]
+  const read = [{ session: 'f75b', kind: 'chat' as const, state: 'done' as const, updatedAt: 1795423218378 }]
+  assert.deepEqual(carryLast(read, prev), prev)
+  assert.deepEqual(carryLast([{ ...read[0]!, updatedAt: 1795423300000 }], prev), [{ ...read[0]!, updatedAt: 1795423300000 }])
+  assert.deepEqual(carryLast([{ ...read[0]!, last: '新しい返事' }], prev)[0]!.last, '新しい返事')
+  // 時刻の無い行と、作業中に戻った行には写さない（前のターンの返事を新しいターンに持ち込まない。Codex 2 巡目 3）。
+  const bare = { session: 'f75b', kind: 'chat' as const, state: 'done' as const }
+  assert.deepEqual(carryLast([bare], [{ ...bare, last: '前の問い？' }]), [bare])
+  assert.deepEqual(carryLast([{ ...read[0]!, state: 'working' }], prev), [{ ...read[0]!, state: 'working' }])
 })
