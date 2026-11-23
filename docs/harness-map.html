@@ -361,7 +361,7 @@ a{color:var(--focus)}
 <li>端末は、移す前に元の会話id・引数・workerの設定を記録に残してから <code>/exit</code> を送り、同じ端末に <code>env CLAUDE_CONFIG_DIR=&lt;今の席&gt; claude … --resume &lt;会話 id&gt;</code> を打つ。Dispatchは端末に結び付くので残る</li>
 <li>Dispatchを持つチャット（担当）を止める前に、窓口のRunの受信箱へ「席の切り替えで止めた。立て直さない」を1通送る</li>
 <li>全部の席が上限なら切り替えず、最初に戻る席と時刻を帯に出す。そのあいだは新しいworkerを立てない</li>
-<li>Orcaの設定「アカウントを切り替えたとき端末のClaudeを」はkeepにしておく（restartだと端末が開き直されてDispatchがlostになる）</li>
+<li>Orcaの設定「When you switch accounts while Claude is running in terminals」は「Never restart」（値は<code>keep</code>）にしておく（「Always restart」だと端末が開き直されてDispatchがlostになる）</li>
 </ul>
 </details>
 

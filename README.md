@@ -244,7 +244,7 @@ worker の結果を取り込んだら、窓口がその場で worktree を消し
 
 ## 利用枠の上限で席を切り替える
 
-前提: Orca の設定「アカウントを切り替えたとき端末の Claude を」は keep（端末に何もしない）にしておく（Orca の設定の画面で変える。CLI からは変えられない）。restart のままだと、切り替えで Orca が端末を閉じて開き直し、worker の Dispatch が lost になり、`--settings`（worker の設定）も落ちる（2026-11-22 に確かめた）。あわせて、Orca の設定「上限がリセットされたらチャットを自動で続ける」（`nativeChatAutoContinueAfterUsageLimit`）はオンにしておく（Dispatch の無い窓口のチャットは、これで新しい席で続く）。
+前提: Orca の設定「When you switch accounts while Claude is running in terminals」は「Never restart」（値は `keep`。端末に何もしない）にしておく（Orca の設定の画面で変える。CLI からは変えられない）。「Always restart」のままだと、切り替えで Orca が端末を閉じて開き直し、worker の Dispatch が lost になり、`--settings`（worker の設定）も落ちる（2026-11-22 に確かめた）。あわせて、Orca の設定「上限がリセットされたらチャットを自動で続ける」（`nativeChatAutoContinueAfterUsageLimit`）はオンにしておく（Dispatch の無い窓口のチャットは、これで新しい席で続く）。
 
 account-failover は、Orca が読んでいる各席の使用量（`orca account list --json` の `rateLimits`。ほかの席の分も、その席を使わずに Orca が読んでいる）と、claude のプロセスの引数と環境変数だけで判断し、トークンや Keychain には触りません。launchd が 1 分おきに起こし、毎回 2 つのことをします（R205）。
 
