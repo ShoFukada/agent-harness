@@ -824,7 +824,9 @@ class ConvergeTest(FailoverTestBase):
         self.put("agents.json", [chat_agent("chat_l", state, "任せる｜仕事")])
         self.proc(401, seat=A, handle="structworker_l", chat="chat_l", session=S1, reply=reply)
         self.put("workers.json", [{"dispatchId": "ctx_l", "taskId": "task_l", "state": "ready", "outcome": "in_progress", "terminal": "structworker_l"}])
-        self.put("shows.json", {"ctx_l": {"dispatch": {"id": "ctx_l", "runId": "run_9"}}})
+        # 実物の `orca orchestration worker-show --dispatch <id> --json` の result の形（2026-11-23 に確かめた）
+        self.put("shows.json", {"ctx_l": {"dispatchId": "ctx_l", "taskId": "task_l", "runId": "run_9", "state": "ready",
+                                          "terminal": "structworker_l", "workspace": "r::/w/l"}})
 
     def test_a_waiting_lead_tells_its_run_before_it_is_stopped(self):
         # 調査の B: Dispatch を持つ担当。止めると Orca が coordinator に「Worker exited」を出すので、先に Run の受信箱へ 1 通送る。

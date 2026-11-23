@@ -584,7 +584,8 @@ class Mover:
                 except RuntimeError as e:
                     return self.issue(key, label, "failed", "担当の Dispatch を確かめられない（%s）ので止めていない" % e)
                 if disp:
-                    run = ((sw.orca("orchestration", "worker-show", "--dispatch", disp)[0] or {}).get("dispatch") or {}).get("runId")
+                    # --full を付けない worker-show は runId を result の直下に返す（--full だと dispatch.runId）
+                    run = (sw.orca("orchestration", "worker-show", "--dispatch", disp)[0] or {}).get("runId")
                     if not run:
                         return self.issue(key, label, "failed", "Dispatch %s の Run を読めず、先の知らせを送れないので止めていない" % disp)
             rec = {"kind": "chat", "pid": row["pid"], "handle": row["handle"], "limited": lim, "dispatch": disp, "run": run, "label": label, "title": title,
