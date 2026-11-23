@@ -270,6 +270,16 @@ cat "$f"
         self.assertIn("W1", mails[0]["body"])
         self.assertFalse([c for c in self.orca_calls() if c.startswith("orchestration")])
 
+    def test_question_and_card_consult_tabs_are_not_stopped_workers(self):
+        # 窓からの質問・カードの相談のタブは窓口の worktree に残り、答えたら done で止まる。止まった worker として知らせない
+        idle = now_ms() - 20 * MIN
+        self.ps([self.main_agent(),
+                 {"paneKey": "q", "state": "done", "stateStartedAt": idle, "conversationName": "質問｜社内 ハーネス｜ask4"},
+                 {"paneKey": "c", "state": "done", "stateStartedAt": idle, "conversationName": "カード相談｜社内 ハーネス｜d21"}])
+        self.run_watch()
+        self.assertEqual(self.alerts(), {})
+        self.assertEqual(self.mails(), [])
+
     def test_mailed_survives_an_orca_outage(self):
         kid = {"paneKey": "w", "state": "done", "stateStartedAt": now_ms() - 20 * MIN}
         self.ps([self.main_agent()], kids=[kid])

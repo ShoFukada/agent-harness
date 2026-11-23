@@ -326,6 +326,9 @@ def check_mains(now, state):
         kids = [r for r in rows if r.get("parentWorktreeId") and r["parentWorktreeId"] == row.get("worktreeId")]
         workers = [(a, r) for r in kids for a in (r.get("agents") or [])] + [(a, row) for a in own if a is not m]
         for a, r in workers:
+            # 窓からの質問とカードの相談のタブは、答えたら手を止めるのが正しく、窓口も閉じない（cockpit skill の consult.md）
+            if (a.get("conversationName") or "").startswith(CONSULT_TABS):
+                continue
             started = a.get("stateStartedAt") or 0
             if (a.get("state") == "working" or started <= since or by_restart(restart, since, started)
                     or now - started < UNHANDLED_MS):
@@ -453,6 +456,7 @@ def notify(texts, title=None):
 
 
 # 窓口の Run に送る知らせ（窓口が動いていて、判断すれば片付くもの）。窓口自身が止まった・Orca や窓が止まったものは、送っても読む人がいない。
+CONSULT_TABS = ("質問｜", "カード相談｜")
 MAIL_KINDS = ("main-unhandled:",)
 MAIL_SUBJECT = "【見張り】窓口の判断が要るものがあります"
 
