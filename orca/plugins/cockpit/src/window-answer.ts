@@ -29,7 +29,7 @@ export function answerActs(r: VRow, ui: Ui): string {
 
 /** 下の固定の行: 選択肢のボタンを先に置き、開く・対応済みにするは枠のボタンにする（塗りの主ボタンは 1 画面に 1 つ）。 */
 export const withAnswerActs = (r: VRow, ui: Ui, acts: string) =>
-  answerWay(r) ? acts.replace('<div class="acts">', `<div class="acts">${answerActs(r, ui)}`).replace(/class="btn pri"( type="button" data-act="focus")/, 'class="btn"$1') : acts
+  answerWay(r) ? acts.replace('<div class="acts">', () => `<div class="acts">${answerActs(r, ui)}`).replace(/class="btn pri"( type="button" data-act="focus")/, 'class="btn"$1') : acts
 
 /** 答えの欄: 選択肢の下の説明と、書いて答える欄（送るは枠のボタン）と、届かなかった理由。 */
 export function answerHtml(r: VRow, ui: Ui): string {

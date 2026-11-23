@@ -341,7 +341,7 @@ function coworkRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, queu
       id: `${COWORK_ID}${s.id}`, rev: live?.updatedAt ?? 0, kind: 'talk', state: 'open', stream: s.id,
       ...(waiting && at && { since: at }),
       title: !waiting ? `共同作業中（担当は${state === 'working' ? '作業中' : state ? (OWNER_WORD[state] ?? '入力待ち') : '状態不明'}）`
-        : question ? askLine(question) : talks[0]?.card.title ?? `担当「${owner.title}」が返事を待っている`,
+        : asked?.agent?.ask?.kind === 'permit' ? asked.card.title : question ? askLine(question) : talks[0]?.card.title ?? `担当「${owner.title}」が返事を待っている`,
       tasks: [...new Set(c.tasks.filter((t) => t.stream === s.id && t.state !== 'ok').map((t) => t.id))],
       ...(context && { last: { text: context, by: '担当', ...(at && { at }) } }),
       // 返事の本文が読めたときは、開くボタンで足りるので「次」を書かない（Neon）。
@@ -366,7 +366,8 @@ const OWNER_WORD: Partial<Record<AgentRow['state'], string>> = { blocked: '許�
 export function permitTitle(a: Pick<Ask, 'text' | 'body'>): string {
   const tool = a.body?.[0] ?? /^(\w+): /.exec(a.text)?.[1] ?? ''
   const target = (a.body?.length ? a.text : a.text.replace(/^\w+: /, '')).trim()
-  const push = /^git push\s+(?:-\S+\s+)*(\S+)\s+(\S+)$/.exec(target)
+  // 文にするのは、ブランチを送るだけの形（-u は付いてよい）。削除・強制・refspec の形は、文にすると取り違えるのでコマンドのまま出す。
+  const push = /^git push\s+(?:(?:-u|--set-upstream)\s+)?(\w[\w./-]*)\s+(\w[\w./-]*)$/.exec(target)
   if (push) return `${push[2]} を ${push[1]} に push する`
   if (/bash/i.test(tool)) return `${target} を実行する`
   if (/edit|write|create/i.test(tool)) return `${target} を書き換える`

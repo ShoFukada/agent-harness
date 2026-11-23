@@ -592,6 +592,9 @@ test('一緒に作る仕事は、カードの有無に関わらず要対応に�
   const stuck = derive(w.cockpit, w.log, [], '/a', facts('waiting', { workers: [agent({ terminalId: null, chat: true, session: 'sess-aws', state: 'waiting', stop: 'waiting', ask: { kind: 'question', text: 'A と B のどちらにしますか？' } })] }), NOW)
   assert.deepEqual(stuck.queue.filter((x) => x.card.kind === 'stuck').map((x) => x.card.id), [])
   assert.deepEqual(row(stuck).map((x) => [x.card.title, x.agent?.ask?.kind]), [['A と B のどちらにしますか？', 'question']])
+  // 担当の許可の停止を寄せるときも、題は停止の行と同じ文（コマンドのままにしない）。
+  const permit = derive(w.cockpit, w.log, [], '/a', facts('blocked', { workers: [agent({ terminalId: null, chat: true, session: 'sess-aws', state: 'blocked', stop: 'blocked', ask: { kind: 'permit', text: 'Bash: git push origin main' } })] }), NOW)
+  assert.deepEqual(row(permit).map((x) => [x.card.title, x.agent?.ask?.kind]), [['main を origin に push する', 'permit']])
   const talk: Card = { id: 'k2', rev: 1, kind: 'talk', state: 'open', at: new Date(NOW - 600_000).toISOString(), stream: 's2', title: '入口の描き方を相談したい', purpose: 'x', fallback: 'x', due: new Date(NOW + 3_600_000).toISOString(), links: [{ label: 'x', href: 'https://example.com' }], last: { text: '入口はどう描きますか', by: '担当' } }
   const c2 = { ...w.cockpit, cards: [...w.cockpit.cards, talk] }
   assert.deepEqual(derive(c2, w.log, [], '/a', facts('working'), NOW).queue.filter((x) => x.card.stream === 's2' && x.card.kind === 'talk').map((x) => [x.card.id, x.card.title]), [['#cowork:s2', '共同作業中（担当は作業中）']])
@@ -954,4 +957,9 @@ test('許可の確認の題は、何をするかが初見で分かる文にす�
   assert.equal(permitTitle({ text: 'echo kt3 > c.txt', body: ['Bash command', 'Write kt3', 'echo kt3 > c.txt'] }), 'echo kt3 > c.txt を実行する')
   assert.equal(permitTitle({ text: 'src/a.ts', body: ['Edit file', 'src/a.ts'] }), 'src/a.ts を書き換える')
   assert.equal(permitTitle({ text: 'mcp__x__y' }), 'mcp__x__y')
+  // 削除・強制・refspec の push は、文にすると別の操作に読めるので、コマンドのまま実行する文にする。
+  assert.equal(permitTitle({ text: 'Bash: git push --delete origin old' }), 'git push --delete origin old を実行する')
+  assert.equal(permitTitle({ text: 'Bash: git push --force origin' }), 'git push --force origin を実行する')
+  assert.equal(permitTitle({ text: 'Bash: git push origin +main' }), 'git push origin +main を実行する')
+  assert.equal(permitTitle({ text: 'Bash: git push origin :old' }), 'git push origin :old を実行する')
 })

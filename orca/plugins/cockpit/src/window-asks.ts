@@ -1,4 +1,4 @@
-import { TEXT_MAX, askItem, askWords, answerParts, unanswered, withoutChoices, type AskEntry, type AskReturn, type AskThread, type Op } from './model.ts'
+import { TEXT_MAX, askChoices, askItem, askWords, answerParts, unanswered, withoutChoices, type AskEntry, type AskReturn, type AskThread, type Op } from './model.ts'
 import { fmtDate, nearDate } from './state.ts'
 import { esc, keyOf, mono, note, type AskWait, type Board, type Ui } from './view.ts'
 import { markdown } from './markdown.ts'
@@ -204,11 +204,35 @@ export function askBoxHtml(b: Board, s: { kind: 'card' | 'task' | 'stream'; id: 
   return `<section class="ask" aria-label="やりとり">${list}${form}</section>`
 }
 
+/**
+ * 返した案の題。op が選んだ答えの【選べる案】から引く（a.choices は今決める答えの案で、前の答えでは同じ A が別の案のことがある）。
+ * その答えが窓に届いた控えに無ければ題を出さない。
+ */
+function choiceTitle(a: AskThread, o: Op): string | undefined {
+  const n = o.answer?.n
+  if (n === undefined) return undefined
+  const seen = a.entries.filter((e) => e.kind === 'a')
+  const e = seen[n - 1 - (a.answers - seen.length)]
+  const cs = n === a.decide?.n ? a.choices : e ? askChoices(answerParts(e.text).body) : undefined
+  return cs?.find((c) => c.key === o.choice)?.title
+}
+
+/**
+ * 返しを受けた写しの答えが、返しの決まったことの言い直しと返しの知らせだけか。ほかのことが 1 文でもあれば出す（移行日は未定、などを落とさない）。
+ * 文ごとに、返しの知らせ（「返し」を含む 40 字までの文）か、決まったことと空白・句読点を除いて一方が他方を含むかを見る。
+ */
+function echoOnly(body: string, decisions: string[]): boolean {
+  const flat = (t: string) => t.replace(/[\s、。，．・「」『』*_`#>-]/g, '')
+  const ds = decisions.map(flat).filter(Boolean)
+  const ss = body.split(/[。\n]/).map(flat).filter(Boolean)
+  return ss.length > 0 && ss.every((x) => (x.includes('返し') && x.length <= 40) || ds.some((d) => d.includes(x) || x.includes(d)))
+}
+
 /** 窓口に返したこと 1 つ（返し方・時刻・今の札と、返しの記録の決まったこと）。o が無いのは写しが自分で書いた返し。 */
 function returnedHtml(b: Board, a: AskThread, o: Op | undefined, ret: AskReturn | undefined, state: AskState, now: number): string {
   const rec = b.v.cockpit!.asks?.find((x) => x.id === a.id)
   const words = o && askWords(o)
-  const title = o?.choice ? a.choices?.find((c) => c.key === o.choice)?.title : undefined
+  const title = o?.choice ? choiceTitle(a, o) : undefined
   const what = !o ? '' : o.choice ? `案 ${o.choice}${title ? `（${title}）` : ''}` : words || ''
   const phase: OpPhase | 'open' = o ? opPhase(b, a, o) : (({ done: 'done', held: 'held', open: 'open' } as const)[retState(b, a, ret!.return_id)])
   const [label, cls] = phase === 'open' ? PHASE_TAG.returned : PHASE_TAG[phase]
@@ -231,22 +255,23 @@ function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
   let n = a.answers - a.entries.filter((e) => e.kind === 'a').length
   const repo = b.v.cockpit!.tasks.find((t) => t.id === a.task)?.repo
   const placed = new Set<string>()
-  // 返した言葉への写しの答えは、返しの決まったことと同じ文になるので、返しが届いていれば出さない。
-  let echo = false
+  // 返した言葉への写しの答えは、返しの決まったことの言い直しになりやすい。言い直しと返しの知らせだけなら出さない（echoOnly）。
+  let echo: string[] | undefined
   const body = entries.map((e) => {
     if (e.kind === 'q' && e.time && words.has(e.text.trim())) {
       const o = ops.find((x) => askWords(x) === e.text.trim())
-      echo = !!(o && retOf(a, o)?.decisions?.length)
+      const ds = (o && retOf(a, o)?.decisions?.map((d) => d.text).filter((t): t is string => !!t)) ?? []
+      echo = ds.length ? ds : undefined
       return ''
     }
     if (e.kind === 'n') return ''
     if (e.kind === 'q') {
-      echo = false
+      echo = undefined
       return `<div class="aq"><span class="mut">${e.time ? `質問 ${esc(e.time)}` : '送った質問'}</span><div class="verb">${esc(e.text)}</div></div>`
     }
     n += 1
-    const skip = echo
-    echo = false
+    const ds = echo
+    echo = undefined
     const p = answerParts(e.text)
     const at = p.at ?? a.at
     const mine = ops.filter((o) => o.answer?.n === n)
@@ -256,7 +281,7 @@ function threadPane(b: Board, a: AskThread, ui: Ui, now: number): string {
     }
     const body = n === a.decide?.n && a.choices?.length ? withoutChoices(p.body) : p.body
     const said = mine.map((o) => returnedHtml(b, a, o, retOf(a, o), st.state, now)).join('')
-    if (skip) return said
+    if (ds && echoOnly(withoutChoices(p.body), ds)) return said
     return `<div class="aa"><span class="mut">答え ${esc(e.time)}${at ? `（窓口の ${esc(at)} までの会話から）` : ''}</span><div class="abody">${markdown(body, repo)}</div></div>${said}`
   }).join('')
   const rest = a.returns.filter((r) => typeof r.return_id === 'string' && !placed.has(r.return_id)).map((r) => returnedHtml(b, a, ops.find((o) => String(o.op_id) === String(r.op)), r, st.state, now)).join('')

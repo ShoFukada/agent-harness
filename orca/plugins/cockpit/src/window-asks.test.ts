@@ -125,6 +125,14 @@ test('やりとりの会話: 何についての質問か（押すと詳細へ）
   // 上の状態（反映済み）と同じ札は重ねず、返しが届いた言葉への写しの答え（決まったことと同じ文）は出さない。
   assert.match(back, /2 案あります。 返した 09:12 担当へ未通知 案 A 地図はタイルをためる 続けて聞く/)
   assert.doesNotMatch(back, /質問 09:12 案 A で。|答え 09:13|窓口が反映済み/)
+  // 写しの答えに決まったこと以外の話があれば、答えを残す（Codex 重大 3）。
+  m.boards[0]!.v.asks![0]!.entries[3] = a('09:13', '地図はタイルをためます。既存データの移行日は未定です。')
+  assert.match(text(page(m, { tab: 'asks', thread: 'ask1', askAll: true })), /答え 09:13（[^）]*） 地図はタイルをためます。既存データの移行日は未定です。/)
+  // 前の答えの案 A と今の答えの案 A が別のものでも、返した案の題は返したときの答えから引く（Codex 重大 2）。
+  m.boards[0]!.v.asks![0] = answered('ask1', { task: 't1', answers: 2, choices: [{ key: 'A', title: '登録順のまま' }], entries: [q('09:10', '並びは？'), a('09:11', '2 案あります。\n\n【選べる案】\n- A: 配送日の降順\n- B: 登録順のまま'), q('09:12', '案 A で。'), a('09:13', '別の案です。\n\n【選べる案】\n- A: 登録順のまま\n- B: 番号順')], decide: { at: '09:13', head: '別の案です。', n: 2 } })
+  const twice = text(page(m, { tab: 'asks', thread: 'ask1', askAll: true }))
+  assert.match(twice, /返した 09:12 [^答]*案 A（配送日の降順）/)
+  assert.doesNotMatch(twice, /案 A（登録順のまま）/)
 })
 
 test('やりとりの会話: 古い op・写しが自分で書いた返し・保留・会話が先に進んで届いていない op を語で出す', () => {
