@@ -15,10 +15,8 @@ cockpit.json は読むだけで書かない（受け取りの runId・taskId は
 .orca/cockpit.json を探し、無ければ git の本線（リポジトリのルート）を使う。
 
 claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなければ呼んだ側の値）・--model opus・--settings $ORCA_WORKER_SETTINGS で起動し
-（選んだ設定の絶対パスを、claude/bin の入口が読む子プロセスの $ORCA_WORKER_SETTINGS にも渡す）、
-端末と設定のファイルを stallwatch の worker-launches.json に記録する（席の切り替えで Orca が --settings を落としたとき、account-failover が戻す）。
-呼んだ側の値をそのまま渡さないのは、account-failover が利用枠の上限で席を切り替えたあとも元の席に残るチャットの担当から立てたとき、
-worker が上限の席で起動するのを避けるため。
+（選んだ設定の絶対パスを、claude/bin の入口が読む子プロセスの $ORCA_WORKER_SETTINGS にも渡す）。
+呼んだ側の値をそのまま渡さないのは、席を切り替えた直後でまだ古い席で動いている担当から立てたとき、worker が上限の席で起動するのを避けるため。
 確認の画面（その席で初めて開く作業場所の「フォルダを信頼するか」・席で一度だけ出る「auto mode を既定にするか」・ログインの画面など）で
 止まったら、Task を渡さずに止め、どの席で何の画面かと画面の最後の行を出す（渡すと指示の文字が「No, exit」を選ぶことがある）。
 信頼を設定ファイル（.claude.json）に先に書くことはしない。
@@ -293,12 +291,6 @@ def main():
     handle = ((created.get("result") or {}).get("terminal") or {}).get("handle")
     if not handle:
         sys.exit("orca-launch: 端末を作れなかった")
-    settings = worker_settings(a)
-    if a.agent == "claude" and settings:
-        try:
-            sw.note_launch(handle, settings, a.model)
-        except OSError as e:  # sandbox の中の worker が helper を立てるときは書けない。立てることは止めない
-            sys.stderr.write("orca-launch: worker の記録を書けなかった（席の切り替えで設定を戻せない）: %s\n" % e)
     args = ["orchestration", "worker-start", "--spec-file", a.spec_file, "--terminal", handle]
     args += ["--task-title", a.task_title] if a.task_title else []
     args += ["--keep-open"] if a.keep_open else []
@@ -311,7 +303,7 @@ def main():
         print(json.dumps({"terminal": handle, "blockedReason": wait.get("blockedReason"), "seat": email}, ensure_ascii=False))
         sys.exit("orca-launch: %s ので Task を渡していない。端末で答えてから %s で渡す（渡さないなら orca terminal close --terminal %s で閉じる）"
                  % (stopped_at(handle, home, email, why), retry, handle))
-    # 席を読んでから端末ができるまでに account-failover が切り替えると、この端末は Orca の起動し直しに入らず古い席に残る。
+    # 席を読んでから端末ができるまでに席が切り替わると、この端末は古い席で起きている。Task を渡す前に閉じて打ち直させる。
     if a.agent == "claude" and seat()[0] != home:
         orca("terminal", "close", "--terminal", handle)
         sys.exit("orca-launch: 起動の途中で Claude の席が切り替わったので、Task を渡さずに端末を閉じた。同じ orca-launch を打ち直す")

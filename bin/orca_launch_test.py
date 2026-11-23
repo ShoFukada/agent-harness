@@ -97,10 +97,6 @@ class LaunchTest(unittest.TestCase):
         create = next(x for x in self.calls() if x[:2] == ["terminal", "create"])
         cmd = create[create.index("--command") + 1]
         self.assertIn("CLAUDE_CONFIG_DIR=" + self.cfg, cmd)
-        # 席の切り替えで Orca が --settings を落としたとき、account-failover が戻せるよう端末と設定を記録する。
-        with open(os.path.join(self.tmp, "stallwatch", "worker-launches.json")) as fh:
-            rec = json.load(fh)
-        self.assertEqual({h: (r["settings"], r["model"]) for h, r in rec.items()}, {"term_x": ("/s/worker.json", "opus")})
         self.assertIn("--model opus --settings /s/worker.json", cmd)
         start = next(x for x in self.calls() if x[:2] == ["orchestration", "worker-start"])
         self.assertEqual(start[start.index("--terminal") + 1], "term_x")
@@ -186,7 +182,7 @@ class LaunchTest(unittest.TestCase):
             self.assertTrue(fh.read().strip())
 
     def test_follows_the_seat_orca_has_selected(self):
-        # account-failover が席を切り替えたあと、元の席に残った担当（CLAUDE_CONFIG_DIR は古い席）から立てても、新しい席で起動する。
+        # 席を切り替えた直後で、まだ古い席で動いている担当（CLAUDE_CONFIG_DIR は古い席）から立てても、新しい席で起動する。
         accounts = {"activeAccountId": "b", "accounts": [{"id": "a", "home": self.cfg}, {"id": "b", "home": "/p/b/home"}]}
         r = self.run_launch(FAKE_ACCOUNTS=json.dumps(accounts))
         self.assertEqual(r.returncode, 0, r.stderr)

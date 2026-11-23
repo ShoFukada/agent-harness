@@ -33,7 +33,7 @@ worktree-flow skill の SKILL.md から分けた細部。`orca-launch` が確認
 
 ## 担当を立てるときの細部
 - 担当は窓口の子の worktree（担当の居場所。commit はしない）に立てる。窓口と同じ worktree に立てると、操縦席を見つけた窓口用の hook（periodic-reminder・compaction-keep）が担当をメインと見なし、操縦席の更新を求め、圧縮のあとに担当の送信を止める。Orca の worker-start には環境変数を渡す手段が無いので、居場所で分ける（操縦席は git に入れないので子の worktree には無い）
-- 担当は窓口と同じ設定（sandboxなし）で動き、立てたときにOrcaで選ばれている席（Claudeのアカウント）を使う。チャットは席を切り替えても起動し直らないので、account-failoverが切り替えたあとも担当は元の席に残る（2026-11-21 21:18に観測）。上限で止まった担当のチャットは、切り替えの仕組みが新しいチャットに出し直す（references/notify.md の「利用枠の上限に当たったとき」）
+- 担当は窓口と同じ設定（sandboxなし）で動き、立てたときにOrcaで選ばれている席（Claudeのアカウント）を使う。席が切り替わると、account-failover が担当の裏の claude を止め、担当は次のメッセージで同じ会話・同じ Dispatch のまま今の席で起きる（references/notify.md の「利用枠の上限に当たったとき」）
 - 受け取りを操縦席のタスクの `worker` に書く（書く欄は cockpit skill の references/workers.md）
 - チャットの題には `--task-title` がそのまま付く（2026-11-21 に確かめた）。あとで変えるときは `orca chat rename --session <id> --name "<題>"`（題の形は references/sidebar.md の仕事の行）。id は `orca worktree ps --json` の、そのチャットの `agents[].orcaSessionId`
 

@@ -66,30 +66,6 @@ def save(path, data):
     os.replace(tmp, path)
 
 
-# orca-launch が立てた worker の端末と、その claude に付けた worker の設定（--settings）。Orca が席の切り替えで起こし直した claude は
-# --settings を落とし、起こし直したあとの端末の出力には元の起動の行が残らないので、account-failover はここから設定を戻す。
-LAUNCHES = os.path.join(HOME, "worker-launches.json")
-LAUNCH_KEEP_MS = 14 * 24 * 60 * 60_000
-
-
-def worker_launches():
-    """端末の handle → {"settings", "model", "at"}。"""
-    v = load(LAUNCHES, {})
-    return v if isinstance(v, dict) else {}
-
-
-def note_launch(handle, settings, model, drop=None):
-    """worker の端末を記録する（drop の handle は消す。起こし直して handle が変わったとき）。2 週間より古い記録は捨てる。"""
-    import fcntl
-    os.makedirs(HOME, exist_ok=True)
-    with open(LAUNCHES + ".lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        now = now_ms()
-        v = {h: r for h, r in worker_launches().items() if h != drop and now - (r.get("at") or 0) < LAUNCH_KEEP_MS}
-        v[handle] = {"settings": settings, "model": model, "at": now}
-        save(LAUNCHES, v)
-
-
 def alert(aid, text, root=None, confirm=False):
     """confirm: 2 回続けて見えたら出す（Orca の更新や再起動の途中の一瞬を知らせない）。"""
     return {"id": aid, "text": text, "root": root, "confirm": confirm}
@@ -119,6 +95,8 @@ STARTUP_SCREENS = (
     ("auto mode を既定にするかの確認", re.compile(r"(?i)set auto mode as my default")),
     ("bypass permissions の同意の確認", re.compile(r"(?i)yes, i accept")),
     ("初回の設定の画面", re.compile(r"(?i)choose the text style|let's get started")),
+    # 席ごとに承認が要り、席を移した端末が止まる（2026-11-22 の切り替えで ca-test-plan の端末が止まった）。承認は席ごとに人が一度する（R205）
+    ("CLAUDE.md の外部 import の承認（External imports）", re.compile(r"(?i)external (?:claude\.md )?(?:file )?imports|imports files outside")),
 )
 # 画面の下のこの行数だけを見る。上には開き直した会話の文が残り、確認の画面の文言を含むことがある。
 SCREEN_LINES = 25
@@ -455,7 +433,7 @@ def check_jobs(jobs, services):
 
 
 def check_side(now):
-    """account-failover（全席が上限・切り替えた・移せなかった端末）と orca-watch（Orca を起動し直した・止めた）が書いた知らせ。
+    """account-failover（全席が上限・切り替えた・古い席から移せなかった claude）と orca-watch（Orca を起動し直した・止めた）が書いた知らせ。
     alerts.json の書き手をここ 1 つに保つため、帯へはここで合流させる。"""
     # どちらも知らせるべきものは書いた時点で自分で通知しているので、ここでは帯にだけ出す（quiet）。
     return [dict(alert(a["id"], a["text"]), quiet=True) for name in ("failover.json", "orca-watch.json")
