@@ -365,6 +365,8 @@ export type AskThread = {
   entries: AskEntry[]; returns: AskReturn[]
   answers: number
   decide?: AskAnswer
+  /** decide の答えの【選べる案】（無ければ無い）。 */
+  choices?: AskChoice[]
 }
 /** どの答えで決めたか。n は控えの中の答えの通番（同じ分・同じ書き出しの別の答えと分ける）、head は読むための頭 80 字。 */
 export type AskAnswer = { at: string; head: string; n: number }
@@ -378,11 +380,45 @@ export function answerParts(text: string): { at?: string; body: string } {
 }
 /** 決める候補の頭の文。太字の記号は外して読む（本文は窓が Markdown で描く。R167）。 */
 export const answerHead = (text: string) => answerParts(text).body.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\s+/g, ' ').slice(0, 80)
-export function latestAnswer(entries: AskEntry[]): AskAnswer | undefined {
+/** 最後の質問より後の、最後の答えの節。 */
+function latestAnswerEntry(entries: AskEntry[]): AskEntry | undefined {
   const lastQ = entries.findLastIndex((e) => e.kind === 'q')
-  const a = entries.slice(lastQ + 1).findLast((e) => e.kind === 'a')
+  return entries.slice(lastQ + 1).findLast((e) => e.kind === 'a')
+}
+export function latestAnswer(entries: AskEntry[]): AskAnswer | undefined {
+  const a = latestAnswerEntry(entries)
   return a && { at: a.time, head: answerHead(a.text), n: entries.filter((e) => e.kind === 'a').length }
 }
+/** 答えの末尾の【選べる案】の 1 行（写しが書く。nix-darwin の claude/roles/ask.md）。pick は推しの案。 */
+export type AskChoice = { key: string; title: string; pick?: true }
+/**
+ * 答えの中で最後の「【選べる案】」の行から続く「- A: 題」の行（2〜5 行）。閉じたコードフェンスの中は読まない（控えの節の見出しと同じ扱い）。
+ * 形の違う行で止め、形が無い・行数が合わない答えは空（文章から案を推し量らない）。
+ */
+export function askChoices(text: string): AskChoice[] {
+  const t = text.replace(/\r\n?/g, '\n')
+  const fenced: [number, number][] = []
+  for (let m, re = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$/gm; (m = re.exec(t)); ) fenced.push([m.index, m.index + m[0].length])
+  const mark = [...t.matchAll(/^【選べる案】[ \t]*$/gm)].filter((m) => !fenced.some(([a, b]) => m.index! > a && m.index! < b)).at(-1)
+  if (!mark) return []
+  const out: AskChoice[] = []
+  for (const line of t.slice(mark.index! + mark[0].length + 1).split('\n')) {
+    const m = /^- ([A-Z]): (.+?)[ \t]*$/.exec(line)
+    if (!m || out.some((c) => c.key === m[1])) break
+    const pick = /（推し）$/.test(m[2]!)
+    const title = m[2]!.replace(/[ \t]*（推し）$/, '')
+    if (!title) break
+    out.push({ key: m[1]!, title, ...(pick && { pick: true as const }) })
+  }
+  return out.length >= 2 && out.length <= 5 ? out : []
+}
+/** 最後の質問より後の、最後の答えの【選べる案】。 */
+export function latestChoices(entries: AskEntry[]): AskChoice[] {
+  const a = latestAnswerEntry(entries)
+  return a ? askChoices(answerParts(a.text).body) : []
+}
+/** 「窓口に返す」で写しに届ける深田さんの言葉。案を選んだら「案 A で。」、書いたらその文。どちらも無い古い op は無い。 */
+export const askWords = (o: Pick<Op, 'choice' | 'text'>): string | undefined => (o.choice ? `案 ${o.choice} で。` : o.text?.trim() || undefined)
 export const unanswered = (entries: AskEntry[]) => entries.filter((e) => e.kind !== 'n').at(-1)?.kind === 'q'
 /** 窓から送る質問の中の、控えの節の見出しと同じ形の行（貼ったログの例など）を 1 字下げる。hook は本文をそのまま控えに書くため（Codex 2 回目 重大 1）。 */
 export const escapeAskSections = (q: string) => q.replace(/^(?=### (?:質問|答え|知らせ) \d{1,2}:\d{2})/gm, ' ')
@@ -421,7 +457,7 @@ export type Cockpit = {
  * 帳簿に無い行への返答で、窓口が反映するものは無い（未反映の操作に数えない）。同じ失敗のあいだだけその行を出さない。
  */
 /**
- * ask_decide: 窓からの質問の「これで決める」。item_id は #ask:<質問 id>、item_rev は 0、answer はどの答えか。窓口はこの op だけでは何もせず、
+ * ask_decide: 窓からの質問の「これで決める」。item_id は #ask:<質問 id>、item_rev は 0、answer はどの答えか、choice は選んだ案、text は書いて返した文。窓口はこの op だけでは何もせず、
  * op にこの op_id を持つ返しが届いたら反映し、同じ書き込みで applied_ops に足す（cockpit skill の ops.md）。
  */
 export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide'
@@ -447,6 +483,8 @@ export type Op = {
   /** talk: 窓が立てた（前に出した）カードの相談のタブの端末の handle。タブが Orca から消えたら話し中の印を外す。 */
   terminal?: string
   answer?: AskAnswer
+  /** ask_decide: 選んだ【選べる案】の記号（A など）。書いた文で返したときは text。どちらも無いのは古い「この答えを窓口に返す」。 */
+  choice?: string
 }
 export type UserLog = { ops: Op[] }
 export type Archive = { cards: Card[] }

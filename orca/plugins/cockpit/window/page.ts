@@ -28,7 +28,7 @@ const ctl = mount({
   clip: (text, format) => post('/api/clip', { text, format }),
   ask: (input) => post('/api/ask', input),
   askLookup: (root, q) => post('/api/asklookup', { root, q }),
-  askDecide: (root, ask, answer) => post('/api/askdecide', { root, ask, answer }),
+  askDecide: (root, ask, answer, how) => post('/api/askdecide', { root, ask, answer, ...how }),
   askTab: (root, ask) => post('/api/asktab', { root, ask })
 }, { window: true })
 

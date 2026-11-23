@@ -12,7 +12,7 @@ import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
 import { renderWindow, todoGroups } from '../src/window-view.ts'
 import type { AutomationRun, OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
-import { askCli, askNotice, askTitle, automationFact, createServer, orcaCli, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
+import { askCli, askMessage, askNotice, askTitle, automationFact, createServer, orcaCli, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
@@ -858,6 +858,83 @@ test('届けられなかった「返しを書いて」は、常駐のプロセ�
   assert.equal(calls.filter((x) => x[0] === 'send').length, 1, '届けた op は 2 回送らない')
 })
 
+test('案を選んで・書いて窓口に返す: op に choice か text を書き、深田さんの言葉を先に、改行して「返しを書いて」を後に 1 回で送る。同じ返し方は重ねず、違う案は新しい op', async () => {
+  const { a, rows } = workspaces()
+  const memo = path.join(a, '.orca/consult/ask-ask3.md')
+  mkdirSync(path.dirname(memo), { recursive: true })
+  writeFileSync(memo, '# 質問｜案件A｜ask3\n\n### 質問 09:10（u-1）\n地図は？\n\n### 答え 09:11\n2 案あります。\n\n【選べる案】\n- A: タイルをためる（推し）\n- B: 見積もりを出す\n\n')
+  let open = true
+  const { s, port, post, calls, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs: async (root) => (root === a && open ? [{ title: askTitle('案件A', 'ask3'), handles: ['term_ask3'] }] : []) })
+  const ev = listen(port, s.token)
+  const shown = board(await ev.until((v) => !!board(v, a)?.asks?.[0]?.choices), a)!.asks![0]!
+  assert.deepEqual(shown.choices, [{ key: 'A', title: 'タイルをためる', pick: true }, { key: 'B', title: '見積もりを出す' }], '案は常駐のプロセスが控えから読んで窓に渡す')
+  const answer = shown.decide!
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'C' })).status, 409, '答えに無い案では返さない')
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'A', text: 'x' })).status, 400)
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer, text: '  ' })).status, 400)
+  const r = await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'A' })
+  assert.equal(r.body.sent, true)
+  const ops = () => JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8')).ops
+  assert.deepEqual({ ...ops().at(-1), at: undefined }, { op_id: r.body.op, at: undefined, item_id: '#ask:ask3', item_rev: 0, type: 'ask_decide', answer, choice: 'A' })
+  assert.deepEqual(calls.filter((x) => x[0] === 'send'), [['send', 'term_ask3', `案 A で。\n【相談の知らせ】返しを書いて（op ${r.body.op}）`]])
+  assert.deepEqual((await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'A' })).body, { op: r.body.op, sent: false, again: true }, '同じ案は重ねない')
+  // 写しに届く前（hook が言葉を控えに書く前）に、違う案や書いた文で返し直すと新しい op になる。タブが閉じていれば記録だけして、見回りが言葉ごと送り直す。
+  open = false
+  const b = await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'B' })
+  const t = await post('askdecide', { root: a, ask: 'ask3', answer, text: 'B で、来週から\n### 答え 09:00 は例' })
+  assert.deepEqual([b.body.sent, t.body.sent, new Set([r.body.op, b.body.op, t.body.op]).size], [false, false, 3])
+  assert.equal(ops().at(-1).text, 'B で、来週から\n ### 答え 09:00 は例', '控えの節の見出しと同じ形の行は 1 字下げて記録する')
+  open = true
+  await s.sweepAsks(Date.now())
+  assert.deepEqual(calls.filter((x) => x[0] === 'send').slice(1), [
+    ['send', 'term_ask3', `案 B で。\n【相談の知らせ】返しを書いて（op ${b.body.op}）`],
+    ['send', 'term_ask3', `B で、来週から\n ### 答え 09:00 は例\n【相談の知らせ】返しを書いて（op ${t.body.op}）`]
+  ])
+  assert.deepEqual(JSON.parse(readFileSync(path.join(wdir, 'asksent.json'), 'utf8')), { [a]: [r.body.op, b.body.op, t.body.op] })
+  // hook が言葉を質問として控えに書いたら、答えを待つあいだは返させない。
+  writeFileSync(memo, readFileSync(memo, 'utf8') + '### 質問 09:12（u-2）\n案 A で。\n\n')
+  assert.equal((await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'B' })).status, 409)
+  assert.equal(askMessage({ op_id: 5 }), askNotice(5), '古い形の op は知らせだけ')
+})
+
+test('写しに届いていない「窓口に返す」があれば、続けて聞く前に届け、続きは送らない（届けられなければ続きでタブを立て直す）。会話が先に進んだ op は送り直さない（Codex 1）', async () => {
+  const { a, rows } = workspaces()
+  const memo = path.join(a, '.orca/consult/ask-ask3.md')
+  mkdirSync(path.dirname(memo), { recursive: true })
+  writeFileSync(memo, '# 質問｜案件A｜ask3\n\n### 質問 09:10（u-1）\n地図は？\n\n### 答え 09:11\n2 案あります。\n\n【選べる案】\n- A: タイルをためる\n- B: 見積もりを出す\n\n')
+  // 見本の帳簿は applied_ops に op 1 を持つので、op の番号をその先から始める。
+  writeFileSync(path.join(a, '.orca/cockpit.user.json'), JSON.stringify({ ops: [{ op_id: 40, at: '2026-11-21T00:00:00.000Z', item_id: '', item_rev: 0, type: 'repeat' }] }))
+  let open = false
+  const asked: string[] = []
+  const { s, port, post, calls } = await start(rows, a, undefined, undefined, undefined, undefined, {
+    tabs: async (root) => (root === a && open ? [{ title: askTitle('案件A', 'ask3'), handles: ['term_ask3'] }] : []),
+    ask: async (_root, id, o) => (asked.push(o.question ?? ''), `term_${id}`)
+  })
+  const ev = listen(port, s.token)
+  const answer = board(await ev.until((v) => !!board(v, a)?.asks?.[0]?.decide), a)!.asks![0]!.decide!
+  const r = await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'A' })
+  assert.equal(r.body.sent, false)
+  open = true
+  const first = await post('ask', { root: a, ask: 'ask3', question: '図は？' })
+  assert.match(first.body.reason, /写しの会話に届けました。その答えが届いてから/)
+  assert.deepEqual(calls.filter((x) => x[0] === 'send'), [['send', 'term_ask3', askMessage({ op_id: r.body.op, choice: 'A' })]])
+  assert.deepEqual(asked, [], '続きは送らない')
+  // 届けられないまま、写しの端末で直接会話が進んだ（新しい答え）ら、古い op は窓が送り直さない。
+  open = false
+  const b = await post('askdecide', { root: a, ask: 'ask3', answer, choice: 'B' })
+  assert.equal(b.body.sent, false)
+  writeFileSync(memo, readFileSync(memo, 'utf8') + '### 質問 09:20（u-2）\n別の話\n\n### 答え 09:21\n別の答え\n\n')
+  open = true
+  await s.sweepAsks(Date.now())
+  assert.equal(calls.filter((x) => x[0] === 'send').length, 1)
+  // タブが閉じて届けられないときは、続きを止めずに consult にタブを立て直させる（Codex 2 巡目 1）。
+  open = false
+  const c = await post('askdecide', { root: a, ask: 'ask3', answer: board(await ev.until((v) => board(v, a)?.asks?.[0]?.decide?.at === '09:21'), a)!.asks![0]!.decide!, text: 'それで' })
+  assert.equal(c.body.sent, false)
+  assert.equal((await post('ask', { root: a, ask: 'ask3', question: '続き' })).body.opened, true)
+  assert.deepEqual(asked, ['続き'])
+})
+
 test('質問のタブを自動で閉じる（R180）: terminals[] から引いたときも、asktabs.json に覚えた handle と同じ端末だけを閉じる（開き直して handle が変わったものは閉じない）', async () => {
   const { a, rows } = workspaces()
   const dir = path.join(a, '.orca/consult')
@@ -869,9 +946,13 @@ test('質問のタブを自動で閉じる（R180）: terminals[] から引い�
     utimesSync(path.join(dir, `ask-${id}.md`), old, old)
   }
   // ask1 は開き直して handle が変わった端末、ask2 は窓が立てたままの端末。
-  const list = { visualLayouts: [], terminals: [{ handle: 'term_new_ask1', worktreePath: a, title: askTitle('案件A', 'ask1'), orphaned: true, connected: true }, { handle: 'term_ask2', worktreePath: a, title: askTitle('案件A', 'ask2'), orphaned: true, connected: true }] }
+  // 開き直した直後は端末の一覧も空のことがある。そのときは「タブが無い」と決めずに、次の回にもう一度見る（Codex 6）。
+  let list: unknown = { visualLayouts: [], terminals: [] }
   const { s, calls, dir: wdir } = await start(rows, a, undefined, undefined, undefined, undefined, { tabs: async (root) => tabsOf(list, root) })
   writeFileSync(path.join(wdir, 'asktabs.json'), JSON.stringify({ [a]: { ask1: 'term_old_ask1', ask2: 'term_ask2' } }))
+  await s.sweepAsks(now)
+  assert.deepEqual(calls.filter((x) => x[0] === 'close'), [])
+  list = { visualLayouts: [], terminals: [{ handle: 'term_new_ask1', worktreePath: a, title: askTitle('案件A', 'ask1'), orphaned: true, connected: true }, { handle: 'term_ask2', worktreePath: a, title: askTitle('案件A', 'ask2'), orphaned: true, connected: true }] }
   await s.sweepAsks(now)
   assert.deepEqual(calls.filter((x) => x[0] === 'close'), [['close', 'term_ask2']])
 })

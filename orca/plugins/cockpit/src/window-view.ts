@@ -1,5 +1,5 @@
 // 窓（常駐のプロセスが出すページ）の 3 タブ: 要対応・全体・対応済み。パネルは view.ts の render のまま。
-import { actionVerb, COUNTED, COWORK_ID, IDLE_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
+import { actionVerb, COUNTED, COWORK_ID, IDLE_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, TEXT_MAX, askItem, askWords, answerParts, doneText, unanswered, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type AskEntry, type AskThread, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
 import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, statusFallback, tokyoDay, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, sp, stripHtml, toastsHtml, rowIdHtml,
@@ -330,29 +330,41 @@ function askReturnsHtml(b: Board, a: AskThread): string {
   return rows.length ? fld('窓口に返したこと', `<ul class="rich">${rows.join('')}</ul>`) : ''
 }
 
-function askDecidedHtml(b: Board, a: AskThread): { html: string; n?: number } {
+/** 取り消されていない最後の「窓口に返す」の op と、その行。words は写しに届けた深田さんの言葉（古い op は無い）。 */
+function askDecidedHtml(b: Board, a: AskThread): { html: string; n?: number; words?: string } {
   const undone = new Set(b.v.log.ops.filter((o) => o.type === 'undo').map((o) => o.undo_of))
-  const ops = b.v.log.ops.filter((o) => o.type === 'ask_decide' && o.item_id === askItem(a.id) && !undone.has(o.op_id))
-  const o = ops.at(-1)
+  const o = b.v.log.ops.filter((x) => x.type === 'ask_decide' && x.item_id === askItem(a.id) && !undone.has(x.op_id)).at(-1)
   if (!o) return { html: '' }
-  // 返しの記録があるか、窓が写しのタブに「返しを書いて」を届けたか（askSent。読めなかった窓は返し待ちとだけ出す）。
-  const got = a.returns.some((r) => String(r.op) === String(o.op_id))
-  const state = got ? tag('写しが返しました')
+  const words = askWords(o)
+  const what = o.choice ? `${esc(o.choice)} で返した` : words ? `「${esc(words.length > 40 ? `${words.slice(0, 40)}…` : words)}」と返した` : `${o.answer?.at ? `答え ${esc(o.answer.at)} を` : ''}窓口に返すよう依頼しました`
+  // 返しの記録があるか（あれば窓口が反映したか）、窓が写しのタブに届けたか（askSent。読めなかった窓は返し待ちとだけ出す）。
+  const ret = a.returns.find((r) => String(r.op) === String(o.op_id))
+  const reflected = !!ret && (!!b.v.cockpit!.asks?.find((x) => x.id === a.id)?.from_returns?.includes(ret.return_id) || !!b.v.cockpit!.applied_ops?.includes(o.op_id))
+  const state = ret ? (reflected ? tag('窓口が反映済み') : tag('窓口の反映待ち', 'wait'))
     : !b.v.askSent ? tag('写しからの返し待ち', 'wait')
     : b.v.askSent.includes(o.op_id) ? tag('写しに届けました・返し待ち', 'wait')
+    // 会話が先に進んだ op は窓が送り直さない（server.ts の undelivered）。
+    : a.decide?.n !== o.answer?.n || a.decide?.at !== o.answer?.at ? tag('写しに届いていません・会話が先に進んだので窓口が控えから拾います', 'wait')
     : tag('写しにまだ届いていません・届けられるようになったら窓が送り直します', 'wait')
-  return { html: `<p class="askdone"><b>${o.answer?.at ? `答え ${esc(o.answer.at)} を` : ''}窓口に返すよう依頼しました</b><span class="mut">${esc(fmtDate(o.at))}</span>${state}</p>`, n: o.answer?.n }
+  return { html: `<p class="askdone"><b>${what}</b><span class="mut">${esc(fmtDate(o.at))}</span>${state}</p>`, n: o.answer?.n, ...(words && { words }) }
 }
 
 function askThreadHtml(b: Board, a: AskThread, ui: Ui, now: number): string {
   const pend = askPending(ui, b.root, a.id)
   const qs = a.entries.filter((e) => e.kind === 'q')
   const entries: AskEntry[] = pend && qs.at(-1)?.text.trim() !== pend[1].q ? [...a.entries, { kind: 'q', time: '', text: pend[1].q }] : a.entries
-  const last = entries.map((e, i) => (e.kind === 'q' ? i : -1)).filter((i) => i >= 0).at(-1) ?? 0
+  const done = askDecidedHtml(b, a)
+  const qIdx = entries.map((e, i) => (e.kind === 'q' ? i : -1)).filter((i) => i >= 0)
+  // 窓口に返した言葉（hook が質問の節として控えに書く）が最後の質問なら、返した答えと一緒に開いたまま見せ、返した行もその下に出す。
+  // 控えの質問で、その前の答えが返した答え（通番）のときだけ（あとで同じ文を聞き直した質問と取り違えない。Codex 5）。
+  const lastQ = qIdx.at(-1) ?? -1
+  // 窓に届く控えは新しい節だけなので、その前の答えの通番は、全体の答えの数から質問より後の答えの数を引いて出す（Codex 2 巡目 3）。
+  const replied = !!done.words && lastQ < a.entries.length && entries[lastQ]?.text.trim() === done.words
+    && a.answers - a.entries.slice(lastQ).filter((e) => e.kind === 'a').length === done.n
+  const last = (replied ? qIdx.at(-2) : qIdx.at(-1)) ?? 0
   const older = entries.slice(0, last).filter((e) => e.kind !== 'n')
   const olderQs = older.filter((e) => e.kind === 'q').length
   // 前の答えで決めた行は、その答えと一緒に畳んだ側へ置く（新しい質問の結果に見えないように。初見 2 巡目）。
-  const done = askDecidedHtml(b, a)
   const recent = entries.slice(last)
   const entry = (e: AskEntry) => {
     if (e.kind === 'q') return `<div class="aq"><span class="mut">${e.time ? `質問 ${esc(e.time)}` : '送った質問'}</span><div class="verb">${esc(e.text)}</div></div>`
@@ -361,29 +373,34 @@ function askThreadHtml(b: Board, a: AskThread, ui: Ui, now: number): string {
     const at = p.at ?? a.at
     return `<div class="aa"><span class="mut">答え ${esc(e.time)}${at ? `（窓口の ${esc(at)} までの会話から）` : ''}</span>${markdown(p.body, b.v.cockpit!.tasks.find((t) => t.id === a.task)?.repo)}</div>`
   }
-  // 決める候補は最後の質問より後の答えだけ（続きの答えを待つあいだ、前の答えで決めさせない。Codex 重大 3）。控えの全文から常駐のプロセスが出す。
+  // 返せるのは最後の質問より後の答えだけ（続きの答えを待つあいだ、前の答えで返させない。Codex 重大 3）。控えの全文から常駐のプロセスが出す。
   const answer = pend ? undefined : a.decide
   const undone = new Set(b.v.log.ops.filter((o) => o.type === 'undo').map((o) => o.undo_of))
-  const decided = b.v.log.ops.some((o) => o.type === 'ask_decide' && o.item_id === askItem(a.id) && !undone.has(o.op_id) && o.answer?.n === answer?.n && o.answer?.at === answer?.at)
+  const sameAnswer = b.v.log.ops.filter((o) => o.type === 'ask_decide' && o.item_id === askItem(a.id) && !undone.has(o.op_id) && o.answer?.n === answer?.n && o.answer?.at === answer?.at)
   // 開き直した窓・別の窓で送った質問も、答えが届くまで続きを送らせない（Codex 2 回目 中 1）。
   const waiting = !!pend || unanswered(a.entries)
-  const doneHere = !waiting && done.n === a.decide?.n
+  const doneHere = replied || (!waiting && done.n === a.decide?.n)
   const fk = askKey(b.root, { kind: 'id', id: a.id })
   const fail = ui.askWait[fk]?.error ? ui.askWait[fk] : undefined
-  // 答えを待つあいだは続きを送らせない（先の答えで両方の待ちが消えるため。Codex 中 4・Neon）。
-  const follow = ui.open[`askf:${fk}`] && !waiting
-    ? `<div class="askin"><label class="lb" for="ask-${esc(scopeOf(fk))}">同じ相手に続けて聞く</label><textarea id="ask-${esc(scopeOf(fk))}" data-askdraft="${esc(fk)}" rows="4" maxlength="${TEXT_MAX}">${esc(ui.askDraft[fk] ?? '')}</textarea>
-      <div class="acts"><button class="btn pri" type="button" data-ask="send" data-scope="${esc(fk)}"${(ui.askDraft[fk] ?? '').trim() ? '' : ' disabled'}>送る</button><button class="btn quiet" type="button" data-ask="more" data-scope="${esc(fk)}" aria-expanded="true">閉じる</button></div></div>`
+  const data = answer ? ` data-id="${esc(a.id)}" data-at="${esc(answer.at)}" data-head="${esc(answer.head)}" data-n="${answer.n}"` : ''
+  // 答えの【選べる案】ごとに「A で返す」。同じ答えでもう返した案は出さない（R101: 語で示す）。
+  const picks = answer && !waiting && a.choices?.length
+    ? `<ul class="askpick" role="list">${a.choices.map((c) => `<li>${sameAnswer.some((o) => o.choice === c.key)
+      ? `<span class="mut">${esc(c.key)} で返しました</span>`
+      : `<button class="btn" type="button" data-ask="decide"${data} data-choice="${esc(c.key)}">${esc(c.key)} で返す</button>`}<span>${esc(c.title)}${c.pick ? tag('推し') : ''}</span></li>`).join('')}</ul>`
     : ''
+  // 会話の下の入力欄は 1 つ。続けて聞くか、書いたことを窓口に返すかをボタンで分ける。答えを待つあいだは出さない（Codex 中 4・Neon）。
+  const draft = (ui.askDraft[fk] ?? '').trim()
+  const input = waiting ? '' : `<div class="askin"><label class="lb" for="ask-${esc(scopeOf(fk))}">続けて聞く・書いたことを窓口に返す</label><textarea id="ask-${esc(scopeOf(fk))}" data-askdraft="${esc(fk)}" rows="3" maxlength="${TEXT_MAX}">${esc(ui.askDraft[fk] ?? '')}</textarea>
+      <div class="acts"><button class="btn" type="button" data-ask="send" data-scope="${esc(fk)}"${draft ? '' : ' disabled'}>続けて聞く</button>${answer ? `<button class="btn" type="button" data-ask="reply" data-scope="${esc(fk)}"${data}${draft ? '' : ' disabled'}>書いたことを窓口に返す</button>` : ''}</div></div>`
   return `<li class="askt">
     ${older.length ? fold(ui, `asko:${fk}`, `前のやり取りを見る（${olderQs} 問）`, older.map(entry).join('') + (doneHere ? '' : done.html)) : doneHere ? '' : done.html}
     ${recent.map(entry).join('')}
+    ${picks}
     ${askWaitHtml(pend?.[1] ?? fail, now, fk, true)}${waiting && !pend ? '<p class="mut">まだ答えが届いていません</p>' : ''}
     ${askReturnsHtml(b, a)}${doneHere ? done.html : ''}
-    <div class="acts">${answer && !decided ? `<button class="btn" type="button" data-ask="decide" data-id="${esc(a.id)}" data-at="${esc(answer.at)}" data-head="${esc(answer.head)}" data-n="${answer.n}">この答えを窓口に返す</button>` : ''}
-      ${waiting || ui.open[`askf:${fk}`] ? '' : `<button class="btn quiet" type="button" data-ask="more" data-scope="${esc(fk)}" aria-expanded="${!!ui.open[`askf:${fk}`]}">続けて聞く</button>`}
-      <button class="btn quiet" type="button" data-ask="tab" data-id="${esc(a.id)}">写しの会話を開く</button></div>
-    ${follow}</li>`
+    ${input}
+    <div class="acts"><button class="btn quiet" type="button" data-ask="tab" data-id="${esc(a.id)}">写しの会話を開く</button></div></li>`
 }
 
 export function askHtml(b: Board, s: AskScope, ui: Ui, now: number): string {

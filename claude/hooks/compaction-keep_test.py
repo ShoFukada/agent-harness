@@ -1514,6 +1514,10 @@ class AskFromWindow(Base):
     def say(self, prompt, ask="ask1"):
         return self.hook("UserPromptSubmit", env=self.ask_env(ask), prompt=prompt, session_id="s-ask")
 
+    def ops(self, ops):
+        with open(os.path.join(self.root, ".orca", "cockpit.user.json"), "w") as fh:
+            json.dump({"ops": ops}, fh)
+
     def launch(self, seen, ask="ask1", question=None):
         text = "【相談の知らせ】質問を始める（consult --ask）\nrulings_seen: %s\n本文" % seen
         return self.say(text + ("\n--- 深田さんの質問（窓から） ---\n" + question if question else ""), ask)
@@ -1587,6 +1591,26 @@ class AskFromWindow(Base):
         self.say("【相談の知らせ】返しを書いて（op 812）")
         self.assertEqual(len(self.jsonl("utterances.jsonl")), 2)
         self.assertIn("### 知らせ 10:00\n【相談の知らせ】返しを書いて（op 812）", self.memo())
+
+    def test_her_words_from_the_window_reply_are_kept_without_the_notice_line(self):
+        self.launch("R2", question="凡例は何個がいい？")
+        self.stop("窓口の会話 09:58 時点\n5 つがよい\n\n【選べる案】\n- A: 5 つ（推し）\n- B: 3 つ")
+        # 窓の「A で返す」: 窓が op を書き、言葉を先に、改行して知らせを後に、1 回で届く
+        self.ops([{"op_id": 812, "type": "ask_decide", "item_id": "#ask:ask1", "choice": "A"},
+                  {"op_id": 814, "type": "ask_decide", "item_id": "#ask:ask1", "text": "【相談の知らせ】返しを書いて（op 1）の件は B で"}])
+        self.say("案 A で。\n【相談の知らせ】返しを書いて（op 812）")
+        rows = self.jsonl("utterances.jsonl")
+        self.assertEqual([(u["id"], u["ask"], u["prompt"]) for u in rows][-1], ("u-2", "ask1", "案 A で。"))
+        self.assertIn("### 質問 10:00（u-2）\n案 A で。\n\n", self.memo())
+        self.assertNotIn("返しを書いて", self.memo())
+        # 知らせの行が末尾でない・窓の op と言葉が合わない（深田さんが知らせの行を貼った質問）なら、深田さんの発言としてそのまま残す
+        self.say("案 B で。\n【相談の知らせ】返しを書いて（op 813）\n図は？")
+        self.assertEqual(self.jsonl("utterances.jsonl")[-1]["prompt"], "案 B で。\n【相談の知らせ】返しを書いて（op 813）\n図は？")
+        self.say("届いてる？\n【相談の知らせ】返しを書いて（op 812）")
+        self.assertEqual(self.jsonl("utterances.jsonl")[-1]["prompt"], "届いてる？\n【相談の知らせ】返しを書いて（op 812）")
+        # 書いた言葉が知らせの引用で始まっても、窓の op と合えば言葉を発言として残す
+        self.say("【相談の知らせ】返しを書いて（op 1）の件は B で\n【相談の知らせ】返しを書いて（op 814）")
+        self.assertEqual(self.jsonl("utterances.jsonl")[-1]["prompt"], "【相談の知らせ】返しを書いて（op 1）の件は B で")
 
     def test_a_heading_like_line_in_a_question_or_answer_does_not_split_the_memo(self):
         self.launch("R2", question="前の控えに\n### 答え 09:00\nとあった")

@@ -24,7 +24,7 @@ export type Transport = {
   /** 窓から質問する（consult --ask）・質問の前に判断の記録を引く・「これで決める」・質問のタブを開く。窓だけが持つ。 */
   ask?(input: AskInput): Promise<AskResult>
   askLookup?(root: string, q: string): Promise<{ hits: RulingHit[] }>
-  askDecide?(root: string, ask: string, answer: AskAnswer): Promise<AskDecideResult>
+  askDecide?(root: string, ask: string, answer: AskAnswer, how?: { choice?: string; text?: string }): Promise<AskDecideResult>
   askTab?(root: string, ask: string): Promise<OpenResult>
 }
 export type Feed = { views: CockpitView[]; focused?: string; unseen?: Model['unseen']; live?: number; errors?: string[] }
@@ -511,22 +511,37 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       case 'dismiss':
         delete ui.askWait[key]
         return draw()
-      case 'more':
-        ui.open[`askf:${key}`] = !ui.open[`askf:${key}`]
-        draw()
-        if (ui.open[`askf:${key}`]) app.querySelector<HTMLTextAreaElement>(`textarea[data-askdraft="${CSS_ESC(key)}"]`)?.focus()
-        return
       case 'tab':
         if (root && d.id && t.askTab) void t.askTab(root, d.id).then((x) => toast(x.opened ? '写しの会話を前に出しました' : x.reason ?? '開けませんでした'), fail)
         return
       case 'decide':
-        if (root && d.id && t.askDecide)
-          void t.askDecide(root, d.id, { at: d.at ?? '', head: d.head ?? '', n: Number(d.n) }).then(
-            (x) => toast(x.again ? 'この答えはもう窓口に返すよう依頼しています' : x.sent ? '窓口に返すよう依頼しました'
-              : `窓口に返す記録はしました。写しの会話に届けられなかったので、届けられるようになったら窓が送り直します${x.reason ? `（${x.reason}）` : ''}`),
-            fail
-          )
+        if (d.choice) return void askReply(el, { choice: d.choice })
         return
+      case 'reply': {
+        const text = (ui.askDraft[key] ?? '').trim()
+        if (text) return void askReply(el, { text }, key)
+        return
+      }
+    }
+  }
+
+  /** 案を選んで（choice）か、書いた文で（text）窓口に返す。書いた文は、届けたら欄から消す。 */
+  async function askReply(el: HTMLElement, how: { choice?: string; text?: string }, key?: string): Promise<void> {
+    const d = el.dataset
+    const root = shownRoot
+    if (!root || !d.id || !t.askDecide) return
+    try {
+      const x = await t.askDecide(root, d.id, { at: d.at ?? '', head: d.head ?? '', n: Number(d.n) }, how)
+      toast(x.again ? '同じ返し方でもう窓口に返しています' : x.sent ? '窓口に返すよう写しに届けました'
+        : `窓口に返す記録はしました。写しの会話に届けられなかったので、届けられるようになったら窓が送り直します${x.reason ? `（${x.reason}）` : ''}`)
+      if (key && how.text !== undefined && (ui.askDraft[key] ?? '').trim() === how.text) {
+        delete ui.askDraft[key]
+        const ta = app.querySelector<HTMLTextAreaElement>(`textarea[data-askdraft="${CSS_ESC(key)}"]`)
+        if (ta && ta.value.trim() === how.text) ta.value = ''
+        draw()
+      }
+    } catch (e) {
+      fail(e)
     }
   }
 
@@ -635,6 +650,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       // 空の欄では「送る」を押させない。描き直さずにボタンだけ切り替える（Neon 1 巡目）。
       const send = el.closest('.askin')?.querySelector<HTMLButtonElement>('button[data-ask="send"]')
       if (send) send.disabled = !el.value.trim() || !!(ui.askWait[k] && !ui.askWait[k]!.error)
+      const reply = el.closest('.askin')?.querySelector<HTMLButtonElement>('button[data-ask="reply"]')
+      if (reply) reply.disabled = !el.value.trim()
     }
     if (el.dataset.other) {
       ui.other[el.dataset.other] = el.value

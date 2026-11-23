@@ -183,6 +183,7 @@ body { margin:0; }
 .ck .btn:hover { border-color:var(--ink); }
 .ck .btn.pri { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck .btn.pri:disabled { background:var(--rule); border-color:var(--rule); color:var(--ink2); cursor:default; }
+.ck .btn:disabled:not(.pri) { color:var(--ink3); border-color:var(--rule); cursor:default; }
 .ck .btn.talk { border-color:var(--focus); color:var(--focus); }
 .ck .btn.quiet { border-color:transparent; background:none; padding-inline:4px; color:var(--ink2); font-weight:400; text-decoration:underline; text-underline-offset:3px; }
 /* 枠の無い副の操作も、下線で押せると分かるようにする（Neon 追加 23）。 */
@@ -437,7 +438,7 @@ body { margin:0; }
 .ck.win .askin { display:grid; gap:8px; }
 .ck.win .askin > .lb { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; font-size:var(--fs-s); font-weight:700; color:var(--ink); }
 .ck.win .askin > .lb .mut { font-size:var(--fs-xs); font-weight:400; }
-.ck.win .askin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(4lh + 18px); max-height:40vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
+.ck.win .askin textarea { width:100%; box-sizing:border-box; field-sizing:content; min-height:calc(4lh + 18px); max-height:60vh; resize:vertical; font:inherit; font-size:var(--fs-s); line-height:1.6; border:1px solid var(--ink3); border-radius:8px; padding:8px 10px; background:var(--surface); color:var(--ink); }
 .ck.win .askin textarea:focus-visible { outline:2px solid var(--focus); outline-offset:1px; }
 .ck.win .ask .acts { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; position:static; padding:0; margin:0; background:none; border:0; }
 .ck.win .ask .btn.quiet { padding-inline:0; }
@@ -484,6 +485,9 @@ body { margin:0; }
 .ck.win .wsw button[aria-pressed="true"] { background:var(--ink); border-color:var(--ink); color:var(--surface); }
 .ck.win .wsw .n { font-weight:700; }
 .ck.win .askdone { margin:0; display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; }
+.ck.win .askpick { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+.ck.win .askpick li { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline; font-size:var(--fs-s); }
+.ck.win .askpick .btn { flex:none; }
 
 /* 全体: 形ごとの置き場所と仕事の箱 */
 .ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }

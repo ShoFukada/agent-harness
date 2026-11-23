@@ -141,7 +141,7 @@ export type AutomationFact = { id: string; name?: string; rrule?: string; timezo
 export type AutomationRun = { status: string; at: number; content?: string; error?: string; chat?: string }
 
 /** root と item_rev は画面が表示していたもの。別のワークスペースや新しい版に記録しない。 */
-export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string; answer?: AskAnswer }
+export type OpInput = { root: string; item_id: string; item_rev: number; type: OpType; option_id?: string; undo_of?: number; target?: number; text?: string; terminal?: string; answer?: AskAnswer; choice?: string }
 /** 窓から質問する（consult --ask）。ask が無ければ新しい質問、あれば続き。card・task は結ぶ先（新しい質問だけ）。 */
 export type AskInput = { root: string; ask?: string; question: string; card?: string; task?: string }
 /** 質問のタブを開いた結果。ask は質問 id（新しい質問でも、立てられなかったときも返す）。 */

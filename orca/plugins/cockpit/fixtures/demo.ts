@@ -137,7 +137,7 @@ export function writeAskSample(root: string, now = Date.now()): void {
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask1.returns.jsonl'), JSON.stringify({ return_id: 'ask1-1', rulings_seen: 'R33', decisions: [{ text: '構成案は定例の前日までに田中さんへ共有する', quote: 'じゃあ構成案は前日までに送っておいて', utterance: 'u-42' }], requests: [], open: [], affects: [], ask: 'ask1' }) + '\n')
   writeFileSync(path.join(root, '.orca', 'consult', 'ask-ask2.md'), `# ${askTitle('青葉物流 配車アプリ', 'ask2')}\n- カード: d21\n- 写した窓口の会話: s1（窓口の会話 ${hhmm(now - 20 * 60_000)} 時点）\n\n`
     + `### 質問 ${hhmm(now - 15 * 60_000)}（u-44）\n社内向けの入口を図に描かないと、田中さんは困る？\n\n`
-    + `### 答え ${hhmm(now - 14 * 60_000)}\n窓口の会話 ${hhmm(now - 20 * 60_000)} 時点（それより後に決まったことは知らない）\n困らない見込みです。田中さんが図で確かめたいのは本番の経路だけで、社内向けの入口は運用の説明で足ります（11/19 の定例の発言）。\n\n`)
+    + `### 答え ${hhmm(now - 14 * 60_000)}\n窓口の会話 ${hhmm(now - 20 * 60_000)} 時点（それより後に決まったことは知らない）\n困らない見込みです。田中さんが図で確かめたいのは本番の経路だけで、社内向けの入口は運用の説明で足ります（11/19 の定例の発言）。\n\n【選べる案】\n- A: 図は今のまま、入口は本文で説明する（推し）\n- B: 社内向けの入口を図に描き足す\n- C: 定例で田中さんに聞いてから決める\n\n`)
 }
 
 /**

@@ -658,6 +658,24 @@ REV_LINE = re.compile(r"^rev: (\d+)$", re.M)
 
 # 質問の起動の指示の末尾に consult --ask が付ける、窓で打たれた深田さんの最初の質問の見出し
 ASK_QUESTION_HEAD = "--- 深田さんの質問（窓から） ---\n"
+# 窓の「A で返す」「書いたことを窓口に返す」は、深田さんの言葉のあとに改行して「返しを書いて」の知らせを付け、1 回の入力で送る
+# （agent-harness の orca/plugins/cockpit/window/server.ts の askMessage）。言葉は発言として残し、末尾の知らせの行は発言に入れない
+ASK_REPLY_TAIL = re.compile(r"\n+【相談の知らせ】返しを書いて（op (\d+)）\s*\Z")
+
+
+def ask_reply_words(root, ask_id, prompt):
+    """窓が送った「言葉 + 返しを書いて（op n）」なら言葉を返す。op n がこの質問の ask_decide で、op から組み立てた言葉と一致するときだけ
+    （深田さんが本当の知らせの行を貼った質問の末尾を削らない。知らせの引用で始まる言葉も、知らせとして落とさない。Codex の指摘 4）。"""
+    m = ASK_REPLY_TAIL.search(prompt or "")
+    if not m:
+        return None
+    words = prompt[:m.start()].strip()
+    for o in read_json(os.path.join(root, ".orca", "cockpit.user.json"), {}).get("ops") or []:
+        if isinstance(o, dict) and o.get("type") == "ask_decide" and o.get("item_id") == "#ask:" + ask_id and str(o.get("op_id")) == m.group(1):
+            # server.ts の askWords と同じ（案を選んだら「案 A で。」、書いたらその文）
+            want = ("案 %s で。" % o["choice"]) if isinstance(o.get("choice"), str) and o["choice"] else (o.get("text") or "").strip() if isinstance(o.get("text"), str) else ""
+            return words if want and words == want else None
+    return None
 
 
 def on_thread_prompt(root, inp, kind, tid, card_id):
@@ -675,7 +693,8 @@ def on_thread_prompt(root, inp, kind, tid, card_id):
         seen = keep.setdefault("consults" if kind == "card" else "asks", {})
         card = (find_card(root, card_id) or {}) if card_id else {}
         rows = rulings(root)
-        relay = is_relay(prompt)
+        reply = ask_reply_words(root, tid, prompt) if kind == "ask" else None
+        relay = reply is None and is_relay(prompt)
         m = SEEN_LINE.search(prompt) if relay else None
         if relay and m:
             v = REV_LINE.search(prompt)
@@ -683,7 +702,7 @@ def on_thread_prompt(root, inp, kind, tid, card_id):
             # 質問の起動の指示は、窓で打たれた最初の質問を末尾に持つ。指示は記録しないが、質問は深田さんの発言として残す
             asked = prompt.rpartition(ASK_QUESTION_HEAD)[2].strip() if kind == "ask" and ASK_QUESTION_HEAD in prompt else None
         elif not relay:
-            asked = prompt
+            asked = prompt if reply is None else reply
         if asked:
             uid = append_utterance(root, {"at": iso(), "session": inp.get("session_id") or "", kind: tid, "prompt": asked})
         # 起動の指示だけが起点を決める。窓・窓口の知らせ（「この答えを窓口に返す」・差し戻し）は記録しないが、増えた判断は流す

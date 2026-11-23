@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
-import { draftFormat, escapeAskSections, latestAnswer, missingFields, unanswered, nextOp, overlay, parseCockpit, shownTask, UNDO_GRACE_MS, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
+import { askChoices, askWords, draftFormat, escapeAskSections, latestAnswer, latestChoices, missingFields, unanswered, nextOp, overlay, parseCockpit, shownTask, UNDO_GRACE_MS, unappliedOps, upgradeCard, type Card, type Cockpit, type Op, type UserLog } from './model.ts'
 import { appendOp, notifyMain, readNotified, SIGNAL, signalPlan, signalText, splitLine, writeAtomic, writeNotified } from './store.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -283,4 +283,26 @@ test('窓から送る質問の中の、控えの節の見出しと同じ形の�
   assert.deepEqual(latestAnswer([q, a('09:11', 'x'), q, a('09:11', 'x'), { kind: 'n', time: '09:12', text: '知らせ' }]), { at: '09:11', head: 'x', n: 2 })
   assert.equal(unanswered([q, a('09:11', 'x'), q, { kind: 'n', time: '09:12', text: '知らせ' }]), true)
   assert.equal(unanswered([]), false)
+})
+
+test('【選べる案】: 答えの最後の印から続く「- A: 題」の行（2〜5 行）だけを読む。フェンスの中・形の違う行・数の合わないものは読まない', () => {
+  const ans = '2 案あります。\n\n【選べる案】\n- A: 地図のタイルを 1 日分ためる（推し）\n- B: 原因と直し方の見積もりを田中さんに出す\n\n【窓口への返し】'
+  assert.deepEqual(askChoices(ans), [{ key: 'A', title: '地図のタイルを 1 日分ためる', pick: true }, { key: 'B', title: '原因と直し方の見積もりを田中さんに出す' }])
+  // 本文の例（フェンスの中）は読まず、フェンスの外の最後の印を読む。
+  const fenced = '形は次のとおり。\n```\n【選べる案】\n- A: 例\n- B: 例\n```\n本文だけ。'
+  assert.deepEqual(askChoices(fenced), [])
+  assert.deepEqual(askChoices(`${fenced}\n【選べる案】\n- A: 本物\n- B: 本物 2`).map((c) => c.title), ['本物', '本物 2'])
+  // 前の印より後ろの印を使う。形の違う行で止める。
+  assert.deepEqual(askChoices('【選べる案】\n- A: 古い\n- B: 古い\n\n【選べる案】\n- A: 新しい\n- B: 新しい 2\n- c: 小文字\n- C: 届かない').map((c) => c.title), ['新しい', '新しい 2'])
+  assert.deepEqual(askChoices('【選べる案】\n- A: 1 つだけ'), [], '1 行だけなら出さない')
+  assert.deepEqual(askChoices(`【選べる案】\n${'ABCDEF'.split('').map((k) => `- ${k}: 案`).join('\n')}`), [], '6 行は出さない')
+  assert.deepEqual(askChoices('A か B のどちらかです。\n- A: 文章の箇条書き\n- B: 文章の箇条書き'), [], '印の無い箇条書きから推し量らない')
+  assert.deepEqual(askChoices('【選べる案】\n- A: 同じ\n- A: 同じ記号'), [])
+  // 最後の質問より後の答えだけ。
+  const entries = [{ kind: 'q' as const, time: '09:10', text: '地図は？' }, { kind: 'a' as const, time: '09:11', text: ans }]
+  assert.equal(latestChoices(entries).length, 2)
+  assert.deepEqual(latestChoices([...entries, { kind: 'q', time: '09:12', text: '案 A で。' }]), [])
+  assert.equal(askWords({ choice: 'A' }), '案 A で。')
+  assert.equal(askWords({ text: ' 来週から ' }), '来週から')
+  assert.equal(askWords({}), undefined)
 })

@@ -3,7 +3,7 @@ import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
   dismissable, isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
-  ASK_ID, isAskItem, latestAnswer, RETURN_ID, taskSig, type TaskSeen, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
+  ASK_ID, isAskItem, latestAnswer, latestChoices, RETURN_ID, taskSig, type TaskSeen, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
 
@@ -172,7 +172,8 @@ export async function readAsks(root: string): Promise<AskThread[]> {
     const rets = await readInOrca(root, `.orca/consult/ask-${id}.returns.jsonl`).catch(() => undefined)
     const m = parseAskMemo(memo ?? '')
     const decide = latestAnswer(m.entries)
-    return { id, path: path.join(dir, `ask-${id}.md`), returnsPath: path.join(dir, `ask-${id}.returns.jsonl`), ...m, answers: m.entries.filter((e) => e.kind === 'a').length, ...(decide && { decide }), returns: parseAskReturns(rets ?? '') }
+    const choices = decide ? latestChoices(m.entries) : []
+    return { id, path: path.join(dir, `ask-${id}.md`), returnsPath: path.join(dir, `ask-${id}.returns.jsonl`), ...m, answers: m.entries.filter((e) => e.kind === 'a').length, ...(decide && { decide }), ...(choices.length && { choices }), returns: parseAskReturns(rets ?? '') }
   }))
 }
 
@@ -370,9 +371,11 @@ async function write(root: string, _shown: Cockpit | undefined, { root: _root, .
     }
     if (input.type === 'ask_decide') {
       const memo = await readInOrca(root, `.orca/consult/ask-${input.item_id.slice('#ask:'.length)}.md`).catch(() => undefined)
-      const ans = latestAnswer(parseAskMemo(memo ?? '').entries)
+      const entries = parseAskMemo(memo ?? '').entries
+      const ans = latestAnswer(entries)
       if (!ans || ans.n !== input.answer?.n || ans.at !== input.answer.at || ans.head !== input.answer.head) throw conflict('答えが変わりました。読み直してからもう一度押してください')
-      if (lastAskDecide(log, input.item_id, input.answer)) return { log }
+      if (input.choice !== undefined && !latestChoices(entries).some((c) => c.key === input.choice)) throw conflict(`この答えに案 ${input.choice} がありません。読み直してからもう一度押してください`)
+      if (lastAskDecide(log, input.item_id, input.answer, input)) return { log }
     }
     const added = nextOp(log, { at: new Date().toISOString(), ...input })
     log.ops.push(added)
@@ -383,9 +386,11 @@ async function write(root: string, _shown: Cockpit | undefined, { root: _root, .
   }
 }
 
-export function lastAskDecide(log: UserLog, item: string, answer: AskAnswer): Op | undefined {
+/** 同じ答えに同じ返し方（同じ案・同じ文、どちらも無い古い形）で返した、取り消されていない最後の op。違う案・違う文は別の op にする。 */
+export function lastAskDecide(log: UserLog, item: string, answer: AskAnswer, how: Pick<Op, 'choice' | 'text'> = {}): Op | undefined {
   const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
-  return log.ops.filter((o) => o.type === 'ask_decide' && o.item_id === item && !undone.has(o.op_id) && o.answer?.n === answer.n && o.answer?.at === answer.at).at(-1)
+  return log.ops.filter((o) => o.type === 'ask_decide' && o.item_id === item && !undone.has(o.op_id) && o.answer?.n === answer.n && o.answer?.at === answer.at
+    && (o.choice ?? null) === (how.choice ?? null) && (o.text?.trim() || null) === (how.text?.trim() || null)).at(-1)
 }
 
 /** カードのその版への、取り消されていない最新の協議。 */
@@ -419,6 +424,9 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
     if (input.type !== 'ask_decide' || !isAskItem(input.item_id) || input.item_rev !== 0) throw invalid('窓からの質問に返せるのは「これで決める」だけです')
     const a = input.answer
     if (!a || typeof a.at !== 'string' || !/^\d{1,2}:\d{2}$/.test(a.at) || typeof a.head !== 'string' || a.head.length > 80 || !Number.isInteger(a.n) || a.n < 1) throw invalid('どの答えで決めるかの形が違います')
+    if (input.choice !== undefined && !(typeof input.choice === 'string' && /^[A-Z]$/.test(input.choice))) throw invalid('案の記号の形が違います')
+    if (input.choice !== undefined && input.text !== undefined) throw invalid('案を選ぶか文を書くかのどちらかで返してください')
+    if (input.text !== undefined && !(typeof input.text === 'string' && input.text.trim())) throw invalid('窓口に返す文を書いてください')
     const bad = textError(input.text)
     if (bad) throw invalid(bad)
     return

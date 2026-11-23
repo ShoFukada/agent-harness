@@ -8,7 +8,7 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ASK_ID, askItem, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
+import { ASK_ID, askItem, askWords, escapeAskSections, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type Op, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
 import type { Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
@@ -29,6 +29,15 @@ const ASK_ENTRIES = 6
 const ASK_TEXT = 6000
 /** 「これで決める」のあとに質問のタブへ送る知らせ（compaction-keep.py が深田さんの発言として記録しない書式）。 */
 export const askNotice = (op: number) => `【相談の知らせ】返しを書いて（op ${op}）`
+/**
+ * 質問のタブに届ける 1 回分の入力。案を選んだ・書いて返したときは、深田さんの言葉を先に、改行して知らせを後に置く（nix-darwin の claude/roles/ask.md）。
+ * compaction-keep.py は先頭が知らせの入力を発言として残さないので、逆の順にすると言葉が発言の記録に残らず、写しが utterance を引けない。
+ * 2 回に分けて送ると、写しが働いている間に届いた 2 回目が別の入力になるので、1 回にまとめる。末尾の知らせの行は hook が発言から外す。
+ */
+export const askMessage = (o: Pick<Op, 'op_id' | 'choice' | 'text'>) => {
+  const words = askWords(o)
+  return words ? `${escapeAskSections(words)}\n${askNotice(o.op_id)}` : askNotice(o.op_id)
+}
 /** 質問のタブの名前（consult --ask の ask_title と同じ）。 */
 export const askTitle = (workspace: string, id: string) => `質問｜${workspace.replace(/｜/g, ' ')}｜${id}`
 /** 窓に送る片付いたカードの日数。古いものは cockpit.archive.json に移っている。 */
@@ -775,8 +784,9 @@ export function createServer(opts: Options) {
           const done = () => (ws.askChecked ??= new Map()).set(id, at)
           // タブが無い（もう閉じた）なら、控えが変わるまで探し直さない。題はあるが端末が繋がっていないときは、次の回にもう一度見る。
           // 端末の題から読んだとき（画面がまだその worktree を開いていない）は、題が書き換わっただけかもしれないので、次の回にもう一度見る。
+          // 一覧が空のとき（開き直した直後で端末の一覧もまだ空）も、次の回にもう一度見る（Codex 6）。
           if (!hit.length) {
-            if (!tabs.some((t) => t.loose)) done()
+            if (tabs.length && !tabs.some((t) => t.loose)) done()
             continue
           }
           const handles = hit.flatMap((t) => t.handles)
@@ -827,26 +837,32 @@ export function createServer(opts: Options) {
     return handle ? { handle } : closed
   }
 
-  /** 「返しを書いて（op n）」を質問のタブに送り、届けた op を窓の置き場所に覚える。案件の順番（inQueue）の中で呼ぶ。 */
-  async function deliverAsk(ws: Ws, id: string, op: number, tabs?: AskTabRow[]): Promise<{ sent: true } | { sent: false; reason: string }> {
+  /** 「返しを書いて（op n）」と深田さんの言葉を質問のタブに送り、届けた op を窓の置き場所に覚える。案件の順番（inQueue）の中で呼ぶ。 */
+  async function deliverAsk(ws: Ws, id: string, op: Op, tabs?: AskTabRow[]): Promise<{ sent: true } | { sent: false; reason: string }> {
     const tab = await askTab(ws, id, tabs).catch((e: Error) => ({ reason: `タブを探せませんでした: ${e.message}` }))
     if ('reason' in tab) return { sent: false, reason: tab.reason }
     try {
-      await orca.send(tab.handle, askNotice(op))
+      await orca.send(tab.handle, askMessage(op))
     } catch (e) {
       return { sent: false, reason: `写しの会話に送れませんでした: ${(e as Error).message}` }
     }
     // 覚えられなければ次の見回りでもう一度送る（知らせが 2 回届くだけで、返しは op ごとに 1 つ）。
-    await addAskSent(opts.dir, ws.root, op).catch((e: Error) => console.error(`asksent.json: ${e.message}`))
+    await addAskSent(opts.dir, ws.root, op.op_id).catch((e: Error) => console.error(`asksent.json: ${e.message}`))
     return { sent: true }
   }
 
-  /** 返しの無い「この答えを窓口に返す」のうち、まだ質問のタブに届けていない op（state.ts の unreflected_returns の「返し」の行。取り消し・窓口が反映済みは入らない）。 */
-  function undelivered(ws: Ws, sent: readonly number[]): { id: string; op: number }[] {
+  /**
+   * 返しの無い「窓口に返す」のうち、まだ質問のタブに届けていない op（state.ts の unreflected_returns の「返し」の行。取り消し・窓口が反映済みは入らない）。
+   * 返した答えが今も最後の答えのものだけ。会話が先に進んだあとに「案 A で。」を届けると、相手が新しい答えの案と取り違えるので送らず、窓口が控えから拾う（Codex 1）。
+   */
+  function undelivered(ws: Ws, sent: readonly number[]): { id: string; op: Op }[] {
     const c = ws.files.cockpit
     if (!c) return []
-    return unreflectedAsks({ root: ws.root, threads: ws.files.asks, marks: ws.files.askMarks, log: ws.files.log, applied: c.applied_ops ?? [] }, new Set())
-      .flatMap((x) => (x.id === null && typeof x.op === 'number' && !sent.includes(x.op) ? [{ id: x.ask, op: x.op }] : []))
+    return unreflectedAsks({ root: ws.root, threads: ws.files.asks, marks: ws.files.askMarks, log: ws.files.log, applied: c.applied_ops ?? [] }, new Set()).flatMap((x) => {
+      const op = x.id === null && typeof x.op === 'number' && !sent.includes(x.op) ? ws.files.log.ops.find((o) => o.op_id === x.op) : undefined
+      const now = ws.files.asks.find((a) => a.id === x.ask)?.decide
+      return op && now && now.n === op.answer?.n && now.at === op.answer.at ? [{ id: x.ask, op }] : []
+    })
   }
 
   /**
@@ -868,7 +884,7 @@ export function createServer(opts: Options) {
           if (stopped) return
           if (!(await deliverAsk(ws, id, op, tabs)).sent) continue
           any = true
-          console.error(`返しを書いての知らせを送り直した: ${ws.root} ${id} op ${op}`)
+          console.error(`返しを書いての知らせを送り直した: ${ws.root} ${id} op ${op.op_id}`)
         }
         if (any) broadcast()
       }).catch((e: Error) => console.error(`質問のタブへの送り直し: ${e.message}`))
@@ -1026,6 +1042,18 @@ export function createServer(opts: Options) {
         try {
           // 続きは順番が来た時点の控えで、前の質問の答えが届いているかを見る（別の窓・開き直した窓から重ねて送らない）。
           if (cont && unanswered((await readAsks(ws.root)).find((a) => a.id === cont)?.entries ?? [])) return { opened: false, ask: cont, reason: '前の質問の答えを待っています。答えが届いてから続けて聞いてください' }
+          // まだ写しに届いていない「窓口に返す」があれば、続きより先に届け、届けたらその答えを待ってから続けて聞かせる（Codex 1）。
+          // 届けられない（タブが閉じた）ときは、続きで consult にタブを立て直させる。続きが控えに入ると、その op は会話が先に進んだものとして送り直さない。
+          if (cont) {
+            await reload(ws)
+            const due = undelivered(ws, (await readAskSent(opts.dir))[ws.root] ?? []).filter((x) => x.id === cont)
+            let delivered = false
+            for (const { op } of due) delivered = (await deliverAsk(ws, cont, op)).sent || delivered
+            if (delivered) {
+              broadcast()
+              return { opened: false, ask: cont, reason: '先に窓口に返した言葉を写しの会話に届けました。その答えが届いてから続けて聞いてください' }
+            }
+          }
           // 題のタブが無いときだけ consult が端末を立てる。立てた端末だけを窓のものとして覚える（開いているタブに送った分は覚え直さない）。
           const before = cont ? await askTab(ws, cont).catch(() => undefined) : { reason: '' }
           const handle = await opts.ask!(ws.root, id, { card, task, question })
@@ -1047,7 +1075,10 @@ export function createServer(opts: Options) {
       const q = str(b.q) ?? ''
       return { hits: matchRulings(ws.files.rulings, q).map((r) => ({ id: r.id, at: r.at, kind: r.kind, text: r.text!, quote: r.quote })) }
     },
-    /** 「これで決める」。op を先に書き、そのあと質問のタブに「返しを書いて」を送る（タブが見つからなくても op は残り、窓が見回りで送り直す）。 */
+    /**
+     * 窓口に返す。案を選んだ（choice）か、書いた文（text）で返す。op を先に書き、そのあと質問のタブに深田さんの言葉と「返しを書いて」を送る
+     * （タブが見つからなくても op は残り、窓が見回りで送り直す）。どちらも無いのは古い画面の「この答えを窓口に返す」。
+     */
     async askdecide(b): Promise<AskDecideResult> {
       const ws = knownWs(b.root)
       const id = str(b.ask)
@@ -1055,21 +1086,22 @@ export function createServer(opts: Options) {
       if (!id || !a) throw new HttpError(409, '質問が見つかりません。再読み込みしてからもう一度押してください')
       const ans = b.answer as { at?: unknown; head?: unknown; n?: unknown } | undefined
       const answer = { at: str(ans?.at) ?? '', head: str(ans?.head) ?? '', n: typeof ans?.n === 'number' ? ans.n : 0 }
+      if (b.choice !== undefined && typeof b.choice !== 'string') throw new HttpError(400, '案の記号の形が違います')
+      if (b.text !== undefined && typeof b.text !== 'string') throw new HttpError(400, '窓口に返す文の形が違います')
+      const how = { ...(b.choice !== undefined && { choice: b.choice as string }), ...(b.text !== undefined && { text: escapeAskSections((b.text as string).trim()) }) }
       // 記録から知らせまでを、タブを自動で閉じる処理と同じ順番に並べる（返しを待つタブを閉じない。Codex 36 2 巡目 2）。
       return inQueue(ws.root, async (): Promise<AskDecideResult> => {
-        const { log, added } = await appendOpOnce(ws.root, ws.files.cockpit, { root: ws.root, item_id: askItem(id), item_rev: 0, type: 'ask_decide', answer })
+        const { log, added } = await appendOpOnce(ws.root, ws.files.cockpit, { root: ws.root, item_id: askItem(id), item_rev: 0, type: 'ask_decide', answer, ...how })
         if (!added) {
           ws.files = { ...ws.files, log }
           broadcast()
-          return { op: lastAskDecide(log, askItem(id), answer)?.op_id ?? 0, sent: false, again: true }
+          return { op: lastAskDecide(log, askItem(id), answer, how)?.op_id ?? 0, sent: false, again: true }
         }
-        const op = added.op_id
         ws.files = { ...ws.files, log }
         broadcast()
-        // 届けられなければ、常駐のプロセスの見回り（resendAsks）がタブを見つけたときに送り直す。
-        const r = await deliverAsk(ws, id, op)
+        const r = await deliverAsk(ws, id, added)
         if (r.sent) broadcast()
-        return { op, ...r }
+        return { op: added.op_id, ...r }
       })
     },
     /** 質問のタブを前に出す。閉じていれば立て直さずに理由を返す（立て直すと窓口の会話をもう一度読み込むため、続きを聞いたときだけ立てる）。 */
