@@ -1,6 +1,6 @@
 #!/bin/bash
 # 長いセッションでは指示が薄れるので、UserPromptSubmit では N 回に 1 回リマインドを stdout から注入する。compact / resume の直後は指示と作業メモが最も失われているので毎回注入し、作業メモ state.md（操縦席のあるワークスペースでは <root>/.orca/cockpit/state.md、無ければ scratchpad/state.md）も続けて流す。
-# 操縦席（.orca/cockpit.json）のあるワークスペースでは、メインの役割と全体像の 2 行を開始・再開のときに流す（発言のたびには流さない。R184）。メインの compact では compaction-keep.py が作業メモを含めて組み直すので、ここでは流さない。
+# 操縦席（.orca/cockpit.json）のあるワークスペースでは、メインの役割の文書（roles/main.md）と全体像を開始・再開・圧縮のあとに流す（発言のたびには流さない。R184）。
 # プロンプトを妨げないよう常に exit 0。第 1 引数でリマインドファイルを差し替えられる (Codex は codex/reminder.md)。
 
 INTERVAL=5
@@ -23,16 +23,17 @@ migrate_line() {
   # -s で全体を読む（後ろが壊れたファイルでも、先頭の値だけを出して版 1 と案内しないように）
   v=$(jq -rs 'if length == 1 and (.[0] | type) == "object" then (.[0].version // 1) else empty end' "$1/.orca/cockpit.json" 2>/dev/null)
   [ -n "$v" ] && [ "$v" != 2 ] &&
-    printf '\n【操縦席】cockpit.json が版 %s のままで、状態を読めない。移し替えが要る: 未反映の操作を反映してから node %s %s で中身を確かめ、--write で移し替える（cockpit skill の references/setup.md「移し替え」）\n' "$v" "$COCKPIT_MIGRATE" "$1"
+    printf '\n【操縦席】cockpit.json が版 %s のままで、状態を読めない。移し替えが要る（中身の確かめは node %s %s。手順は cockpit skill の references/setup.md「移し替え」）\n' "$v" "$COCKPIT_MIGRATE" "$1"
 }
 pick() { printf '%s' "$state" | jq -r "$1" 2>/dev/null; }
 
-# メインが個別の作業に入り込んでも、案件全体の進行役であることと今の全体像を毎回思い出せるようにする。
+# 開始・再開・圧縮のあとのたびに流すので、個別の作業に入り込んだあとも役割と今の全体像が文脈に残る。
 cockpit_overview() {
   name=$(pick '.workspace // empty')
   # 状態を読めない（版 1 など）ときも、案件の名前は cockpit.json から出す
   [ -n "$name" ] || name=$(jq -r '.workspace.name // empty' "$root/.orca/cockpit.json" 2>/dev/null)
-  echo "【メインの役割】あなたは「${name:-このワークスペース}」のメイン（案件全体の進行役）。深田さんの窓口・依頼の分解・担当と worker への指示とレビュー・操縦席の更新を受け持つ。担当と worker の知らせは Orca が起こして届けるので、見張りを仕掛けない。3 ファイル以上を読む調べものは subagent、コードは worker に出し、会話には結論だけを残す。個別の作業に入り込んだら、ここに戻って全体を見直す"
+  printf '【操縦席】このセッションは「%s」のメイン（窓口）。役割の文書 %s/main.md:\n' "${name:-このワークスペース}" "$CLAUDE_ROLES_DIR"
+  cat "$CLAUDE_ROLES_DIR/main.md" 2>/dev/null || printf '（%s/main.md を読めない）\n' "$CLAUDE_ROLES_DIR"
   pick '.overview // empty'
 }
 
@@ -41,7 +42,7 @@ cockpit_overview() {
 SWEEP="${WORKTREE_SWEEP_HOME:-$HOME/Library/Application Support/worktree-sweep}/sweep.json"
 sweep_line() {
   jq -r --arg root "$1" '[.decide[]? | select(.main == $root)] | select(length > 0)
-    | "【worktree】判断が要る worktree \(length) 件（取り込むか捨てるかを決める。残すなら orca worktree set --worktree path:<path> --workspace-status completed）: "
+    | "【worktree】取り込むか捨てるかの判断が要る worktree \(length) 件（扱いは cockpit skill の references/checks.md）: "
       + (map("\(.path)（\(.reasons | join("・") | .[0:80])）") | .[0:5] | join("、"))' "$SWEEP" 2>/dev/null
 }
 
@@ -93,61 +94,50 @@ fi
 
 case "$event" in
   SessionStart)
-    cat "$reminder"
     source=$(echo "$input" | jq -r '.source // empty')
-    # カードの相談（claude/bin/consult --card）が圧縮・再開・/clear のあとに、古い前提のまま話を続けないようにする（設計 10.2 の「始め方と再開」）
-    if [ -n "${CONSULT_CARD:-}" ] && [ "$source" != startup ]; then
-      card="${CONSULT_CARD##*#}"; croot="${CONSULT_CARD%#*}"
-      printf '\n【相談】カード %s の相談を続ける前に、役割の「再開」どおり、相談のメモ %s/.orca/consult/%s.md と、%s/compaction-keep.py consult-context %s %s の出力（カードの今の rev と関係する判断）を読み直す。メモの rev と今の rev が違えば、何が変わったかを最初に深田さんへ見せる\n' \
-        "$card" "$croot" "$card" "$(dirname "$0")" "$croot" "$card"
-      # チャットの相談は役割を system prompt に持たず最初の指示で受けるので、圧縮・再開・/clear のあとに流し直す
-      if [ -n "${ORCA_STRUCTURED_SESSION:-}" ]; then
-        printf '\n# 役割（claude/roles/consult-card.md）\n'
-        cat "$CLAUDE_ROLES_DIR/consult-card.md" 2>/dev/null ||
-          printf '役割のファイル %s/consult-card.md を読めない。役割なしで続けず、窓口に知らせる\n' "$CLAUDE_ROLES_DIR"
-      fi
-    fi
     session=$(echo "$input" | jq -r '.session_id // empty')
     cwd=$(echo "$input" | jq -r '.cwd // empty'); root=$(find_cockpit_root "$cwd")
+    # 作業メモ・制約などの長くなる部分は compaction-keep.py start-context が上限（hook の 1 つの出力は 10,000 字まで）に収める。
+    head=$(
+      cat "$reminder"
+      # カードの相談（claude/bin/consult --card）が圧縮・再開・/clear のあとに、古い前提のまま話を続けないようにする（設計 10.2 の「始め方と再開」）
+      if [ -n "${CONSULT_CARD:-}" ] && [ "$source" != startup ]; then
+        card="${CONSULT_CARD##*#}"; croot="${CONSULT_CARD%#*}"
+        printf '\n【相談】カード %s の相談の続き（圧縮・再開・/clear のあと）。前提の元: 相談のメモ %s/.orca/consult/%s.md と、%s/compaction-keep.py consult-context %s %s の出力（カードの今の rev と関係する判断）。続け方は役割の「再開」\n' \
+          "$card" "$croot" "$card" "$(dirname "$0")" "$croot" "$card"
+        # チャットの相談は役割を system prompt に持たず最初の指示で受けるので、圧縮・再開・/clear のあとに流し直す
+        if [ -n "${ORCA_STRUCTURED_SESSION:-}" ]; then
+          printf '\n# 役割（claude/roles/consult-card.md）\n'
+          cat "$CLAUDE_ROLES_DIR/consult-card.md" 2>/dev/null ||
+            printf '役割のファイル %s/consult-card.md を読めない。役割の文書が無いまま相談が続いている（窓口に知らせる件）\n' "$CLAUDE_ROLES_DIR"
+        fi
+      fi
+      # 操縦席のあるワークスペースでは、深田がパネルで押した操作の取りこぼしを最初に拾う
+      if [ -n "$root" ]; then
+        state=$(cockpit_state "$root")
+        printf '\n%s\n' "$(cockpit_overview)"
+        if [ -n "$state" ]; then
+          printf '\n操縦席あり（.orca/cockpit.json）・未反映の操作 %s 件（扱いは cockpit skill の「操作を反映する」）。状態は node %s <root> の出力にある\n' "$(pick '.checks.pending_ops // 0')" "$COCKPIT_STATE"
+        elif ! migrate_line "$root"; then
+          printf '\n操縦席あり（.orca/cockpit.json）・状態を読めない。理由は node %s %s の出力にある\n' "$COCKPIT_STATE" "$root"
+        fi
+        lacking=$(names missing_context)
+        [ -n "$lacking" ] && printf '判断材料が欠けている判断のカード: %s\n' "$lacking"
+        line=$(sweep_line "$root"); [ -n "$line" ] && printf '\n%s\n' "$line"
+      fi
+    )
     # メインの作業メモは、操縦席があればワークスペースに置く（scratchpad はセッションごとに変わり、/clear や新しいチャットで辿れない）。
-    memo=""
+    args=()
     if [ -n "$root" ] && [ "$source" = compact ]; then
       :  # 圧縮のあとは compaction-keep.py が作業メモ・操縦席・判断の記録・発言をまとめて流し直す（同じメモを 2 回流さない）
     elif [ -n "$root" ]; then
-      memo="$root/.orca/cockpit/state.md"; label=".orca/cockpit/state.md"
+      args=(--memo "$root/.orca/cockpit/state.md" .orca/cockpit/state.md --root "$root")
     elif [ -n "$session" ] && [ -n "$cwd" ]; then
       slug=$(printf '%s' "$cwd" | tr '/.' '--')
-      memo="/private/tmp/claude-$(id -u)/$slug/$session/scratchpad/state.md"; label="scratchpad/state.md"
+      args=(--memo "/private/tmp/claude-$(id -u)/$slug/$session/scratchpad/state.md" scratchpad/state.md)
     fi
-    if [ -n "$memo" ] && [ -f "$memo" ]; then
-      printf '\n# 作業メモ (%s)\n' "$label"
-      cat "$memo"
-    fi
-    # 操縦席のあるワークスペースでは、深田がパネルで押した操作の取りこぼしを最初に拾わせる。
-    if [ -n "$root" ]; then
-      state=$(cockpit_state "$root")
-      printf '\n%s\n' "$(cockpit_overview)"
-      if [ -n "$state" ]; then
-        printf '\n操縦席あり（.orca/cockpit.json）・未反映の操作 %s 件・cockpit skill に従って処理する。状態は node %s <root> の出力で読む\n' "$(pick '.checks.pending_ops // 0')" "$COCKPIT_STATE"
-      elif ! migrate_line "$root"; then
-        printf '\n操縦席あり（.orca/cockpit.json）・状態を読めない。理由は node %s %s で見る\n' "$COCKPIT_STATE" "$root"
-      fi
-      lacking=$(names missing_context)
-      [ -n "$lacking" ] && printf '判断材料が欠けている判断のカード: %s\n' "$lacking"
-      line=$(sweep_line "$root"); [ -n "$line" ] && printf '\n%s\n' "$line"
-      # 有効な制約（「返事は日本語」など）と、空き枠・待ちのタスクを、開始・再開のたびに流す。圧縮のあとは compaction-keep.py が組み直しに全部入れる
-      if [ "$source" != compact ]; then
-        keeper="$(dirname "$0")/compaction-keep.py"
-        if rules=$("$keeper" rulings "$root" constraint 2>/dev/null); then
-          [ -n "$rules" ] && printf '\n# 守る制約（.orca/cockpit/rulings.jsonl の有効な constraint。原文つき）\n%s\n' "$rules"
-        else
-          printf '\n【記録】有効な制約を読み出せなかった。%s rulings %s constraint で確かめる\n' "$keeper" "$root"
-        fi
-        slots=$("$keeper" slots "$root" 2>/dev/null) && [ -n "$slots" ] && printf '\n%s\n' "$slots"
-        # 送った知らせが届かなくても、相談の返しを開始・再開で拾う（設計 10.7 の 1）
-        returns=$("$keeper" unreflected "$root" 2>/dev/null) && [ -n "$returns" ] && printf '\n%s\n' "$returns"
-      fi
-    fi
+    printf '%s\n' "$head" | "$(dirname "$0")/compaction-keep.py" start-context "${args[@]}" 2>/dev/null ||
+      printf '%s\n\n【記録】作業メモと操縦席の記録を組めなかった（%s/compaction-keep.py start-context が失敗）\n' "$head" "$(dirname "$0")"
     ;;
   UserPromptSubmit)
     session=$(echo "$input" | jq -r '.session_id // "unknown"')
@@ -167,34 +157,36 @@ case "$event" in
       echo "$n" > "$count_file"
       [ $(( n % INTERVAL )) -eq 0 ] && cat "$reminder"
     fi
-    if [ -n "$root" ]; then
+    # hook は何が何件かという事実だけを流し、扱いは cockpit skill の references/checks.md が持つ
+    # （命令の形の文は、hook の文として prompt injection の防御に当たりやすい。Claude Code の hooks の文書）
+    [ -n "$root" ] && notes=$(
       state=$(cockpit_state "$root")
       [ -n "$state" ] || migrate_line "$root"
       pending=$(pick '.checks.pending_ops // 0')
       [ "${pending:-0}" -gt 0 ] 2>/dev/null &&
-        printf '\n【操縦席】未反映の操作が %s 件あります。返答の前に cockpit skill に従って反映する\n' "$pending"
+        printf '\n【操縦席】未反映の操作 %s 件（扱いは cockpit skill の「操作を反映する」）\n' "$pending"
       intake=$(names intake)
       [ -n "$intake" ] &&
-        printf '\n【操縦席】worker が終わったのに取り込んでいないタスク: %s。worker の結果を確かめて取り込み、state を ok にする（続きがあるなら orca orchestration send --to dispatch:<id> で次を頼む）\n' "$intake"
+        printf '\n【操縦席】worker が終わったのに取り込んでいないタスク: %s\n' "$intake"
       remind=$(names remind_due)
       [ -n "$remind" ] &&
-        printf '\n【操縦席】催促の日を過ぎた顧客待ち: %s。担当（無ければメイン）が催促の下書きを送信前のカードにして出す\n' "$remind"
+        printf '\n【操縦席】催促の日を過ぎた顧客待ち: %s\n' "$remind"
       routes=$(names routes)
       [ -n "$routes" ] &&
-        printf '\n【操縦席】連絡を拾えていない経路: %s。見張りが止まっていないか確かめ、直せないもの（ログイン切れなど）は深田さんに頼む許可か判断のカードにする\n' "$routes"
+        printf '\n【操縦席】連絡を拾えていない経路: %s\n' "$routes"
       # 未仕分けは帳簿が版 3（intake の欄がある）のときだけ意味を持つ（その前は古い発言が全部並ぶ）。Stop で止めるのと同じ判定を compaction-keep.py に聞く（R195）
       if [ "${COCKPIT_LEDGER_GUARD:-0}" = 1 ] && "$(dirname "$0")/compaction-keep.py" ledger-guard "$root"; then
         unsorted=$(names unsorted)
         [ -n "$unsorted" ] &&
-          printf '\n【操縦席】仕分けていない発言: %s。このターンのうちに、新しい依頼・既存の依頼への追記か返答・依頼でない、のどれかに仕分けて cockpit-write で書く（cockpit skill の「受付と仕分け」）\n' "$unsorted"
+          printf '\n【操縦席】仕分けていない発言: %s\n' "$unsorted"
       fi
       # 状況の文が古い仕事と、開いた待ちと照らしていない知らせ（R204）。どちらも次の cockpit-write で直す（書く道具が同じ判定で断る）
       stale=$(pick '[(.checks.stale_status // [])[] | "\(.id)（\((.changes // [])[0:2] | join("／"))）"] | join("、")')
       [ -n "$stale" ] &&
-        printf '\n【操縦席】状況の文が古い仕事: %s。次の cockpit-write で、その仕事の status を今の事実に合わせて書き直す（R204。同じ文の渡し直しは断られる）\n' "$stale"
+        printf '\n【操縦席】状況の文が古い仕事: %s\n' "$stale"
       notices=$(names unsorted_notices)
       [ -n "$notices" ] &&
-        printf '\n【操縦席】開いた待ちと照らしていない知らせ: %s。待ちを解くならそのタスクの wait.met に by として書き、解かないなら intake.no_wait に足して intake.notices_through を進める（R204）\n' "$notices"
+        printf '\n【操縦席】開いた待ちと照らしていない知らせ: %s\n' "$notices"
       # 線を越えて動いていないタスク（R170）。task@since ごとに最初の 1 回だけ流す（since はタスクが動くたびに変わるので、戻ってまた越えたらもう 1 回）
       idle_seen="$state_dir/idle-notified.txt"
       idle_new=$(pick '(.checks.idle_tasks // [])[] | "\(.task)@\(.since)\t\(.task)（\(.hours) 時間）"' | while IFS="$(printf '\t')" read -r key label; do
@@ -202,45 +194,47 @@ case "$event" in
         printf '%s %s\n' "$root" "$key" >> "$idle_seen"; printf '%s、' "$label"
       done)
       [ -n "$idle_new" ] &&
-        printf '\n【操縦席】線を越えて動いていないタスク: %s。止まっている理由（worker・担当の今）を確かめ、今やれるなら次の手を打つ。止めてよいのは外の理由があるときだけで（R193。agents/common.md「判断」の「聞かずにやる」）、そのときはタスクの wait（相手・出来事・日付・空き枠）か after を書く。深田さんの判断が要るなら判断のカードにする\n' "${idle_new%、}"
+        printf '\n【操縦席】線を越えて動いていないタスク: %s\n' "${idle_new%、}"
       # 承認・照合・範囲の変更の抜け（設計 9.2・9.4・9.5）。要素は { card, missing[] }・{ request, when[] }・{ ruling, task }
       unmapped=$(pick '[(.checks.unmapped_elements // [])[] | "\(.card)（要素 \((.missing // []) | map(tostring) | join("・"))）"] | join("、")')
       [ -n "$unmapped" ] &&
-        printf '\n【操縦席】「承認する」が来たのに、要素の行き先（element_map）が欠けたカード: %s。番号ごとにタスク・依頼の済の条件・結ばない理由のどれかを書き、op の取り込みと同じ書き込みで渡す（references/cards.md「承認の前に要素を固める」）\n' "$unmapped"
+        printf '\n【操縦席】「承認する」が来たのに、要素の行き先（element_map）が欠けたカード: %s\n' "$unmapped"
       unproven=$(pick '[(.checks.unproven // [])[] | "\(.request)（済の条件 \((.when // []) | map(tostring) | join("・"))）"] | join("、")')
       [ -n "$unproven" ] &&
-        printf '\n【操縦席】タスクは全部済なのに、証拠の無い済の条件が残る依頼: %s。条件ごとに証拠（commit・URL・回答・操作）を結ぶ。条件を変えて済ませたなら、判断のカードに回す\n' "$unproven"
+        printf '\n【操縦席】タスクは全部済なのに、証拠の無い済の条件が残る依頼: %s\n' "$unproven"
       affected=$(pick '[(.checks.affected_tasks // [])[] | "\(.ruling)→\(.task)"] | join("、")')
       [ -n "$affected" ] &&
-        printf '\n【操縦席】判断で範囲・対象が変わったのに、見直していないタスク: %s。タスクの済の条件を直すか判断のカードに載せ、reviewed_for に判断の id を足す\n' "$affected"
+        printf '\n【操縦席】判断で範囲・対象が変わったのに、見直していないタスク: %s\n' "$affected"
       # カードの相談（設計 10.7 の 1）。要素は { id: return_id, card, missing[] }
       returns=$(names unreflected_returns)
       [ -n "$returns" ] &&
-        printf '\n【操縦席】反映していないカードの相談の返し: %s。cockpit skill の「カードの相談」の手順で、同じ return_id が記録と帳簿に無いかを見てから反映する\n' "$returns"
+        printf '\n【操縦席】反映していないカードの相談の返し: %s\n' "$returns"
       # 帳簿の形の直し（R184 の「今の順番・未処理の要対応・重要な警告」に当たらないもの）は 1 行にまとめ、検査ごとの直し方を写さない（R181）。
       # 案件の名前の形（R165）もここで直るまで毎回名指す
       fixes=$(ledger_fixes)
       [ -n "$fixes" ] &&
-        printf '\n【操縦席】帳簿の直し: %s。直し方は cockpit skill の references/schema.md で検査の名前を引く\n' "$fixes"
+        printf '\n【操縦席】帳簿の直し: %s\n' "$fixes"
       plugin=$(pick '.checks.plugin // empty')
       # 古い写しは、権限が変わらなければ承認を保ったまま入れ直せるので、メインがその場で直す
+      # $( ) の中の case は、bash 3.2 が閉じ括弧を取り違えないよう ( で始める形で書く
       case "$plugin" in
-        *'orca plugin update'*)
-          printf '\n【操縦席】%s。メインが orca plugin update local.cockpit を打つ（権限が増えて approval_required になったら、承認を深田さんに頼む許可のカードを出す）\n' "$plugin" ;;
-        ?*)
-          printf '\n【操縦席】%s。深田さんに Orca で操縦席のプラグインを承認（開発用の読み込みなら dev unload）してもらう許可のカードを出す。承認は深田さんが選ぶ\n' "$plugin" ;;
+        (*'orca plugin update'*)
+          printf '\n【操縦席】%s（古い写し。入れ直しは orca plugin update local.cockpit）\n' "$plugin" ;;
+        (?*)
+          printf '\n【操縦席】%s（承認は深田さんが Orca で選ぶ）\n' "$plugin" ;;
       esac
       stalled=$(jq -r --arg root "$root" '[.alerts[]? | select(.root == null or .root == $root) | .text] | join("・")' \
         "${STALLWATCH_ALERTS:-$HOME/Library/Application Support/cockpit/alerts.json}" 2>/dev/null)
       [ -n "$stalled" ] &&
-        printf '\n【見張り】止まっているもの: %s。原因を確かめて直すか、深田さんにしか直せないもの（ログイン・承認）なら許可か判断のカードにして窓に出す\n' "$stalled"
+        printf '\n【見張り】止まっているもの: %s\n' "$stalled"
       left=$(unpushed "$root")
       if [ -n "$left" ] && [ "$(pick '.checks.push_delegated')" = true ]; then
-        printf '\n【操縦席】進行中のタスクが無いのに、ワークスペースの root に %s があります。この案件では push が一任されている（判断の記録）。深田さんの変更も含めて中身を確認し、窓口が commit・push して報告する。許可のカードは出さない\n' "$left"
+        printf '\n【操縦席】進行中のタスクが無いのに、ワークスペースの root に %s がある。この案件では push が一任されている（判断の記録）\n' "$left"
       elif [ -n "$left" ]; then
-        printf '\n【操縦席】進行中のタスクが無いのに、ワークスペースの root に %s があります。深田さんの変更も含めて中身を確認する。この案件で push が一任されていれば（今回だけの許可は数えない）窓口が commit・push して報告し、一任されていなければ scope: "push" の許可のカードにして窓に出し、深田さんが選んでから commit・push する（cockpit skill の references/cards.md「push の許可」）\n' "$left"
+        printf '\n【操縦席】進行中のタスクが無いのに、ワークスペースの root に %s がある。push の一任は判断の記録に無い\n' "$left"
       fi
-    fi
+    )
+    [ -n "${notes:-}" ] && printf '%s\n\n（上の行の扱いは cockpit skill の references/checks.md にある。行の頭の語で引く）\n' "$notes"
     ;;
   Stop)
     # 深田さんに頼む・聞くことをチャットにだけ書くと、窓だけ見て進められない（2026-11-16 にマージの進め方と switch を窓に出し忘れた）。
@@ -255,7 +249,7 @@ case "$event" in
     hit=$(printf '%s' "$msg" | LC_ALL=en_US.UTF-8 grep -oE '[^。\n]{0,20}(ください|お願いします|お願いしたい|いただければ|いただけますか|いただきたい|でしょうか|ますか[。？?]|[？?])' | head -1)
     [ -n "$hit" ] || exit 0
     [ "$(stat -f %m "$root/.orca/cockpit.json" 2>/dev/null || echo 0)" -ge "$turn" ] && exit 0
-    jq -n --arg hit "$hit" '{decision: "block", reason: ("当たった文: 「" + $hit + "」。誤検知ならそう一言書いて終える。") + "返答で深田さんに頼む・聞くことを書いたのに、このターンで操縦席（.orca/cockpit.json）を更新していない。深田さんは窓だけ見て進めるので、頼んだこと・聞いたことを判断・送信前・確認・許可のカードにし、stream・tasks で仕事に結んでから終える。すでに開いたカードにあるなら、どのカードかを返答に一言書いて終える"}'
+    jq -n --arg hit "$hit" '{decision: "block", reason: ("当たった文: 「" + $hit + "」（誤検知ならそう一言書けば次は止まらない）。") + "返答に深田さんへ頼む・聞くことがあるが、このターンで操縦席（.orca/cockpit.json）を更新していない。深田さんは窓だけ見て進めるため、頼むこと・聞くことは判断・送信前・確認・許可のカードにして stream・tasks で仕事に結ぶ決まり（cockpit skill の「何を私の番に出すかと受付の要点」）。すでに開いたカードにあるなら、どのカードかを返答に一言書けば足りる"}'
     ;;
 esac
 exit 0

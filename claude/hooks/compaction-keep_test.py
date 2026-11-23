@@ -380,6 +380,29 @@ class Reassembly(Base):
         self.assertIn("compaction-keep.py resume", text)
         self.assertTrue(self.keep()["verify"]["pending"])
 
+    def test_a_long_record_is_cut_to_the_hook_limit_from_prompts_then_rulings(self):
+        # Claude Code は 10,000 字を超えた hook の出力を先頭 2,000 字だけ渡す。判断が 150 件・長い発言が並ぶ窓口で 4 万字になった
+        with open(os.path.join(self.root, ".orca", "cockpit", "state.md"), "w") as fh:
+            fh.write("## 今の順番\n1. t1: 続き")
+        with open(os.path.join(self.root, ".orca", "cockpit", "rulings.jsonl"), "w") as fh:
+            for i in range(1, 151):
+                fh.write(json.dumps({"id": "R%d" % i, "at": self.now, "kind": "decision", "text": "決めたこと %d " % i + "理由" * 80}, ensure_ascii=False) + "\n")
+        for i in range(10):
+            self.hook("UserPromptSubmit", prompt="長い依頼 %d " % i + "本文" * 600)
+        text = json.loads(self.hook("SessionStart", source="compact"))["hookSpecificOutput"]["additionalContext"]
+        self.assertLessEqual(len(text), 9500)
+        self.assertIn("1. t1: 続き", text)
+        self.assertIn("有効な判断の ID: R1・R2・", text)
+        self.assertIn("・R150", text)
+        self.assertIn("utterances.jsonl（発言の直近 10 件。", text)
+        self.assertIn("compaction-keep.py rulings %s decision）" % self.root, text)
+        self.assertIn("- R150 [decision] 決めたこと 150", text)
+
+    def test_a_short_record_is_not_cut(self):
+        self.hook("UserPromptSubmit", prompt="短い依頼")
+        text = json.loads(self.hook("SessionStart", source="compact"))["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("全文は", text)
+
     def test_the_reassembly_starts_with_the_current_time(self):
         # 11/21 に、窓口と担当が時刻を推し量って書き、約 5 時間 20 分ずれた（F26）
         text = json.loads(self.hook("SessionStart", source="compact"))["hookSpecificOutput"]["additionalContext"]
@@ -1322,7 +1345,7 @@ class ConsultCard(Base):
         self.assertIn("R6 [decision] 依頼のタスクの判断", out)
         self.assertIn("R7 [constraint] 本番は禁止", out)
         self.assertNotIn("d2 だけの話", out)
-        self.assertIn("rulings_seen は R8", out)
+        self.assertIn("rulings_seen に書く値は R8", out)
         self.assertIn("rev が 1 から 2 に変わった", out)
         self.assertEqual(self.say("次"), "")
         self.cockpit["cards"][-1]["state"] = "done"
@@ -1579,7 +1602,7 @@ class AskFromWindow(Base):
         self.rule(kind="decision", text="t9 の話（どのカードにも関係しない）")  # R3
         out = self.say("続き")
         self.assertIn("R3 [decision] t9 の話", out)
-        self.assertIn("返しの rulings_seen は R3", out)
+        self.assertIn("返しの rulings_seen に書く値は R3", out)
         self.assertEqual(self.say("次"), "")
 
     def test_a_question_on_a_card_gets_only_the_related_rulings_and_the_card_when_its_rev_changes(self):
@@ -1726,7 +1749,7 @@ class AskFromWindow(Base):
         self.rule(kind="decision", text="t9 の話")                       # R3
         self.rule(kind="none", text="記録しない", dec="d21")              # R4 渡さない
         out = self.say("続き")
-        self.assertIn("返しの rulings_seen は R3", out)
+        self.assertIn("返しの rulings_seen に書く値は R3", out)
         self.assertEqual(self.keep()["asks"]["ask1"]["seen"], 3)
 
     def test_a_decide_press_the_main_applied_itself_is_not_named(self):

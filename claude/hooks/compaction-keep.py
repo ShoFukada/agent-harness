@@ -64,6 +64,11 @@ WORKER_LIMIT = 4
 HANDOFF_FRESH_SEC = 1800
 # 作業メモの目安は CLAUDE.md の 1〜2k トークン。日本語は 1 字 3 バイト・1 字 1 トークン前後なので、2k トークンでおよそ 6〜8KB
 MEMO_LIMIT = 8 * 1024
+# Claude Code は hook の 1 つの出力が 10,000 字を超えると、全文をファイルに逃がして先頭 2,000 字だけを会話に渡す。
+HOOK_TEXT_LIMIT = 9500
+FIT_MIN_LINE = 24
+# nix-darwin が ~/.claude/hooks にこの clone の hooks を張る
+KEEPER = "~/.claude/hooks/compaction-keep.py"
 # 許可・禁止・撤回らしい言い回し。当たったターンに判断を記録していなければ Stop で促す。誤検知はメインが一言書いて終える。
 PERMISSION_WORDS = re.compile(
     r"て(も)?(いい|よい|OK)|OK|許可|任せ|しないで|するな|禁止|やめて|ダメ|だめ|使わない|"
@@ -695,21 +700,18 @@ def on_thread_prompt(root, inp, kind, tid, card_id):
             # 渡した判断の最後の id までしか進めない（窓口の照合は全部を見るので、渡していない id まで進めると見逃す。11.6 の 6）
             shown = max([ruling_num(r) for r in rows] + [0]) if card_id else max([ruling_num(r) for r in new] + [base.get("seen") or 0])
             if new:
-                lines.append("【%s】前のターンのあとに、窓口の判断の記録に%s判断が増えた。古い前提のまま話を進めず、"
-                             "今の話に関わるなら返答の最初に深田さんへ伝える。%sの rulings_seen は R%d にする:"
+                lines.append("【%s】前のターンのあとに、窓口の判断の記録に%s判断が増えた（扱いは役割の文書。%sの rulings_seen に書く値は R%d）:"
                              % (tag, "関係する" if card_id else "", "窓口に返すとき" if kind == "card" else "返し", shown))
                 lines += ["- " + ruling_line(r) for r in new]
             if card_id and card.get("rev") != base.get("rev"):
                 if kind == "card":
-                    lines.append("【相談】カード %s の rev が %s から %s に変わった。compaction-keep.py consult-context %s %s で読み直し、"
-                                 "何が変わったかを返答の最初に深田さんへ見せる。相談のメモの「前提のカード」も直す"
-                                 % (card_id, base.get("rev"), card.get("rev"), root, card_id))
+                    lines.append("【相談】カード %s の rev が %s から %s に変わった。今のカードは compaction-keep.py consult-context %s %s の出力にあり、"
+                                 "相談のメモの「前提のカード」は前の rev のまま" % (card_id, base.get("rev"), card.get("rev"), root, card_id))
                 else:  # 質問の相手はコマンドを使えないので、今のカードをそのまま渡す
-                    lines.append("【質問】カード %s の rev が %s から %s に変わった。今のカード（何が変わったかを返答の最初に深田さんへ見せる）:\n%s"
+                    lines.append("【質問】カード %s の rev が %s から %s に変わった。今のカード:\n%s"
                                  % (card_id, base.get("rev"), card.get("rev"), json.dumps(shorten(card, "帳簿のカード %s の欄 " % card_id), ensure_ascii=False)))
             if card_id and card.get("state") == "done" and base.get("state") != "done":
-                lines.append("【%s】カード %s が片付いた。%s" % (tag, card_id, "窓口に返していないものがあれば返し、無ければ相談を終えると深田さんに伝える"
-                                                              if kind == "card" else "深田さんに伝える"))
+                lines.append("【%s】カード %s が片付いた（扱いは役割の文書）" % (tag, card_id))
         if not m:
             # 起点が無い（起動の指示を受けていない・keep.json が消えた）ときは、今までどおり今の最後の id から数え始める
             last = shown if shown is not None else max([ruling_num(r) for r in rows] + [0])
@@ -1030,7 +1032,7 @@ def on_ask_session_start(root, ask_id, inp):
             keep.setdefault("asks", {})[ask_id] = {**keep.get("asks", {}).get(ask_id, {}), "seen": int(m.group(1)), "at": iso()}
             save_keep(root, keep)
     out({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "\n".join([
-        "【質問】圧縮のあと。役割（claude/roles/ask.md）のまま続ける。前の質問と答えは控え %s にある。今の文脈:" % ask_memo_path(root, ask_id), "", text])}})
+        "【質問】圧縮のあと。役割は claude/roles/ask.md のまま。前の質問と答えは控え %s にある。今の文脈:" % ask_memo_path(root, ask_id), "", text])}})
 
 
 def ledger_asks(root):
@@ -1130,26 +1132,94 @@ def slot_lines(root):
     return out + ([] if idle else ["- 待ちのタスクは無い"])
 
 
+def clip_lines(text, width, source):
+    lines, cut = [], False
+    for line in text.split("\n"):
+        if len(line) > width and line.strip() and not line.lstrip().startswith("#"):
+            line, cut = line[:width - 1] + "…", True
+        lines.append(line)
+    return "\n".join(lines + (["（長い行を %d 字で切った。全文は %s）" % (width, source)] if cut else []))
+
+
+def collapse(text, source):
+    head = next((x for x in text.split("\n") if x.strip()), "")
+    return "%s\n%s（%d 字を省いた。全文は %s）" % ("\n" if text.startswith("\n") else "", head, len(text), source)
+
+
+def fit(blocks, limit=HOOK_TEXT_LIMIT):
+    """blocks は (本文, 全文の読み方, 削る順) の列で、"\\n" でつなぐ。読み方が None の塊は削らない。削る順の大きい塊から削る。"""
+    cur = [b[0] for b in blocks]
+    for tier in sorted({b[2] for b in blocks if b[1]}, reverse=True):
+        if len("\n".join(cur)) <= limit:
+            break
+        idx = [i for i, b in enumerate(blocks) if b[1] and b[2] == tier]
+
+        def size(width):
+            return len("\n".join(clip_lines(blocks[i][0], width, blocks[i][1]) if i in idx else t for i, t in enumerate(cur)))
+        lo, hi, best = FIT_MIN_LINE, max(len(x) for i in idx for x in blocks[i][0].split("\n")), None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if size(mid) <= limit:
+                best, lo = mid, mid + 1
+            else:
+                hi = mid - 1
+        for i in idx:
+            cur[i] = clip_lines(blocks[i][0], best, blocks[i][1]) if best else collapse(blocks[i][0], blocks[i][1])
+    return "\n".join(cur)
+
+
+def start_context(head, args):
+    """--memo <path> <見出し> で作業メモを、--root <root> で操縦席の有効な制約・空き枠・反映していない返しを足す。"""
+    blocks = [(head.rstrip("\n"), None, 0)]
+    if "--memo" in args:
+        i = args.index("--memo")
+        path, label = args[i + 1], args[i + 2]
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                blocks.append(("\n# 作業メモ (%s)\n%s" % (label, fh.read().rstrip()), path, 1))
+    root = cockpit_root_at(args[args.index("--root") + 1]) if "--root" in args else None
+    if root:
+        try:
+            rules = ["- " + ruling_line(r) for r in active_rulings(rulings(root)) if r.get("kind") == "constraint"]
+            if rules:
+                blocks.append(("\n".join(["", "# 守る制約（.orca/cockpit/rulings.jsonl の有効な constraint。原文つき）"] + rules),
+                               "%s rulings %s constraint" % (KEEPER, root), 1))
+        except (OSError, ValueError) as e:
+            blocks.append(("\n【記録】有効な制約を読み出せなかった（%s）。%s rulings %s constraint で出せる" % (e, KEEPER, root), None, 0))
+        blocks.append(("\n".join(slot_lines(root)), "%s slots %s" % (KEEPER, root), 1))
+        left = unreflected_lines(root)
+        if left:
+            blocks.append(("\n".join(left), "%s unreflected %s" % (KEEPER, root), 1))
+    return fit(blocks)
+
+
 def reassembly(root, heading):
     # 時刻を推し量って書かないよう、組み直しの先頭に今の時刻を出す（11/21 に作業メモの時刻が約 5 時間 20 分ずれた）
-    out = ["今の時刻: %s（date の値。過去の出来事の時刻は op・ログ・git の記録から取る）" % now().strftime("%Y-%m-%d %H:%M %z"),
-           "# %s（compaction-keep。元の記録は .orca/cockpit/ にある）" % heading]
+    blocks = [("今の時刻: %s（date の値。過去の出来事の時刻は op・ログ・git の記録から取る）\n# %s（compaction-keep。元の記録は .orca/cockpit/ にある）"
+               % (now().strftime("%Y-%m-%d %H:%M %z"), heading), None, 0)]
     memo = path_of(root, "state.md")
     if os.path.isfile(memo):
         with open(memo, encoding="utf-8") as fh:
-            out += ["", "## 作業メモ (.orca/cockpit/state.md)", fh.read().rstrip()]
+            blocks.append(("\n## 作業メモ (.orca/cockpit/state.md)\n" + fh.read().rstrip(), memo, 1))
     opens = open_lines(cockpit(root))
-    out += ["", "## 開いている操縦席のカードと済んでいないタスク（状態は state.ts の出力で読む）"] + (opens or ["- なし"])
-    out += slot_lines(root)
-    out += unreflected_lines(root)
+    blocks.append(("\n".join(["", "## 開いている操縦席のカードと済んでいないタスク（状態は state.ts の出力で読む）"] + (opens or ["- なし"])),
+                   "node %s %s の出力" % (cockpit_state_path(), root), 1))
+    blocks.append(("\n".join(slot_lines(root)), "%s slots %s" % (KEEPER, root), 1))
+    left = unreflected_lines(root)
+    if left:
+        blocks.append(("\n".join(left), "%s unreflected %s" % (KEEPER, root), 1))
     act = active_rulings(rulings(root))
-    out += ["", "## 有効な判断（.orca/cockpit/rulings.jsonl。撤回・置き換え済みのものは除いてある。ここに無い判断を蒸し返さない）"]
-    out += ["- " + ruling_line(r) for r in act] or ["- なし"]
+    held = [r for r in act if r.get("kind") != "decision"]
+    blocks.append(("\n".join(["", "## 有効な判断（.orca/cockpit/rulings.jsonl。撤回・置き換え済みのものは除いてある。ここに無い判断は効力が無い）",
+                              "### 制約・許可・却下"] + (["- " + ruling_line(r) for r in held] or ["- なし"])),
+                   "%s rulings %s" % (KEEPER, root), 2))
+    blocks.append(("\n".join(["### 決定"] + (["- " + ruling_line(r) for r in act if r.get("kind") == "decision"] or ["- なし"])),
+                   "%s rulings %s decision" % (KEEPER, root), 3))
     recent = utterances(root)[-RECENT_UTTERANCES:]
-    out += ["", "## 深田さんの直近の発言 %d 件（原文。古い順）" % len(recent)]
-    # 長い依頼の末尾の条件（「本番は禁止」）を落とさないよう、切らずに改行も保って流す
-    out += ["- %s\n%s" % (u.get("at", ""), textwrap.indent(str(u.get("prompt") or ""), "  ")) for u in recent] or ["- なし"]
-    return "\n".join(out)
+    blocks.append(("\n".join(["", "## 深田さんの直近の発言 %d 件（原文。古い順）" % len(recent)]
+                             + (["- %s\n%s" % (u.get("at", ""), textwrap.indent(str(u.get("prompt") or ""), "  ")) for u in recent] or ["- なし"])),
+                   path_of(root, "utterances.jsonl") + "（発言の直近 %d 件。Orca の知らせの行は除く）" % len(recent), 4))
+    return blocks
 
 
 def orca_bin():
@@ -1184,7 +1254,7 @@ def late_notices(root):
 def notice_lines(msgs, run):
     if not msgs:
         return []
-    return ["", "## 深田さんの最後の発言より後に届いた Orca の知らせ %d 件（古い順。本文は orca orchestration inbox --terminal run:%s --full で読む。処理したかを確かめる）" % (len(msgs), run)] + [
+    return ["", "## 深田さんの最後の発言より後に届いた Orca の知らせ %d 件（古い順。要約に入っていないことがある。本文は orca orchestration inbox --terminal run:%s --full にある）" % (len(msgs), run)] + [
         "- %s %s（%s）: %s" % (m.get("created_at", ""), m.get("from_handle", ""), m.get("type", ""), norm(m.get("subject"))) for m in msgs]
 
 
@@ -1193,11 +1263,10 @@ def resume_request(root):
     return "\n".join([
         "",
         "## 再開の確かめ（⑥。通るまで orca orchestration send / worker-start・orca-launch は止まる）",
-        "上を読んだうえで、次の JSON を `~/.claude/hooks/compaction-keep.py resume %s` の標準入力に渡す（cockpit skill の「圧縮のあと」）。" % root,
+        "確かめは `%s resume %s` が標準入力の JSON で行う（手順は cockpit skill の references/resume.md）。照合するのは ID・許可の対象と値・却下した案・パス。JSON の形:" % (KEEPER, root),
         '{"next": "次にやること 1〜3 文", "rulings": [守る判断の ID を全部], "permissions": [{"id", "scope", "allow"} 有効な許可・禁止を全部],'
         ' "workers": [済んでいないタスクの worker.task_id（Orca の最初の Task の id）], "paths": [編集の途中のファイルの絶対パス]}',
         "有効な判断の ID: %s" % ("・".join(ids) or "なし"),
-        "合わなければ指摘の箇所を記録と操縦席で読み直して出し直す。ID だけでなく許可の対象と値・却下した案・パスも見る。",
     ])
 
 
@@ -1441,10 +1510,10 @@ def order_lines(root, relay=False):
             rows.append(re.sub(r"^(?:\d+[.)]|[-*])\s+", "", line).strip())
     if not rows:
         # 知らせのターンには書くよう促さない（念押しを流さない。R186）
-        return [] if relay else ["【今の順番】作業メモ .orca/cockpit/state.md の先頭に「%s」が無い。今進める 1〜3 件のタスク ID と理由を 1 行ずつ書く（cockpit skill の「メインの作業メモ」）" % ORDER_HEAD]
+        return [] if relay else ["【今の順番】作業メモ .orca/cockpit/state.md の先頭に「%s」が無い（書き方は cockpit skill の references/memo.md「今の順番」）" % ORDER_HEAD]
     c = cockpit(root)
     tasks = {t.get("id"): t for t in (c.get("tasks") or []) if isinstance(t, dict)} if isinstance(c, dict) and not relay else {}
-    out = ["【今の順番】" if relay else "【今の順番】（作業メモの先頭。順番を入れ替えたら作業メモを直す）"]
+    out = ["【今の順番】" if relay else "【今の順番】（作業メモの先頭）"]
     for n, row in enumerate(rows[:ORDER_MAX], 1):
         # ja-review が「t119 監査」を「t119監査」に詰めるので、\b（漢字も単語の文字）でなく数字の切れ目で ID を取る
         m = re.match(r"(t\d+)(?!\d)", row)
@@ -1519,7 +1588,7 @@ def on_prompt(root, inp):
              "reason": "このチャットの記憶が崩れてきたため（%s）、同じワークスペースの新しいチャットに引き継ぎました。"
                        "いまの発言は新しいチャットに渡してあります。Orca のチャットの一覧から新しいチャットを開いてください。" % reason})
     else:
-        print("【引き継ぎ】%s ため新しいチャットへの引き継ぎを試みたが失敗した（%s）。このチャットで続け、記録を読み直してから答える" % (reason, detail))
+        print("【引き継ぎ】%s ため新しいチャットへの引き継ぎを試みたが失敗した（%s）。このチャットのまま続いている。記録の元は .orca/cockpit/（state.md・rulings.jsonl・utterances.jsonl）" % (reason, detail))
         print("\n".join(order_lines(root)))
 
 
@@ -1590,12 +1659,9 @@ def on_session_start(root, inp):
             keep["handoff"] = {**h, "state": "taken", "to_session": session}
             keep["verify"] = {"pending": True, "since": iso(), "session": session, "failures": 0, "required_paths": []}
             save_keep(root, keep)
-            text = "\n".join([
-                reassembly(root, "前のチャットからの引き継ぎ（%s）" % h.get("reason", "")),
-                "", "## 最初のメッセージ",
-                "最初のメッセージは、前のチャットで受けた深田さんのこの日の最初の発言（原文）。再開の確かめを通してから答える。",
-                resume_request(root),
-            ])
+            text = fit(reassembly(root, "前のチャットからの引き継ぎ（%s）" % h.get("reason", "")) + [
+                ("\n## 最初のメッセージ\n最初のメッセージは、前のチャットで受けた深田さんのこの日の最初の発言（原文）。答えるのは再開の確かめを通ったあと。", None, 0),
+                (resume_request(root), None, 0)])
             out({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}})
             return
     if source != "compact":
@@ -1608,11 +1674,14 @@ def on_session_start(root, inp):
     msgs, run = late_notices(root)
     # chat の窓口の hook から run-current で Run を引けたかを、次の本物の圧縮で確かめられるよう残す
     append_jsonl(path_of(root, "compactions.jsonl"), {"type": "notices", "at": iso(), "session": session, "run": run, "n": len(msgs)})
-    text = "\n".join([reassembly(root, "圧縮のあとの組み直し")] + notice_lines(msgs, run)) + resume_request(root)
+    blocks = reassembly(root, "圧縮のあとの組み直し")
+    if msgs:
+        blocks.append(("\n".join(notice_lines(msgs, run)), "orca orchestration inbox --terminal run:%s --full" % run, 4))
+    blocks.append((resume_request(root), None, 0))
     issues = (keep.get("verify") or {}).get("summary_issues") or []
     if issues:
-        text += "\n\n## 要約の照合で見つかった食い違い（要約より上の記録を正とする）\n" + "\n".join("- " + i for i in issues)
-    out({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}})
+        blocks.append(("\n## 要約の照合で見つかった食い違い（要約より上の記録を正とする）\n" + "\n".join("- " + i for i in issues), None, 0))
+    out({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": fit(blocks)}})
 
 
 def strip_command(command):
@@ -1658,9 +1727,8 @@ def on_posttool(root, inp):
     save_keep(root, keep)
     if busy:
         out({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext":
-             "【窓口】このターンでツールを %d 回呼び、別々のファイルを %d 件読んだ。窓口は深田さんの窓口として空けておき、まとまった作業は"
-             "subagent（調べもの）・worker（コード）・担当（1 日を超える仕事）に出す（CLAUDE.md の窓口の決まり。nix-darwin の判断の記録 R69）。"
-             "残りを出せるなら今出し、会話には結論だけを残す。すぐ終わる確認ならそのまま続けてよい" % (mine["tools"], len(reads))}})
+             "【窓口】このターンでツールを %d 回呼び、別々のファイルを %d 件読んだ。窓口の作業の出し方（subagent・worker・担当）は"
+             "役割の文書 roles/main.md にある。すぐ終わる確認ならこのまま続けて差し支えない" % (mine["tools"], len(reads))}})
 
 
 # ---------- 帳簿を書く道具に限る（操縦席 版 3） ----------
@@ -1875,6 +1943,9 @@ def tool(argv):
     if cmd == "ledger-guard":
         # periodic-reminder.sh が未仕分けの発言を出すかを、この hook と同じ判定で決める（0 で効く、1 で効かない）
         sys.exit(0 if rest and ledger_guard(os.path.join(rest[0], ".orca")) else 1)
+    if cmd == "start-context":
+        print(start_context(sys.stdin.read(), rest))
+        return
     thread = "compaction-keep: 相談スレッドは判断の記録を書かない。決まったことは窓口に返す（役割の「窓口に返す」）"
     if cmd in ("rule", "resume") and (os.environ.get("CONSULT_THREAD") or chat_card(os.getcwd())):
         sys.exit(thread)

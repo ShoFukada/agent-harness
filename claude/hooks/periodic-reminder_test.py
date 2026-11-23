@@ -29,6 +29,8 @@ os.environ.setdefault("COCKPIT_STATE", os.path.join(os.path.dirname(HOOK), "..",
 ROLES = tempfile.mkdtemp(prefix="periodic-reminder-roles-")
 with open(os.path.join(ROLES, "consult-card.md"), "w", encoding="utf-8") as _fh:
     _fh.write("カードの相談の役割の本文\n")
+with open(os.path.join(ROLES, "main.md"), "w", encoding="utf-8") as _fh:
+    _fh.write("窓口の役割の本文\n")
 os.environ["CLAUDE_ROLES_DIR"] = ROLES
 atexit.register(shutil.rmtree, ROLES, True)
 SCRATCHPAD_ROOT = "/private/tmp/claude-%d" % os.getuid()
@@ -148,7 +150,7 @@ class Cockpit(unittest.TestCase):
         self.assertIn("「案件A」", self.start())
         for out in (self.start(), self.prompt()):
             self.assertIn("【操縦席】cockpit.json が版 1 のままで、状態を読めない。移し替えが要る", out)
-            self.assertIn("migrate.ts %s で中身を確かめ、--write で移し替える" % self.dir, out)
+            self.assertIn("migrate.ts %s。手順は cockpit skill の references/setup.md「移し替え」" % self.dir, out)
         self.write("cockpit.json", {})
         self.assertNotIn("移し替え", self.prompt())
         self.write("cockpit.json", '{"version": 1} garbage')
@@ -173,12 +175,29 @@ class Cockpit(unittest.TestCase):
         output = run(self.reminder, hook_event_name="SessionStart", source="resume", session_id=session, cwd=self.dir)
         self.assertIn("# 作業メモ (.orca/cockpit/state.md)\nワークスペースの作業メモ", output)
         self.assertNotIn("セッションの作業メモ", output)
-        self.assertLess(output.index("ワークスペースの作業メモ"), output.index("操縦席あり"))
+        self.assertLess(output.index("操縦席あり"), output.index("ワークスペースの作業メモ"))
         # 圧縮のあとは compaction-keep.py が組み直しの中で流すので、ここでは流さない
         output = run(self.reminder, hook_event_name="SessionStart", source="compact", session_id=session, cwd=self.dir)
         self.assertNotIn("ワークスペースの作業メモ", output)
         self.assertNotIn("セッションの作業メモ", output)
         self.assertIn("操縦席あり", output)
+
+    def test_a_long_memo_and_many_constraints_are_cut_to_the_hook_limit(self):
+        # hook の 1 つの出力は 10,000 字まで（超えると先頭 2,000 字だけが渡る）。
+        self.write("cockpit.json", {"workspace": {"name": "案件A"}, "applied_ops": []})
+        os.makedirs(os.path.join(self.dir, ".orca", "cockpit"))
+        with open(os.path.join(self.dir, ".orca", "cockpit", "state.md"), "w", encoding="utf-8") as fh:
+            fh.write("## 今の順番\n1. t1: 続き\n" + "メモの本文。" * 1500)
+        with open(os.path.join(self.dir, ".orca", "cockpit", "rulings.jsonl"), "w", encoding="utf-8") as fh:
+            for i in range(1, 81):
+                fh.write(json.dumps({"id": "R%d" % i, "at": "2026-11-21T10:00:00+09:00", "kind": "constraint",
+                                     "text": "守ること %d " % i + "中身" * 60, "quote": "原文"}, ensure_ascii=False) + "\n")
+        out = run(self.reminder, hook_event_name="SessionStart", source="startup", session_id=str(uuid.uuid4()), cwd=self.dir)
+        self.assertLessEqual(len(out.rstrip("\n")), 9500)
+        self.assertIn("窓口の役割の本文", out)
+        self.assertIn("1. t1: 続き", out)
+        self.assertIn("- R80 [constraint] 守ること 80", out)
+        self.assertIn("全文は %s" % os.path.join(self.dir, ".orca", "cockpit", "state.md"), out)
 
     def prompt(self):
         return run(self.reminder, hook_event_name="UserPromptSubmit",
@@ -215,7 +234,7 @@ class Cockpit(unittest.TestCase):
     def test_every_prompt_reports_unapplied_ops(self):
         self.write("cockpit.json", {"applied_ops": [1]})
         self.write("cockpit.user.json", {"ops": [{"op_id": 1}, {"op_id": 2}]})
-        self.assertIn("【操縦席】未反映の操作が 1 件", self.prompt())
+        self.assertIn("【操縦席】未反映の操作 1 件", self.prompt())
 
     def test_stalled_things_found_by_the_watchdog_are_named_for_this_workspace(self):
         self.write("cockpit.json", {})
@@ -226,7 +245,7 @@ class Cockpit(unittest.TestCase):
                                   {"text": "よそのメインが止まった", "root": "/elsewhere"}]}, fh)
         with mock.patch.dict(os.environ, {"STALLWATCH_ALERTS": alerts}):
             out = self.prompt()
-        self.assertIn("【見張り】止まっているもの: 定時ジョブ x が失敗・ここのメインが止まった。", out)
+        self.assertIn("【見張り】止まっているもの: 定時ジョブ x が失敗・ここのメインが止まった\n", out)
         self.assertNotIn("よそ", out)
         self.assertNotIn("【見張り】", self.prompt(), "見張りの記録が無ければ出さない")
 
@@ -247,12 +266,13 @@ class Cockpit(unittest.TestCase):
         env = self.fake_orca([], shows={"ctx_1": self.show("ready")})
         start = lambda: run(self.reminder, env=env, hook_event_name="SessionStart", source="startup", session_id=str(uuid.uuid4()), cwd=self.dir)
         out = start()
-        self.assertIn("「案件A」のメイン（案件全体の進行役）", out)
+        self.assertIn("「案件A」のメイン（窓口）", out)
+        self.assertIn("窓口の役割の本文", out)
         # 種類の名前は窓の名前（R84）。版 3 の窓は kind: talk のカードを協議中に数えない（協議中は talk の op から決まる）
         self.assertIn("全体: 私の番 2 件（判断 1・確認 1）・話し中 0・顧客待ち 1・動いている worker 1（画面の実装）", out)
         # R184: 発言のたびに役割と件数を流すと、次にやることが薄れた
         out = self.prompt_with(env)
-        self.assertNotIn("メインの役割", out)
+        self.assertNotIn("窓口の役割の本文", out)
         self.assertNotIn("全体:", out)
         env = self.fake_orca([], shows={"ctx_1": self.show("succeeded", done_ms_ago=60000)})
         self.assertIn("・動いている worker 0", start())
@@ -269,7 +289,7 @@ class Cockpit(unittest.TestCase):
         os.makedirs(os.path.join(self.dir, "other-repo", ".git"))
         out = run(self.reminder, hook_event_name="UserPromptSubmit", session_id=str(uuid.uuid4()),
                   cwd=os.path.join(self.dir, "other-repo"))
-        self.assertNotIn("メインの役割", out)
+        self.assertNotIn("窓口の役割の本文", out)
 
     def test_a_consult_thread_does_not_get_the_main_role(self):
         self.write("cockpit.json", {"workspace": {"name": "案件A"}})
@@ -288,7 +308,7 @@ class Cockpit(unittest.TestCase):
                 {"path": "/w/other", "main": "/elsewhere", "reasons": ["r"]}]}, fh)
         out = run(self.reminder, env={**os.environ, "WORKTREE_SWEEP_HOME": sweep}, hook_event_name="SessionStart",
                   source="compact", session_id=str(uuid.uuid4()), cwd=self.dir)
-        self.assertIn("【worktree】判断が要る worktree 1 件", out)
+        self.assertIn("【worktree】取り込むか捨てるかの判断が要る worktree 1 件", out)
         self.assertIn("/w/mine（10 時間動きが無い・main に無い commit 2 件）", out)
         self.assertNotIn("/w/other", out)
         self.assertNotIn("【worktree】", self.start())
@@ -329,8 +349,8 @@ class Cockpit(unittest.TestCase):
                                                                           "remind_at": "2026-11-03T10:00:00+09:00"})]})
         out = self.prompt()
         # 要対応と警告は 1 件ずつ、帳簿の形の直しは 1 行にまとめる
-        self.assertIn("催促の日を過ぎた顧客待ち: w1。", out)
-        self.assertIn("連絡を拾えていない経路: Slack #dev: token expired。", out)
+        self.assertIn("催促の日を過ぎた顧客待ち: w1\n", out)
+        self.assertIn("連絡を拾えていない経路: Slack #dev: token expired\n", out)
         self.assertIn("orphan_cards 1 件（d1）", out)
         self.assertIn("long_names 1 件（s2（%d 字））" % len(long), out)
         self.assertEqual(out.count("【操縦席】帳簿の直し"), 1)
@@ -428,7 +448,7 @@ class Cockpit(unittest.TestCase):
             "ctx_26": self.show("succeeded", done_ms_ago=5 * 60000),
             "ctx_27": self.show("ready")})
         out = self.prompt_with(env)
-        self.assertIn("【操縦席】worker が終わったのに取り込んでいないタスク: t25。worker の結果を確かめて取り込み、state を ok にする", out)
+        self.assertIn("【操縦席】worker が終わったのに取り込んでいないタスク: t25\n", out)
         self.assertIn("missing_workers 1 件（t30）", out)
         shows = ["orchestration worker-show --dispatch ctx_%s --full --json" % n for n in ("25", "26", "27", "30", "6")]
         self.assertEqual(sorted(self.calls()), sorted(["agent list --json", "plugin list --json", "terminal list --limit 500 --json", "worktree ps --limit 500 --json", *shows]),
@@ -446,7 +466,7 @@ class Cockpit(unittest.TestCase):
         # プラグインの worker が止まると、窓が Orca の前面に追いつかない（2026-11-16、理由が分からないまま切り替わらなくなった）
         self.write("cockpit.json", {})
         out = self.prompt_with(self.fake_orca([], plugin_status="pending"))
-        self.assertIn("【操縦席】Orca のプラグインが承認待ちのため、Orca に合わせた切り替えが止まっています。深田さんに Orca で操縦席のプラグインを承認", out)
+        self.assertIn("【操縦席】Orca のプラグインが承認待ちのため、Orca に合わせた切り替えが止まっています（承認は深田さんが Orca で選ぶ）", out)
         self.assertNotIn("プラグイン", self.prompt_with(self.fake_orca([])))
 
     def test_no_missing_context_line_when_every_decision_is_complete(self):
@@ -477,14 +497,14 @@ class Version3Checks(unittest.TestCase):
         codex = self.v3_prompt(checks, reminder=self.codex_reminder, TMPDIR=tmp)
         self.assertNotIn("【操縦席】", codex)
         first = self.v3_prompt(checks, TMPDIR=tmp)
-        self.assertIn("線を越えて動いていないタスク: t12（3 時間）。", first)
+        self.assertIn("線を越えて動いていないタスク: t12（3 時間）\n", first)
         self.assertIn("workspace_name 1 件（dev-standards）", first)
         again = self.v3_prompt(checks, TMPDIR=tmp)
         self.assertNotIn("線を越えて動いていないタスク", again)
         self.assertIn("workspace_name 1 件（dev-standards）", again)
         # タスクが動いて since が変わり、また線を越えたら、もう 1 回流す
         moved = self.v3_prompt({"idle_tasks": [{"task": "t12", "since": "2026-11-22T13:00:00+09:00", "hours": 2}]}, TMPDIR=tmp)
-        self.assertIn("線を越えて動いていないタスク: t12（2 時間）。", moved)
+        self.assertIn("線を越えて動いていないタスク: t12（2 時間）\n", moved)
 
     git_ahead_by_one = Cockpit.git_ahead_by_one
 
@@ -493,9 +513,9 @@ class Version3Checks(unittest.TestCase):
         out = self.v3_prompt({"push_delegated": True, "push_check": False})
         self.assertIn("push していない commit 1 件", out)
         self.assertIn("この案件では push が一任されている", out)
-        self.assertNotIn("許可のカードにして窓に出し", out)
+        self.assertNotIn("push の一任は判断の記録に無い", out)
         asked = self.v3_prompt({"push_check": True})
-        self.assertIn("許可のカードにして窓に出し", asked)
+        self.assertIn("push の一任は判断の記録に無い", asked)
         self.assertNotIn("一任されている（判断の記録）", asked)
         self.assertNotIn("push していない", self.v3_prompt({}))
 
@@ -518,7 +538,7 @@ class Version3Checks(unittest.TestCase):
                                 "stale_tasks": ["t58"], "loose_tasks": [{"id": "t70"}], "unknown_phase": ["t66"],
                                 "no_form": ["s9"], "unsorted": ["u-160"]})
         self.assertIn("【操縦席】帳簿の直し: incomplete_cards 2 件（v90、p97）・stale_tasks 1 件（t58）・loose_tasks 1 件（t70）・"
-                      "unknown_phase 1 件（t66）・no_form 1 件（s9）。直し方は cockpit skill の references/schema.md で検査の名前を引く", out)
+                      "unknown_phase 1 件（t66）・no_form 1 件（s9）\n", out)
         self.assertNotIn("u-160", out)  # 帳簿を移すまでは未仕分けを出さない
 
     def test_unsorted_utterances_are_named_once_the_switch_is_on_and_the_ledger_is_moved(self):
@@ -530,25 +550,25 @@ class Version3Checks(unittest.TestCase):
         os.remove(os.path.join(self.dir, ".orca", "cockpit.v2.json"))
         v3 = {"intake": {"through": "", "none": []}}
         out = self.v3_prompt({"unsorted": ["u-160", {"id": "u-161"}]}, ledger=v3, COCKPIT_LEDGER_GUARD="1")
-        self.assertIn("仕分けていない発言: u-160、u-161。", out)  # init で作った帳簿（控えが無い）にも出す
+        self.assertIn("仕分けていない発言: u-160、u-161\n", out)  # init で作った帳簿（控えが無い）にも出す
         self.assertNotIn("u-160", self.v3_prompt({"unsorted": ["u-160"]}, ledger=v3, COCKPIT_LEDGER_GUARD="0"))  # 切り替えが切れていれば出さない
 
     # 受入（設計 9.8）: 11/21 の台帳で抜けた 4 件を、窓口に名指しする
     def test_A006_an_approval_without_the_element_map_is_named(self):
         out = self.v3_prompt({"unmapped_elements": [{"card": "v89", "missing": [3, 5]}]})
-        self.assertIn("要素の行き先（element_map）が欠けたカード: v89（要素 3・5）。", out)
+        self.assertIn("要素の行き先（element_map）が欠けたカード: v89（要素 3・5）\n", out)
 
     def test_B025_a_request_whose_tasks_are_done_without_proof_is_named(self):
         out = self.v3_prompt({"unproven": [{"request": "r27", "when": [2]}]})
-        self.assertIn("証拠の無い済の条件が残る依頼: r27（済の条件 2）。", out)
+        self.assertIn("証拠の無い済の条件が残る依頼: r27（済の条件 2）\n", out)
 
     def test_t50_a_task_affected_by_the_R39_scope_change_is_named(self):
         out = self.v3_prompt({"affected_tasks": [{"ruling": "R39", "task": "t50"}]})
-        self.assertIn("見直していないタスク: R39→t50。", out)
+        self.assertIn("見直していないタスク: R39→t50\n", out)
 
     def test_B035_a_commitment_left_unsorted_is_named(self):
         out = self.v3_prompt({"unsorted": ["u-171"]}, ledger={"intake": {"through": "", "none": []}}, COCKPIT_LEDGER_GUARD="1")
-        self.assertIn("仕分けていない発言: u-171。", out)
+        self.assertIn("仕分けていない発言: u-171\n", out)
 
     def test_nothing_is_said_when_the_checks_are_empty(self):
         out = self.v3_prompt({"incomplete_cards": [], "unsorted": [], "unmapped_elements": [], "unproven": [], "affected_tasks": []},
@@ -579,14 +599,14 @@ class Version3Checks(unittest.TestCase):
         self.write("cockpit.json", {"workspace": {"name": "案件A"}})
         for event in ("SessionStart", "UserPromptSubmit"):
             out = run(self.codex_reminder, hook_event_name=event, source="startup", session_id=str(uuid.uuid4()), cwd=self.dir)
-            self.assertNotIn("メインの役割", out, event)
+            self.assertNotIn("窓口の役割の本文", out, event)
             self.assertNotIn("操縦席", out, event)
 
     # カードの相談（設計 10.7 の 1・8）
     def test_unreflected_returns_and_tabs_left_after_the_card_closed_are_named(self):
         out = self.v3_prompt({"unreflected_returns": [{"id": "d21-1", "card": "d21", "missing": ["帳簿"]}],
                               "stale_consults": [{"id": "d19", "terminal": "term_x"}]})
-        self.assertIn("反映していないカードの相談の返し: d21-1（帳簿）。", out)
+        self.assertIn("反映していないカードの相談の返し: d21-1（帳簿）\n", out)
         self.assertIn("stale_consults 1 件（d19）", out)
 
     def test_a_return_left_in_the_consult_memo_is_named_at_startup(self):
@@ -601,10 +621,10 @@ class Version3Checks(unittest.TestCase):
         self.write("cockpit.json", {})
         env = {**os.environ, "CONSULT_THREAD": "1", "CONSULT_CARD": self.dir + "#d21"}
         out = run(self.reminder, env=env, hook_event_name="SessionStart", source="compact", session_id=str(uuid.uuid4()), cwd=self.dir)
-        self.assertIn("カード d21 の相談を続ける前に", out)
+        self.assertIn("カード d21 の相談の続き", out)
         self.assertIn(os.path.join(self.dir, ".orca", "consult", "d21.md"), out)
         self.assertIn("consult-context %s d21" % self.dir, out)
-        self.assertNotIn("メインの役割", out)
+        self.assertNotIn("窓口の役割の本文", out)
         # 立てたときは起動の指示が文脈の束を持つので、ここでは流さない
         out = run(self.reminder, env=env, hook_event_name="SessionStart", source="startup", session_id=str(uuid.uuid4()), cwd=self.dir)
         self.assertNotIn("相談を続ける前に", out)
@@ -620,9 +640,9 @@ class Version3Checks(unittest.TestCase):
             json.dump({"chat-1": {"card": "d21"}}, fh)
         chat = {**os.environ, "ORCA_AGENT_SESSION_ID": "chat-1", "ORCA_STRUCTURED_SESSION": "1"}
         out = run(self.reminder, env=chat, hook_event_name="SessionStart", source="compact", session_id=str(uuid.uuid4()), cwd=self.dir)
-        self.assertIn("カード d21 の相談を続ける前に", out)
+        self.assertIn("カード d21 の相談の続き", out)
         self.assertIn("# 役割（claude/roles/consult-card.md）\nカードの相談の役割の本文", out)
-        self.assertNotIn("メインの役割", out)
+        self.assertNotIn("窓口の役割の本文", out)
         # 役割のファイルが無ければ、見出しだけで黙らずに読めないことを出す
         out = run(self.reminder, env={**chat, "CLAUDE_ROLES_DIR": "/nonexistent/roles"}, hook_event_name="SessionStart",
                   source="compact", session_id=str(uuid.uuid4()), cwd=self.dir)
