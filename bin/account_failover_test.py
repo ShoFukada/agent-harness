@@ -508,6 +508,14 @@ class SwitchTest(FailoverTestBase):
         self.assertEqual(len(self.notes()), 1)
         self.assertIn("Orca に無い席", self.notes()[0])
 
+    def test_a_success_after_a_failure_ends_the_log_with_recovered(self):
+        # stallwatch はログの最後の行で失敗を判断する。直ったあとも Traceback が最後に残ると、止まったと出し続ける。
+        self.accounts(A, {A: usage(), B: usage(), C: usage()})
+        self.assertNotEqual(self.run_cmd(sys.executable, SCRIPT, "--seat", "nobody@example.com").returncode, 0)
+        last = self.run_failover().strip().splitlines()[-1]
+        self.assertEqual(json.loads(last)["event"], "recovered")
+        self.assertEqual(self.run_failover().strip(), "")
+
 
 class ConvergeTest(FailoverTestBase):
     """古い席の claude を今の席へ移す処理（R205）。"""

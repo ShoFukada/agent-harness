@@ -947,6 +947,8 @@ def main():
                 sw.save(failed, text)
             raise
         if os.path.exists(failed):
+            # 成功した回はログを書かないので、書かないと失敗の Traceback がログの最後に残り、stallwatch が止まったと出し続ける。
+            print(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "event": "recovered"}))
             os.remove(failed)
 
 
