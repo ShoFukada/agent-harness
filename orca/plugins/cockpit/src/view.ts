@@ -1,6 +1,6 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
 import { actionVerb, CONTEXT_FIELDS, COUNTED, COWORK_ID, IDLE_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
-import type { CockpitView, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
+import type { CockpitView, FocusResult, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import type { Since } from './since.ts'
 import {
   BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
@@ -91,6 +91,12 @@ export function linkKind(href: string): string {
   return 'ページ'
 }
 export const isWebUrl = (s: string) => /^https?:\/\//.test(s)
+/** 開いた知らせ。開く先は窓の外（Orca のエディタかブラウザ）で窓が変わらないので、押して開いたかを知らせる。label はボタンの語。 */
+export function openedMessage(label: string, href: string): string {
+  const name = label.trim().replace(/を?開く$/, '')
+  const what = !name || name === 'リンク' ? linkKind(href) : name
+  return isWebUrl(href) ? `「${what}」をブラウザで開きました` : `「${what}」を Orca で開きました`
+}
 export const linkBtn = (label: string, href: string) =>
   `<button class="lk" type="button" ${isWebUrl(href) ? `data-url="${esc(href)}"` : `data-file="${esc(href)}"`}><i>${esc(linkKind(href))}</i><span>${esc(label)}</span></button>`
 
@@ -206,7 +212,7 @@ export function ownerHtml(o: OwnerRef, owners?: OwnerLive[] | false, same?: stri
   const where = o.how === 'main' || owners === false ? '' : o.how === 'chat' ? 'チャット' : '端末'
   const wt = o.how === 'chat' && o.session && owners ? owners.find((x) => x.session === o.session)?.worktree : undefined
   const open = owners && (o.how === 'terminal' ? !!o.terminal : !!wt)
-    ? `<button type="button" class="act" data-term="${esc(o.how === 'terminal' ? o.terminal : '')}" data-wt="${esc(wt ?? '')}">${where}を開く</button>`
+    ? `<button type="button" class="act" data-term="${esc(o.how === 'terminal' ? o.terminal : '')}" data-wt="${esc(wt ?? '')}" data-who="${esc(`${o.title}の担当`)}">${where}を開く</button>`
     : ''
   // 役割・名前・状態・操作の順（全体のタスクの進め手の行と同じ。Neon 追加 23）。
   // 担当の名前が仕事の名前と同じなら名前を重ねない（初見 2 巡目 3）。
@@ -680,14 +686,24 @@ function handoffHtml(shown: Board[], now: number): string {
   return lines.length ? `<div class="notes" role="status">${lines.join('')}</div>` : ''
 }
 
+/** 担当・worker の端末かチャットを開いた知らせ。who は誰のものか（「AWS 構成案の担当」）で、ワークスペースの内部の名前は出さない。 */
+export function focusMessage(x: FocusResult, who?: string): string {
+  if (!x.focused) return '端末も worktree も Orca にありません'
+  const of = who ? `${who}の` : ''
+  if (!x.how || x.how === '端末') return `${of}端末を前に出しました`
+  // チャットは Orca がタブを前に出せないので、チャットのある作業場所を開く。
+  if (x.how === '作業場所') return `${of}作業場所を Orca で開きました。チャットはその作業場所のタブから開いてください`
+  return `${x.how}を前に出しました`
+}
+
 export function talkMessage(res: TalkResult, copied: boolean): string {
-  const where = res.opened ? `${res.how}を前に出しました。` : ''
   const paste = copied ? '書き出しをコピーしたので、貼って話してください' : '話してください'
   const head = res.note ? `${res.note}。窓口に回します。` : ''
   // 開けたが協議中の印を残せなかった（版が変わったなど）。
   if (res.reason && res.opened) return `${head}${res.how}を開きました。協議中の記録は残せませんでした: ${res.reason}`
   if (res.reason) return `${head}開けませんでした: ${res.reason}`
-  if (res.tab) return `${head}${where}チャットの「${res.tab}」を開き、${paste}`
+  // チャットの担当は、Orca にチャットのタブを前に出す手段が無いので作業場所を開き、開くチャットの題を案内する。
+  if (res.tab) return `${head}${res.how}の作業場所を Orca で開きました。チャットの「${res.tab}」を開き、${paste}`
   return head + (res.opened ? `${res.how}を開きました。${paste}` : `${res.how}を開けませんでした。Orca で開き、${paste}`)
 }
 

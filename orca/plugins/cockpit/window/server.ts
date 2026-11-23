@@ -892,7 +892,6 @@ export function createServer(opts: Options) {
   }
 
   const liveTerminal = (t: string | null | undefined): t is string => !!t && (t.startsWith(CHAT_HANDLE) ? chats.has(t) : [...terms.values()].includes(t))
-  const wsName = (p: string) => `ワークスペース「${path.basename(p)}」`
 
   type Target = { terminal: string; how: string } | { worktree: string; how: string; tab?: string } | { how: string; reason: string }
   /**
@@ -910,7 +909,7 @@ export function createServer(opts: Options) {
       const chat = owners
         .filter((x) => x.kind === 'chat' && x.worktree === ws.root)
         .sort((x, y) => Number(x.state === 'done') - Number(y.state === 'done') || (y.updatedAt ?? 0) - (x.updatedAt ?? 0))[0]
-      return { worktree: ws.root, how: wsName(ws.root), tab: chat?.title ?? '窓口' }
+      return { worktree: ws.root, how: '窓口', tab: chat?.title ?? '窓口' }
     }
     const who = `担当「${o.title}」`
     if (o.how === 'terminal') {
@@ -924,7 +923,7 @@ export function createServer(opts: Options) {
       return { how: `${o.title}のチャット`, reason: ownersStale ? 'Orca からチャットの一覧を読めません。少し待ってもう一度押してください' : `${who}のチャットが Orca にありません。閉じられたようです` }
     if (!chat.worktree || !rowOf(chat.worktree))
       return { how: `${o.title}のチャット`, reason: `${who}のチャットの居場所の worktree${chat.worktree ? `（${path.basename(chat.worktree)}）` : ' '}が Orca にありません。片付けられたようです` }
-    return { worktree: chat.worktree, how: wsName(chat.worktree), tab: chat.title ?? (o.owner ? ownerName(c, o.owner) : o.title) }
+    return { worktree: chat.worktree, how: `${o.title}の担当`, tab: chat.title ?? (o.owner ? ownerName(c, o.owner) : o.title) }
   }
 
   /**
@@ -1176,7 +1175,7 @@ export function createServer(opts: Options) {
       const wt = str(b.worktree)
       if (wt && rowOf(wt)) {
         await orca.activate(wt)
-        return { focused: true, how: wsName(wt) }
+        return { focused: true, how: '作業場所' }
       }
       return { focused: false }
     }

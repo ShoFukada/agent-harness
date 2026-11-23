@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { sample } from '../fixtures/sample.ts'
 import { actionVerb, parseCockpit } from './model.ts'
 import type { CockpitView } from './protocol.ts'
-import { actsHtml, boardsOf, linkKind, newUi, preface, render, rich, talkMessage, tighten, type Model, type Ui } from './view.ts'
+import { actsHtml, boardsOf, focusMessage, linkKind, newUi, openedMessage, ownerHtml, preface, render, rich, talkMessage, tighten, type Model, type Ui } from './view.ts'
 import { CSS } from './style.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
@@ -96,8 +96,9 @@ test('案件の列は、止まっている・期限切れ・今日・話し中�
   assert.ok(!aoba.includes('最短'))
 })
 
-test('担当と話すの知らせは、次に押す場所を名前で言う', () => {
-  assert.equal(talkMessage({ opened: true, how: 'ワークスペース「aoba」', tab: 'AWS 構成案（担当）' }, true), 'ワークスペース「aoba」を前に出しました。チャットの「AWS 構成案（担当）」を開き、書き出しをコピーしたので、貼って話してください')
+test('担当と話すの知らせは、次に押す場所を利用者の語（担当の題とチャットの題）で言い、ワークスペースの内部の名前を出さない', () => {
+  assert.equal(talkMessage({ opened: true, how: 'AWS 構成案の担当', tab: '一緒に｜AWS 構成案' }, true), 'AWS 構成案の担当の作業場所を Orca で開きました。チャットの「一緒に｜AWS 構成案」を開き、書き出しをコピーしたので、貼って話してください')
+  assert.equal(talkMessage({ opened: true, how: '窓口', tab: '窓口（配車）' }, false), '窓口の作業場所を Orca で開きました。チャットの「窓口（配車）」を開き、話してください')
   assert.equal(talkMessage({ opened: true, how: '窓口の端末' }, false), '窓口の端末を開きました。話してください')
   assert.equal(talkMessage({ opened: true, how: '相談のタブ' }, false), '相談のタブを開きました。話してください')
   assert.equal(talkMessage({ opened: true, how: '窓口の端末', note: '相談のタブを開けませんでした（consult: 操縦席が見つからない）' }, false),
@@ -106,6 +107,24 @@ test('担当と話すの知らせは、次に押す場所を名前で言う', ()
   // 開けなかった理由があれば、何も起きなかったように見せず、理由を出す。
   assert.equal(talkMessage({ opened: false, how: '窓の版 3のチャット', reason: '担当「窓の版 3」のチャットの居場所の worktree（gone）が Orca にありません。片付けられたようです' }, true),
     '開けませんでした: 担当「窓の版 3」のチャットの居場所の worktree（gone）が Orca にありません。片付けられたようです')
+})
+
+test('担当・worker の「チャットを開く」「端末を開く」の知らせは、誰のものかを題で言い、ワークスペースの内部の名前を出さない（利用者役の初見 S5）', () => {
+  assert.equal(focusMessage({ focused: true, how: '作業場所' }, 'AWS 構成案の担当'), 'AWS 構成案の担当の作業場所を Orca で開きました。チャットはその作業場所のタブから開いてください')
+  assert.equal(focusMessage({ focused: true, how: '端末' }, '一覧の改修の worker'), '一覧の改修の workerの端末を前に出しました')
+  assert.equal(focusMessage({ focused: true, how: 'Bot の実行のチャット' }), 'Bot の実行のチャットを前に出しました')
+  assert.equal(focusMessage({ focused: false }, 'AWS 構成案の担当'), '端末も worktree も Orca にありません')
+  const h = ownerHtml({ how: 'chat', title: 'AWS 構成案', session: 'sess-aws' } as Parameters<typeof ownerHtml>[0], [{ session: 'sess-aws', kind: 'chat', state: 'working', worktree: '/ws/aoba-aws' }])
+  assert.match(h, /data-wt="\/ws\/aoba-aws" data-who="AWS 構成案の担当">チャットを開く<\/button>/)
+})
+
+test('成果物・差分などを開いたら、窓は変わらないので何を開いたかを知らせる', () => {
+  assert.equal(openedMessage('成果物を開く', 'https://github.com/o/r/pull/12'), '「成果物」をブラウザで開きました')
+  assert.equal(openedMessage('差分を開く', 'docs/design.md'), '「差分」を Orca で開きました')
+  assert.equal(openedMessage('相談のメモ', '.orca/cockpit/memo.md'), '「相談のメモ」を Orca で開きました')
+  // ボタンの語が「開く」だけ・本文の「リンク」のときは、開く先の種類で言う。
+  assert.equal(openedMessage('開く', 'https://docs.google.com/x'), '「Drive」をブラウザで開きました')
+  assert.equal(openedMessage('リンク', 'https://example.com/'), '「ページ」をブラウザで開きました')
 })
 
 test('見て: 「直しを伝える」で書く欄を開き、本文が空のうちは伝えられない。欄では伝える・担当と話す・やめるだけ。伝えたら直し待ちになり、伝えた文を出す（R115）', () => {

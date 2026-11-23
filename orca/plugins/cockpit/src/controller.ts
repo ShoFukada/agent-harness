@@ -6,7 +6,7 @@ import { sanitize } from './sanitize.ts'
 import { FRESH_WAIT_MS, seenTracker } from './since.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
-import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
+import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, focusMessage, openedMessage, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
 import { askPending, boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
 
 export type Transport = {
@@ -92,7 +92,7 @@ export const copyTarget = (d: Draft | undefined, format?: DraftFormat): Draft | 
 
 /** 帯の印（Orca で止まった worker）を開いた結果を、担当と話すと同じ知らせにする。 */
 const focusResult = (x: FocusResult, title: string): TalkResult =>
-  x.focused ? { opened: true, how: x.how === '端末' || !x.how ? `${title}の端末` : x.how } : { opened: false, how: `${title}の端末`, reason: `「${title}」の端末も worktree も Orca にありません` }
+  x.focused ? { opened: true, how: x.how === '端末' || !x.how ? `${title}の端末` : x.how === '作業場所' ? `${title}の作業場所` : x.how } : { opened: false, how: `${title}の端末`, reason: `「${title}」の端末も worktree も Orca にありません` }
 
 export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } = {}) {
   const win = !!opts.window
@@ -357,8 +357,10 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   function openTarget(root: string, el: HTMLElement): void {
-    if (el.dataset.url) void t.openUrl(el.dataset.url).then((x) => !x.opened && toast(`開けませんでした${x.reason ? `: ${x.reason}` : ''}`), fail)
-    else if (el.dataset.file) void t.open(root, el.dataset.file).then((x) => !x.opened && toast(`開けませんでした: ${x.reason ?? 'ワークスペースの中にファイルが見つかりません'}`), fail)
+    const label = (el.querySelector('span') ?? el).textContent ?? ''
+    const { url, file } = el.dataset
+    if (url) void t.openUrl(url).then((x) => toast(x.opened ? openedMessage(label, url) : `開けませんでした${x.reason ? `: ${x.reason}` : ''}`), fail)
+    else if (file) void t.open(root, file).then((x) => toast(x.opened ? openedMessage(label, file) : `開けませんでした: ${x.reason ?? 'ワークスペースの中にファイルが見つかりません'}`), fail)
   }
 
   const CSS_ESC = (s: string) => (window.CSS?.escape ? window.CSS.escape(s) : s.replace(/"/g, '\\"'))
@@ -564,7 +566,10 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       ui.filter = d.filter || undefined
       if (narrow()) ui.sideOpen = false
     } else if (d.orca === 'open') {
-      if (root) void t.focusAgent(null, root).then((x) => toast(x.focused ? `${x.how ?? '案件'}を Orca で開きました` : 'この案件は Orca にありません'), fail)
+      if (root) {
+        const name = feed.views.find((v) => v.root === root)?.cockpit?.workspace.name
+        void t.focusAgent(null, root).then((x) => toast(x.focused ? `${name ? `「${name}」` : 'この案件'}を Orca で開きました` : 'この案件は Orca にありません'), fail)
+      }
       return true
     } else if (d.orca === 'sync') {
       if (feed.views.some((v) => v.root === feed.focused && v.cockpit)) ui.filter = feed.focused
@@ -598,7 +603,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       }
     } else if (d.dsel !== undefined) pickDone(d.dsel)
     else if (d.term !== undefined) {
-      void t.focusAgent(d.term || null, d.wt || undefined).then((x) => toast(x.focused ? `${x.how ?? '端末'}を前に出しました` : '端末も worktree も Orca にありません'), fail)
+      void t.focusAgent(d.term || null, d.wt || undefined).then((x) => toast(focusMessage(x, d.who)), fail)
       return true
     } else if (d.talkstream !== undefined) {
       if (root) void talkStream(root, d.talkstream)

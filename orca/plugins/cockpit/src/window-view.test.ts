@@ -34,6 +34,23 @@ test('要対応: 仕事ごとにまとめ、先頭の詳細を右に開く。届
   assert.match(t, /配車画面の改修|AWS 構成案/)
 })
 
+test('タスクの詳細の worker の「端末を開く」は、開いた知らせで誰のものかを言えるよう worker の題を持つ', () => {
+  const m = aoba((v) => {
+    v.workers = [{ terminalId: 'term_w', title: '作業｜一覧の改修', agent: 'claude', state: 'working', since: NOW, task: 't1', where: 'テストを直している' }]
+  })
+  assert.match(page(m, { tab: 'whole', task: 't1' }), /<div class="wk2">[\s\S]*?data-term="term_w" data-wt="" data-who="作業｜一覧の改修の worker">端末を開く<\/button>/)
+})
+
+test('要対応の行の題は「…」で 1 行に切らず、2 行まで折り返して 3 行目から切る（ui.md。利用者役の初見で題が切れて読めなかった）', () => {
+  const h = page(aoba())
+  assert.match(h, /class="cardrow[^"]*"[^>]*>[\s\S]*?<span class="tl"><span class="ti">/)
+  const rule = /\.ck\.win \.cardrow \.tl \.ti \{([^}]*)\}/.exec(CSS)![1]!
+  assert.doesNotMatch(rule, /nowrap|ellipsis/)
+  assert.match(rule, /-webkit-line-clamp:2/)
+  // 切るのは補助の情報（2 行目の居場所）から。
+  assert.match(/\.ck\.win \.cardrow \.crumb \{([^}]*)\}/.exec(CSS)![1]!, /ellipsis/)
+})
+
 test('見てほしい点の「1 …」の番号は一覧の番号にし（二重にしない）、続かない数字の文は一覧の下に添える', () => {
   const m = aoba((v) => {
     v.cockpit!.cards.find((x) => x.id === 'r5')!.look_for = ['1 一覧の幅', '2「担当と話す」の位置', '6 点ともおすすめなら「これでよい」']
@@ -482,8 +499,8 @@ test('詳細の担当の行は、端末・チャットを前に出すボタン�
     v.owners = [{ session: 'sess-aws', kind: 'chat', state: 'working', worktree: '/ws/aoba-aws' }]
   })
   // 担当の名前が仕事の名前（AWS 構成案）と同じなら名前を重ねない（初見 2 巡目 3）。
-  assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span>(<span>[^<]*<\/span>)?<button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws">チャットを開く<\/button>/)
-  assert.match(page(m, { sel: '/ws/aoba#r5' }), /<button type="button" class="act" data-term="term_aoba_w1" data-wt="">端末を開く<\/button>/)
+  assert.match(page(m, { sel: '/ws/aoba#d21' }), /<span class="owner"><span>担当<\/span>(<span>[^<]*<\/span>)?<button type="button" class="act" data-term="" data-wt="\/ws\/aoba-aws" data-who="[^"]+の担当">チャットを開く<\/button>/)
+  assert.match(page(m, { sel: '/ws/aoba#r5' }), /<button type="button" class="act" data-term="term_aoba_w1" data-wt="" data-who="[^"]+の担当">端末を開く<\/button>/)
   // 前に出せないときは「チャット」を押せない語として並べない。
   assert.doesNotMatch(page(aoba(), { sel: '/ws/aoba#d21' }), /<span>チャット<\/span>/)
 })

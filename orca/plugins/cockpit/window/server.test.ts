@@ -339,7 +339,7 @@ test('担当と話す: 話し中の操作を 1 度だけ記録し、担当の端
   await listen(port, s.token).until(ready)
   assert.deepEqual((await post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body, { opened: true, how: '配車画面の改修の端末' })
   assert.deepEqual((await post('talk', { root: a, item_id: 'r5', item_rev: 1 })).body.opened, true)
-  assert.deepEqual((await post('talk', { root: a, item_id: 'd21', item_rev: 1 })).body, { opened: true, how: `ワークスペース「${path.basename(child)}」`, tab: 'AWS 構成案（担当）' })
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd21', item_rev: 1 })).body, { opened: true, how: 'AWS 構成案の担当', tab: 'AWS 構成案（担当）' })
   assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '窓口の端末' })
   assert.deepEqual(calls.filter((x) => x[0] !== 'send'), [['switch', 'term_aoba_w1'], ['switch', 'term_aoba_w1'], ['activate', child], ['switch', 'term_main']])
   const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))
@@ -1000,7 +1000,7 @@ test('担当と話す: チャットの担当（terminal に structworker_ を書
   const { a, child, rows, shows, owners } = chatOwner(undefined)
   const { s, port, post, calls } = await start(rows, a, undefined, owners, shows)
   await listen(port, s.token).until((w) => ready(w) && !!board(w, a)?.dispatches?.ctx_lead)
-  assert.deepEqual((await post('talk', { root: a, item_id: 'd21', item_rev: 1 })).body, { opened: true, how: `ワークスペース「${path.basename(child)}」`, tab: '窓の版 3（担当）' })
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd21', item_rev: 1 })).body, { opened: true, how: '窓の版 3の担当', tab: '窓の版 3（担当）' })
   assert.deepEqual(calls.filter((x) => x[0] !== 'send'), [['activate', child]])
   assert.deepEqual(talkLog(a), ['d21:talk'])
 })
@@ -1011,7 +1011,7 @@ test('担当と話す: 窓を開いた直後（Dispatch を読んでいる途中
   // 帳簿が読めた（カードが押せる）ことを出来事で待つ。409 を回数で押し直すと、重い機械では読み終わる前に回数が尽きる（追加 43）。
   await listen(port, s.token).until((w) => !!board(w, a)?.cockpit)
   const r = await post('talk', { root: a, item_id: 'd21', item_rev: 1 })
-  assert.deepEqual(r.body, { opened: true, how: `ワークスペース「${path.basename(child)}」`, tab: '窓の版 3（担当）' })
+  assert.deepEqual(r.body, { opened: true, how: '窓の版 3の担当', tab: '窓の版 3（担当）' })
 })
 
 test('担当と話す: 担当の worktree が消えた・チャットが閉じた・端末が閉じたときは、何も開かず理由を返し、カードを話し中にしない', async () => {
@@ -1090,7 +1090,7 @@ test('担当と話す: 窓口がチャットなら本線を開き、本線で動
   ]
   const { s, port, post, calls } = await start(rows, a, undefined, owners)
   await listen(port, s.token).until(ready)
-  assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: `ワークスペース「${path.basename(a)}」`, tab: '窓口（配車）' })
+  assert.deepEqual((await post('talk', { root: a, item_id: 'd22', item_rev: 2 })).body, { opened: true, how: '窓口', tab: '窓口（配車）' })
   assert.deepEqual(calls, [['activate', a]])
 })
 
@@ -1099,7 +1099,7 @@ test('帯の印は端末を前に出し、端末が無ければ worktree を開�
   const { s, port, post, calls } = await start(rows, a)
   await listen(port, s.token).until(ready)
   assert.deepEqual((await post('focus', { terminalId: 'term_w1', worktree: child })).body, { focused: true, how: '端末' })
-  assert.deepEqual((await post('focus', { terminalId: '', worktree: child })).body, { focused: true, how: `ワークスペース「${path.basename(child)}」` })
+  assert.deepEqual((await post('focus', { terminalId: '', worktree: child })).body, { focused: true, how: '作業場所' })
   assert.deepEqual((await post('focus', { terminalId: 'term_x', worktree: '/etc' })).body, { focused: false })
   assert.deepEqual(calls, [['switch', 'term_w1'], ['activate', child]])
 })

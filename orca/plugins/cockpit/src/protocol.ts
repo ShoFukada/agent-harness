@@ -163,6 +163,7 @@ export type OpenResult = { opened: boolean; reason?: string }
 /** 送る文面を宛先の書式でクリップボードに入れた結果。subject はメールの先頭の「件名:」行（本文からは外す）。 */
 export type ClipResult = { copied: boolean; subject?: string; reason?: string }
 /** 帯の印・「端末を開く」の結果。how は前に出したもの（端末かワークスペース）。 */
+/** how は前に出したもの。worktree を前に出したときは「作業場所」（ワークスペースの名前は利用者の語でないので出さない）。 */
 export type FocusResult = { focused: boolean; how?: string }
 
 /** 常駐のプロセスが窓のページに SSE で送る全体。 */
