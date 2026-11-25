@@ -675,7 +675,7 @@ class ConvergeTest(FailoverTestBase):
 
     def ask_argv(self, prompt):
         """consult --ask が起こした claude の引数（実際の質問の端末と同じ形）。最後が最初の指示の位置引数。"""
-        return ["--resume", S2, "--fork-session", "--name", "質問｜FitFounder AI 基盤｜ask2", "--tools", "Read,Grep,Glob",
+        return ["--resume", S2, "--fork-session", "--name", "質問｜サンプル案件｜ask2", "--tools", "Read,Grep,Glob",
                 "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent",
                 "--permission-mode", "dontAsk", "--strict-mcp-config", "--system-prompt-snapshot", "off",
                 "--append-system-prompt-file", "/cfg/roles/ask.md", prompt]
@@ -690,7 +690,7 @@ class ConvergeTest(FailoverTestBase):
         (line,) = self.launched()
         self.assertLess(len(line), 1000)
         self.assertEqual(shlex.split(line)[3:], [
-            "claude", "--name", "質問｜FitFounder AI 基盤｜ask2", "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
+            "claude", "--name", "質問｜サンプル案件｜ask2", "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
             "--disallowedTools", "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent", "--permission-mode", "dontAsk",
             "--strict-mcp-config", "--system-prompt-snapshot", "off", "--append-system-prompt-file", "/cfg/roles/ask.md", "--resume", S1])
         self.assertEqual(self.processes()[0]["env"]["CLAUDE_CONFIG_DIR"], self.seat_dir(B))
