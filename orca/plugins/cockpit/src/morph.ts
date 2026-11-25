@@ -53,9 +53,11 @@ function patch(x: Node, y: Node, active: Element | null, pin: Pin | undefined): 
   if (a === active && isField(a)) return
   for (const { name } of Array.from(a.attributes)) if (!b.hasAttribute(name)) a.removeAttribute(name)
   for (const { name, value } of Array.from(b.attributes)) if (a.getAttribute(name) !== value) a.setAttribute(name, value)
+  // 値は子を移す前に読む（walk は空の欄に入れる文字の節を b から a へ移すので、あとで読むと b の値が空になる）。
+  const want = isField(b) ? (b as HTMLTextAreaElement).value : undefined
   walk(a, b, active, pin)
   // 中身の文字（初期値）を変えても、打ち込まれたあとの value は変わらない。送ったあとに欄を空にするには value を合わせる。
-  if (isField(a) && (a as HTMLTextAreaElement).value !== (b as HTMLTextAreaElement).value) (a as HTMLTextAreaElement).value = (b as HTMLTextAreaElement).value
+  if (want !== undefined && (a as HTMLTextAreaElement).value !== want) (a as HTMLTextAreaElement).value = want
 }
 
 const isField = (e: Element) => e.nodeName === 'TEXTAREA' || e.nodeName === 'INPUT'

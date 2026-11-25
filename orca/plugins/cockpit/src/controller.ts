@@ -399,6 +399,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
 
   function pickWhole(p: { task?: string; stream?: string; watch?: string }): void {
     ui.tidy = undefined
+    ui.tidyOp = undefined
     ui.task = p.task
     ui.stream = p.stream
     ui.watch = p.watch
@@ -591,12 +592,13 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     ui.tab = 'whole'
     const drafts = (ui.tidyDraft ??= {})
     ui.tidy = true
+    ui.tidyOp = k === 'open' ? Number(el.dataset.op) || undefined : undefined
     if (k !== 'open') {
       ;(ui.tidyKind ??= {})[root] = k
       drafts[root] = tidyDraftFor(k, drafts[root] ?? '')
     }
     draw()
-    if (k === 'open') return void app.querySelector('.tidyd .sent')?.scrollIntoView({ block: 'nearest' })
+    if (k === 'open') return void app.querySelector(`[data-tidyitem="${ui.tidyOp}"]`)?.scrollIntoView({ block: 'nearest' })
     const ta = app.querySelector<HTMLTextAreaElement>('textarea[data-tidydraft]')
     if (!ta) return
     ta.focus()

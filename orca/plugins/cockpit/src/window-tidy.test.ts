@@ -49,8 +49,8 @@ test('整理・棚卸し: 全体のタブの先頭に既定の指示 3 つと自
   const h = whole(model())
   const head = h.slice(h.indexOf('<section class="fsec tidy"'), h.indexOf('</section>', h.indexOf('<section class="fsec tidy"')))
   assert.ok(h.indexOf('class="fsec tidy"') < h.indexOf('class="st '), '仕事の一覧より上に置く')
-  for (const [k, label] of [['workers', 'workerとworktreeの整理'], ['cockpit', '操縦席の整理'], ['inventory', '棚卸し'], ['free', '自由に書く']])
-    assert.match(head, new RegExp(`data-tidy="${k}" aria-pressed="false">${label}</button>`))
+  for (const [k, label] of [['workers', 'workerとworktreeの整理'], ['cockpit', '操縦席の整理'], ['inventory', '棚卸し'], ['free', '自由な指示']])
+    assert.match(head, new RegExp(`<button class="btn" type="button" data-tidy="${k}">${label}</button>`), '入口なので選んだ印は付けない')
   const t = text(head)
   assert.match(t, /送信待ち 棚卸し Slack・関連ファイル/)
   assert.match(t, /実行中 自由な指示 #pj-xxx と docs\/ を見て/)
@@ -75,6 +75,10 @@ test('整理・棚卸し: 欄を開くと右に種類・指示の文・送るボ
   const t = text(side)
   assert.ok(t.indexOf('送信待ち') < t.indexOf('実行中') && t.indexOf('実行中') < t.indexOf('完了'), '新しい順')
   assert.doesNotMatch(side, /data-talkstream/, 'タスクの詳細は出さない')
+  const opened = whole(model(), { tidy: true, tidyOp: 3 })
+  assert.match(opened, /<button type="button" class="cardrow" data-tidy="open" data-op="3" aria-current="true">/, '先頭の行から開いた指示に印')
+  assert.match(opened, /<li class="s-running" aria-current="true" data-tidyitem="3">/, '右の一覧のその指示にも印')
+  assert.match(opened, /<li class="s-done" data-tidyitem="1"><span class="sl"><span class="tds">完了<\/span>/, '状態は先頭に語で置き、完了は薄くする元の印を付ける')
 })
 
 test('整理・棚卸し: 文が空のあいだと送っているあいだは「窓口に送る」を押させない。結果のカードの無い完了は、その旨を出す', () => {

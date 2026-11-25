@@ -62,6 +62,8 @@ export type Ui = {
   tidy?: boolean
   /** 選んでいる指示の種類（案件の root → TidyKind か free）。文と同じく案件ごとに持つ（別の案件で選んだ種類で送らない）。 */
   tidyKind?: Record<string, string>
+  /** 先頭の行から開いた指示（op_id）。右の送った指示の一覧で、その指示に選んだ印を付ける。 */
+  tidyOp?: number
   /** 整理・棚卸しの指示の書きかけ（案件の root → 文）。 */
   tidyDraft?: Record<string, string>
   /** 整理・棚卸しの指示を送っている案件（二度押しで 2 通送らない）。 */

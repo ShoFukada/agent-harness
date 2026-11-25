@@ -215,3 +215,15 @@ test('入力していなければ、前の兄弟が消えたときはこれま�
   assert.equal(now.childNodes.length, 1)
   assert.equal(now.childNodes[0], main)
 })
+
+test('空の欄に文を入れる描き直しでも、欄の値をその文にする（文字の節を移したあとの空の値で上書きしない）', () => {
+  const now = page('題', '')
+  const box = now.childNodes[1].childNodes[1] as E
+  box.childNodes = []
+  const next = page('題', '既定の指示の文')
+  // ブラウザの欄の値は、入力される前は中の文字の節から決まる。walk が節を移すと、描き直しの元の欄の値は空になる。
+  const src = next.childNodes[1].childNodes[1] as E
+  Object.defineProperty(src, 'value', { get: () => src.childNodes.map((k) => k.nodeValue).join('') })
+  run(now, next)
+  assert.equal(box.value, '既定の指示の文')
+})

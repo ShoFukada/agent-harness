@@ -541,9 +541,15 @@ body { margin:0; }
 .ck.win .tidy .tdh { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; }
 .ck.win .tidy .tdh > h3 { margin:0; font-size:var(--fs-m); }
 .ck.win .tidy .tdk { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-.ck.win .tidy .tdk .btn[aria-pressed="true"] { border-color:var(--focus); color:var(--focus); }
 .ck.win .tidy .rows { border-bottom:0; }
-.ck.win .tidyin .afil { display:flex; flex-wrap:wrap; gap:4px; }
+/* 書いた文は 2 行まで見せる（自由な指示は 1 行目が種類の名前だけで、中身が分からないため）。 */
+.ck.win .tidy .cardrow .crumb { white-space:normal; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow-wrap:anywhere; }
+/* 種類の 4 つは 2 列にそろえる（右の欄の幅では 1 行に収まらず、最後の 1 つだけが折れるため）。 */
+.ck.win .tidyin .afil { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:4px; }
+.ck.win .tidyin .afil button { white-space:normal; }
+.ck.win .tidyd .sent .tds { min-width:4.5em; font-size:var(--fs-xs); font-weight:700; color:var(--ink); }
+.ck.win .tidyd .sent li.s-done .tds, .ck.win .tidyd .sent li.s-done .sl b, .ck.win .tidyd .sent li.s-done .quote { color:var(--ink3); font-weight:400; }
+.ck.win .tidyd .sent li[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); padding-inline:8px; }
 .ck.win .tidyin textarea { min-height:calc(4lh + 18px); }
 .ck.win .tidyin .acts { position:static; margin:0; padding:0; background:none; border:0; }
 .ck.win .tidyd .tres { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; font-size:var(--fs-s); }
