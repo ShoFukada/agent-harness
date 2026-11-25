@@ -13,7 +13,13 @@ import { workspaceNameCheck } from './state.ts'
 import { applyChange, deferToCheck, draftsToLint, migrateFacts, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
-const aoba = (): Cockpit => structuredClone(sample(NOW)[0]!.cockpit)
+/** 仕事には形が要る（t159）。見本の AWS 構成案は担当と一緒に作り、ほかは任せる。 */
+const FORMS: Record<string, 'delegate' | 'cowork'> = { s1: 'delegate', s2: 'cowork', s3: 'delegate', s4: 'delegate' }
+const aoba = (): Cockpit => {
+  const c = structuredClone(sample(NOW)[0]!.cockpit)
+  c.streams = c.streams.map((s) => ({ ...s, form: FORMS[s.id] ?? 'delegate' }))
+  return c
+}
 /** 移し替え（migrate-v3 --write）は「顧客｜案件」の形の名前だけを通すので、見本の名前を形に合わせる。 */
 const aobaNamed = (): Cockpit => ({ ...aoba(), workspace: { ...aoba().workspace, name: '青葉物流｜配車アプリ' } })
 /** 初めて作る帳簿の見本。init は今の形（worker は run_id と task_id）を求めるので、版 2 の dispatch_id の worker を今の形にする。 */
@@ -316,7 +322,9 @@ test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ�
   // 担当の session の空文字は断る（分からなければ欄ごと書かない）。
   const o = { id: 'o9', title: '担当', stream: 's1' }
   assert.match(applyChange(c, { owners: [{ ...o, session: '' }] }).errors.join(), /担当 o9: session が空/)
-  assert.deepEqual(applyChange(c, { owners: [o] }).errors, [])
+  // 開いた担当は居場所（session か terminal）が要る。片付けた担当の行は居場所なしで書ける（t159）。
+  assert.match(applyChange(c, { owners: [{ ...o, stream: 's3' }] }).errors.join(), /担当 o9: session（チャットの担当）か terminal/)
+  assert.deepEqual(applyChange(c, { owners: [{ ...o, state: 'done' }] }).errors, [])
   const problems: string[] = []
   assert.equal(parseCockpit(JSON.stringify(r.next), problems).main?.run_id, 'run_abc123')
   assert.equal(parseCockpit(JSON.stringify({ ...c, main: { ...c.main, run_id: 3 } }), problems).main?.run_id, undefined)
@@ -745,4 +753,39 @@ test('仕分けと待ち（Astra 4 の中 2）: 確認の承認で済になっ�
   const ch = { intake: { through: 'u2', none: ['u1', 'u2'] } }
   assert.match(applyChange(c, ch, utter).errors.join('\n'), /開いた待ち t3/)
   assert.deepEqual(applyChange(c, ch, utter, log).errors, [])
+})
+
+test('仕事の形と担当・worker（t159）: 形の無い仕事は書けず、形を決める前にタスク・担当を結べない。一緒に作る仕事は担当なしで残せず、担当の受け取りをタスクの worker に書けない', () => {
+  const c = aoba()
+  const s1 = c.streams.find((x) => x.id === 's1')!
+  const s2 = c.streams.find((x) => x.id === 's2')!
+  const t2 = c.tasks.find((x) => x.id === 't2')!
+  const o1 = c.owners!.find((x) => x.id === 'o1')!
+  // 形を書かない仕事は断る（前は警告だけで書けた）。
+  assert.match(applyChange(c, { streams: [{ id: 's9', title: '議事録' }] }).errors.join('\n'), /仕事 s9: form（delegate・cowork・watch）が無い/)
+  // 形の無い古い仕事に、タスクも担当も結べない（自由な指示の整理で、形を決めずにタスクを起こしたのを止める）。
+  const old = { ...c, streams: [...c.streams, { id: 's9', title: '議事録' }] }
+  const t9 = { id: 't9', stream: 's9', phase: '作成', title: '電話の議事録', state: 'open' as const }
+  assert.match(applyChange(old, { tasks: [t9] }).errors.join('\n'), /仕事 s9: 形（form）が無いので、タスクを結べない/)
+  assert.deepEqual(applyChange(old, { tasks: [t9], streams: [{ id: 's9', title: '議事録', form: 'delegate' }] }).errors, [])
+  assert.match(applyChange(old, { owners: [{ id: 'o9', title: '議事録', stream: 's9', session: 'sess-9' }] }).errors.join('\n'), /仕事 s9: 形（form）が無いので、担当を置けない/)
+  // 見張る仕事に担当は置かない。1 つの仕事に開いた担当は 1 人。
+  const watch = { automation: 'a1', targets: ['Slack #x'], to: 'main' }
+  assert.match(applyChange(c, { streams: [{ id: 'w1', title: '見張り', form: 'watch', watch }], owners: [{ id: 'o9', title: '見張り', stream: 'w1', session: 'sess-9' }] }).errors.join('\n'), /仕事 w1: 見張る仕事に担当（o9）は置かない/)
+  assert.match(applyChange(c, { owners: [{ id: 'o9', title: '別の担当', stream: 's2', session: 'sess-9' }] }).errors.join('\n'), /仕事 s2: 開いた担当が o1・o9 の 2 人いる/)
+  // 一緒に作る仕事の担当だけを外すと、共同作業中の行が消えるので断る。形を任せるに変えるか、タスクを済ませれば外せる。
+  assert.match(applyChange(c, { owners: [{ ...o1, state: 'done' }] }).errors.join('\n'), /仕事 s2: 一緒に作る仕事に済んでいないタスク（t2）があるのに、開いた担当がいない/)
+  assert.deepEqual(applyChange(c, { owners: [{ ...o1, state: 'done' }], streams: [{ ...s2, form: 'delegate' }] }).errors, [])
+  // 担当のいない仕事を一緒に作る形に変えるなら、担当の行を同じ書き込みで足す（担当を立ててから 25 分、行が無かった INTLOOP の s6）。
+  const lead = { id: 'o9', title: '配車画面の改修', stream: 's1', session: 'sess-9', worker: { run_id: 'run_l', task_id: 'task_lead' } }
+  const noOwner = { ...c, owners: c.owners!.filter((o) => o.stream !== 's1') }
+  assert.match(applyChange(noOwner, { streams: [{ ...s1, form: 'cowork' }] }).errors.join('\n'), /仕事 s1: 一緒に作る仕事に済んでいないタスク（t1）があるのに/)
+  assert.deepEqual(applyChange(noOwner, { streams: [{ ...s1, form: 'cowork' }], owners: [lead] }).errors, [])
+  // 担当の受け取りは owners[].worker だけに書く。タスクの worker に同じ受け取りを書くと断る（窓が担当を worker の停止と読まないため）。
+  const both = applyChange(noOwner, { streams: [{ ...s1, form: 'cowork' }], owners: [lead], tasks: [{ ...t2, stream: 's1', worker: { run_id: 'run_l', task_id: 'task_lead' } }] })
+  assert.match(both.errors.join('\n'), /タスク t2: worker が担当 o9 の受け取りと同じ/)
+  assert.match(applyChange(c, { owners: [{ ...o1, worker: { task_id: 'task_x' } as never }] }).errors.join('\n'), /担当 o1: worker は \{ run_id, task_id \}/)
+  // 担当を別の仕事に移すときは、移す前の一緒に作る仕事も見る（Astra 中 1）。交代は片付けと新しい担当を同じ書き込みで書けば通る。
+  assert.match(applyChange(c, { owners: [{ ...o1, stream: 's3' }] }).errors.join('\n'), /仕事 s2: 一緒に作る仕事に済んでいないタスク（t2）があるのに、開いた担当がいない/)
+  assert.deepEqual(applyChange(c, { owners: [{ ...o1, state: 'done' }, { ...lead, id: 'o9', stream: 's2' }] }).errors, [])
 })

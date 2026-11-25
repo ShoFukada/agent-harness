@@ -69,7 +69,7 @@ const REQUEST_KEYS: Keys = {
   nested: { utterances: ['id', 'quote'], evidence: ['when', 'kind', 'ref', 'card', 'rev'], source: ['session', 'at', 'quote'] }
 }
 const STREAM_KEYS: Keys = { top: ['id', 'title', 'summary', 'status', 'status_basis', 'sources', 'form', 'watch'], nested: { watch: ['automation', 'targets', 'to'] } }
-const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'state'], nested: {} }
+const OWNER_KEYS: Keys = { top: ['id', 'title', 'stream', 'agent', 'session', 'terminal', 'worker', 'state'], nested: { worker: ['task_id', 'run_id'] } }
 const INTAKE_KEYS: Keys = { top: ['through', 'none', 'checked_through', 'notices_through', 'no_wait'], nested: {} }
 const ASK_KEYS: Keys = { top: ['id', 'card', 'task', 'stream', 'memo', 'from_returns', 'held_returns', 'notify'], nested: { notify: ['return_id', 'task', 'message_id'] } }
 
@@ -252,6 +252,42 @@ const asRead = (c: Cockpit) => parseCockpit(JSON.stringify(c))
  *   after・next・goal で済になったタスクを指す開いたタスクを、この書き込みで直すか unaffected に並べる（Astra 3 の重大 2・小 3）
  * 書いたあとの帳簿に、控えを書き直した status_basis を返す。facts_since の無い帳簿（移し替えの前）は何もしない。
  */
+/**
+ * 仕事の形と担当・worker の食い違い（t159）。書いたあとの帳簿で、この書き込みが触れた仕事（渡した仕事、渡したタスク・担当の仕事）だけを見る。
+ * - 形の無い仕事のタスク・担当は書かない（形を先に決める）。見張る仕事に担当は置かない
+ * - 1 つの仕事に開いた担当は 1 人まで
+ * - 担当の受け取り（owners[].worker）をタスクの worker に書かない（タスクの worker は worker だけ。担当を worker の停止・取り込み・片付けに数えないため）
+ * - 一緒に作る仕事に済んでいないタスクがあれば、開いた担当を置く（R145 の「共同作業中」の行は担当から作る。担当なしで worker を立てる・担当だけ外すと行が消える）
+ * 済は窓と同じ判定で決める（確認の承認で済になったタスクは数えない）。
+ */
+function formErrors(before: Cockpit, next: Cockpit, ch: Change, log: UserLog, archive: Card[], now: number): string[] {
+  // 行を別の仕事に移したときは、移す前の仕事も見る（担当だけ移して、元の一緒に作る仕事から担当が消えるのを止める）。
+  const was = [...(ch.owners ?? []).map((o) => before.owners?.find((x) => x.id === o.id)?.stream), ...(ch.tasks ?? []).map((t) => before.tasks.find((x) => x.id === t.id)?.stream)]
+  const touched = new Set<string>([...(ch.streams ?? []).map((s) => s.id), ...(ch.tasks ?? []).map((t) => t.stream), ...(ch.owners ?? []).flatMap((o) => (o.stream ? [o.stream] : [])), ...was.filter((x): x is string => !!x)])
+  if (!touched.size) return []
+  const read = asRead(next)
+  const judged = judgeTasks(read, log, overlay(read, log, archive), undefined, now)
+  const owners = next.owners ?? []
+  const errors: string[] = []
+  for (const id of touched) {
+    const s = next.streams.find((x) => x.id === id)
+    if (!s) continue
+    const open = owners.filter((o) => o.stream === id && o.state !== 'done')
+    const left = next.tasks.filter((t) => t.stream === id && judged.get(t.id)?.state !== 'ok')
+    if (!s.form && (ch.tasks ?? []).some((t) => t.stream === id && judged.get(t.id)?.state !== 'ok'))
+      errors.push(`仕事 ${id}: 形（form）が無いので、タスクを結べない。先に仕事の form を delegate・cowork・watch から決めて同じ書き込みで渡す`)
+    if (!s.form && open.length) errors.push(`仕事 ${id}: 形（form）が無いので、担当を置けない。先に仕事の form を決める`)
+    if (s.form === 'watch' && open.length) errors.push(`仕事 ${id}: 見張る仕事に担当（${open.map((o) => o.id).join('・')}）は置かない。担当が要るなら任せるか一緒に作る仕事を別に作る`)
+    if (open.length > 1) errors.push(`仕事 ${id}: 開いた担当が ${open.map((o) => o.id).join('・')} の ${open.length} 人いる。1 つの仕事の担当は 1 人にし、前の担当は state を done にする`)
+    if (s.form === 'cowork' && left.length && !open.length)
+      errors.push(`仕事 ${id}: 一緒に作る仕事に済んでいないタスク（${left.map((t) => t.id).join('・')}）があるのに、開いた担当がいない。orca-launch --lead ${id} で担当を立てて受け取りを同じ書き込みで owners に足すか、form を delegate に変える（worker を直接立てない）`)
+  }
+  const leads = new Map(owners.flatMap((o) => (o.worker?.task_id ? [[o.worker.task_id, o.id] as const] : [])))
+  const shared = next.tasks.filter((t) => t.worker && leads.has(t.worker.task_id) && ((ch.tasks ?? []).some((x) => x.id === t.id) || (ch.owners ?? []).some((o) => o.id === leads.get(t.worker!.task_id))))
+  for (const t of shared) errors.push(`タスク ${t.id}: worker が担当 ${leads.get(t.worker!.task_id)} の受け取りと同じ。担当の受け取りは owners[].worker だけに書き、タスクの worker は消す`)
+  return errors
+}
+
 function basisErrors(c: Cockpit, next: Cockpit, ch: Change, log: UserLog, archive: Card[], now: number): { errors: string[]; streams: Stream[] } {
   if (!next.facts_since) return { errors: [], streams: next.streams }
   const read = asRead(next)
@@ -428,7 +464,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     const soft = softError(`仕事 ${s.id}`, s, c.streams.find((x) => x.id === s.id), { top: ['status'], nested: {} })
     if (soft) errors.push(soft)
     if (s.form !== undefined && !FORMS.includes(s.form as StreamForm)) errors.push(`仕事 ${s.id}: form は ${FORMS.join('・')} のどれか`)
-    if (s.form === undefined) warnings.push(`仕事 ${s.id}: form（delegate・cowork・watch）が無い`)
+    // 形を決めずに仕事を書かせない（R51）。形の無い仕事に担当・worker を立てると、窓とサイドバーが別々の形を言い出す（t159）。
+    if (s.form === undefined) errors.push(`仕事 ${s.id}: form（delegate・cowork・watch）が無い。先に形を決めて書く（cockpit skill の「仕事の形」）`)
     if (s.form === 'watch' ? !WATCH_SHAPE(s.watch) : s.watch !== undefined)
       errors.push(`仕事 ${s.id}: ${s.form === 'watch' ? '見張る仕事は watch を { automation（orca automations の id）, targets（見張る対象の名前の配列、1 件以上）, to（送り先） } で書く' : 'watch は見張る仕事（form: watch）だけに書く'}`)
   }
@@ -439,6 +476,9 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (!has(streams, o.stream)) errors.push(`担当 ${o.id}: 仕事 ${o.stream} が無い`)
     // 空の session は「チャットの担当だが session が分からない」と区別できず、窓が Dispatch から引き直す道も塞ぐ。
     if (o.session === '') errors.push(`担当 ${o.id}: session が空。分からなければ session の欄ごと書かない`)
+    // チャットか端末の居場所が無い担当は、窓の「共同作業中」の行も「担当と協議」も開けない。orca-launch --lead が session を出す。
+    if (o.state !== 'done' && !o.session && !o.terminal) errors.push(`担当 ${o.id}: session（チャットの担当）か terminal（端末の担当）が無い。orca-launch --lead が出した担当の行をそのまま書く`)
+    if (o.worker !== undefined && !(WORKER_SHAPE(o.worker) && typeof o.worker.run_id === 'string')) errors.push(`担当 ${o.id}: worker は { run_id, task_id }（orca-launch --lead の受け取り）`)
   }
   for (const t of ch.tasks ?? []) {
     const old = c.tasks.find((x) => x.id === t.id)
@@ -600,6 +640,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   // カードの承認で済になったタスクの待ちは、もう仕分けを求めない（窓と同じ判定。Astra 4 の中 2）。
   const doneBefore = new Set([...judgeTasks(before, log, overlay(before, log, more.archive ?? []), undefined, more.now ?? Date.now()).values()].filter((t) => t.state === 'ok').map((t) => t.task.id))
   errors.push(...waitSortErrors(before, asRead(next), utterances, more.notices ?? [], doneBefore))
+  errors.push(...formErrors(c, next, ch, log, more.archive ?? [], more.now ?? Date.now()))
   const basis = basisErrors(c, next, ch, log, more.archive ?? [], more.now ?? Date.now())
   errors.push(...basis.errors)
   if (errors.length) return { errors, warnings }

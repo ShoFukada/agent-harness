@@ -42,10 +42,10 @@ worktree の中身を書くのは、その worktree のターミナルで走る�
 | 役 | 何をするか | 立て方 | coordinator |
 |---|---|---|---|
 | 窓口 | 深田の窓口と操縦席。依頼を受け、担当を立てるか自分で片付ける | ワークスペースのメイン（深田が開く） | 担当と、自分で立てた worker の coordinator |
-| 担当 | 1 つの仕事を終わりまで受け持つ。深田と直接話し、自分の worker を立てて結果を確かめ、窓口に返す | 窓口が Orca のチャットで立てる（references/launch.md） | 自分の worker の coordinator。自分は窓口の worker |
+| 担当 | 1 つの仕事を終わりまで受け持つ。深田と直接話し、自分の worker を立てて結果を確かめ、窓口に返す | 窓口が `orca-launch --lead` で Orca のチャットに立てる（references/launch.md） | 自分の worker の coordinator。自分は窓口の worker |
 | worker | 1 つの worktree でコードを書く | 窓口か担当が `orca-launch` で立てる | なし（coordinator に worker_done・ask で返す） |
 
-- 1 日を超える仕事と、顧客向けに深田と一緒に作る仕事には担当を立てる。小さい依頼は窓口が片付ける（自分で直すか、worker を 1 本立てる）
+- 1 日を超える仕事と、顧客向けに深田と一緒に作る仕事には担当を立てる。小さい依頼は窓口が片付ける（自分で直すか、worker を 1 本立てる）。操縦席のある窓口は、先に仕事の形を決めてタスクを帳簿に書き、`orca-launch --cockpit-task` で立てる（`--title` だけの起動は道具が断る）。一緒に作る仕事（`cowork`）の作業は、worker を立てずに担当へ `send` で渡す
 - 担当は仕事が終わるまで残り、worker とは寿命を分ける。worker は 1 つの worktree・1 つの Task ごとに立てて畳む
 - 1 つの worktree に worker は 1 人
 - 同時に動かす worker は、窓口と担当の配下を合わせて上限の中に収める。上限の数は compaction-keep.py の `WORKER_LIMIT` だけが持ち、`~/.claude/hooks/compaction-keep.py slots <窓口の root>` の見出しに出る（開始・再開と圧縮のあとには hook も出す）。slots が作業中に数えるのは操縦席のタスクに結んだ worker だけなので、担当の配下で動く worker（`orca orchestration worker-list`）は足して数える。全部の席が利用枠の上限のあいだは、空き枠があっても立てない（references/notify.md の「利用枠の上限に当たったとき」）

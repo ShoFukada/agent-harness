@@ -535,6 +535,17 @@ class Verify(Base):
         self.assertIn("t3 タスク: 窓の作り直し。次: - worker task_v3", text)
         self.assertIn("worker.task_id", text)
 
+    def test_an_open_lead_is_named_by_its_receipt(self):
+        # 担当の受け取りは owners[].worker に置く（t159）。開いた担当は続ける相手に数え、片付けた担当は数えない
+        self.cockpit["owners"] = [{"id": "o1", "title": "窓", "stream": "s1", "session": "sess", "state": "open", "worker": {"run_id": "run_l", "task_id": "task_lead"}},
+                                  {"id": "o2", "title": "前", "stream": "s1", "session": "sess2", "state": "done", "worker": {"run_id": "run_l", "task_id": "task_old"}}]
+        self.write_cockpit()
+        done = self.resume()
+        self.assertIn("続ける worker task_lead が答えに無い", done.stdout)
+        self.assertNotIn("task_old", done.stdout)
+        done = self.resume(workers=["task_a", "task_lead"])
+        self.assertEqual(done.returncode, 0, done.stdout)
+
     def test_the_summary_itself_is_checked_for_the_same_three(self):
         [row] = [r for r in self.jsonl("compactions.jsonl") if r["type"] == "compact"]
         self.assertEqual(row["summary_issues"], [])

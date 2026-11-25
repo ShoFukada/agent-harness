@@ -69,6 +69,7 @@ node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts <ワークス�
   - nix-darwin の窓の全体のタブは、各案件の操縦席の見張る仕事を集めて表示する。案件の Bot の一覧を nix-darwin の操縦席に別に写さない
 - 迷ったら、外に出るもの（顧客・Slack の相手に出すもの）を深田の言葉で作るなら `cowork`、それ以外は `delegate`
 - タスクは仕事の形を引き継ぐ（タスクに欄は無い）。形の無い仕事は `checks.no_form` で名指しされる
+- 形は、タスク・担当・worker を起こす前に決める。cockpit-write は、形の無い仕事を書かず、形の無い仕事にタスクや担当を結ばない。一緒に作る仕事に済んでいないタスクがあれば開いた担当を要り（担当の行は担当を立てた同じ書き込みで足す）、見張る仕事に担当を置かない。`orca-launch` は形の無い仕事・見張る仕事に立てず、窓口が一緒に作る仕事の worker を直接立てるのも断る（t159）
 
 # カードの書き方の要点
 細部と例は references/cards.md。
@@ -86,7 +87,7 @@ node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts <ワークス�
 同時に動かす worker の数は worktree-flow skill の「窓口・担当・worker」の決まり（上限の数は `compaction-keep.py` の `WORKER_LIMIT` だけが持つ）。worker_done を取り込んだとき・セッションの開始と再開のとき（圧縮のあとを含む）に、空き枠と待ちのタスク（未着手のタスク）を突き合わせ、優先の順に出す。作業中と未着手は state.ts の判定で数える（タスクの手書きの状態は `open` と `ok` だけ）。開始・再開と圧縮のあとには、hook が空き枠と待ちのタスクを出す（`compaction-keep.py slots <root>` でも出せる）。待ちのタスクを起こす仕組み（wake）は付けない。
 
 # 担当・worker を立てたとき
-立て方と知らせの受け方は worktree-flow skill の「窓口・担当・worker」、名前と親子は worktree-flow skill の references/sidebar.md。帳簿に書く欄（`worker`・`owners[]`）と、担当から判断の依頼が届いたときの受け方は references/workers.md。
+立て方と知らせの受け方は worktree-flow skill の「窓口・担当・worker」、名前と親子は worktree-flow skill の references/sidebar.md。帳簿に書く欄（worker はタスクの `worker`、担当は `owners[]` の行と受け取りの `worker`）と、担当から判断の依頼が届いたときの受け方は references/workers.md。担当は `orca-launch --lead`、worker は `orca-launch --cockpit-task` で立て、`worker-start` を手で打たない
 - brief に、タスクの id と、関係する判断の本文と原文を書く。担当の brief には「操縦席を書かない」も書く（worker には orca-launch が worktree-flow skill の references/worker-rules.md を足す）
 
 # いつ更新するか

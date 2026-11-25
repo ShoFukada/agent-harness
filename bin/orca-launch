@@ -7,6 +7,15 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
 
   orca-launch --worktree <selector> --title <短い題> --spec-file <brief> [--keep-open] [--run <run_id>] [-- <追加の引数>]
   orca-launch --worktree <selector> --cockpit-task <task id> --spec-file <brief> [--cockpit-root <root>] ...
+  orca-launch --lead <仕事の id> --name <slug> --spec-file <brief> [--cockpit-root <root>]
+
+--lead は仕事（streams[]）の担当を立てる（t159）。表示名とチャットの題を「<形の頭>｜<仕事の題>」にし（頭は state.ts の NAME_HEAD を仕事の form で引く）、
+窓口の子の worktree（new-child）に Orca のチャットで立て、帳簿の owners[] にそのまま書ける担当の行（session と受け取り worker）を出す。
+形の無い仕事・見張る仕事・開いた担当がいる仕事には立てない。担当の形を手で打つと、帳簿の形と食い違う（2026-11-25 の整理のあと、
+任せる仕事に「一緒に｜」の担当がいた）。
+--cockpit-task は、タスクの仕事に形が無い・見張る仕事なら断る。一緒に作る仕事は担当が --run を付けて立てるときだけ通し、窓口が直接立てるのは断る
+（一緒に作る仕事の作業は担当のチャットで深田さんと進める。R145）。操縦席のある窓口（今のディレクトリから上に .orca/cockpit.json がある）からは、
+--run を付けない --title だけの起動を断る（帳簿のタスクに結ばない worker は、帳簿と Orca が食い違う元になる）。
 
 --cockpit-task は操縦席（<root>/.orca/cockpit.json）のタスクから、題（タスクの題）・comment（「<仕事の題> › <タスク id>｜worker が作業中」）・
 親の worktree（仕事の担当の worktree、担当がいなければ窓口の worktree）を決め、そのタスクを持つ依頼の済の条件と、依頼に結んだ深田さんの発言の原文
@@ -22,7 +31,7 @@ claude は CLAUDE_CONFIG_DIR（Orca で今選ばれている席。読めなけ�
 信頼を設定ファイル（.claude.json）に先に書くことはしない。
 動いている claude も同じファイルを書き換え、排他の手段が無いので、競合するとほかの項目の更新を消す。
 Orca のサイドバーにいつも同じ形で出るよう、端末の題と worker の作業場所の表示名を「作業｜<短い題>」に、状態を in-progress にする
-（頭に仕事の形を付ける決まり。担当は「一緒に｜」「任せる｜」。呼んだ側と同じ作業場所に立てるときは、その作業場所の表示は変えない）。
+（頭に仕事の形を付ける決まり。担当の「一緒に｜」「任せる｜」は --lead が仕事の形から付ける。呼んだ側と同じ作業場所に立てるときは、その作業場所の表示は変えない）。
 頭の語も含めて上限の字数を超える名前は、何も起こさずに断る（勝手に切ると何の仕事か読めなくなり、起こしてから気づくより打ち直すほうが安い）。
 頭の語と上限の値は操縦席の state.ts の WORKER_HEAD・NAME_MAX から読み、ここに写しを持たない（文書の置き場所は worktree-flow skill の references/sidebar.md）。
 worker の作業場所に親が無ければ、立てる人の作業場所（ORCA_WORKTREE_ID）を親にする。親があればそのまま使う。
@@ -38,6 +47,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from importlib.machinery import SourceFileLoader
 
 _loader = SourceFileLoader("stallwatch", os.path.join(os.path.dirname(os.path.realpath(__file__)), "stallwatch"))
@@ -45,6 +55,7 @@ sw = importlib.util.module_from_spec(importlib.util.spec_from_loader("stallwatch
 _loader.exec_module(sw)
 
 WAIT_MS = 90000
+LEAD_MODEL = "claude-opus-5-5"
 ROOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..")
 STATE_TS = os.path.join(ROOT, "orca", "plugins", "cockpit", "src", "state.ts")
 # どの worker にも渡す決まりの文言の置き場所。文言はここだけが持ち、brief に人が手で書かない。
@@ -60,6 +71,17 @@ def name_rule():
     if not head or not limit:
         sys.exit("orca-launch: %s から WORKER_HEAD・NAME_MAX を読めない" % STATE_TS)
     return head.group(1), int(limit.group(1))
+
+
+def form_heads():
+    """仕事の形 → 担当の名前の頭（state.ts の NAME_HEAD）。"""
+    with open(STATE_TS, encoding="utf-8") as fh:
+        src = fh.read()
+    m = re.search(r"^export const NAME_HEAD: Record<StreamForm, string> = \{([^}]*)\}$", src, re.M)
+    heads = dict(re.findall(r"(\w+): '([^']+)'", m.group(1))) if m else {}
+    if not heads:
+        sys.exit("orca-launch: %s から NAME_HEAD を読めない" % STATE_TS)
+    return heads
 
 
 def orca(*args):
@@ -109,17 +131,24 @@ def command(a, home):
     return shlex.join((["env", *env] if env else []) + argv + a.extra)
 
 
-def cockpit_root(given):
-    if given:
-        return os.path.abspath(given)
+def own_cockpit():
+    """今のディレクトリから上にある操縦席の root（窓口の居場所）。担当・worker の worktree には操縦席が無い（git に入れない）。"""
     d = os.getcwd()
     while True:
         if os.path.isfile(os.path.join(d, ".orca", "cockpit.json")):
             return d
         up = os.path.dirname(d)
         if up == d:
-            break
+            return None
         d = up
+
+
+def cockpit_root(given):
+    if given:
+        return os.path.abspath(given)
+    here = own_cockpit()
+    if here:
+        return here
     r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
     return os.path.dirname(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
 
@@ -204,6 +233,20 @@ def cockpit_plan(a):
     if not t:
         sys.exit("orca-launch: 操縦席にタスク %s が無い（%s）" % (a.cockpit_task, path))
     s = next((x for x in c.get("streams") or [] if x.get("id") == t.get("stream")), None)
+    form = (s or {}).get("form")
+    if form not in ("delegate", "cowork"):
+        sys.exit("orca-launch: タスク %s の仕事 %s は%s。worker を立てる前に仕事の形を決める（cockpit skill の「仕事の形」）"
+                 % (a.cockpit_task, t.get("stream"), "見張る仕事で、worker を立てない" if form == "watch" else "形（form）が決まっていない"))
+    if form == "cowork" and not a.run:
+        sys.exit("orca-launch: タスク %s の仕事 %s は一緒に作る仕事。作業は担当のチャットで進めるので、窓口は worker を立てず担当に send で渡す"
+                 "（担当がいなければ orca-launch --lead %s で立てる）" % (a.cockpit_task, t.get("stream"), t.get("stream")))
+    lead = None
+    if form == "cowork":
+        # 一緒に作る仕事の worker は、その仕事の開いた担当が自分の worktree から立てるものだけ（別の Run を渡して窓口が立てるのを止める）。
+        lead = owner_worktree(c, t.get("stream"))
+        if not lead or lead != os.environ.get("ORCA_WORKTREE_ID"):
+            sys.exit("orca-launch: タスク %s の仕事 %s は一緒に作る仕事で、worker を立てられるのはその仕事の開いた担当（の worktree）だけ%s"
+                     % (a.cockpit_task, t.get("stream"), "" if lead else "。担当がいないか、Orca で担当の居場所を引けない"))
     reqs = [r for r in c.get("requests") or [] if a.cockpit_task in (r.get("tasks") or [])]
     lines = ["- %s#%d: %s" % (r["id"], i + 1, w) for r in reqs for i, w in enumerate(r.get("done_when") or [])]
     tail = ""
@@ -216,7 +259,8 @@ def cockpit_plan(a):
         "title": t["title"],
         "comment": "%s › %s｜worker が作業中" % ((s or {}).get("title") or t.get("stream") or "仕事", t["id"]),
         # 担当の worktree は Orca に問い合わせるので、名前の検査を通ってから引く
-        "parent": lambda: "id:" + owner if (owner := owner_worktree(c, t.get("stream"))) else "path:" + root,
+        # 一緒に作る仕事は照合に使った担当の worktree をそのまま親にする（引き直して一覧から消えていると窓口の root になる）。
+        "parent": lambda: "id:" + owner if (owner := lead or owner_worktree(c, t.get("stream"))) else "path:" + root,
         "tail": tail,
     }
 
@@ -240,16 +284,82 @@ def brief(spec_file, tail):
     return path
 
 
+def session_of(dispatch, tries=15):
+    """担当の Dispatch のチャットのセッション（worker-show --full の endpointIncarnation「structured:<id>」）。チャットができるまで少し待つ。"""
+    for i in range(tries):
+        r = (orca("orchestration", "worker-show", "--dispatch", dispatch, "--full").get("result") or {})
+        inc = (r.get("terminalResource") or {}).get("endpointIncarnation") or ""
+        if inc.startswith("structured:"):
+            return inc[len("structured:"):]
+        if i + 1 < tries:
+            time.sleep(2)
+    return None
+
+
+def start_lead(a):
+    """仕事の担当を立て、帳簿の owners[] に書く担当の行を出す。"""
+    root = cockpit_root(a.cockpit_root)
+    path = os.path.join(root or "", ".orca", "cockpit.json")
+    if not root or not os.path.isfile(path):
+        sys.exit("orca-launch: 操縦席（.orca/cockpit.json）が見つからない。--cockpit-root で窓口のワークスペースを渡す")
+    with open(path) as fh:
+        c = json.load(fh)
+    s = next((x for x in c.get("streams") or [] if x.get("id") == a.lead), None)
+    if not s:
+        sys.exit("orca-launch: 操縦席に仕事 %s が無い（%s）" % (a.lead, path))
+    # 形を変えるときは新しい形を --form で渡し、仕事の form と担当の行を同じ書き込みで書く（先に form だけ変えると、担当のいない一緒に作る仕事になる）。
+    form = a.form or s.get("form")
+    if form not in ("delegate", "cowork"):
+        sys.exit("orca-launch: 仕事 %s は%s。担当を立てる前に仕事の形（delegate か cowork）を cockpit-write で決める"
+                 % (a.lead, "見張る仕事で、担当を置かない" if form == "watch" else "形（form）が決まっていない"))
+    owners = c.get("owners") or []
+    have = next((o for o in owners if o.get("stream") == a.lead and o.get("state") != "done"), None)
+    if have and have.get("id") != a.replace:
+        sys.exit("orca-launch: 仕事 %s には担当 %s がいる。続きは orca orchestration send --to dispatch:<担当の今の Dispatch> で渡す"
+                 "（立て直すなら --replace %s を付け、出た 2 行を同じ書き込みで書く）" % (a.lead, have.get("id"), have.get("id")))
+    if a.replace and not have:
+        sys.exit("orca-launch: 仕事 %s に開いた担当 %s がいない（--replace は今の担当を立て直すときだけ）" % (a.lead, a.replace))
+    if not a.name or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", a.name):
+        sys.exit("orca-launch: --lead には --name <英小文字・数字・- の slug> が要る（担当の worktree の名前。例 backlog-lead）")
+    _, limit = name_rule()
+    name = "%s｜%s" % (form_heads()[form], s.get("title") or a.lead)
+    if len(name) > limit:
+        sys.exit("orca-launch: 名前「%s」が %d 字で、上限の %d 字を超える。仕事の題を cockpit-write で短くして打ち直す" % (name, len(name), limit))
+    started = orca("orchestration", "worker-start", "--spec-file", a.spec_file, "--worktree", "new-child", "--name", a.name,
+                   "--display-name", name, "--agent", "claude", "--model", a.model or LEAD_MODEL, "--keep-open", "--task-title", name)
+    r = started.get("result") or {}
+    if not started.get("ok") or not r.get("runId") or not r.get("taskId"):
+        sys.exit("orca-launch: 担当を立てられなかった")
+    session = session_of(r["dispatchId"]) if r.get("dispatchId") else None
+    nums = [int(m.group(1)) for o in owners if (m := re.fullmatch(r"o(\d+)", str(o.get("id"))))]
+    row = {"id": "o%d" % (max(nums, default=0) + 1), "title": s.get("title") or a.lead, "stream": a.lead, "agent": "claude",
+           **({"session": session} if session else {}), "worker": {"run_id": r["runId"], "task_id": r["taskId"]}, "state": "open"}
+    out = {"runId": r["runId"], "taskId": r["taskId"], "dispatchId": r.get("dispatchId"), "owner": row}
+    if have:
+        out["replaced"] = {**have, "state": "done"}
+    if form != s.get("form"):
+        # 書く道具は仕事の行を丸ごと置き換えるので、今の行に形だけを変えたものを出す。
+        out["stream"] = {**s, "form": form}
+    print(json.dumps(out, ensure_ascii=False))
+    if not session:
+        sys.exit("orca-launch: 担当は立ったが、チャットの session を引けなかった。orca worktree ps --json の %s の agents[].orcaSessionId を owner の session に足して書く" % a.name)
+    sys.exit(0)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="orca-launch", description=__doc__.split("\n")[0])
-    ap.add_argument("--worktree", required=True, help="worker を置く worktree（orca の selector。先に orca worktree create で作る）")
+    ap.add_argument("--worktree", help="worker を置く worktree（orca の selector。先に orca worktree create で作る）。--lead では使わない")
+    ap.add_argument("--lead", help="担当を立てる仕事の id（streams[]）。表示名の頭は仕事の形から決め、owners[] に書く行を出す")
+    ap.add_argument("--name", help="--lead の担当の worktree の名前（slug）")
+    ap.add_argument("--form", choices=("delegate", "cowork"), help="--lead で、仕事の形を変えながら担当を立てる（出た stream の行を担当の行と同じ書き込みで書く）")
+    ap.add_argument("--replace", help="--lead で、今の担当（owners の id）を立て直す（出た replaced の行と新しい担当の行を同じ書き込みで書く）")
     ap.add_argument("--title", help="仕事の短い日本語名。端末と作業場所は「作業｜<題>」になり、頭も含めて上限（state.ts の NAME_MAX）を超えると断るので、何の仕事かを先頭に短く。--cockpit-task のときはタスクの題")
     ap.add_argument("--cockpit-task", help="操縦席のタスクの id。題・comment・親の worktree・済の条件・深田さんの発言の原文をそこから引く")
     ap.add_argument("--cockpit-root", help="操縦席のあるワークスペースの root（省くと探す）")
     ap.add_argument("--spec-file", required=True, help="brief のファイル")
     ap.add_argument("--task-title")
     ap.add_argument("--agent", choices=("claude", "codex"), default="claude")
-    ap.add_argument("--model", default="opus")
+    ap.add_argument("--model", help="既定は worker が opus、担当が %s" % LEAD_MODEL)
     ap.add_argument("--settings", help="既定は $ORCA_WORKER_SETTINGS")
     ap.add_argument("--keep-open", action="store_true")
     ap.add_argument("--run")
@@ -258,6 +368,14 @@ def main():
     a.extra = a.extra[1:] if a.extra[:1] == ["--"] else a.extra
     if not os.path.isfile(a.spec_file):
         sys.exit("orca-launch: brief が無い: %s" % a.spec_file)
+    if a.lead:
+        start_lead(a)
+    if not a.worktree:
+        sys.exit("orca-launch: --worktree が要る（担当を立てるなら --lead）")
+    a.model = a.model or "opus"
+    if not a.cockpit_task and not a.run and own_cockpit():
+        sys.exit("orca-launch: 操縦席のある窓口からは --cockpit-task <タスクの id> で立てる（帳簿のタスクに結ばない worker は、帳簿と Orca が食い違う元になる）。"
+                 "タスクが無ければ、先に仕事の形を決めてタスクを cockpit-write で書く")
     plan = cockpit_plan(a) if a.cockpit_task else None
     if plan:
         a.title = a.title or plan["title"]

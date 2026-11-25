@@ -717,6 +717,19 @@ export const waitOpen = (w: Wait | undefined, today: string): w is Wait =>
   !!w && (w.kind === 'slot' || (w.kind === 'date' ? today < (w.on ?? '') : !waitMet(w)))
 
 /**
+ * タスクの worker の記録が、同じ仕事の開いた担当のものか（t159）。担当の受け取りは owners[].worker に書く決まりだが、それより前の帳簿は
+ * タスクの worker に担当の受け取りがある。担当がターンを終えると Dispatch は exited になり、worker の停止と読むと窓が「落ちた」と出し、
+ * 整理が担当を片付けうるので、担当の受け取り（task_id）か、Dispatch のチャットが担当の session と同じなら worker として判定しない。
+ */
+function leadOf(c: Cockpit, t: Task, facts: OrcaFacts | undefined): Owner | undefined {
+  if (!t.worker) return undefined
+  const own = (c.owners ?? []).filter((o) => o.stream === t.stream && o.state !== 'done')
+  const did = currentDispatch(t, facts)
+  const session = did ? facts?.dispatches?.[did]?.session : undefined
+  return own.find((o) => o.worker?.task_id === t.worker!.task_id || (!!session && o.session === session))
+}
+
+/**
  * タスクの今を事実から決める（R204）。窓・パネル・hook・書く道具が同じこの関数を通す。上が勝つ:
  * 1. 済: 窓口が ok と書いたか、カードの効果（cardEffect）が済のカードが承認された
  * 2. 止まり: 開いた停止のカード
@@ -745,8 +758,9 @@ export function judgeTasks(c: Cockpit, log: UserLog, views: CardView[], facts: O
   const today = tokyoDay(now)
   const out = new Map<string, TaskView>()
   for (const t of c.tasks) {
-    const did = currentDispatch(t, facts)
-    const fact = facts?.dispatches && t.worker ? (did ? facts.dispatches[did] ?? null : null) : undefined
+    const lead = leadOf(c, t, facts)
+    const did = lead ? undefined : currentDispatch(t, facts)
+    const fact = facts?.dispatches && t.worker && !lead ? (did ? facts.dispatches[did] ?? null : null) : undefined
     const base = { task: t, settledAt: fact?.settledAt }
     const how = done.get(t.id)
     if (how) {
@@ -783,7 +797,9 @@ export function judgeTasks(c: Cockpit, log: UserLog, views: CardView[], facts: O
       if (ahead.length) set('idle', 'record', { kind: 'after', key: `after:${ahead.join(',')}`, label: `前提待ち（${ahead.map((id) => (title.has(id) ? `${id}「${title.get(id)}」` : `${id}（帳簿に無い）`)).join('・')}）` })
       else {
         const came = t.wait?.kind === 'date' ? `確かめる日が来た: ${t.wait.what}` : undefined
-        set('run', 'record', undefined, came ?? (t.worker && !facts ? 'worker に任せている' : '着手できる'))
+        // 担当の名前を出すのは、担当の受け取りと照合できたタスクか、worker の記録の無いタスクだけ（担当の子の worker のタスクを担当と言わない）。
+        const own = lead ?? (t.worker ? undefined : c.owners?.find((o) => o.stream === t.stream && o.state !== 'done'))
+        set('run', 'record', undefined, came ?? (own ? `担当「${own.title}」が受け持つ` : t.worker && !facts ? 'worker に任せている' : '着手できる'))
       }
     }
   }

@@ -453,12 +453,16 @@ def worker_id(t):
 
 
 def live_workers(c):
-    """続ける worker・担当。済んでいないタスクの worker_id と、答えで受ける別名（古い行の dispatch_id）。"""
+    """続ける worker・担当。済んでいないタスクの worker_id と、開いた担当の受け取り（owners[].worker。t159）と、答えで受ける別名（古い行の dispatch_id）。"""
     out = {}
     for t in c.get("tasks") or []:
         w = worker_id(t)
         if w and t.get("state") != "ok":
             out[w] = {w, t["worker"].get("dispatch_id")} - {None}
+    for o in c.get("owners") or []:
+        w = worker_id(o)
+        if w and isinstance(o, dict) and o.get("state") != "done":
+            out[w] = {w}
     return out
 
 

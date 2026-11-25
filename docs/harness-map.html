@@ -199,6 +199,7 @@ a{color:var(--focus)}
 <ul>
 <li>帳簿（操縦席）を書くのは窓口だけ。担当とworkerは書かず、深田さんに決めてほしいことは窓口に <code>send</code> で届け、窓口がカードにする</li>
 <li>担当は仕事が終わるまで残り、workerは1つのworktree・1つのTaskごとに立てて畳む。1つのworktreeにworkerは1人</li>
+<li>担当もworkerも、先に仕事の形（任せる・一緒に作る）を決めてから <code>orca-launch</code> で立てる（担当は <code>--lead</code>、workerは <code>--cockpit-task</code>）。担当の受け取りは帳簿の担当の行、workerの受け取りはタスクに書き分け、書く道具が食い違いを断る（t159）</li>
 <li>担当とworkerがcoordinatorに送るのは、完了・停止・深田さんの判断の依頼・調整の4つだけ（worktree-flow skillの references/worker-rules.md）</li>
 <li>窓口自身が止まったことは、会話の外の見張り（stallwatch、5分おき）が通知と窓の帯で知らせる</li>
 </ul>

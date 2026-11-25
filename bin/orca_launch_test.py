@@ -48,6 +48,8 @@ elif args[:2] == ["orchestration", "worker-start"]:
     with open(os.environ["FAKE_LOG"] + ".spec", "w") as fh:
         fh.write(open(spec).read())
     out({"runId": "run_1", "taskId": "task_1", "dispatchId": "ctx_1", "terminal": "term_x", "state": "ready"})
+elif args[:2] == ["orchestration", "worker-show"]:
+    out({"terminalResource": {"endpointIncarnation": "structured:sess_new"}})
 elif args[:2] == ["agent", "list"]:
     out({"agents": [{"orcaSessionId": "sess_lead", "worktreeId": "repo::/lead"}]})
 elif args[:2] == ["terminal", "list"]:
@@ -85,7 +87,7 @@ class LaunchTest(unittest.TestCase):
     def run_launch(self, *extra, title="t", **env):
         return subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--title", title,
                                "--spec-file", self.spec, *extra], capture_output=True, text=True,
-                              env={**self.env, **env})
+                              env={**self.env, **env}, cwd=self.tmp)
 
     def calls(self):
         with open(self.log) as fh:
@@ -261,14 +263,14 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(any(x[:2] == ["worktree", "set"] for x in self.calls()))
 
-    def cockpit(self, owners, said=None, utter=None):
+    def cockpit(self, owners, said=None, utter=None, form="delegate"):
         root = os.path.join(self.tmp, "root")
         os.makedirs(os.path.join(root, ".orca", "cockpit"))
         if utter:
             with open(os.path.join(root, ".orca", "cockpit", "utterances.jsonl"), "w") as fh:
                 fh.write("".join(json.dumps(u, ensure_ascii=False) + "\n" for u in utter) + "{書きかけ")
         with open(os.path.join(root, ".orca", "cockpit.json"), "w") as fh:
-            json.dump({"version": 2, "workspace": {"name": "ハーネス"}, "streams": [{"id": "s1", "title": "操縦席の窓"}],
+            json.dump({"version": 2, "workspace": {"name": "ハーネス"}, "streams": [{"id": "s1", "title": "操縦席の窓", **({"form": form} if form else {})}],
                        "tasks": [{"id": "t65", "stream": "s1", "phase": "実装", "title": "窓の版 3", "state": "run"}],
                        "owners": owners, "cards": [],
                        "requests": [{"id": "r30", "at": "", "title": "上限の判定", "tasks": ["t65"], "done_when": ["LIMIT が 3 行の上限の文言に当たる"],
@@ -277,9 +279,100 @@ class LaunchTest(unittest.TestCase):
                                      "utterances": [{"id": "u-9", "quote": "別の仕事の発言"}]}]}, fh)
         return root
 
-    def run_cockpit(self, root):
+    def run_cockpit(self, root, *extra):
         return subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--cockpit-task", "t65", "--cockpit-root", root,
-                               "--spec-file", self.spec], capture_output=True, text=True, env=self.env)
+                               "--spec-file", self.spec, *extra], capture_output=True, text=True, env=self.env, cwd=self.tmp)
+
+    def test_cockpit_task_needs_a_form_and_leaves_cowork_to_the_lead(self):
+        # 形の無い仕事・見張る仕事には立てない。一緒に作る仕事は、担当が自分の Run で立てるときだけ通す（t159）。
+        for form, said in ((None, "形（form）が決まっていない"), ("watch", "見張る仕事で、worker を立てない"),
+                           ("cowork", "一緒に作る仕事。作業は担当のチャットで進める")):
+            shutil.rmtree(os.path.join(self.tmp, "root"), ignore_errors=True)
+            root = self.cockpit([], form=form)
+            r = self.run_cockpit(root)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn(said, r.stderr)
+            self.assertFalse(os.path.exists(self.log), "orca を 1 回も呼ばない")
+        # 一緒に作る仕事の worker は、その仕事の開いた担当の worktree から立てるときだけ（別の Run を渡しても、担当でなければ断る）。
+        r = self.run_cockpit(root, "--run", "run_lead")
+        self.assertIn("worker を立てられるのはその仕事の開いた担当", r.stderr)
+        shutil.rmtree(os.path.join(self.tmp, "root"))
+        root = self.cockpit([{"id": "o1", "title": "窓", "stream": "s1", "session": "sess_lead", "state": "open"}], form="cowork")
+        r = self.run_cockpit(root, "--run", "run_lead")
+        self.assertNotEqual(r.returncode, 0)
+        os.remove(self.log)
+        r = subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--cockpit-task", "t65", "--cockpit-root", root,
+                            "--spec-file", self.spec, "--run", "run_lead"], capture_output=True, text=True,
+                           env={**self.env, "ORCA_WORKTREE_ID": "repo::/lead"}, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (setw,) = [x for x in self.calls() if x[:2] == ["worktree", "set"]]
+        self.assertEqual(setw[setw.index("--parent-worktree") + 1], "id:repo::/lead")
+        self.assertEqual(sum(1 for x in self.calls() if x[:2] == ["agent", "list"]), 1, "照合した担当の居場所を親にも使い、引き直さない")
+
+    def test_lead_can_replace_the_open_lead_or_change_the_form(self):
+        # 担当の交代: --replace で今の担当を立て直し、片付ける行と新しい行を同じ書き込みで書けるように出す（Astra 重大 1）。
+        root = self.cockpit([{"id": "o1", "title": "窓", "stream": "s1", "session": "sess_lead", "state": "open"}], form="cowork")
+        r = self.run_lead(root, "--replace", "o1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out["replaced"], {"id": "o1", "title": "窓", "stream": "s1", "session": "sess_lead", "state": "done"})
+        self.assertEqual(out["owner"]["id"], "o2")
+        self.assertNotIn("stream", out)
+        # 形の変更: --form で新しい形の頭で立て、仕事の form を一緒に出す（Astra 重大 2）。
+        shutil.rmtree(os.path.join(self.tmp, "root"))
+        os.remove(self.log)
+        r = self.run_lead(self.cockpit([]), "--form", "cowork")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (start,) = [x for x in self.calls() if x[:2] == ["orchestration", "worker-start"]]
+        self.assertEqual(start[start.index("--display-name") + 1], "%s｜操縦席の窓" % ol.form_heads()["cowork"])
+        self.assertEqual(json.loads(r.stdout)["stream"], {"id": "s1", "title": "操縦席の窓", "form": "cowork"})
+        r = self.run_lead(os.path.join(self.tmp, "root"), "--replace", "o9")
+        self.assertIn("開いた担当 o9 がいない", r.stderr)
+
+    def test_main_with_a_cockpit_binds_workers_to_tasks(self):
+        # 操縦席のある窓口からの --title だけの起動は断る。担当（--run）と、操縦席の無い場所からは今までどおり。
+        root = self.cockpit([])
+        r = subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--title", "t", "--spec-file", self.spec],
+                           capture_output=True, text=True, env=self.env, cwd=root)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--cockpit-task <タスクの id> で立てる", r.stderr)
+        r = subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--title", "t", "--spec-file", self.spec, "--run", "run_lead"],
+                           capture_output=True, text=True, env=self.env, cwd=root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def run_lead(self, root, *extra):
+        return subprocess.run([sys.executable, self.launch, "--lead", "s1", "--name", "win-lead", "--cockpit-root", root, "--spec-file", self.spec, *extra],
+                              capture_output=True, text=True, env=self.env, cwd=self.tmp)
+
+    def test_lead_takes_the_head_from_the_form_and_prints_the_owner_row(self):
+        heads = ol.form_heads()
+        root = self.cockpit([{"id": "o3", "title": "前の担当", "stream": "s1", "session": "sess_old", "state": "done"}], form="cowork")
+        r = self.run_lead(root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (start,) = [x for x in self.calls() if x[:2] == ["orchestration", "worker-start"]]
+        name = "%s｜操縦席の窓" % heads["cowork"]
+        self.assertEqual(start[start.index("--display-name") + 1], name)
+        self.assertEqual(start[start.index("--task-title") + 1], name)
+        self.assertEqual(start[start.index("--worktree") + 1], "new-child")
+        self.assertEqual(start[start.index("--name") + 1], "win-lead")
+        self.assertEqual(start[start.index("--model") + 1], ol.LEAD_MODEL)
+        self.assertEqual(self.spec_text(), "brief", "担当の brief に worker の決まりを足さない")
+        self.assertEqual(json.loads(r.stdout)["owner"], {"id": "o4", "title": "操縦席の窓", "stream": "s1", "agent": "claude", "session": "sess_new",
+                                                         "worker": {"run_id": "run_1", "task_id": "task_1"}, "state": "open"})
+
+    def test_lead_is_refused_without_a_form_or_with_an_open_owner(self):
+        for form, owners, said in ((None, [], "形（form）が決まっていない"), ("watch", [], "見張る仕事で、担当を置かない"),
+                                   ("delegate", [{"id": "o1", "title": "x", "stream": "s1", "session": "sess_lead", "state": "open"}], "担当 o1 がいる")):
+            shutil.rmtree(os.path.join(self.tmp, "root"), ignore_errors=True)
+            r = self.run_lead(self.cockpit(owners, form=form))
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn(said, r.stderr)
+            self.assertFalse(os.path.exists(self.log), "orca を 1 回も呼ばない")
+        shutil.rmtree(os.path.join(self.tmp, "root"))
+        r = subprocess.run([sys.executable, self.launch, "--lead", "s1", "--cockpit-root", self.cockpit([]), "--spec-file", self.spec],
+                           capture_output=True, text=True, env=self.env, cwd=self.tmp)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--lead には --name", r.stderr)
 
     def test_cockpit_task_names_parents_and_passes_done_when(self):
         root = self.cockpit([{"id": "o1", "title": "窓の版 3", "stream": "s1", "session": "sess_lead", "state": "open"}])
@@ -360,7 +453,7 @@ class LaunchTest(unittest.TestCase):
     def test_cockpit_task_unknown(self):
         root = self.cockpit([])
         r = subprocess.run([sys.executable, self.launch, "--worktree", "path:" + self.wt, "--cockpit-task", "t99", "--cockpit-root", root,
-                            "--spec-file", self.spec], capture_output=True, text=True, env=self.env)
+                            "--spec-file", self.spec], capture_output=True, text=True, env=self.env, cwd=self.tmp)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("タスク t99 が無い", r.stderr)
 

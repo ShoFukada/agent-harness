@@ -53,7 +53,7 @@ JSON
 - `phases[]`: 工程。5 つの固定の並び `["調査", "決定", "作成", "確認", "反映"]`（R83・R135）で、案件ごとに変えない。今の窓は工程の並びをここから読むので書いておく。窓の版 3 は読まないので、新しい窓に入れ替えたあとは省いてよい
 - `streams[]`: 仕事（`id`・`title`・`form`・`summary`・`sources[]`）。深田の案件の単位（管理表の行・顧客の指摘・依頼）でメインが決める。窓の「案件の今」は仕事ごとに 1 行（私待ち・止まっている・作業中・顧客待ち・出来事待ち・未着手・済と、次にやること・担当）を出し、Orca のサイドバーの表示名にもこの `title` を使う
   - `title`: 20 字以内の名詞句で、何の仕事かが先頭で分かる日本語（例「AWS 構成案」「配車画面の改修」）。超えると `checks.long_names` に出る。管理表の番号や指摘の日付は `summary` か `sources` に書く
-  - `form`: 仕事の形。`delegate`（任せる）・`cowork`（一緒に作る）・`watch`（見張る）。決め方は SKILL.md の「仕事の形」。タスクは仕事の形を引き継ぐ（タスクに欄は無い）。無い仕事は `checks.no_form` に出て、窓の全体のタブの下に「形が書かれていない仕事」として並ぶ
+  - `form`: 仕事の形。`delegate`（任せる）・`cowork`（一緒に作る）・`watch`（見張る）。決め方は SKILL.md の「仕事の形」。タスクは仕事の形を引き継ぐ（タスクに欄は無い）。書く道具は形の無い仕事を書かない（新しく作る仕事も、前からある仕事を書き直すときも渡す）。前からある形の無い仕事は `checks.no_form` に出て、窓の全体のタブの下に「形が書かれていない仕事」として並ぶ
   - `watch`: 見張る（`form: "watch"`）の仕事だけに書く。この仕事を受け持つ Orca の Bot（定期確認の automation）の設定 `{ "automation": "<orca automations の id>", "targets": ["<見張る対象の 1 行の名前>"], "to": "<気づいたことの送り先の 1 行>" }`。3 つとも必須で、`targets` は 1 件以上（例 `targets: ["管理表『運用保守対応』", "Slack 7 チャンネル"]`・`to: "Main · sample-app"`）。保ち方は SKILL.md の「仕事の形」（R152）
     - Bot の名前・頻度（rrule・timezone）・有効か・次の実行・前回の実行・定期確認の名前は写さない。Orca の automation が持つ値で、写すと食い違うため。窓が `orca automations list --json` から引く
     - 前回の結果も書かない。窓が `orca automations runs --id <id> --limit 1 --json` の `status`・`scheduledFor`・`outputSnapshot.content`・`chatSessionId` から引く
@@ -78,7 +78,7 @@ JSON
     - `met[]`: person・event の待ちを解いた事実 `{ "by": "u-290" | "n-12" | "op:812" | "<議事録のパス>", "at": "…", "note"?: "届いた中身 1 行" }`。`by` の発言・知らせ・操作は記録に在るものだけ（cockpit-write が照らす）。`need` 件そろうと解ける。会議の中での返事は、議事録を取り込んだ窓口が議事録のパスで書く
     - 何を待つかが無い日付・期間だけの文（「12月」「来週」）と、都合での先送り（「落ち着いてから」）は cockpit-write が断る（`who`・`what`・`why`・`next` を `~/.claude/hooks/defer-guard.py` にかける）
   - `after[]`: 先に済む要るタスクの id（`["t104"]`）。どれかが済んでいなければ「前提待ち」（未着手）。`next`・`goal` に書いたタスクの id は、前提なら `after` に入れる
-  - `worker`: `{ "run_id": "<Orca の Run の id>", "task_id": "<最初の Orca の Task の id>" }`。このタスクを進める担当か worker を立てたときの受け取り（`runId`・`taskId`）をそのまま書き、あとから書き換えない（references/workers.md）。続きを `send` で頼むと Orca は Task も Dispatch も新しく作るが、state.ts が最初の Task から続き（`follow_up_of`）をたどって今の Dispatch を引く。`dispatch_id` は書かない（古い行にあれば読み込みで受け、移し替えで `run_id` を補う）。
+  - `worker`: `{ "run_id": "<Orca の Run の id>", "task_id": "<最初の Orca の Task の id>" }`。このタスクを進める worker を立てたときの受け取り（`orca-launch` の `runId`・`taskId`）をそのまま書き（担当の受け取りは `owners[].worker` に書き、ここには書かない。同じ受け取りを両方に書くと書く道具が断る）、あとから書き換えない（references/workers.md）。続きを `send` で頼むと Orca は Task も Dispatch も新しく作るが、state.ts が最初の Task から続き（`follow_up_of`）をたどって今の Dispatch を引く。`dispatch_id` は書かない（古い行にあれば読み込みで受け、移し替えで `run_id` を補う）。
   - Orca では今の Dispatch が済んで取り込まれたのに、`state` が `open` のままのタスクは `checks.stale_tasks` に出る
   - `reviewed_for[]`: 範囲・届け先・対象を変える判断（判断の記録の `affects` がこのタスクを挙げたもの）を受けて、このタスクを見直した判断の id（`R39`）。done_when を直したか、判断のカードに載せたら足す。足していないと `checks.affected_tasks` に出る
   - `next`: 次にやること。待つタスクには、待ちが解けたら何をするかを書く（例「届いたら、12/1 の週に検証環境へ入れる日程を確定する」）。待っていることを書き直さない（`wait` と 2 回並ぶ）。済にするタスクには新しく書かない（残りの確認は別のタスクにする。cockpit-write が断る）
@@ -86,7 +86,7 @@ JSON
   - 済にしたら見直す: 書き込みのあとの帳簿で新しく済になったタスク（手書きの `ok` でも、確認のカードの承認でも）があれば、同じ仕事の開いたタスクと、`after`・`next`・`goal` でそのタスクを指す開いたタスクを、同じ書き込みで直して渡すか、関係ないと確かめて変更の `unaffected` に id を並べる。どちらも無ければ cockpit-write が断る（帳簿に書かれていない前提を見落とさない。R204）
   - 古い欄（`status`・`waiting_on`・`waiting_since`・`check_on`）と、手書きの `run`・`wait`・`idle`・`stop` は cockpit-write が断る。読み込み（窓・hook・書く道具）は古い帳簿を次の規則で補って読む: `run`・`wait`・`idle`・`stop` は `open`、`waiting_on` が名前だけなら person・`idle` で「空き枠」なら slot・ほかは event、`idle` の `waiting_on` が指すタスクは `after`、`check_on` は date、タスクの `status` は捨てる。帳簿そのものは `cockpit-write migrate-facts` で移す（下の「移し替え（migrate-facts）」）
   - `repo`: 本文の `#123` を GitHub の PR へのリンクにするリポジトリ（`owner/name`）。前置きで分けるなら `{ "BE": "owner/be", "FE": "owner/fe" }`
-- `owners[]`: 仕事の担当（話し相手のエージェント）。`id`（`o1` から）・`title`（仕事の名前。20 字以内）・`stream`・`agent`・`session`（Orca のチャットのセッション id。`orca agent list --json` の `orcaSessionId`）・`terminal`（担当が端末で動くときの `term_…`。`worker-start --agent claude` の受け取りの `terminal` は `structworker_…` というチャットの handle で端末ではないので、ここに書かず `session` を書く。2026-11-21 に書き違えて「担当と協議」が開かなかった）・`state`（open / done）。カードの「担当と協議」は、カードの `owner`、無ければ仕事の担当、それも無ければ窓口を開く
+- `owners[]`: 仕事の担当（話し相手のエージェント）。`id`（`o1` から）・`title`（仕事の名前。20 字以内）・`stream`・`agent`・`session`（Orca のチャットのセッション id。`orca agent list --json` の `orcaSessionId`）・`terminal`（担当が端末で動くときの `term_…`。`worker-start --agent claude` の受け取りの `terminal` は `structworker_…` というチャットの handle で端末ではないので、ここに書かず `session` を書く。2026-11-21 に書き違えて「担当と協議」が開かなかった）・`worker`（担当を立てたときの受け取り `{ run_id, task_id }`。`orca-launch --lead` が出した行をそのまま書く）・`state`（open / done）。開いた担当は `session` か `terminal` が要り、1 つの仕事に 1 人まで、形の無い仕事・見張る仕事には置けない。一緒に作る仕事に済んでいないタスクがあれば開いた担当が要る（書く道具が断る。t159）。カードの「担当と協議」は、カードの `owner`、無ければ仕事の担当、それも無ければ窓口を開く
 - `routes[]`: 連絡を拾う経路（Slack・Teams・メール）。`id`・`label`（「Slack #aoba-dev」）・`read_at`（見張りが最後に読んだ時刻）・`error`・`stale_minutes`（既定 120）。古い・失敗した経路は窓に「見ていない」と出て、hook も `checks.routes` で名指しする。見張りが書く欄で、メインは経路を足すときだけ書く。`streams[].watch` との違い: `routes[]` は経路ごとに最後に読んだ時刻を見張りが書き込む記録で、`watch` は Bot の設定への参照を窓口が保つ欄（前回の結果は Orca から引き、帳簿には書き込まない）
 - `cards[]`: 深田の私の番の候補。形はこのファイルの「カード」、書き方は references/cards.md
 - `applied_ops[]`: 反映済みの op_id の一覧。書く道具の `applied_ops` で足す
@@ -283,7 +283,7 @@ state.ts の `judgeTasks` が、上から順に最初に当たったもので決
 | 外の相手・出来事を待っていること | 送ったカードの `awaiting`、タスクの `wait`（person・event・date・slot） | 仕事の「顧客待ち」（人の返事）・「出来事待ち」（出来事・日付） |
 | 待ちが解けたこと | タスクの `wait.met[]`（発言・知らせ・操作・議事録を指す） | 窓口の会話で「届いた」と言うだけにしない |
 | 件数・期限・次の節目 | `cards[]`・`milestones[]` | 画面・hook の全体の 1 行・カードのコメントは state.ts から。要約の文は書かない |
-| worker・担当とタスクの結び付き | `tasks[].worker`（Orca の Run と最初の Task の id） | 担当・worker の状態と知らせは Orca の orchestration が持つ（`worker-show`・`task-list`・`inbox`）。写しを作らない |
+| worker とタスク・担当と仕事の結び付き | `tasks[].worker`（worker）・`owners[].worker`（担当）。どちらも Orca の Run と最初の Task の id | 担当・worker の状態と知らせは Orca の orchestration が持つ（`worker-show`・`task-list`・`inbox`）。写しを作らない |
 | 担当の話し相手の場所 | `owners[]` の `session`・`terminal` | カードは `owner` か `stream` で引く |
 | 決めたあとの結果 | カードの `resolved_*` と、要ればカードの `why` の先頭の「結果:」 | タスクの `done[]` は、そのタスクで済んだ作業。同じ文を両方に書かない |
 | 顧客に聞くこと | `project/questions.yaml` や Issue があればそちら | 送信前の `links` で指し、中身を書き写さない |

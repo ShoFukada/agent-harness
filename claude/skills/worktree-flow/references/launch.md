@@ -21,20 +21,20 @@ worktree-flow skill の SKILL.md から分けた細部。`orca-launch` が確認
 
 ## 担当を立てる（窓口）
 - brief をファイルに書く。深田の言葉は要約し直さず、決めた経緯とあわせて原文を引用で入れる（間に担当を挟むと文脈が落ちるので、ここで落とさない）。先頭に「`~/.config/nix-darwin/claude/roles/lead.md` を読み、その役割に従う」と書く
-- 立てる:
+- 先に操縦席の仕事（`streams[]`）と形（`form` の `delegate` か `cowork`）を書いておく。担当は仕事を受け持つ（タスクではない）
+- 立てる（窓口のワークスペースの root から）:
   ```bash
-  orca orchestration worker-start --spec-file <brief> --worktree new-child --name <slug>-lead \
-    --display-name "<形>｜<成果物>" --agent claude --model claude-opus-5-5 --keep-open --task-title "<形>｜<成果物>" --json
+  orca-launch --lead <仕事の id> --name <slug>-lead --spec-file <brief>
   ```
-  - 表示名とチャットの題の形（`<形>` に入る語・字数）は references/sidebar.md の仕事の行
-  - 担当は窓口の子の worktree（担当の居場所。commit はしない）に立てる。窓口と同じ worktree に立てると、窓口用の hook が担当をメインと見なす。理由と、アカウント・チャットの題の細部は references/launch.md の「担当を立てるときの細部」
-  - 受け取りを操縦席のタスクの `worker` に書く（書く欄は cockpit skill の references/workers.md）
+  - 道具が、窓口の子の worktree（new-child）に Orca のチャットで担当を立て、表示名とチャットの題を「<形>｜<仕事の題>」にする（頭は仕事の形から。references/sidebar.md の仕事の行）。形を手で打たない（2026-11-25 に、任せる仕事に「一緒に｜」の担当がいた）。形の無い仕事・見張る仕事には立てない。担当の立て直し（`--replace`）と、形を変えながら立てる（`--form`）ときの書き方は cockpit skill の references/workers.md
+  - 担当は窓口の子の worktree（担当の居場所。commit はしない）に立つ。窓口と同じ worktree に立てると、窓口用の hook が担当をメインと見なす。理由と、アカウント・チャットの題の細部は references/launch.md の「担当を立てるときの細部」
+  - 道具が出した担当の行（`owner`。session と受け取りの `worker` を持つ）を、そのまま操縦席の `owners[]` に、立てた直後の 1 回の書き込みで書く。タスクの `worker` には書かない（書く欄は cockpit skill の references/workers.md）
 - 続きの仕事を渡す: `orca orchestration send --to dispatch:<担当の今の Dispatch の id> --subject "<題>" --body-file <brief>`。担当が作業中なら今の応答の後に届き、終わっていれば続きの Task になる。操縦席の `worker` は最初の Task のまま書き換えない（今の Dispatch は操縦席の判定がたどる）
 
 ## 担当を立てるときの細部
 - 担当は窓口の子の worktree（担当の居場所。commit はしない）に立てる。窓口と同じ worktree に立てると、操縦席を見つけた窓口用の hook（periodic-reminder・compaction-keep）が担当をメインと見なし、操縦席の更新を求め、圧縮のあとに担当の送信を止める。Orca の worker-start には環境変数を渡す手段が無いので、居場所で分ける（操縦席は git に入れないので子の worktree には無い）
 - 担当は窓口と同じ設定（sandboxなし）で動き、立てたときにOrcaで選ばれている席（Claudeのアカウント）を使う。席が切り替わると、account-failover が担当の裏の claude を止め、担当は次のメッセージで同じ会話・同じ Dispatch のまま今の席で起きる（references/notify.md の「利用枠の上限に当たったとき」）
-- 受け取りを操縦席のタスクの `worker` に書く（書く欄は cockpit skill の references/workers.md）
+- 受け取りは操縦席の担当の行（`owners[].worker`）に書く（書く欄は cockpit skill の references/workers.md）
 - チャットの題には `--task-title` がそのまま付く（2026-11-21 に確かめた）。あとで変えるときは `orca chat rename --session <id> --name "<題>"`（題の形は references/sidebar.md の仕事の行）。id は `orca worktree ps --json` の、そのチャットの `agents[].orcaSessionId`
 
 ## brief の所有の 1 文

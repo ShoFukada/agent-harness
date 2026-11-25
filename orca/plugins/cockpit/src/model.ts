@@ -57,7 +57,8 @@ export type Task = {
   sources?: string[]
   repo?: Repo
   /**
-   * このタスクを進める担当か worker の、Orca の orchestration の Run と最初の Task（worker-start の受け取りの runId・taskId）。
+   * このタスクを進める worker の、Orca の orchestration の Run と最初の Task（orca-launch の受け取りの runId・taskId）。
+   * 担当の受け取りはここに書かず owners[].worker に書く（担当はタスクでなく仕事を受け持つ。書く道具が兼用を断る。t159）。
    * 今の Dispatch は窓が Run の Task の続き（follow_up_of）をたどって引く。dispatch_id は版 2 の古い形で、読むが新しく書かせない。
    */
   worker?: TaskWorker
@@ -115,6 +116,8 @@ export type Owner = {
   session?: string
   /** 担当が端末で動くときの handle（term_…）。 */
   terminal?: string
+  /** 担当を立てたときの受け取り（orca-launch --lead の runId・taskId）。タスクの worker と同じ形で、タスクには書かない。 */
+  worker?: TaskWorker
   state?: 'open' | 'done'
 }
 

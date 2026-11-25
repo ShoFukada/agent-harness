@@ -125,6 +125,28 @@ test('Dispatch で落ちた・Orca に見つからない worker は、端末が�
   assert.ok(!done.queue.some((r) => r.card.kind === 'stuck'))
 })
 
+test('担当の受け取りがタスクの worker にある古い帳簿（t159）: Dispatch のチャットが同じ仕事の開いた担当なら、worker の停止・取り込み待ちにせず担当が受け持つと出す', () => {
+  const w = ws(0)
+  const o2 = w.cockpit.owners!.find((o) => o.id === 'o2')!
+  o2.session = 'sess-lead'
+  // 担当がターンを終えて Dispatch が exited になっても、worker が落ちたとは出さない（窓と整理が担当を止まった worker と読まないため）。
+  const lead = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: { ctx_aoba_list: { state: 'ready', liveness: 'exited', session: 'sess-lead' } } }, NOW)
+  assert.ok(!lead.queue.some((r) => r.card.id === '#dispatch:t1'))
+  assert.equal(lead.tasks.get('t1')!.label, '担当「配車画面の改修」が受け持つ')
+  // 担当の行に受け取りを書いた帳簿も同じ（Orca を読めなくても決まる）。
+  o2.session = undefined
+  o2.worker = { run_id: 'run_l', task_id: 'task_aoba_list' }
+  assert.equal(derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: {} }, NOW).tasks.get('t1')!.label, '担当「配車画面の改修」が受け持つ')
+  // 担当と照合できない worker のタスクは、Orca を読めないときも担当の名前を出さない（Astra 中 3）。
+  o2.worker = { run_id: 'run_l', task_id: 'task_lead' }
+  assert.equal(derive(w.cockpit, w.log, [], '/a', undefined, NOW).tasks.get('t1')!.label, 'worker に任せている')
+  // 別のチャットの Dispatch（担当でない worker）は、今までどおり落ちたと出す。
+  o2.worker = undefined
+  o2.session = 'sess-lead'
+  const other = derive(w.cockpit, w.log, [], '/a', { workers: [], dispatches: { ctx_aoba_list: { state: 'ready', liveness: 'exited', session: 'sess-worker' } } }, NOW)
+  assert.equal(other.queue.find((r) => r.card.id === '#dispatch:t1')!.card.title, '「配車画面の改修」が落ちた')
+})
+
 test('hook が読む検査: 一時フォルダのままの成果物。タスクの待ちはカードと wait から決まり、手書きの state は読み替える（R204）', () => {
   const c: Cockpit = {
     version: 2, workspace: { name: 'x' }, streams: [{ id: 's1', title: '仕事' }],
@@ -812,6 +834,9 @@ test('待ちの語（追加 42・R204）: 相手は「〜の返事待ち（何�
   assert.deepEqual([job().state, job().label], ['customer', '田中さんの返事待ち（認証情報）'])
   // 解いた事実（met）がそろえば待ちが解け、着手できる。
   w.cockpit.tasks[1]!.wait!.met = [{ by: 'u-3', at: '2026-11-21T09:00:00+09:00' }]
+  // 仕事に開いた担当がいれば、着手できるタスクは担当が受け持つ（t159）。
+  assert.equal(derive(w.cockpit, w.log, [], '/a', undefined, NOW).tasks.get('k2')!.label, '担当「配車画面の改修」が受け持つ')
+  w.cockpit.owners = []
   assert.equal(derive(w.cockpit, w.log, [], '/a', undefined, NOW).tasks.get('k2')!.label, '着手できる')
 })
 
