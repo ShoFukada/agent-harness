@@ -1069,7 +1069,8 @@ export function createServer(opts: Options) {
       ws.files = { ...ws.files, log }
       broadcast()
       await autoSignal(ws)
-      return { view: await cockpitView(ws.root, true) }
+      // 応答のログはこの追記の直後のものにする（末尾がこの操作。待つあいだに別の画面が追記しても、画面が取り消す番号を取り違えない）。
+      return { view: { ...(await cockpitView(ws.root, true)), log } }
     },
     /** 担当と話す。担当の端末かチャットのワークスペースを Orca で前に出し、開けたらカードに話し中の印を付ける（私の番に残す）。 */
     async talk(b): Promise<TalkResult> {

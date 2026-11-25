@@ -613,12 +613,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     try {
       const res = await t.op({ root, item_id: '', item_rev: 0, type: 'tidy', ...(kind && { option_id: kind }), text })
       // 応答のログの末尾は、同じ案件に別の画面が続けて書いた操作のことがある。取り消しは自分の書いた指示を指す。
-      const op = res.view.log.ops.findLast((o) => o.type === 'tidy' && o.text === text && o.option_id === kind)!
+      const op = res.view.log.ops.at(-1)!
       // 送っているあいだに書き換えていたら、書きかけを残す。
       if ((ui.tidyDraft?.[root] ?? '').trim() === text) delete ui.tidyDraft![root]
       replace(res.view)
       ui.toast = undefined
-      ui.undos.push({ root, opId: op.op_id, itemId: '', rev: 0, label: '送りました', title: kind ? TIDY_LABEL[kind] : '自由な指示', to: '窓口', until: Date.now() + UNDO_GRACE_MS })
+      ui.undos.push({ root, opId: op.op_id, itemId: '', rev: 0, label: '送りました', title: kind ? TIDY_LABEL[kind] : '自由な指示', to: '窓口', until: Date.parse(op.at) + UNDO_GRACE_MS })
       tick()
     } catch (e) {
       fail(e)

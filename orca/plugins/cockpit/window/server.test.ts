@@ -1234,15 +1234,16 @@ test('整理・棚卸しの指示（r132）: カードを持たない tidy の�
   ])
 })
 
-test('整理・棚卸しの指示（r132）: 猶予が過ぎたら郵便受けから窓口の Run に知らせ、件名はほかの操作と同じ、本文に種類と op の番号と指示の全文を載せる', async () => {
+test('整理・棚卸しの指示（r132）: 猶予が過ぎたら郵便受けから窓口の Run に知らせ、件名はほかの操作と同じ、本文に種類と op の番号と指示の全文を載せる。猶予を過ぎた指示は取り消さない', async () => {
   const old = new Date(Date.now() - 60_000).toISOString()
   const text = 'Slack・関連ファイル・これまでのやり取りを読み、帳簿に無い依頼と古くなったタスクを棚卸しして報告する。\n見る範囲: #pj-xxx と docs/'
   const a = workspace('a', {
     '.orca/cockpit.json': cockpit('案件A'),
     '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 4, at: old, item_id: '', item_rev: 0, type: 'tidy', option_id: 'inventory', text }] })
   })
-  const { s, port, calls } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
+  const { s, port, calls, post } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
   await listen(port, s.token).until((w) => board(w, a)?.notifiedOp === 4)
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'undo', undo_of: 4 })).status, 409, '猶予を過ぎた指示は取り消さない（窓口が実行しているかもしれない）')
   const run = calls.filter((c) => c[0] === 'run')
   assert.equal(run.length, 1)
   assert.deepEqual(run[0]!.slice(2, 4), ['run_main', SIGNAL])

@@ -439,7 +439,12 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
     if (bad) throw invalid(bad)
     return
   }
-  if (input.type === 'undo' && input.item_id === '' && log.ops.some((o) => o.op_id === input.undo_of && o.type === 'tidy')) return
+  const tidy = input.type === 'undo' && input.item_id === '' ? log.ops.find((o) => o.op_id === input.undo_of && o.type === 'tidy') : undefined
+  if (tidy) {
+    // 猶予を過ぎた指示は窓口が実行しているかもしれないので、取り消した印だけを残さない（cockpit skill の references/tidy.md）。
+    if (Date.now() > Date.parse(tidy.at) + UNDO_GRACE_MS) throw conflict('窓口に送った指示は取り消せません。止めるなら窓口に伝えてください')
+    return
+  }
   if (input.type === 'answer') {
     if (!isAnswerItem(input.item_id) || !Number.isInteger(input.item_rev)) throw invalid('窓から答えられるのは停止の行と一緒に作る仕事の行だけです')
     if (!(typeof input.text === 'string' && input.text.trim())) throw invalid('答えの文がありません')
