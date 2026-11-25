@@ -58,8 +58,10 @@ export type Ui = {
   askWait: Record<string, AskWait>
   answerDraft?: Record<string, string>
   answering?: Record<string, { error?: string }>
-  /** 窓の全体で右に出している「整理・棚卸し」の欄と、選んでいる既定の指示の種類（TidyKind か free）。タスク・仕事・見張るの詳細と入れ替わりに出す。 */
-  tidy?: string
+  /** 窓の全体の右に「整理・棚卸し」の欄を出しているか。タスク・仕事・見張るの詳細と入れ替わりに出す。 */
+  tidy?: boolean
+  /** 選んでいる指示の種類（案件の root → TidyKind か free）。文と同じく案件ごとに持つ（別の案件で選んだ種類で送らない）。 */
+  tidyKind?: Record<string, string>
   /** 整理・棚卸しの指示の書きかけ（案件の root → 文）。 */
   tidyDraft?: Record<string, string>
   /** 整理・棚卸しの指示を送っている案件（二度押しで 2 通送らない）。 */

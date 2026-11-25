@@ -45,7 +45,7 @@ const stateTag = (s: TidyState) => tag(STATE_LABEL[s], s === 'running' ? 'talk' 
 export function tidyHead(b: Board, ui: Ui, now: number): string {
   const rows = tidyRows(b)
   const shown = rows.filter((r, i) => r.state !== 'done' || i === 0)
-  const btn = (k: string, label: string) => `<button class="btn${k === FREE ? ' quiet' : ''}" type="button" data-tidy="${k}" aria-pressed="${ui.tidy === k}">${esc(label)}</button>`
+  const btn = (k: string, label: string) => `<button class="btn${k === FREE ? ' quiet' : ''}" type="button" data-tidy="${k}" aria-pressed="${!!ui.tidy && ui.tidyKind?.[b.root] === k}">${esc(label)}</button>`
   const row = (r: TidyRow) => `<button type="button" class="cardrow" data-tidy="open">
       <span class="kd">${esc(STATE_LABEL[r.state])}</span>
       <span class="tt"><span class="tl"><span class="ti">${esc(kindName(r.op))}</span></span><span class="crumb">${esc(oneLine(r.op.text))}</span></span>
@@ -60,7 +60,7 @@ const oneLine = (s: string | undefined) => (s ?? '').replace(/\s+/g, ' ').trim()
 export function tidyDetail(b: Board, ui: Ui, listed: Set<string>): string {
   const draft = ui.tidyDraft?.[b.root] ?? ''
   const busy = ui.tidySending === b.root
-  const kind = (k: string, label: string) => `<button type="button" data-tidy="${k}" aria-pressed="${ui.tidy === k}">${esc(label)}</button>`
+  const kind = (k: string, label: string) => `<button type="button" data-tidy="${k}" aria-pressed="${(ui.tidyKind?.[b.root] ?? FREE) === k}">${esc(label)}</button>`
   const form = `<div class="askin tidyin"><div class="afil" role="group" aria-label="指示の種類">${TIDY_KINDS.map((k) => kind(k, TIDY_LABEL[k])).join('')}${kind(FREE, '自由な指示')}</div>
     <label class="lb" for="tidy-text">窓口への指示</label>
     <textarea id="tidy-text" data-tidydraft="${esc(b.root)}" rows="4" maxlength="${TEXT_MAX}">${esc(draft)}</textarea>

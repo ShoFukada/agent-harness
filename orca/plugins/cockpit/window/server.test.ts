@@ -273,6 +273,8 @@ test('送る量を絞る: 14 日より前に片付いたカードと、タスク
   c.cards.push({ id: 'proof', rev: 1, kind: 'review', title: '昔の見て', state: 'done', resolved_at: old })
   c.cards.push({ id: 'linked', rev: 1, kind: 'decide', title: '昔の決める', state: 'done', resolved_at: old, request_id: 'q2' })
   c.requests = [{ id: 'q1', at: old, title: '依頼', evidence: [{ when: 1, kind: 'op', ref: '1', card: 'proof' }] }, { id: 'q2', at: old, title: '依頼 2' }]
+  // 整理・棚卸しの結果の報告は、送った指示の行から開くので古くても送る（Codex 中 5）。
+  c.cards.push({ id: 'tidied', rev: 1, kind: 'report', title: '昔の整理', state: 'done', resolved_at: old, tidy_op: 3 })
   c.tasks[0].done = ['長い作業の記録']
   const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(c) })
   const { s, port } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
@@ -282,6 +284,7 @@ test('送る量を絞る: 14 日より前に片付いたカードと、タスク
   assert.ok(got.cards.some((x) => x.id === 'proof'))
   assert.ok(got.cards.some((x) => x.id === 'linked'), '依頼に結ばれたカードも送る（依頼の今の判定が読む）')
   assert.ok(got.cards.some((x) => x.id === 'd19'))
+  assert.ok(got.cards.some((x) => x.id === 'tidied'), '整理・棚卸しの結果の報告も送る')
   assert.equal(got.tasks[0]!.done, undefined)
 })
 

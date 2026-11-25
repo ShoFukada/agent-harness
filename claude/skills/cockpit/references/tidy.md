@@ -10,7 +10,7 @@ cockpit skill の SKILL.md から分けた手順。窓の全体のタブの「�
 - 手順は種類で選び、`text` は範囲と注文として読む（「#pj-xxx と docs/ を見て」「s3 は触らない」など）。`text` が既定の手順と食い違えば `text` を採る。自由な指示は、`text` に近い種類の手順を使い、どれにも当たらなければ書かれたとおりに進める
 
 ## 進め方（種類に共通）
-1. 受けたら、深田への答えを待たずに実行する。窓は合図を送った時点から「実行中」と出す
+1. 受けたら、深田への答えを待たずに実行する。ただし op の `at` から 10 秒（窓の取り消しの猶予）が過ぎていない指示は、まだ実行しない（ほかの知らせで起きたときに拾っても、取り消されうる）。実行の直前に `cockpit.user.json` を読み直し、その op を指す `undo` があれば実行せずに references/ops.md の 1 で反映済みにする。窓は合図を送った時点から「実行中」と出す
 2. 戻せる片付け・直しは窓口がそのまま行う。戻せない操作は行わず、許可のカード（`kind: "permit"`、`target` に対象の全部、`undo` に戻せない理由）にする。戻せない操作に当たるもの:
    - 未 commit の変更か main に無い commit がある worktree の削除・ブランチの削除
    - 深田の判断待ち（判断・許可・確認・送信前・停止）のカードを閉じる・中身を変える
@@ -27,7 +27,7 @@ cockpit skill の SKILL.md から分けた手順。窓の全体のタブの「�
 2. 片付けるもの:
    - worker_done を返したのに取り込んでいない worker: 取り込みの手順（worktree-flow skill の「窓口・担当・worker」）で取り込むか、取り込めない理由を報告に書く
    - 止まったまま・Orca に見つからない worker: 結んだタスクの `worker` を消すか、立て直す。どちらにしたかを報告に書く
-   - 取り込み済みで使い終わった worktree: worktree-flow skill の references/cleanup.md の順で消す。`worktree-sweep` が「消してよい」と出したものは `worktree-sweep --apply` で消してよい。「判断が要る」と出したもの・未 commit や main に無い commit があるものは許可のカードにする
+   - 取り込み済みで使い終わった worktree: worktree-flow skill の references/cleanup.md の順で、1 つずつ消す。`worktree-sweep --apply` は使わない（`~/orca/workspaces` の全部の案件の worktree を消すため）。一覧は `sweep.json` の `main` がこの窓口の root の行だけを使う（cleanup.md と同じ絞り方）。「判断が要る」と出したもの・未 commit や main に無い commit があるものは許可のカードにする
    - 帳簿のタスクに結ばれていない worktree・worker: 取り込むか捨てるかが分からなければ許可のカードにする
 3. サイドバーの名前と状態を、worktree-flow skill の references/sidebar.md の「状態と片付け」でそろえる
 

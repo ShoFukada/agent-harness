@@ -471,9 +471,10 @@ export function createServer(opts: Options) {
     // 済んでいないタスクに結ばれたカードは、期間を過ぎても送る（タスクの詳細から開くため）。
     const live = new Set(files.cockpit?.tasks.filter((t) => t.state !== 'ok').map((t) => t.id))
     const tied = (x: Card) => !!x.tasks?.some((t) => live.has(t))
-    const keep = (x: Card) => recent(x) || tied(x)
+    // 整理・棚卸しの結果の報告は、送った指示の行から開くので、期間を過ぎても送る（落とすと「結果のカードなし」と出る）。
+    const keep = (x: Card) => recent(x) || tied(x) || x.tidy_op !== undefined
     const cockpit = slim && files.cockpit ? slimmed(files.cockpit, keep) : files.cockpit
-    const archive = slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since || proof.has(c.id) || tied(c)) : files.archive
+    const archive = slim ? files.archive.filter((c) => Date.parse(c.resolved_at ?? '') > since || proof.has(c.id) || tied(c) || c.tidy_op !== undefined) : files.archive
     return {
       state: !root ? 'no-workspace' : files.missing ? 'missing' : 'ok',
       root, cockpit, log: files.log, figures: files.figures, errors: files.errors,

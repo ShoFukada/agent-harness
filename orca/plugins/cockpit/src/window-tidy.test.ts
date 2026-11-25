@@ -66,7 +66,7 @@ test('整理・棚卸し: 指示が無ければ先頭の欄はボタンだけ。
 })
 
 test('整理・棚卸し: 欄を開くと右に種類・指示の文・送るボタンと送った指示の一覧を出し、タスクの詳細と入れ替わる。結果の報告は押して要対応のカードへ移れる', () => {
-  const h = whole(model(), { tidy: 'cockpit', task: 't1', tidyDraft: { [R]: '操縦席を整理する。s3の古い状況も直す' } })
+  const h = whole(model(), { tidy: true, tidyKind: { [R]: 'cockpit', '/ws/other': 'workers' }, task: 't1', tidyDraft: { [R]: '操縦席を整理する。s3の古い状況も直す' } })
   const side = h.slice(h.indexOf('<aside class="wside" aria-label="整理・棚卸し"'))
   assert.match(side, /<button type="button" data-tidy="cockpit" aria-pressed="true">操縦席の整理<\/button>/)
   assert.match(side, /<textarea id="tidy-text" data-tidydraft="\/ws\/aoba" rows="4" maxlength="4000">操縦席を整理する。s3の古い状況も直す<\/textarea>/)
@@ -78,9 +78,10 @@ test('整理・棚卸し: 欄を開くと右に種類・指示の文・送るボ
 })
 
 test('整理・棚卸し: 文が空のあいだと送っているあいだは「窓口に送る」を押させない。結果のカードの無い完了は、その旨を出す', () => {
-  assert.match(whole(model(), { tidy: 'free' }), /data-tidy="send" disabled>窓口に送る/)
-  assert.match(whole(model(), { tidy: 'free', tidyDraft: { [R]: 'x' }, tidySending: R }), /data-tidy="send" disabled>窓口に送る/)
-  const h = whole(model((v) => (v.cockpit!.cards = v.cockpit!.cards.filter((c) => c.id !== 'x1'))), { tidy: 'free' })
+  assert.match(whole(model(), { tidy: true }), /data-tidy="send" disabled>窓口に送る/)
+  assert.match(whole(model(), { tidy: true }), /data-tidy="free" aria-pressed="true">自由な指示/, '種類を選んでいなければ自由な指示')
+  assert.match(whole(model(), { tidy: true, tidyDraft: { [R]: 'x' }, tidySending: R }), /data-tidy="send" disabled>窓口に送る/)
+  const h = whole(model((v) => (v.cockpit!.cards = v.cockpit!.cards.filter((c) => c.id !== 'x1'))), { tidy: true })
   assert.match(text(h), /完了 .*結果のカードなし/)
 })
 

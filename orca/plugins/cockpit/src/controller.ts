@@ -590,9 +590,9 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     pickWhole({})
     ui.tab = 'whole'
     const drafts = (ui.tidyDraft ??= {})
-    if (k === 'open') ui.tidy ??= 'free'
-    else {
-      ui.tidy = k
+    ui.tidy = true
+    if (k !== 'open') {
+      ;(ui.tidyKind ??= {})[root] = k
       drafts[root] = tidyDraftFor(k, drafts[root] ?? '')
     }
     draw()
@@ -607,12 +607,13 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   async function tidySend(root: string): Promise<void> {
     const text = (ui.tidyDraft?.[root] ?? '').trim()
     if (!text || ui.tidySending) return
-    const kind = TIDY_KINDS.find((x) => x === ui.tidy)
+    const kind = TIDY_KINDS.find((x) => x === ui.tidyKind?.[root])
     ui.tidySending = root
     draw()
     try {
       const res = await t.op({ root, item_id: '', item_rev: 0, type: 'tidy', ...(kind && { option_id: kind }), text })
-      const op = res.view.log.ops.at(-1)!
+      // 応答のログの末尾は、同じ案件に別の画面が続けて書いた操作のことがある。取り消しは自分の書いた指示を指す。
+      const op = res.view.log.ops.findLast((o) => o.type === 'tidy' && o.text === text && o.option_id === kind)!
       // 送っているあいだに書き換えていたら、書きかけを残す。
       if ((ui.tidyDraft?.[root] ?? '').trim() === text) delete ui.tidyDraft![root]
       replace(res.view)
