@@ -3,7 +3,7 @@
 worktree-flow skill の SKILL.md から分けた決まり。担当・worker・カードの相談・窓口へ知らせを送るとき、coordinator として知らせを受けたとき、読み逃した知らせを探すとき、席の切り替えの知らせが来たときに読む。
 
 ## 知らせの経路
-エージェントの会話の中へ届ける知らせは `orca orchestration send` の 1 本にそろえる（R191。2026-11-22 に深田が選んだ）。経路の決まりはこの節だけが持ち、ほかの文書はここを指す。
+エージェントの会話の中へ届ける知らせは `orca orchestration send` の 1 本にそろえる（R191。深田が選んだ）。経路の決まりはこの節だけが持ち、ほかの文書はここを指す。
 
 | 宛先 | `--to` |
 |---|---|
@@ -35,7 +35,7 @@ coordinator は知らせのたびに Orca に起こされる。チャットに�
 - 担当・worker・窓口のどれが止まっても誰かが気づく形にしてある: worker が止まれば担当（か窓口）に escalation が来る。担当が止まれば窓口に escalation が来る。窓口自身が止まったことは、会話の外の見張り（agent-harness の bin/stallwatch、launchd で 5 分おき）が通知と操縦席の窓の帯で深田に知らせる
 
 ## 利用枠の上限に当たったとき
-席の切り替えと、切り替えたあとに古い席の claude（端末・チャット）を今の席へ移す仕組みは、agent-harness の README（`~/.config/agent-harness/README.md`）の「利用枠の上限で席を切り替える」が持つ。窓口と担当が守るのは次の 5 つ。
+席の切り替えと、切り替えたあとに古い席の claude（端末・チャット）を今の席へ移す仕組みは、agent-harness の `docs/scripts.md`（`~/.config/agent-harness/docs/scripts.md`）の「利用枠の上限で席を切り替える」が持つ。窓口と担当が守るのは次の 5 つ。
 - Run の受信箱に「席の切り替えで <題> の裏の claude を止めた。Dispatch は生きているので立て直さない」が届いたら、その担当を立て直さない。続けて届く Orca の「Worker exited without reporting」も同じ件で、担当は次のメッセージで今の席の claude として同じ会話のまま起きる
 - Run の受信箱に「席の切り替えで <題> の claude を、同じ端末で同じ会話のまま今の席で起こし直す……worker-start で立て直さない」が届いたら、その worker を立て直さない（Orca は端末の claude が終わると Dispatch を failed で閉じ、「Worker exited without reporting」を出す）。coordinator が担当なら、account-failover が担当の名で続き（follow-up の Dispatch）を送る。窓口が coordinator のとき（Orca はチャットを名乗らせない）は「`send --to dispatch:<id>` で続きを送る」と頼まれるので、その Dispatch あてに続きを送る
 - 「席の切り替えで起こし直した。バックグラウンドの監視は止まったので、要るものは張り直す」を受けたら、止まった監視（`tail -F`・Monitor など）のうち要るものを張り直してから続ける

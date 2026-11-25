@@ -1,6 +1,6 @@
 ---
 name: worktree-flow
-description: Orca の worktree でコードを書く作業の流れ（base の選び方、worktree・担当・worker の立て方、brief、知らせの受け方、stack、マージと片付け）。コードを書く作業を始めるとき、worker や担当を立てる・引き継ぐ・マージするときに使う。コマンドの細部（orca-cli・orchestration）とマージ済みブランチの掃除（tidy-branches）には使わない。
+description: Orca の worktree でコードを書く作業の進め方。コードを書く作業を始めるとき、worker や担当を立てる・引き継ぐ・マージするときに使う。コマンドの細部（orca-cli・orchestration）とマージ済みブランチの掃除（tidy-branches）には使わない。
 ---
 
 # 読む順
@@ -28,7 +28,7 @@ worker の起動・指示・知らせ・停止の検知は Orca の orchestratio
 - 作る前に、PR が何本になるかと、PR 同士の依存を決める。1 つの機能が複数の PR に分かれ、後の PR が前の PR のコードに依存するなら、main から PR ごとに worktree を切らず、1 つの stack にする（references/stack.md）。依存しない部分だけを別の worktree・別の stack に分けて並列にする
 - あわせて `gh pr list` で open の PR を見る。新しい作業がどれかの PR のコードに依存する、または同じ箇所を触って衝突が見えているなら、その PR の上に積む
 - 作る前にルートで `git fetch` する。base は既定でリポジトリの default base（`origin/<default>`）。ローカルの default ブランチが origin より先行しているリポジトリでは `--base-branch <default>` を明示する
-- `orca worktree create --repo id:<repoId> --name <slug> --parent-worktree <立てる人の worktree> --json`。checkout は `~/orca/workspaces/<repo>/<name>/`、ブランチは `<git-username>/<name>` になる。立てる人（窓口か担当）の worktree の子にする（窓口 → 担当 → worker の順に並ぶ）。無関係な作業だけ `--no-parent` を付ける。別のリポジトリ（dev-standards など）に worker の worktree を作るときも、立てる人の worktree を `--parent-worktree` に指定する（親が無いと夜の見回りが終わった記録と結べず、取り込み後も残る。2026-11-22 の ja-spacing-rule）
+- `orca worktree create --repo id:<repoId> --name <slug> --parent-worktree <立てる人の worktree> --json`。checkout は `~/orca/workspaces/<repo>/<name>/`、ブランチは `<git-username>/<name>` になる。立てる人（窓口か担当）の worktree の子にする（窓口 → 担当 → worker の順に並ぶ）。無関係な作業だけ `--no-parent` を付ける。別のリポジトリ（dev-standards など）に worker の worktree を作るときも、立てる人の worktree を `--parent-worktree` に指定する（親が無いと、夜の定期確認（bin/worktree-sweep）が終わった記録と結べず、取り込み後も残る）
 - 親子の記録と base は別。親のコードの上で試す子 worktree は、`--base-branch` に親の commit を指定する（省くと default base から切られる）。親の未コミットの変更は入らないので、先に commit する
 - `--name` は ASCII の slug（ブランチ名になる）。人間が見る名前は表示名で、worker を立てるときに `orca-launch` が付ける（references/sidebar.md）。`agent-<乱数>` のような自動生成名を人間が見る worktree に残さない
 - 人間にすぐ見せるなら `--activate`。裏で並列に走らせるなら付けない
@@ -60,15 +60,15 @@ orca-launch --worktree id:<worktree id> --title "<短い題>" --spec-file <brief
 orca-launch --worktree id:<worktree id> --title "<短い題>" --spec-file <brief> --settings ~/.config/nix-darwin/claude/settings.worker.verify.json   # 検証用（DB・dev サーバー・ブラウザ・録画）
 orca-launch --worktree id:<worktree id> --title "<短い題>" --spec-file <brief> --agent codex -- <codex の引数>
 ```
-- 担当が立てるときは、`orca-launch` に `--run <担当の Run>`（担当が仕事を始めたときに作った Run。roles/lead.md）を付ける。表示名は `--title "<タスクの題>"` で付ける。worker の worktree の親は、作ったときの記録を使い、無ければ `orca-launch` が立てる人の worktree（`$ORCA_WORKTREE_ID`）にする（`orca worktree create` は、Orca の環境変数か cwd から立てる人の worktree を親に推定する。別のリポジトリでも付く。2026-11-22 に確かめた）
+- 担当が立てるときは、`orca-launch` に `--run <担当の Run>`（担当が仕事を始めたときに作った Run。roles/lead.md）を付ける。表示名は `--title "<タスクの題>"` で付ける。worker の worktree の親は、作ったときの記録を使い、無ければ `orca-launch` が立てる人の worktree（`$ORCA_WORKTREE_ID`）にする（`orca worktree create` は、Orca の環境変数か cwd から立てる人の worktree を親に推定する。別のリポジトリでも付く）
 - 操縦席のあるワークスペースの窓口は `--cockpit-task` で立てる。表示名・comment・親の worktree を操縦席のタスクと仕事からそろえる（references/sidebar.md）。`orca-launch` がまだ `--cockpit-task` を受けない間は `--title "<タスクの題>"` で立て、comment を手でそろえる
 - `orca-launch` は、worker 用の設定で claude（か codex）を起こした端末を作り、表示名・状態・親をそろえ、入力待ちを待って brief を Task として渡す。表示名が上限（references/sidebar.md）を超えるときは何も起こさずに断るので、題を短くして打ち直す（中でしていることと出力は references/launch.md の「orca-launch がすること」）
 - どの worker にも渡す決まり（操縦席を書かない・sandbox で止まったら・途中経過を送らない・従量課金の LLM の許可）は、`orca-launch` が references/worker-rules.md を brief の先頭に足す。brief に手で書かない（文言を直すときは worker-rules.md だけを直す）
 - 確認の画面（初めてのリポジトリの信頼の確認など）や時間切れで止まったら、Task を渡さずに exit 非 0 で止まる。片付け方は references/launch.md の「確認の画面で止まったとき」
 - `orca orchestration worker-start --agent claude` で worker を立てない。起動コマンドを指定できず、worker 用の設定（sandbox）が付かない
 - 立てたら、そのターンを終える。worker_done・質問・停止は Orca が coordinator を起こして知らせる（下）
-- 操縦席のあるワークスペースでは、brief にそのタスクの依頼の済の条件（依頼の id・番号・本文。例「r30 の 2: before/after のページを公開する」）を入れる。`orca-launch --cockpit-task` は自動で brief の末尾に足す。worker_done が来たら、worker の報告の「仮定」からではなく、済の条件を起点に証拠（commit・URL・出力）を照合する。条件を変えて済ませたものはそのまま取り込まず、判断のカードに回す（cockpit skill の「受付と仕分け」）
-- brief の書き方（文脈の圧縮・所有の 1 文）、worker 用の設定と検証用、Orca のプラグインを触る worker の決まりは references/launch.md の「brief と worker の設定」
+- 操縦席のあるワークスペースでは、brief にそのタスクの依頼の完了条件（依頼の id・番号・本文。例「r30 の 2: before/after のページを公開する」）を入れる。`orca-launch --cockpit-task` は自動で brief の末尾に足す。worker_done が来たら、worker の報告の「仮定」からではなく、完了条件を起点に証拠（commit・URL・出力）を照合する。条件を変えて済ませたものはそのまま取り込まず、判断のカードに回す（cockpit skill の「受付と仕分け」）
+- brief の書き方（文脈の圧縮・所有の 1 文）は references/launch.md の「brief の書き方」、worker 用の設定と検証用は同じファイルの「worker の設定」、Orca のプラグインを触る worker の決まりは「Orca のプラグインを触る worker」
 
 ## 担当を立てる・知らせ
 - 担当の立て方（brief・`worker-start` のコマンド・続きの渡し方）は references/launch.md の「担当を立てる（窓口）」
@@ -80,7 +80,7 @@ orca-launch --worktree id:<worktree id> --title "<短い題>" --spec-file <brief
 - 担当は仕事ごとに自分の Run を作り（`orca orchestration run-create`）、その coordinator になる（入れ子の coordinator）
 - 担当から窓口へ: 仕事の結果は `worker_done`（worker の報告は要約し直さずに添え、自分で確かめた結果を分けて書く）。深田の判断が要るときは `orca orchestration send --to run:<窓口の Run> --type status --subject "判断: <題>" --body-file <選択肢とおすすめ>`
 - 窓口から担当へ: 答えも続きの仕事も `orca orchestration send --to dispatch:<担当の今の Dispatch の id>` で送る
-- 担当は `ask` を使わず、窓口は担当に `reply` しない。入れ子の coordinator には `reply` が届かず、質問が開いたまま残る（2026-11-21 に 1.4.268 で確かめた。`send --to dispatch:` は担当の Run の受信箱に回されて届く）
+- 担当は `ask` を使わず、窓口は担当に `reply` しない。入れ子の coordinator には `reply` が届かず、質問が開いたまま残る（`send --to dispatch:` は担当の Run の受信箱に回されて届く）
 - 深田が担当のチャットで直接答えたときは、担当が窓口に「判断 <題> は深田さんがチャットで答えた（答えの原文）」と send し、窓口が操縦席の判断のカードを閉じる。深田の判断待ちを出すのは操縦席の窓の 1 か所にする
 
 ## サイドバーの出し方

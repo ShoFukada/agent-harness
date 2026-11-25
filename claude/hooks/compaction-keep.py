@@ -140,7 +140,7 @@ def cockpit_root_at(start):
 def orca_main_root(start):
     """操縦席の無いワークスペースの窓口の root。cwd のリポジトリが元のチェックアウト（.git がフォルダ）で、Orca がこの端末に付けた
     worktree（ORCA_WORKTREE_ID の「<repo id>::<パス>」）がそのリポジトリのときだけ。担当と worker は子の worktree（.git がファイル）に立ち、
-    そこから別のチェックアウトへ移っても端末の worktree は子のままなので外れる（worktree-flow の references/launch.md「担当を立てるときの細部」）。"""
+    そこから別のチェックアウトへ移っても端末の worktree は子のままなので外れる（worktree-flow の references/launch.md「担当を立てる（窓口）」）。"""
     own = (os.environ.get("ORCA_WORKTREE_ID") or "").partition("::")[2]
     if os.environ.get("CONSULT_THREAD") or not own:
         return None
@@ -1234,7 +1234,7 @@ def start_context(head, args):
 
 
 def reassembly(root, heading):
-    # 時刻を推し量って書かないよう、組み直しの先頭に今の時刻を出す（11/21 に作業メモの時刻が約 5 時間 20 分ずれた）
+    # 時刻を推し量って書かないよう、組み直しの先頭に今の時刻を出す（推し量った時刻は何時間もずれる）
     blocks = [("今の時刻: %s（date の値。過去の出来事の時刻は op・ログ・git の記録から取る）\n# %s（compaction-keep。元の記録は .orca/cockpit/ にある）"
                % (now().strftime("%Y-%m-%d %H:%M %z"), heading), None, 0)]
     memo = path_of(root, "state.md")
@@ -1250,7 +1250,7 @@ def reassembly(root, heading):
         blocks.append(("\n".join(left), "%s unreflected %s" % (KEEPER, root), 1))
     act = active_rulings(rulings(root))
     held = [r for r in act if r.get("kind") != "decision"]
-    blocks.append(("\n".join(["", "## 有効な判断（.orca/cockpit/rulings.jsonl。撤回・置き換え済みのものは除いてある。ここに無い判断は効力が無い）",
+    blocks.append(("\n".join(["", "## 有効な判断（.orca/cockpit/rulings.jsonl。撤回・置き換え済みのものは除いてある。有効かは %s rulings %s の出力で確認し、省いた分は示された全文の参照先を読む）" % (KEEPER, root),
                               "### 制約・許可・却下"] + (["- " + ruling_line(r) for r in held] or ["- なし"])),
                    "%s rulings %s" % (KEEPER, root), 2))
     blocks.append(("\n".join(["### 決定"] + (["- " + ruling_line(r) for r in act if r.get("kind") == "decision"] or ["- なし"])),

@@ -1,6 +1,6 @@
 ---
 name: codex-review
-description: Codex（GPT-6.2 Astra）にレビュー・相談・独立した設計案を頼み、指摘を採るかを決める。CLAUDE.md の Codex の条件に当たったとき、行き詰まったバグや設計を相談したいとき、設計の選択肢をユーザーに出す前に使う。「Codex に見せて」「Astra に聞いて」「別の目で見て」で発動する。日本語の文面と見た目には使わない（Neon）。
+description: Codex（GPT-6.2 Astra）にレビュー・相談・独立した設計案を頼むときに使う。CLAUDE.md の Codex の条件に当たったとき、行き詰まったバグや設計を相談したいとき、設計の選択肢をユーザーに出す前、「Codex に見せて」「Astra に聞いて」「別の目で見て」で発動する。日本語の文面と見た目には使わない（Neon）。
 ---
 
 # なぜ異系統に見せるか
@@ -44,7 +44,7 @@ grep -m1 "session id:" <scratchpad>/codex-err.txt    # 続きに使う ID
 cd <リポジトリ> && codex exec resume <session id> -m gpt-6.2-astra -c sandbox_mode='"read-only"' -o <scratchpad>/codex-out.md - < <scratchpad>/codex-prompt.md
 ```
 
-- 回答は `-o` のファイルだけを読む。stdout と stderr には途中経過と hook のログが大量に出るので本線に入れない
+- 回答は `-o` のファイルだけを読む。stdout と stderr には途中経過と hook のログが大量に出るのでメインのセッションに入れない
 - `-m gpt-6.2-astra` を明示する（config.toml の既定に依存しない）
 - 相談・レビューは `-s read-only`。作業を渡すときだけ `-s workspace-write` にし、Claude 側と同じファイルを同時に触らせない
 - 一連の相談は `session id` を保持して `codex exec resume` で続ける。毎回新セッションを作らない

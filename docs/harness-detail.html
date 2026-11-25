@@ -676,7 +676,7 @@ a{color:var(--focus)}
 <thead><tr><th>ID</th><th>何が起きるか</th><th>使うもの</th></tr></thead>
 <tbody>
 <tr id="S1"><td class="n">S1</td><td>今の席の5時間の枠か週の枠が100%なら、優先度の順に空いている席へ切り替える。全部の席が上限なら切り替えず、最初に戻る席と時刻を出す</td><td><code>account-failover</code>・<code>orca account select</code></td></tr>
-<tr id="S2"><td class="n">S2</td><td>切り替えたかに関わらず、claudeを席ごとに数え、今の席と違うものを移す。端末（workerを含む）は入力待ちのときに <code>/exit</code> して同じ端末で <code>--resume</code>（Orcaが閉じたworkerのDispatchには、coordinatorの名で続きを送って付け直す）、窓口と担当のチャットは手が空いていれば止め、次の発言で今の席で起きる</td><td>同上（README「利用枠の上限で席を切り替える」）</td></tr>
+<tr id="S2"><td class="n">S2</td><td>切り替えたかに関わらず、claudeを席ごとに数え、今の席と違うものを移す。端末（workerを含む）は入力待ちのときに <code>/exit</code> して同じ端末で <code>--resume</code>（Orcaが閉じたworkerのDispatchには、coordinatorの名で続きを送って付け直す）、窓口と担当のチャットは手が空いていれば止め、次の発言で今の席で起きる</td><td>同上（docs/scripts.md「利用枠の上限で席を切り替える」）</td></tr>
 <tr id="S3"><td class="n">S3</td><td>切り替えたこと・移せなかったもの・全部の席が上限なことを <code>failover.json</code> に書き、通知を出す</td><td><code>STALLWATCH_HOME</code></td></tr>
 <tr id="S4"><td class="n">S4</td><td>人のいないあいだにOrcaが落ちていたら起動し直し、<code>orca-watch.json</code> に書く。人が自分で終えたときは起動し直さない</td><td><code>orca-watch</code></td></tr>
 <tr id="S5"><td class="n">S5</td><td>Orca・各ワークスペースの窓口・窓のサーバー・定時ジョブの停止を見つけ、S3とS4のファイルと合わせて <code>alerts.json</code> に書く</td><td><code>stallwatch</code></td></tr>
@@ -688,7 +688,7 @@ a{color:var(--focus)}
 <ul>
 <li>Orcaの設定「When you switch accounts while Claude is running in terminals」は「Never restart」にしておく前提。「Always restart」だと端末が開き直されてworkerのDispatchがlostになる</li>
 <li>確認の画面（ログイン・フォルダの信頼など）で止まった端末には自動で答えず、席・端末・画面の名前を帯と通知で名指しする</li>
-<li>席の切り替えの分岐は<a href="harness-map.html#s3-5">見取り図の3.5</a>（図7）、細部はREADME「利用枠の上限で席を切り替える」</li>
+<li>席の切り替えの分岐は<a href="harness-map.html#s3-5">見取り図の3.5</a>（図7）、細部は docs/scripts.md「利用枠の上限で席を切り替える」</li>
 </ul>
 </details>
 

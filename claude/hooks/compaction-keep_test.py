@@ -402,6 +402,9 @@ class Reassembly(Base):
         self.hook("UserPromptSubmit", prompt="短い依頼")
         text = json.loads(self.hook("SessionStart", source="compact"))["hookSpecificOutput"]["additionalContext"]
         self.assertNotIn("全文は", text)
+        # 短くする処理が判断を省いても嘘にならないよう、有効かの確かめ先を出し、「ここに無い判断は効力が無い」とは言わない
+        self.assertIn("有効かは ~/.claude/hooks/compaction-keep.py rulings %s の出力で確認し、省いた分は示された全文の参照先を読む" % self.root, text)
+        self.assertNotIn("効力が無い", text)
 
     def test_the_reassembly_starts_with_the_current_time(self):
         # 11/21 に、窓口と担当が時刻を推し量って書き、約 5 時間 20 分ずれた（F26）

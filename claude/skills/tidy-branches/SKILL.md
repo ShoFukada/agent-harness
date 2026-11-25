@@ -1,6 +1,6 @@
 ---
 name: tidy-branches
-description: ローカルブランチと git worktree の掃除。「ブランチ片付けて」「とっ散らかってる」「worktree 掃除して」「マージ済みブランチ消して」で発動する。マージ済みの判定はリモート削除シグナル（upstream gone）に基づく機械的な条件だけで行い、曖昧なものは消さず報告する。
+description: マージ済みのローカルブランチと git worktree を掃除するときに使う。「ブランチ片付けて」「とっ散らかってる」「worktree 掃除して」「マージ済みブランチ消して」で発動する。取り込んだ直後の worktree の片付けには使わない（worktree-flow skill）。
 metadata:
   language: ja
 ---

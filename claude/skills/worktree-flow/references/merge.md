@@ -10,4 +10,4 @@ worktree-flow skill の SKILL.md から分けた手順。人間に差分を見�
 - マージの前に、その worktree の worker が止まっていること（`orca orchestration worker-show --dispatch <id>` が作業中でない、`orca worktree ps --json` の `agents[].state` が `working` でない）を確かめる。検証とレビューを済ませた commit の SHA を控えて `git merge --ff-only <その SHA>` でマージする。ブランチ名で merge すると、レビューのあとに worker が積んだ未検証の commit まで入る。マージ後は `git rev-parse main` がその SHA と一致することを読み直してから報告する
 - レビュー指摘の手直しは新 worker を立てず、同じ worker に `orca orchestration send --to dispatch:<id>` で続ける
 - 片付け: 取り込んだら、その worktree を消す。開発用のプラグインを外す → 未 commit と main に無い commit が無いことを確かめる → `orca worktree rm --worktree path:<path> --delete-branch`、の順で、手順の細部と担当の片付け方は [cleanup.md](cleanup.md)
-- 取りこぼしは夜の見回り（agent-harness の bin/worktree-sweep、launchd で 23:30）が拾う。開始時に【worktree】の行が出たら、取り込むか捨てるかを決めて消すか completed にする。今すぐ一覧を見るなら `worktree-sweep`（`--apply` なしは一覧だけ）。溜まったブランチの掃除は tidy-branches skill
+- 取りこぼしは夜の定期確認（agent-harness の bin/worktree-sweep、launchd で 23:30）が拾う。開始時に【worktree】の行が出たら、取り込むか捨てるかを決めて消すか completed にする。今すぐ一覧を見るなら `worktree-sweep`（`--apply` なしは一覧だけ）。溜まったブランチの掃除は tidy-branches skill

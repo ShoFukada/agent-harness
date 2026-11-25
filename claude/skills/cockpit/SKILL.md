@@ -1,6 +1,6 @@
 ---
 name: cockpit
-description: Orca のワークスペースのメインとして、操縦席（.orca/cockpit.json）を作る・更新し、深田が画面で押した操作（.orca/cockpit.user.json）を反映する。「操縦席を作って」「操縦席を更新して」「未反映の操作があります」「移し替えが要る」、セッションの開始・圧縮のあとに cwd に .orca/cockpit.json があるときに使う。担当と worker は使わない（操縦席を書かない）。
+description: Orca のワークスペースのメインが、操縦席（.orca/cockpit.json）を作る・更新する・深田が画面で押した操作を反映するときに使う。「操縦席を作って」「操縦席を更新して」「未反映の操作があります」「移し替えが要る」、セッションの開始・圧縮のあとに cwd に .orca/cockpit.json があるときに発動する。担当と worker は使わない。
 metadata:
   language: ja
 ---
@@ -30,18 +30,18 @@ metadata:
 - メインは、そのワークスペースで深田とやり取りする窓口。まとまった作業は担当と worker に出し、結果を取り込み、操縦席を最新に保つ
 - 操縦席を書くのはメインだけ。担当と worker は書かない（指示にもそう書く）。担当が深田に決めてほしいことは窓口に send で届き、窓口がカードにする
 - 深田の脳の資源は有限。エージェントが決められることは決め、決めたことは報告で共有する。深田がするのは、判断・許可・送信前・確認の 4 種類のカードへの返答と、停止への返事と、相談だけ。会話は担当のチャットで行う（カードの中に会話の欄は無い）
-- 深田が主に使うのは左のディスプレイの窓（`cockpit-window`）。タブは要対応（私の番を仕事ごとにまとめ、右に詳細を常に開く。下に件数に入らない「報告（参照のみ）」）・全体（仕事 → 工程 → タスク → worker の入れ子と、まだ済んでいない依頼）・対応済みの 3 つ。パネル（Orca の右のサイドバー）は前面の案件 1 つを同じ部品で出す
+- 深田が主に使うのは左のディスプレイの窓（`cockpit-window`）。タブは要対応（深田さんが応じるカードを仕事ごとにまとめ、右に詳細を常に開く。下に件数に入らない「報告（参照のみ）」）・全体（仕事 → 工程 → タスク → worker の入れ子と、まだ済んでいない依頼）・対応済みの 3 つ。パネル（Orca の右のサイドバー）は前面の案件 1 つを同じ部品で出す
 
 # ファイルと形の要点
 - すべてワークスペースの root の `.orca/` に置く（グローバルの gitignore で外してあるので、顧客のリポジトリにも置いてよい）。`cockpit.json`・`cockpit.archive.json`・`cockpit/figures/`・`cockpit/rulings.jsonl` はメインだけが書く。`cockpit.user.json` は画面だけ、`cockpit/utterances.jsonl`・`compactions.jsonl`・`keep.json`・`handoff.json`・`main-session.json` は hook と決まったコマンドだけが書く。`consult/<カード id>.md`（相談のメモ）はカードの相談だけが書き、`consult/ask-<質問 id>.md`（質問と答えの控え）と `ask-<質問 id>.returns.jsonl`（質問の返しの記録）は consult --ask と hook だけが書く。一覧は references/schema.md の「ファイル」
 - `cockpit.json` は書く道具 `cockpit-write` だけで書く（使い方は references/schema.md の「書く道具」）。型・参照・`rev`・仕分けを検査し、通らなければ書かずに理由を返す。Write・Edit で書くと hook が断る
-- 時刻（カードの `at`・`due`、依頼の `at`、作業メモの時刻）は、`date '+%Y-%m-%dT%H:%M:%S%z'` で今の時刻を取ってから書く。推し量って書かない（2026-11-21 に、窓口と担当の作業メモの時刻が実際より約 5 時間 20 分進んでいた）
+- 時刻（カードの `at`・`due`、依頼の `at`、作業メモの時刻）は、`date '+%Y-%m-%dT%H:%M:%S%z'` で今の時刻を取ってから書く。推し量って書かない（推し量った時刻は実際から何時間もずれることがある）
 - 必須の欄・工程・カードの種類とその値は references/schema.md の「cockpit.json の形」「カード」「必須の欄」が持ち、書く道具が入口で検査する。`workspace.name` の形は worktree-flow skill の references/sidebar.md の案件の行。ここには値を写さない
 - 仕事（`streams`）の下にタスク（`tasks`）とカード（`cards`）がぶら下がる。仕事には形 `form` を書き（下の「仕事の形」）、タスクは 1 つの仕事に入れて工程を 1 つ付ける。タスクの `state` は `open` と `ok` だけを書き、止まり・待ち・未着手は state.ts が事実（カード・操作・worker・`wait`・`after`・日付）から決める。深田を待つタスクはカードの `tasks` から指し、外の相手・出来事・日付・空き枠は `wait`、先に済む要るタスクは `after` に書く。書き方は references/schema.md の `tasks[]` と「タスクの今の決まり方」
 - カードの中身（選択肢・対象・本文・期限）を変えたら `rev` を 1 上げる。どのカードにも出た時刻 `at` を書く。確認依頼は、種類ごとの必須の欄がそろったものだけが窓に出る
 
 # 状態を読む
-カード・タスク・worker・深田の番・期限・仕事の今は、窓・パネル・hook と同じ判定（`~/.config/agent-harness/orca/plugins/cockpit/src/state.ts`）で決まる。メインも状態はこの出力で読み、cockpit.json の生の `state` を状態として信じない（2026-11-16 に、手書きの状態を数えて、済んだ依頼 2 件を作業中と思い込んだ）。
+カード・タスク・worker・深田の番・期限・仕事の今は、窓・パネル・hook と同じ判定（`~/.config/agent-harness/orca/plugins/cockpit/src/state.ts`）で決まる。メインも状態はこの出力で読み、cockpit.json の生の `state` を状態として信じない（手書きの状態を数えると、済んだ依頼を作業中と取り違える）。
 
 ```bash
 node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts <ワークスペースの root>
@@ -77,7 +77,7 @@ node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts <ワークス�
 
 - 判断・許可・送信前は、何のため（`purpose` と `stream`・`tasks`）と具体例（選択肢の `example`・`compare`・`figure`・`quote`・`draft` の実際の値）の両方を持たせる。片方を書けないカードは出さず、書けるまで調べる
 - 判断には `context` の 5 欄（`what`・`now`・`how`・`gain`・`cost`）、`fallback`、選択肢ごとの `example`、おすすめ 1 つの `recommended` を付ける。空の欄は hook が `checks.missing_context` で名指しする
-- 判断を頼むカードは、出す時点で関係するタスク（`tasks`）・実物へのリンク（`links`）・推す案（`recommended` と理由）をそろえる。深田に聞き返されてから足さない
+- 判断を頼むカードは、出す時点で関係するタスク（`tasks`）・実物へのリンク（`links`）・おすすめの案（`recommended` と理由）をそろえる。深田に聞き返されてから足さない
 - 依頼から起きたカードには、帳簿の依頼の id を `request_id` に書く。確認の `request` には依頼の原文を書く
 - 要素から成る提案・設計・計画を判断・確認で出すときは、`elements` を書いてから出す（references/cards.md の「承認の前に要素を固める」）
 - 文は硬めの業務文書の語調で書く（references/cards.md の「言葉づかい」。R50）

@@ -7,7 +7,7 @@ worktree-flow skill の SKILL.md から分けた細部。worker と担当を立�
 ## 階層と題
 | 階層 | 操縦席（cockpit.json） | 題の形 | Orca での名前と置き場所 | 実例（ハーネス） |
 |---|---|---|---|---|
-| 案件 | `workspace.name` | 「<顧客>｜<案件>」。社内の案件の顧客は「社内」（R165） | 本線の worktree。窓口のチャットの題は「<案件の役割> 窓口」 | 社内｜ハーネス／A社｜予約管理AI |
+| 案件 | `workspace.name` | 「<顧客>｜<案件>」。社内の案件の顧客は「社内」（R165） | 窓口の worktree。窓口のチャットの題は「<案件の役割> 窓口」 | 社内｜ハーネス／A社｜予約管理AI |
 | 仕事 | `streams[].title` | 名詞句、20 字まで | 担当がいれば担当の worktree。表示名とチャットの題は、頭に仕事の形を付けて「一緒に｜<成果物>」（一緒に作る）か「任せる｜<成果物>」（任せる）。見張る仕事のタブは「見張る｜<題>」（R163）。担当の頭は `orca-launch --lead` が仕事の形から付ける。あとで形を変えたら、同じターンで担当の表示名（`orca worktree set --display-name`）とチャットの題（`orca chat rename`）も新しい頭にする | 任せる｜窓の版3／一緒に｜操縦席の説明スライド |
 | タスク | `tasks[].title`・`phase` | 名詞句、20 字まで。工程は cockpit skill の references/schema.md の `tasks[].phase` から選ぶ | worker の worktree。表示名は「作業｜<タスクの題>」。親は仕事の担当の worktree（いなければ窓口の worktree） | 作業｜協議をチャットで開く（作成） |
 | worker | `tasks[].worker`（`run_id` と最初の Task の `task_id`） | 端末の題「作業｜<タスクの題>」 | worktree の comment を「<仕事の題> › <タスク id>｜<現在地>」にする | 操縦席の窓 › t69｜worker が作業中 |

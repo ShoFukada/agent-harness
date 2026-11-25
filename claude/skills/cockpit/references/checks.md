@@ -12,9 +12,9 @@
 | 状況の文が古い仕事 | `stale_status` | 次の cockpit-write で、その仕事の `status` を今の事実に合わせて書き直す。同じ文を渡し直すと書く道具が断る |
 | 開いた待ちと照らしていない知らせ | `unsorted_notices` | 待ちを解くなら、そのタスクの `wait.met` に `by` として書く。解かないなら `intake.no_wait` に足して `intake.notices_through` を進める |
 | 線を越えて動いていないタスク | `idle_tasks` | 止まっている理由（worker・担当の今）を確かめ、今やれるなら次の手を打つ。止めてよいのは外の理由があるときだけ（agents/common.md「判断」の「聞かずにやる」）で、そのときはタスクの `wait`（相手・出来事・日付・空き枠）か `after` を書く。深田の判断が要るなら判断のカードにする。hook は同じタスクの同じ止まりを 1 回だけ出す |
-| 要素の行き先（element_map）が欠けたカード | `unmapped_elements` | 要素の番号ごとに、タスク・依頼の済の条件・結ばない理由のどれかを書き、op の取り込みと同じ書き込みで渡す（references/cards.md「承認の前に要素を固める」） |
-| 証拠の無い済の条件が残る依頼 | `unproven` | 条件ごとに証拠（commit・URL・回答・操作）を結ぶ。条件を変えて済ませたなら、判断のカードに回す |
-| 見直していないタスク | `affected_tasks` | タスクの済の条件を直すか判断のカードに載せ、`reviewed_for` に判断の id を足す |
+| 要素の行き先（element_map）が欠けたカード | `unmapped_elements` | 要素の番号ごとに、タスク・依頼の完了条件・結ばない理由のどれかを書き、op の取り込みと同じ書き込みで渡す（references/cards.md「承認の前に要素を固める」） |
+| 証拠の無い完了条件が残る依頼 | `unproven` | 条件ごとに証拠（commit・URL・回答・操作）を結ぶ。条件を変えて済ませたなら、判断のカードに回す |
+| 見直していないタスク | `affected_tasks` | タスクの完了条件を直すか判断のカードに載せ、`reviewed_for` に判断の id を足す |
 | 反映していないカードの相談の返し | `unreflected_returns` | references/consult.md「カードの相談」の手順で、同じ return_id が記録と帳簿に無いかを見てから反映する |
 | 帳簿の直し | `periodic-reminder.sh` の `LEDGER_FIXES` | references/schema.md で検査の名前を引き、その欄の行のとおりに直す |
 | プラグインの古い写し（「orca plugin update」を含む行） | `plugin` | メインが `orca plugin update local.cockpit` を打つ。権限が増えて `approval_required` になったら、承認を深田に頼む許可のカードを出す |
@@ -22,7 +22,7 @@
 | 【見張り】止まっているもの | stallwatch の `alerts.json` | 原因を確かめて直す。深田にしか直せないもの（ログイン・承認）は、許可か判断のカードにして窓に出す |
 | ワークスペースの root に push していない commit・変更がある（一任あり） | `push_check`・`push_delegated` | 深田の変更も含めて中身を確かめ、窓口が commit・push して報告する。許可のカードは出さない |
 | ワークスペースの root に push していない commit・変更がある（一任なし） | `push_check` | 深田の変更も含めて中身を確かめ、`scope: "push"` の許可のカードにして窓に出す。深田が選んでから commit・push する（references/cards.md「push の許可」）。今回だけの許可は一任に数えない |
-| 【worktree】取り込むか捨てるかの判断が要る worktree | 夜の見回り（bin/worktree-sweep）の `sweep.json` | 取り込むか捨てるかを決める。残すなら `orca worktree set --worktree path:<path> --workspace-status completed` |
+| 【worktree】取り込むか捨てるかの判断が要る worktree | 夜の定期確認（bin/worktree-sweep）の `sweep.json` | 取り込むか捨てるかを決める。残すなら `orca worktree set --worktree path:<path> --workspace-status completed` |
 | 判断材料が欠けている判断のカード | `missing_context` | references/cards.md「判断材料（context）」の 5 欄を埋める |
 | cockpit.json が版 1 のまま（移し替えが要る） | — | 未反映の操作を反映してから、references/setup.md「移し替え」の手順で移す |
 
