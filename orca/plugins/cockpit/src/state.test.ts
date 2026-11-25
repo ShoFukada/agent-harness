@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -264,7 +264,7 @@ test('発言の仕分け: 相談・質問の返しで反映された発言（判
   const utterances = ['u1', 'u2', 'u3', 'u4', 'u5', 'u6'].map(u)
   w.cockpit.intake = { through: 'u1', none: ['u1'] }
   w.cockpit.requests = [{ id: 'q1', at: '', title: '', from_return: 'd1-2', source: { at: '', quote: '' }, kind: 'work', done_when: ['x'] }]
-  const consults = [{ card: 'd1', path: '/a/.orca/consult/d1.md', returns: [
+  const consults = [{ card: 'd1', path: '/a/.orca/consult/d1.md', returnsPath: '/a/.orca/consult/d1.returns.jsonl', returns: [
     { return_id: 'd1-1', decisions: [{ text: '図はこのまま', quote: 'このままで', utterance: 'u2' }], requests: [{ quote: '資料も直して', utterance: 'u3' }] },
     { return_id: 'd1-2', requests: [{ quote: '一覧も', utterance: 'u4' }] },
     { return_id: 'd1-3', decisions: [{ text: 'まだ', quote: 'まだ', utterance: 'u5' }] }
@@ -359,7 +359,10 @@ test('カードの相談: タブ（talk の terminal）が Orca にある間だ�
   assert.deepEqual(report(w.cockpit, back, [], facts([]), 'ok', NOW).talking, [])
 })
 
-/** 相談の返しの照合を試す操縦席。d21 は反映済み・帳簿だけ抜け・保留、d22 はメモの塊に card が無い。片付けて移したカードの保留はメモに無い。 */
+/**
+ * 相談の返しの照合を試す操縦席。d21 は反映済み・帳簿だけ抜け・保留、d22 は記録の行に card が無い。片付けて移したカードの保留は記録に無い。
+ * 返しは返しの記録（<カード id>.returns.jsonl）にあり、メモ（d21.md の古い塊）は読まない。
+ */
 function consultRoot(): string {
   const root = mkdtempSync(path.join(os.tmpdir(), 'cockpit-consult-'))
   const w = ws(0)
@@ -374,37 +377,53 @@ function consultRoot(): string {
   put('.orca/cockpit.json', JSON.stringify({ ...c, cards: [...c.cards, { id: 'd1', rev: 1, kind: 'decide', state: 'open', held_returns: ['d1-1'] }] }))
   put('.orca/cockpit.archive.json', JSON.stringify({ cards: [{ id: 'x9', rev: 1, kind: 'decide', state: 'done', title: '移したカード', held_returns: ['x9-1'] }] }))
   put('.orca/cockpit/rulings.jsonl', [{ id: 'R1', from_return: 'd21-1' }, { from_return: 'd21-2' }, { id: 'R3', from_return: 'd22-1' }, { id: 'R4' }].map((x) => JSON.stringify(x)).join('\n') + '\n')
-  const block = (v: unknown) => '```json\n' + JSON.stringify(v, null, 1) + '\n```\n'
-  put('.orca/consult/d21.md', ['# 相談｜案件A｜d21\n', '## 決めたこと\n', block({ return_id: 'd21-8', card: 'd21' }), '## 窓口に返したもの（時刻・message id）\n',
-    block({ return_id: 'd21-1', card: 'd21', rev: 1, decisions: [{ text: '入口は 1 つにする' }] }), block({ return_id: 'd21-2', card: 'd21', rev: 1 }), block({ return_id: 'd21-2', card: 'x' }),
-    '```json\n{ 書きかけ\n```\n', block({ card: 'd21' }), block({ return_id: 'd21-3', card: 'd21', rev: 1 }), '## 残っている論点\n', block({ return_id: 'd21-9', card: 'd21' })].join(''))
-  // 改行が CRLF のメモ・card が空の配列の塊・全角数字の連番も python と同じに読む（Codex 重大 4・軽微）。
-  put('.orca/consult/d22.md', ('## 窓口に返したもの\n' + block({ return_id: 'd22-1', rev: 2 }) + block({ return_id: 'd22-２', card: [] })).replace(/\n/g, '\r\n'))
+  const mark = { memo_imported: '2026-11-25T10:00:00+09:00', memo: '', skipped: [] }
+  const rows = (...xs: unknown[]) => xs.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join('\n') + '\n'
+  put('.orca/consult/d21.md', '# 相談｜案件A｜d21\n## 窓口に返したもの\n```json\n{"return_id": "d21-8", "card": "d21"}\n```\n')
+  put('.orca/consult/d21.returns.jsonl', rows(mark, { return_id: 'd21-1', card: 'd21', rev: 1, decisions: [{ text: '入口は 1 つにする' }] }, { return_id: 'd21-2', card: 'd21', rev: 1 },
+    { return_id: 'd21-2', card: 'x' }, '{ 書きかけ', { card: 'd21' }, ['配列'], { return_id: 'd21-3', card: 'd21', rev: 1 }))
+  // 改行が CRLF の記録・card が空の配列の行・全角数字の連番も python と同じに読む（Codex 重大 4・軽微）。
+  put('.orca/consult/d22.returns.jsonl', rows(mark, { return_id: 'd22-1', rev: 2 }, { return_id: 'd22-２', card: [] }).replace(/\n/g, '\r\n'))
   put('.orca/consult/c4.md', '# 返しはまだ無い\n')
   return root
 }
 
-test('相談の返し: メモにあって判断の記録か帳簿に無いものと保留を名指しする（同じ id は先の塊、節の外の塊と書きかけは読まない）', async () => {
+test('相談の返し: 返しの記録にあって判断の記録か帳簿に無いものと保留を名指しする（同じ id は先の行、書きかけと id の無い行は読まない。メモは読まない）', async () => {
   const root = consultRoot()
   const f = await loadFiles(root, emptyFiles())
   const memo = (card: string) => path.join(root, '.orca', 'consult', `${card}.md`)
+  const rets = (card: string) => path.join(root, '.orca', 'consult', `${card}.returns.jsonl`)
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), [
-    { id: 'd21-2', card: 'd21', missing: ['帳簿'], memo: memo('d21') },
-    { id: 'd21-3', card: 'd21', missing: ['判断の記録', '帳簿', '保留'], memo: memo('d21') },
-    { id: 'd22-1', card: 'd22', missing: ['帳簿'], memo: memo('d22') },
-    { id: 'd22-２', card: 'd22', missing: ['判断の記録', '帳簿'], memo: memo('d22') },
-    { id: 'd1-1', card: 'd1', missing: ['保留'], memo: null },
-    { id: 'x9-1', card: 'x9', missing: ['保留'], memo: null }
+    { id: 'd21-2', card: 'd21', missing: ['帳簿'], memo: memo('d21'), returns: rets('d21') },
+    { id: 'd21-3', card: 'd21', missing: ['判断の記録', '帳簿', '保留'], memo: memo('d21'), returns: rets('d21') },
+    { id: 'd22-1', card: 'd22', missing: ['帳簿'], memo: memo('d22'), returns: rets('d22') },
+    { id: 'd22-２', card: 'd22', missing: ['判断の記録', '帳簿'], memo: memo('d22'), returns: rets('d22') },
+    { id: 'd1-1', card: 'd1', missing: ['保留'], memo: null, returns: null },
+    { id: 'x9-1', card: 'x9', missing: ['保留'], memo: null, returns: null }
   ])
+  assert.deepEqual(f.consults.map((m) => [m.card, m.returns.length]), [['c4', 0], ['d21', 3], ['d22', 2]])
 })
 
 // 同じリポジトリの hook（compaction-keep.py unreflected）と同じ結果になること
 const KEEP = new URL('../../../../claude/hooks/compaction-keep.py', import.meta.url).pathname
+const pyUnreflected = (root: string) => JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
 test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結果', async () => {
   const root = consultRoot()
   const f = await loadFiles(root, emptyFiles())
-  const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
+  assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), pyUnreflected(root))
+})
+
+test('相談の返し: 切り替え前のメモの返しは compaction-keep.py が最初に読むときに記録へ取り込み、窓はそのあと記録から同じ結果を読む', async () => {
+  const root = consultRoot()
+  rmSync(path.join(root, '.orca/consult/d22.returns.jsonl'))
+  const block = (v: unknown) => '```json\n' + JSON.stringify(v, null, 1) + '\n```\n'
+  writeFileSync(path.join(root, '.orca/consult/d22.md'), '## 窓口に返したもの\n' + block({ return_id: 'd22-1', rev: 2 }) + block({ return_id: 'd22-5', card: 'd22', requests: [{ quote: '資料も', utterance: 'u-9' }] }))
+  assert.deepEqual((await loadFiles(root, emptyFiles())).consults.find((m) => m.card === 'd22')!.returns, [], '取り込む前の窓はメモを読まない')
+  const py = pyUnreflected(root)
+  const f = await loadFiles(root, emptyFiles())
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), py)
+  assert.deepEqual(py.filter((x: { card?: string }) => x.card === 'd22').map((x: { id: string }) => x.id), ['d22-1', 'd22-5'])
+  assert.deepEqual(f.consults.find((m) => m.card === 'd22')!.returns.at(-1)!.requests, [{ quote: '資料も', utterance: 'u-9' }])
 })
 
 /**
@@ -456,7 +475,7 @@ test('質問の返し: 帳簿・判断の記録・保留・担当への通知の
 test('質問の返し: compaction-keep.py unreflected <root> --json と同じ結果', async () => {
   const root = askRoot()
   const f = await loadFiles(root, emptyFiles())
-  const py = JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
+  const py = pyUnreflected(root)
   assert.ok(py.some((x: { ask?: string }) => x.ask), 'python が質問の分を出す版であること')
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults, { root, threads: f.asks, marks: f.askMarks, log: f.log, applied: f.cockpit!.applied_ops ?? [] }), py)
 })

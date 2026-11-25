@@ -339,8 +339,8 @@ export type Ruling = {
   scope?: string; allow?: boolean
 }
 /**
- * カードの相談が窓口に返したもの（相談のメモの「## 窓口に返したもの」の節の ```json の塊）。窓は読むだけで、反映は窓口が書く道具で行う。
- * card は塊に無ければメモのファイル名。
+ * カードの相談が窓口に返したもの（返しの記録 <カード id>.returns.jsonl の行。consult-return が番号を付けて書く）。窓は読むだけで、反映は窓口が書く道具で行う。
+ * card は行に無ければ記録のファイル名のカード。
  */
 export type ConsultReturn = {
   return_id: string; card?: unknown; rev?: number; choice?: string | null
@@ -348,8 +348,8 @@ export type ConsultReturn = {
 }
 /** 返しの照合に使う、帳簿と移したカードの生の欄（画面の形の検査で外したカードも含める。compaction-keep.py の ledger_cards と同じ）。 */
 export type ReturnMark = { id: unknown; from_returns?: unknown[]; held_returns?: unknown[] }
-/** 相談のメモ（<root>/.orca/consult/<カード id>.md）。path は絶対パス。 */
-export type ConsultMemo = { card: string; path: string; returns: ConsultReturn[] }
+/** カードの相談。path は相談のメモ（<root>/.orca/consult/<カード id>.md）、returnsPath は返しの記録（<カード id>.returns.jsonl）の絶対パス。 */
+export type ConsultMemo = { card: string; path: string; returnsPath: string; returns: ConsultReturn[] }
 export const ASK_ID = /^ask\d+$/
 /** 「これで決める」の op の item_id（#ask:<質問 id>）。orchestration の question の行（#ask:msg_…）とは id の形で分ける。 */
 export const askItem = (id: string) => `#ask:${id}`

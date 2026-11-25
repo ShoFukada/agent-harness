@@ -4,16 +4,16 @@ cockpit skill の SKILL.md から分けた手順。カードの相談や窓か�
 
 # カードの相談
 担当のいないカードで深田が「窓口と協議」を押すと、窓が `consult --card <root> <カード id>` でそのカード専用の相談を窓口の worktree に Orca のチャットで立てて前に出す（チャットで立たなければ Claude の端末のタブで立てる。2 回目は、端末なら同じタブを前に出し、チャットは CLI で前に出せないので handle を返すだけ。設計 10 章、R74）。相談は読むだけで、決まったことは窓口に「返し」として送る。決まったことが作業に反映されるのは、窓口が判断の記録と帳簿に書いたときだけ。
-- 帳簿の `main.run_id` に窓口の Run を書いておく（references/setup.md の「最初に作るとき」）。書かれていないと、相談は返しをメモに書くだけになり、窓口が開始・再開時に拾うまで届かない
-- 返しは `orca orchestration send` の知らせ（件名「相談 <カード id>: …」。本文の末尾に JSON）で届く。知らせが失われても、相談は送る前に、相談のメモ `.orca/consult/<カード id>.md` の「窓口に返したもの」に同じ JSON を書いており、hook が開始・再開・圧縮のあとに「反映していないカードの相談の返し」として名指しする（`~/.claude/hooks/compaction-keep.py unreflected <root>` でも出せる）
-- 返しの JSON: `{"return_id": "d21-1", "card": "d21", "rev": 3, "rulings_seen": "R80", "choice": "<選択肢の id か null>", "decisions": [{"text", "quote", "utterance"}], "requests": [{"quote", "utterance"}], "open": [...], "affects": ["t50"]}`。保留された返しを返し直すときは `"replaces": "<元の return_id>"` が付く
+- 帳簿の `main.run_id` に窓口の Run を書いておく（references/setup.md の「最初に作るとき」）。書かれていないと、返しは返しの記録に保存されるだけになり、窓口が開始・再開時に拾うまで届かない
+- 返しは `orca orchestration send` の知らせ（件名「相談 <カード id>: 返し <return_id>」。本文の末尾に JSON）で届く。相談は返しを `~/.claude/hooks/compaction-keep.py consult-return <root> <カード id>` に渡し、道具が return_id を付けて返しの記録 `.orca/consult/<カード id>.returns.jsonl` に保存してから送る。知らせが失われても、hook が開始・再開・圧縮のあとに、返しの記録から「反映していないカードの相談の返し」として名指しする（`~/.claude/hooks/compaction-keep.py unreflected <root>` でも出せる）。相談のメモ `.orca/consult/<カード id>.md` は人が読むメモで、窓口は返しをメモから探さない
+- 返しの JSON: `{"return_id": "d21-1", "card": "d21", "rev": 3, "rulings_seen": "R80", "choice": "<選択肢の id か null>", "decisions": [{"text", "quote", "utterance"}], "requests": [{"quote", "utterance"}], "open": [...], "affects": ["t50"]}`。return_id は道具が付ける（記録と判断の記録の `from_return` の最大の番号の次）。保留された返しを返し直すときは `"replaces": "<元の return_id>"` が付く（同じ `replaces` の返しは道具が 1 つにまとめ、同じ return_id で送り直す）
 - 相談中の深田の発言も、hook が発言の記録に `card` 付きで残す。ほかの発言と同じく仕分ける（references/intake.md の「受付と仕分け」）
 - 相談のタブへの知らせは、チャットでも端末でも `orca orchestration send --to <handle> --subject "相談 <カード id>: 知らせ" --body "<7 の書式の 1 文>"` で送る（経路の決まりは worktree-flow skill の references/notify.md「知らせの経路」）。本文は下の 7 の書式だけにする（書式が違うと、hook が深田の発言として記録する）。handle は talk の op の `terminal`（references/ops.md）
   - チャットは `orca_session_id:<id>`（`.orca/consult/chats.json` で、値の `card` がそのカードの id と一致するキー）。送り主の見出し付きで届く
   - 端末は `term_…`（`orca terminal list --worktree path:<root>` のタブ名「カード相談｜<案件名>｜<カード id>」）。Orca が `check` を打つよう差し込み、相談がそれで本文を読む
 
 返しを受けたら、次の順で反映する。帳簿のカードの `from_returns` に return_id を足すのが最後の書き込みで、これが反映し終えた印になる。
-1. 重複を見る: 帳簿のカードの `from_returns` にその return_id があれば反映済み。何も書かず、保留（カードの `held_returns`）に入っていれば 7 の差し戻しを、無ければ 7 の「反映済み」を送り直す。`from_returns` に無ければ、判断の記録に同じ `from_return` の行が一部あっても 2 から全部やり直す（`rule` は同じ返しの同じ判断を足さないので、書き損ねた判断だけが入る）。相談がメモに書き損ねた返しでも、届いた JSON で同じように反映する。`replaces` 付きの返しで、元の return_id がもう `held_returns` に無い（ほかの返し直しか画面の決定で片付いた）ときは、`choice` と `decisions` を反映せず、`requests` だけを照らして受け、5 の `none`・6 の `from_returns` を書いて「反映済み」を送る
+1. 重複を見る: 帳簿のカードの `from_returns` にその return_id があれば反映済み。何も書かず、保留（カードの `held_returns`）に入っていれば 7 の差し戻しを、無ければ 7 の「反映済み」を送り直す。`from_returns` に無ければ、判断の記録に同じ `from_return` の行が一部あっても 2 から全部やり直す（`rule` は同じ返しの同じ判断を足さないので、書き損ねた判断だけが入る）。返しの記録に無い返し（切り替え前に相談がメモに書き損ねたもの）でも、届いた JSON で同じように反映する。`replaces` 付きの返しで、元の return_id がもう `held_returns` に無い（ほかの返し直しか画面の決定で片付いた）ときは、`choice` と `decisions` を反映せず、`requests` だけを照らして受け、5 の `none`・6 の `from_returns` を書いて「反映済み」を送る
 2. 版を照らす: カードの今の `rev` と返しの `rev` が違えば、`choice` とこのカードについての `decisions` は反映しない（保留）。`requests` は版に関係なく、発言の id と原文で照らして受ける（同じ発言の同じ依頼が帳簿にあれば足さない）
 3. 増えた判断を確かめる: `compaction-keep.py consult-context <root> <カード id> --since <rulings_seen> --return <return_id>`（この返しから書いた行は除かれる）が「- なし」でなければ、`choice` と `decisions` は保留にする。途中まで書いて止まった前の試みで、この返しの判断がもう有効になっていれば、保留にするときに `revoke` で撤回する
 4. 食い違いを見る: `decisions` と `choice` を、同じコマンドから `--since` を省いた出力（このカード・仕事・タスクに関係する有効な判断）と照らす。食い違えば書かず、両方の原文を載せた判断のカードで深田に聞く
@@ -21,11 +21,11 @@ cockpit skill の SKILL.md から分けた手順。カードの相談や窓か�
 6. 帳簿に書く: 書く道具の 1 回で、カードの `from_returns` に return_id を足し、`choice` は判断の op（`decide`）と同じ扱いでカードを閉じるか `rev` を上げ、`open` はカードの `undecided` に、`requests` は新しい依頼（`utterances` に発言の id と原文、`from_return`）か既存の依頼への追記にする。保留にしたら、カードの `held_returns` に return_id を足す。返しに `replaces`（相談が返し直した元の return_id）があれば、その id を `held_returns` から外す。発言を仕分けたら `intake` も同じ 1 回で渡す
 7. 相談に知らせる（上の「相談のタブへの知らせ」の送り方で送る。下の書式だけを使う。ほかの書き方だと hook が深田の発言として記録する）
    - 反映した: `【相談の知らせ】反映済み <return_id>（<何を書いたか 1 行>）`
-   - 版違いで保留した: `【相談の知らせ】rev <n> に変わった。<return_id> の選択と判断は保留した。前提を読み直し、新しい return_id に replaces: <return_id> を付けて返して`
-   - 増えた判断で保留した: `【相談の知らせ】<R の id>（複数は・でつなぐ）が増えた。<return_id> の選択と判断は保留した。確かめて、新しい return_id に replaces: <return_id> を付けて返して`
-8. タブを閉じる: カードを片付けるときは `held_returns` を空にし、保留していた返しごとに「反映済み <return_id>（カードが片付いたので保留を解いた）」を送る。カードが片付き、`unreflected` にこのカードの返しが無い（保留も無い）ときだけ `orca terminal close --terminal <handle>` で閉じる。チャットは Orca の CLI で閉じられないので、閉じてよいことを深田に伝える。相談のメモは消さない
+   - 版違いで保留した: `【相談の知らせ】rev <n> に変わった。<return_id> の選択と判断は保留した。前提を読み直し、replaces: <return_id> を付けて返し直して`
+   - 増えた判断で保留した: `【相談の知らせ】<R の id>（複数は・でつなぐ）が増えた。<return_id> の選択と判断は保留した。確かめて、replaces: <return_id> を付けて返し直して`
+8. タブを閉じる: カードを片付けるときは `held_returns` を空にし、保留していた返しごとに「反映済み <return_id>（カードが片付いたので保留を解いた）」を送る。カードが片付き、`unreflected` にこのカードの返しが無い（保留も無い）ときだけ `orca terminal close --terminal <handle>` で閉じる。チャットは Orca の CLI で閉じられないので、閉じてよいことを深田に伝える。相談のメモと返しの記録は消さない
 
-`compaction-keep.py unreflected <root>` と state.ts の `checks.unreflected_returns`（`{ id: return_id, card, missing[] }`）は、相談のメモにあって 5 か 6 が済んでいない返し（`missing` に `判断の記録`・`帳簿`）と、保留のまま相談の返し直しを待つ返し（`保留`。差し戻しが届いていないかもしれないので 7 を送り直す）。`checks.stale_consults`（`{ id: カード id, terminal }`）はカードが片付いたのに残っている相談のタブ。hook が発言のたびに名指しするので、前者は上の手順で反映し、後者は 8 の条件を確かめて閉じる。
+`compaction-keep.py unreflected <root>` と state.ts の `checks.unreflected_returns`（`{ id: return_id, card, missing[], returns }`。`returns` は返しの記録のパスで、返しの本文はここから読む）は、返しの記録にあって 5 か 6 が済んでいない返し（`missing` に `判断の記録`・`帳簿`）と、保留のまま相談の返し直しを待つ返し（`保留`。差し戻しが届いていないかもしれないので 7 を送り直す）。`checks.stale_consults`（`{ id: カード id, terminal }`）はカードが片付いたのに残っている相談のタブ。hook が発言のたびに名指しするので、前者は上の手順で反映し、後者は 8 の条件を確かめて閉じる。
 
 # 窓から質問する
 深田が窓の質問の欄（やりとりのタブの一覧の上・カードとタスクの詳細の「〜について質問する」・全体のタブで仕事の名前を押した仕事の詳細）から聞くと、窓が `consult --ask <root> <質問 id> [--on-card <カード id>] [--on-task <タスク id>] [--on-stream <仕事 id>] --question <文>` で、窓口の会話を写した質問の相手（`claude --resume <窓口の会話> --fork-session`）を窓口の worktree のタブに立てる。タブは前に出さず、答えは窓のやりとりのタブの会話で読む（R219）。写しの会話は窓の「写しの会話を開く」を押したときだけ前に出る（設計 11 章、R105・R172）。同じ質問の続きは同じタブに送る。相手は Read・Grep・Glob しか使えず、帳簿・判断の記録・作業メモ・担当と worker への指示に触れない。窓口自身の会話は質問で長くならない。決まったことは、相手が答えの末尾に書いた `【窓口への返し】` の塊を hook が返しの記録に保存し、窓口の Run に知らせる。決まったことが作業に反映されるのは、窓口が判断の記録と帳簿に書き、担当と worker に伝えたときだけ。

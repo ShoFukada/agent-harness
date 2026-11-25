@@ -42,7 +42,7 @@ export type Files = {
   taskSeen: TaskSeen
   /** 判断の記録（.orca/cockpit/rulings.jsonl）の id と affects。見直していないタスクの検査に使う。 */
   rulings: Ruling[]
-  /** カードの相談のメモ（.orca/consult/*.md）と、その中の窓口への返し。 */
+  /** カードの相談（.orca/consult/ の相談のメモと返しの記録 <カード id>.returns.jsonl）と、記録にある窓口への返し。 */
   consults: ConsultMemo[]
   /** cockpit.json と cockpit.archive.json の生のカードの返しの印（形の崩れたカードも数える）。 */
   marks: ReturnMark[]
@@ -79,43 +79,34 @@ function returnMarks(text: string | undefined): ReturnMark[] {
 }
 
 /**
- * 相談のメモの「## 窓口に返したもの」の節にある ```json の塊のうち、return_id を持つもの（同じ id は先のもの）。
- * 読み方は compaction-keep.py の memo_returns と同じにする（checks.unreflected_returns を python と食い違わせないため）。
+ * カードの相談の返しの記録の行のうち、return_id を持つもの（同じ id は先の行）。切り替え前のメモから取り込んだ印の行など、return_id の無い行は飛ばす。
+ * 読み方は compaction-keep.py の valid_returns と同じにする（checks.unreflected_returns を python と食い違わせないため）。
  */
-export function memoReturns(raw: string): ConsultReturn[] {
-  // python はテキストの読み込みで改行を \n にそろえる。
-  const text = raw.replace(/\r\n?/g, '\n')
-  const head = /^## 窓口に返したもの[^\n]*\n/m.exec(text)
-  if (!head) return []
-  const rest = text.slice(head.index + head[0].length)
-  const end = /^## /m.exec(rest)
+export function consultReturns(text: string): ConsultReturn[] {
   const out = new Map<string, ConsultReturn>()
-  for (const m of (end ? rest.slice(0, end.index) : rest).matchAll(/```json[ \t]*\n([\s\S]*?)\n[ \t]*```/g)) {
-    try {
-      const v = JSON.parse(m[1]!) as unknown
-      if (typeof v === 'object' && v !== null && !Array.isArray(v) && typeof (v as ConsultReturn).return_id === 'string' && RETURN_ID.test((v as ConsultReturn).return_id) && !out.has((v as ConsultReturn).return_id))
-        out.set((v as ConsultReturn).return_id, v as ConsultReturn)
-    } catch {
-      // 書きかけの塊。
-    }
-  }
+  for (const v of parseAskReturns(text) as unknown as ConsultReturn[])
+    if (typeof v.return_id === 'string' && RETURN_ID.test(v.return_id) && !out.has(v.return_id)) out.set(v.return_id, v)
   return [...out.values()]
 }
 
-/** .orca/consult/*.md を名前の順に読む。置き場所が無ければ空。 */
+/**
+ * .orca/consult/ の <カード id>.md（相談のメモ）か <カード id>.returns.jsonl（返しの記録）のあるカードを、id の順に読む（compaction-keep.py の consult_cards と同じ）。
+ * 返しは記録だけから読む。切り替え前のメモの返しは compaction-keep.py が最初に読むときに記録へ取り込むので、窓はメモを読まない。置き場所が無ければ空。
+ */
 async function readConsults(root: string): Promise<ConsultMemo[]> {
   const dir = path.join(root, '.orca', 'consult')
   let names: string[]
   try {
-    names = (await fsp.readdir(dir)).filter((n) => n.endsWith('.md')).sort()
+    names = await fsp.readdir(dir)
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []
     throw e
   }
+  const cards = [...new Set(names.map((n) => /^([A-Za-z0-9_]+)\.(?:md|returns\.jsonl)$/.exec(n)?.[1]).filter((x): x is string => !!x))].sort()
   const out: ConsultMemo[] = []
-  for (const name of names) {
-    const text = await readInOrca(root, `.orca/consult/${name}`).catch(() => undefined)
-    if (text !== undefined) out.push({ card: name.slice(0, -3), path: path.join(dir, name), returns: memoReturns(text) })
+  for (const card of cards) {
+    const text = await readInOrca(root, `.orca/consult/${card}.returns.jsonl`).catch(() => undefined)
+    out.push({ card, path: path.join(dir, `${card}.md`), returnsPath: path.join(dir, `${card}.returns.jsonl`), returns: consultReturns(text ?? '') })
   }
   return out
 }

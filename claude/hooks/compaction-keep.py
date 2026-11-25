@@ -27,8 +27,10 @@ hook（標準入力に Claude Code の hook の JSON）:
   compaction-keep.py resume [root] < 答えの JSON     ⑥ 照合する。合わなければ exit 1
   compaction-keep.py consult-context root カード [--since R<n> [--return <return_id>]]  カードの相談の文脈の束
                                                      （--since は、その判断より後に増えた関係する判断だけ。--return の返しから書いた行は除く）
+  compaction-keep.py consult-return root カード < 返しの JSON  カードの相談の返しを、番号を付けて返しの記録 <カード id>.returns.jsonl に
+                                                     保存し、窓口の Run に送る（return_id と送信の結果を 1 行ずつ出す）
   compaction-keep.py ask-context root 質問 [--since R<n> [--return <return_id>]]  窓からの質問の文脈（--since は増えた判断だけ）
-  compaction-keep.py unreflected [root] [--json]     相談のメモと質問の返しの記録にあって、判断の記録か帳簿に入っていない返し・
+  compaction-keep.py unreflected [root] [--json]     カードの相談と質問の返しの記録にあって、判断の記録か帳簿に入っていない返し・
                                                      返しの無い「この答えを窓口に返す」・担当に伝えていない返し
 
 操縦席のあるワークスペースのメインだけに効く（periodic-reminder.sh の find_cockpit_root と同じ判定。相談スレッドでは動かない）。
@@ -47,6 +49,7 @@ SessionStart(compact) が文脈を流し直す（設計 11 章）。
 import contextlib
 import datetime
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -472,16 +475,26 @@ def done_decisions(c):
 
 # ---------- keep.json ----------
 
+_HELD = set()
+
+
 @contextlib.contextmanager
 def locked(root):
-    """keep.json の読み書きを 1 つずつにする（PostCompact と SessionStart(compact) は同時に走ることがある）。"""
+    """keep.json と返しの記録の読み書きを 1 つずつにする（PostCompact と SessionStart(compact) は同時に走ることがある）。
+    同じプロセスで取り直すと flock が自分を待って止まるので、持っている間の入れ子はそのまま通す。"""
     p = path_of(root, "keep.lock")
+    key = os.path.realpath(p)
+    if key in _HELD:
+        yield
+        return
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "a") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
+        _HELD.add(key)
         try:
             yield
         finally:
+            _HELD.discard(key)
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
@@ -764,52 +777,153 @@ def append_text(path, text):
 
 
 RETURN_BLOCK = re.compile(r"```json[ \t]*\n(.*?)\n[ \t]*```", re.S)
+# 返しの記録の行のうち、道具が足す欄（窓口に送る返しの JSON には入れない）
+RECORD_FIELDS = ("ask", "saved_at", "session", "reply", "imported_from")
+# 切り替え前のメモの返しを取り込み終えた印の行（return_id を持たないので、返しとしては読まれない）
+MEMO_MARK = "memo_imported"
+CONSULT_FILE = re.compile(r"([A-Za-z0-9_]+)\.(?:md|returns\.jsonl)")
 
 
-def memo_returns(text):
-    """相談のメモの「## 窓口に返したもの」の節にある ```json の塊のうち、return_id を持つもの（相談スレッドが送る前に書く）。"""
+def card_returns_path(root, card_id):
+    """カードの相談の返しの記録（正本）。consult-return が 1 行ずつ足す。窓口・state.ts は返しをここだけから読む。"""
+    return os.path.join(root, ".orca", "consult", "%s.returns.jsonl" % card_id)
+
+
+def memo_blocks(text):
+    """切り替え前の相談のメモの「## 窓口に返したもの」の節にある ```json の塊のうち、return_id を持つもの（同じ id も全部、書いた順）。"""
     m = re.search(r"^## 窓口に返したもの[^\n]*\n(.*?)(?=^## |\Z)", text or "", re.S | re.M)
-    out = {}
+    out = []
     for block in RETURN_BLOCK.findall(m.group(1) if m else ""):
         try:
             v = json.loads(block)
         except ValueError:
             continue
         if isinstance(v, dict) and isinstance(v.get("return_id"), str) and RETURN_ID.fullmatch(v["return_id"]):
-            out.setdefault(v["return_id"], v)
+            out.append(v)
+    return out
+
+
+def import_memo(root, card_id, rows):
+    """切り替え前のメモの返しを返しの記録に足し、取り込んだ印の行を書く（呼ぶ側が locked(root) を持つ）。
+    同じ return_id の返しが記録かメモの前の塊に中身違いであれば、取り込まずに理由を印の行に残して標準エラーに出す。"""
+    memo, path = consult_memo_path(root, card_id), card_returns_path(root, card_id)
+    try:
+        with open(memo, encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        text = ""
+    # ほかの読み取りの誤り（権限など）は印を書かずに上げる。空として印を書くと、直したあとも取り込まれない
+    have = {r["return_id"]: r for r in valid_returns(rows)}
+    body = lambda r: {k: v for k, v in r.items() if k not in RECORD_FIELDS}
+    added, skipped = [], []
+    for v in memo_blocks(text):
+        v = {**v, "card": v.get("card") or card_id}
+        old = have.get(v["return_id"])
+        if old is None:
+            row = {**v, "imported_from": memo, "saved_at": iso()}
+            have[v["return_id"]] = row
+            added.append(row)
+        elif body(old) != body(v):
+            why = "return_id %s は返しの記録に中身の違う返しがあるので、メモの塊を取り込まなかった" % v["return_id"]
+            skipped.append({"return_id": v["return_id"], "why": why})
+            print("compaction-keep: %s（%s）" % (why, memo), file=sys.stderr)
+    mark = {MEMO_MARK: iso(), "memo": memo, "skipped": skipped}
+    for row in added + [mark]:
+        append_jsonl(path, row)
+    return added + [mark]
+
+
+def card_returns(root, card_id):
+    """カードの相談の返しの記録の全部の行。切り替え前のメモの返しは、最初に読むときにロックの中で 1 回だけ取り込む。"""
+    path = card_returns_path(root, card_id)
+    rows = read_jsonl(path)
+    if any(MEMO_MARK in r for r in rows):
+        return rows
+    with locked(root):
+        rows = read_jsonl(path)
+        if not any(MEMO_MARK in r for r in rows):
+            rows += import_memo(root, card_id, rows)
+    return rows
+
+
+def valid_returns(rows):
+    """記録の行のうち、return_id のある返し（同じ id は先の行）。"""
+    out = {}
+    for r in rows:
+        if isinstance(r.get("return_id"), str) and RETURN_ID.fullmatch(r["return_id"]):
+            out.setdefault(r["return_id"], r)
     return list(out.values())
 
 
-def unreflected_returns(root):
-    """相談のメモにあって、判断の記録の from_return か帳簿のカードの from_returns のどちらかに無い返し（設計 10.7 の 1）と、
-    窓口が版違い・増えた判断で保留にした返し（カードの held_returns。相談が返し直すまで残す）。
-    形は state.ts の checks.unreflected_returns と同じ { id, card, missing[], memo }。missing は 判断の記録・帳簿・保留。"""
-    folder = os.path.join(root, ".orca", "consult")
+def consult_cards(root):
+    """相談のメモか返しの記録のあるカードの id（名前の順）。"""
     try:
-        names = sorted(n for n in os.listdir(folder) if n.endswith(".md"))
+        names = os.listdir(os.path.join(root, ".orca", "consult"))
     except OSError:
-        names = []
+        return []
+    return sorted({m.group(1) for n in names for m in [CONSULT_FILE.fullmatch(n)] if m})
+
+
+def unreflected_returns(root):
+    """カードの相談の返しの記録にあって、判断の記録の from_return か帳簿のカードの from_returns のどちらかに無い返し（設計 10.7 の 1）と、
+    窓口が版違い・増えた判断で保留にした返し（カードの held_returns。相談が返し直すまで残す）。
+    形は state.ts の checks.unreflected_returns と同じ { id, card, missing[], memo, returns }。missing は 判断の記録・帳簿・保留。"""
     in_rulings = {r.get("from_return") for r in rulings(root)}
     in_ledger = {x for card in ledger_cards(root) if isinstance(card.get("from_returns"), list) for x in card["from_returns"]}
     # 片付いた・移したカードの保留も数える（窓口が片付けるときに held_returns を空にするまで残す）
     held = {x: card.get("id") for card in ledger_cards(root) if isinstance(card.get("held_returns"), list) for x in card["held_returns"]}
     out = []
-    for name in names:
-        path = os.path.join(folder, name)
-        try:
-            with open(path, encoding="utf-8") as fh:
-                text = fh.read()
-        except OSError:
-            continue
-        for v in memo_returns(text):
+    for card_id in consult_cards(root):
+        for v in valid_returns(card_returns(root, card_id)):
             missing = [label for label, have in (("判断の記録", in_rulings), ("帳簿", in_ledger)) if v["return_id"] not in have]
             missing += ["保留"] if v["return_id"] in held else []
             if missing:
-                out.append({"id": v["return_id"], "card": v.get("card") or name[:-3], "missing": missing, "memo": path})
-    # 相談がメモに書き損ねた返しでも、保留にしたものは相談が返し直すまで名指しする
+                out.append({"id": v["return_id"], "card": v.get("card") or card_id, "missing": missing,
+                            "memo": consult_memo_path(root, card_id), "returns": card_returns_path(root, card_id)})
     named = {x["id"] for x in out}
-    out += [{"id": x, "card": c, "missing": ["保留"], "memo": None} for x, c in sorted(held.items()) if x not in named]
+    out += [{"id": x, "card": c, "missing": ["保留"], "memo": None, "returns": None} for x, c in sorted(held.items()) if x not in named]
     return out + unreflected_asks(root, in_rulings)
+
+
+def same_return(rows, ret, reply=None):
+    """既にある返しのうち、因果の鍵（同じ replaces・同じ op・同じ返事）で ret と同じもの。本文の一致では見ない（言い換えた返し直しで番号が増えないように）。"""
+    for r in valid_returns(rows):
+        # 返し直しは同じ replaces の返しとだけ比べる（元の返しと同じ op を持っていても、直した中身を捨てない）
+        if ret.get("replaces"):
+            if r.get("replaces") == ret["replaces"]:
+                return r
+            continue
+        if ret.get("op") is not None and r.get("op") is not None and str(r["op"]) == str(ret["op"]):
+            return r
+        if reply and r.get("reply") == reply:
+            return r
+    return None
+
+
+def next_return_id(root, owner, rows):
+    """<カード id か質問 id>-<n>。n は記録（取り込めなかったメモの番号も）と判断の記録の from_return の最大に 1 を足す。"""
+    pat = re.compile(r"%s-(\d+)" % re.escape(owner))
+    ids = [r.get("return_id") for r in rows]
+    ids += [s.get("return_id") for r in rows if MEMO_MARK in r and isinstance(r.get("skipped"), list) for s in r["skipped"] if isinstance(s, dict)]
+    ids += [r.get("from_return") for r in rulings(root)]
+    n = max([int(m.group(1)) for x in ids if isinstance(x, str) for m in [pat.fullmatch(x)] if m] + [0])
+    return "%s-%d" % (owner, n + 1)
+
+
+def save_return(root, owner, ret, is_ask, **extra):
+    """返しを記録に保存する。カードの相談（consult-return）と質問（Stop の hook）の両方がここを通る。
+    ロックの中で、既にある返しとの照合 → 採番 → 追記をする。入力の return_id は使わず、道具が付ける。
+    (保存した行か既にあった行, 新しく足したか) を返す。送るのは呼ぶ側で、ロックを外してから。"""
+    path = ask_returns_path(root, owner) if is_ask else card_returns_path(root, owner)
+    with locked(root):
+        rows = read_jsonl(path) if is_ask else card_returns(root, owner)
+        old = same_return(rows, ret, extra.get("reply"))
+        if old is not None:
+            return old, False
+        row = {"return_id": next_return_id(root, owner, rows), **{k: v for k, v in ret.items() if k != "return_id"},
+               **{k: v for k, v in extra.items() if v}, "saved_at": iso()}
+        append_jsonl(path, row)
+    return row, True
 
 
 def unreflected_lines(root):
@@ -819,7 +933,7 @@ def unreflected_lines(root):
 
     def line(x):
         if "ask" not in x:
-            return "- %s（カード %s。無いもの: %s。メモ: %s）" % (x["id"], x["card"], "・".join(x["missing"]), x["memo"] or "無い")
+            return "- %s（カード %s。無いもの: %s。返しの記録: %s）" % (x["id"], x["card"], "・".join(x["missing"]), x["returns"] or "無い")
         if x.get("op") is not None:
             return "- 質問 %s の「この答えを窓口に返す」（op %s）に結ばれた返しが無い。質問のタブに返しを頼み直すか、答えの控え %s から窓口が反映して op を applied_ops に足す" % (
                 x["ask"], x["op"], x["memo"])
@@ -988,9 +1102,24 @@ def reply_return(text, ask_id, ops=None):
         return None, "【窓口への返し】の JSON を読めない（%s）" % e
     if not isinstance(v, dict):
         return None, "【窓口への返し】は JSON のオブジェクト 1 つ"
-    rid = v.get("return_id")
-    if not (isinstance(rid, str) and re.fullmatch(r"%s-\d+" % re.escape(ask_id), rid)):
-        return None, "return_id は %s-<連番>（ask の id にハイフンと数）" % ask_id
+    return check_return(v, ask_id, True, ops)
+
+
+def check_return(v, owner, ask, ops=None):
+    """(返し, 断る理由)。質問の返し（owner が質問 id）とカードの相談の返し（owner がカード id）の形を同じ規則で確かめる。
+    return_id は書かなくてよく、書いてあっても外す（番号は save_return が付ける。相手が推し量った番号で衝突しないように）。"""
+    # 道具が付ける欄と取り込みの印の欄は、相手が書いても使わない
+    v = {k: x for k, x in v.items() if k not in ("return_id", MEMO_MARK, "skipped") + RECORD_FIELDS}
+    if not ask:
+        if v.get("card") not in (None, owner):
+            return None, "card は相談しているカードの id（%s）" % owner
+        v["card"] = owner
+        if not (isinstance(v.get("rev"), int) and not isinstance(v["rev"], bool)):
+            return None, "rev に前提にしたカードの rev（数）を書く"
+        if not (v.get("choice") is None or isinstance(v["choice"], str)):
+            return None, "choice は選んだ選択肢の id か null"
+    if "replaces" in v and not (isinstance(v["replaces"], str) and re.fullmatch(r"%s-\d+" % re.escape(owner), v["replaces"])):
+        return None, "replaces は保留された返しの return_id（%s-<連番>）" % owner
     if not (isinstance(v.get("rulings_seen"), str) and re.fullmatch(r"R\d+", v["rulings_seen"])):
         return None, "rulings_seen に、読んだ最後の判断の id（R80 の形）を書く"
     for key in ("decisions", "requests", "open", "affects"):
@@ -1006,14 +1135,23 @@ def reply_return(text, ask_id, ops=None):
             return None, "requests の各項目は quote（依頼の原文）・utterance（発言の id u-12）を持つ"
     if not all(isinstance(x, str) and x for x in (v.get("open") or []) + (v.get("affects") or [])):
         return None, "open は論点の文、affects はタスクの id の配列"
-    if not (v.get("decisions") or v.get("requests") or v.get("open")):
-        return None, "decisions・requests・open のどれも空。決まったことが無ければ【窓口への返し】を書かない"
+    if not (v.get("decisions") or v.get("requests") or v.get("open") or (not ask and v.get("choice"))):
+        return None, "decisions・requests・open のどれも空。決まったことが無ければ返さない"
     if v.get("op") is not None:
-        # 別の質問の「この答えを窓口に返す」や、役割の例の番号をそのまま書いた返しで、その op が片付いたことにしない（Codex の指摘 1）
-        mine = {str(o.get("op_id")) for o in ops or [] if isinstance(o, dict) and o.get("type") == "ask_decide" and o.get("item_id") == "#ask:" + ask_id}
+        # 別の質問・カードの op や、役割の例の番号をそのまま書いた返しで、その op が片付いたことにしない
+        item = "#ask:" + owner if ask else owner
+        mine = {str(o.get("op_id")) for o in ops or [] if isinstance(o, dict) and o.get("item_id") == item and (not ask or o.get("type") == "ask_decide")}
         if str(v["op"]) not in mine:
-            return None, "op %s はこの質問（%s）の「この答えを窓口に返す」ではない。【相談の知らせ】返しを書いて（op <番号>）で届いた番号だけを書き、届いていなければ op を書かない" % (v["op"], ask_id)
+            if ask:
+                return None, "op %s はこの質問（%s）の「この答えを窓口に返す」ではない。【相談の知らせ】返しを書いて（op <番号>）で届いた番号だけを書き、届いていなければ op を書かない" % (v["op"], owner)
+            return None, "op %s はこのカード（%s）の操作ではない。届いた op の番号だけを書き、届いていなければ op を書かない" % (v["op"], owner)
     return v, None
+
+
+def reply_key(inp, text):
+    """同じ返事を Stop が 2 回処理したと見分ける鍵（会話 id と返事）。hook の入力は返事の message id を持たず、会話の記録の最後の行は
+    Stop の時点でまだ書かれていないことがあるので、返事の本文の要約値を message id の代わりにする。"""
+    return "%s#%s" % (inp.get("session_id") or "", hashlib.sha256(text.encode("utf-8")).hexdigest()[:16])
 
 
 def on_ask_stop(root, ask_id, inp):
@@ -1025,39 +1163,62 @@ def on_ask_stop(root, ask_id, inp):
     # 返しの形で差し戻して書き直させた返事（stop_hook_active）も、深田さんが見る最後の答えなので控えに足す
     append_text(ask_memo_path(root, ask_id), "### 答え %s\n%s\n\n" % (now().strftime("%H:%M"), escape_sections(text)))
     ret, err = reply_return(text, ask_id, read_json(os.path.join(root, ".orca", "cockpit.user.json"), {}).get("ops"))
-    path = ask_returns_path(root, ask_id)
     if ret:
-        with locked(root):
-            have = {r.get("return_id"): r for r in read_jsonl(path)}
-            old = have.get(ret["return_id"])
-            strip = lambda r: {k: v for k, v in r.items() if k not in ("ask", "saved_at", "session")}
-            if old is None:
-                append_jsonl(path, {**ret, "ask": ask_id, "saved_at": iso(), "session": inp.get("session_id") or ""})
-            elif strip(old) != strip(ret):
-                err = "return_id %s は使い済み（中身が違う）。使っていない次の番号で書き直す" % ret["return_id"]
-        if old is None:
-            notify_main(root, ask_id, ret)
+        row, added = save_return(root, ask_id, ret, True, ask=ask_id, session=inp.get("session_id") or "", reply=reply_key(inp, text))
+        if added:
+            notify_main(root, ask_id, row, True)
     if err and not inp.get("stop_hook_active"):
         out({"decision": "block", "reason": "【質問】返しを保存できなかった: %s。役割の「窓口への返し」の形で、返事の末尾に書き直す" % err})
 
 
-def notify_main(root, ask_id, ret):
-    """新しい返しを窓口の Run に知らせる。知らせは受け取りを早めるためだけで、失われても窓口は返しの記録から拾う（unreflected）。"""
+def sent_id(stdout):
+    """orchestration send --json の出力から、送った message の id。形が読めなければ None。"""
+    try:
+        v = json.loads(stdout)
+    except ValueError:
+        return None
+    stack = [v]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            for k in ("messageId", "message_id", "id"):
+                if isinstance(x.get(k), str) and (k != "id" or x[k].startswith("msg")):
+                    return x[k]
+            stack += list(x.values())
+        elif isinstance(x, list):
+            stack += x
+    return None
+
+
+def notify_main(root, owner, row, ask):
+    """保存した返しを窓口の Run に知らせる。(message の id, 送れなかった理由)。知らせは受け取りを早めるためだけで、
+    失われても窓口は返しの記録から拾う（unreflected）。"""
+    rid = row["return_id"]
     run = (cockpit(root).get("main") or {}).get("run_id")
     if not run:
-        return
+        return None, "窓口の Run が帳簿（main.run_id）に無い。窓口は開始・再開のときに返しの記録から拾う"
+    ret = {k: v for k, v in row.items() if k not in RECORD_FIELDS}
     said = [norm(d.get("text")) for d in ret.get("decisions") or [] if isinstance(d, dict)]
-    body = "\n".join(["質問 %s の相手が返しを書いた（hook が %s に保存）。cockpit skill の「窓から質問する」の手順で反映する。" % (ask_id, ask_returns_path(root, ask_id))]
-                     + ["- " + s for s in said] + [json.dumps(ret, ensure_ascii=False)])
-    head = ["--from", os.environ["ORCA_TERMINAL_HANDLE"]] if os.environ.get("ORCA_TERMINAL_HANDLE") else []
+    if ask:
+        subject = "質問 %s: 返し %s" % (owner, rid)
+        head = "質問 %s の相手が返しを書いた（hook が %s に保存）。cockpit skill の「窓から質問する」の手順で反映する。" % (owner, ask_returns_path(root, owner))
+    else:
+        subject = "相談 %s: 返し %s" % (owner, rid)
+        head = "カード %s の相談が返しを書いた（consult-return が %s に保存）。cockpit skill の「カードの相談」の手順で反映する。" % (owner, card_returns_path(root, owner))
+    body = "\n".join([head] + ["- " + s for s in said] + [json.dumps(ret, ensure_ascii=False)])
+    frm = ["--from", os.environ["ORCA_TERMINAL_HANDLE"]] if os.environ.get("ORCA_TERMINAL_HANDLE") else []
     try:
-        done = subprocess.run([orca_bin(), "orchestration", "send", "--to", "run:" + run, *head, "--type", "status",
-                               "--subject", "質問 %s: 返し %s" % (ask_id, ret["return_id"]), "--body", body, "--json"],
+        done = subprocess.run([orca_bin(), "orchestration", "send", "--to", "run:" + run, *frm, "--type", "status",
+                               "--subject", subject, "--body", body, "--json"],
                               capture_output=True, text=True, timeout=10)
-        if done.returncode != 0:
-            print("compaction-keep: 返し %s を窓口に知らせられなかった: %s" % (ret["return_id"], (done.stderr or done.stdout).strip()[:200]), file=sys.stderr)
     except (OSError, subprocess.TimeoutExpired) as e:
-        print("compaction-keep: 返し %s を窓口に知らせられなかった: %s" % (ret["return_id"], e), file=sys.stderr)
+        why = str(e)
+    else:
+        if done.returncode == 0:
+            return sent_id(done.stdout), None
+        why = (done.stderr or done.stdout).strip()[:200]
+    print("compaction-keep: 返し %s を窓口に知らせられなかった: %s" % (rid, why), file=sys.stderr)
+    return None, why
 
 
 def on_ask_session_start(root, ask_id, inp):
@@ -1227,7 +1388,10 @@ def start_context(head, args):
         except (OSError, ValueError) as e:
             blocks.append(("\n【記録】有効な制約を読み出せなかった（%s）。%s rulings %s constraint で出せる" % (e, KEEPER, root), None, 0))
         blocks.append(("\n".join(slot_lines(root)), "%s slots %s" % (KEEPER, root), 1))
-        left = unreflected_lines(root)
+        try:
+            left = unreflected_lines(root)
+        except OSError as e:
+            left = ["", "【記録】反映していない返しを読み出せなかった（%s）。%s unreflected %s で出せる" % (e, KEEPER, root)]
         if left:
             blocks.append(("\n".join(left), "%s unreflected %s" % (KEEPER, root), 1))
     return fit(blocks)
@@ -2022,6 +2186,31 @@ def tool(argv):
             new = [r for r in related_rulings(rulings(root), rest[1], stream, tasks, since) if not own or r.get("from_return") != own]
             print("\n".join("- " + ruling_line(r) for r in new) or "- なし")
         return
+    if cmd == "consult-return":
+        if len(rest) < 2 or not CARD_ID.fullmatch(rest[1]):
+            sys.exit("compaction-keep: consult-return <root> <カード id> < 返しの JSON")
+        if find_card(root, rest[1]) is None:
+            sys.exit("compaction-keep: カード %s が帳簿に無い" % rest[1])
+        try:
+            data = json.loads(sys.stdin.read())
+        except ValueError as e:
+            sys.exit("compaction-keep: 返しの JSON を読めない: %s" % e)
+        if not isinstance(data, dict):
+            sys.exit("compaction-keep: 返しは JSON のオブジェクト 1 つ")
+        ret, err = check_return(data, rest[1], False, read_json(os.path.join(root, ".orca", "cockpit.user.json"), {}).get("ops"))
+        if err:
+            sys.exit("compaction-keep: 返しを保存しなかった: %s" % err)
+        try:
+            row, added = save_return(root, rest[1], ret, False, session=session)
+        except OSError as e:
+            sys.exit("compaction-keep: 返しを保存できなかった: %s" % e)
+        if not added:
+            print("compaction-keep: 同じ%sの返し %s が保存済みなので、新しい番号を付けずに送り直す" % (
+                "差し戻し（replaces %s）" % ret["replaces"] if ret.get("replaces") else "op", row["return_id"]), file=sys.stderr)
+        print("return_id %s" % row["return_id"])
+        mid, why = notify_main(root, rest[1], row, False)
+        print("message %s" % mid if mid else "送った（message の id は読めなかった）" if not why else "送れなかった: %s" % why)
+        return
     if cmd == "ask-context":
         if len(rest) < 2 or not ASK_ID.fullmatch(rest[1]):
             sys.exit("compaction-keep: ask-context <root> <質問 id（ask3）> [--since R<n> [--return <return_id>]]")
@@ -2032,7 +2221,10 @@ def tool(argv):
             sys.exit("compaction-keep: %s" % e)
         return
     if cmd == "unreflected":
-        left = unreflected_returns(root)
+        try:
+            left = unreflected_returns(root)
+        except OSError as e:
+            sys.exit("compaction-keep: 返しの記録を読めない: %s" % e)
         if "--json" in argv:
             print(json.dumps(left, ensure_ascii=False))
         else:
@@ -2080,7 +2272,7 @@ def tool(argv):
         if failures >= 2:
             print("2 回続けて合わないため、その日の最初の発言の前に新しいチャットへ引き継ぎます（それまではこのチャットで、読み直してから進める）")
         sys.exit(1)
-    sys.exit("compaction-keep: 知らないコマンド %s（rule / rulings / slots / relay / resume / consult-context / ask-context / unreflected）" % cmd)
+    sys.exit("compaction-keep: 知らないコマンド %s（rule / rulings / slots / relay / resume / consult-context / consult-return / ask-context / unreflected）" % cmd)
 
 
 if __name__ == "__main__":

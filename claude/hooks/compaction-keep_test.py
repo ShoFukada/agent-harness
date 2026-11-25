@@ -1227,8 +1227,8 @@ class LedgerGuard(Base):
         self.assertEqual(self.hook("Stop", env=self.on(COCKPIT_STATE=os.path.join(self.root, "none.js")), last_assistant_message="はい"), "")
 
 
-class ConsultCard(Base):
-    """カードの相談（claude/bin/consult --card が CONSULT_CARD を付けて立てる端末）の発言の記録・流し込み・返しの照合（設計 10.3・10.7）。"""
+class ConsultBase(Base):
+    """カードの相談のテストの操縦席（d21 と、関係する判断・しない判断 R1〜R6）と道具。"""
 
     def setUp(self):
         super().setUp()
@@ -1254,6 +1254,24 @@ class ConsultCard(Base):
 
     def launch(self, seen="R6", rev=1):
         return self.say("【相談の知らせ】カードの相談を始める\nrev: %d\nrulings_seen: %s\n本文" % (rev, seen))
+
+    def write_memo(self, *returns):
+        os.makedirs(os.path.join(self.root, ".orca", "consult"), exist_ok=True)
+        body = "".join("### %s（送った）\n```json\n%s\n```\n" % (r["return_id"], json.dumps(r, ensure_ascii=False)) for r in returns)
+        with open(os.path.join(self.root, ".orca", "consult", "d21.md"), "w", encoding="utf-8") as fh:
+            fh.write("# 相談｜テスト｜d21\n## 決めたこと\n```json\n{\"return_id\": \"d21-9\"}\n```\n## 窓口に返したもの\n" + body + "## 残っている論点\n")
+
+    def unreflected(self):
+        done = self.tool_args("unreflected", "--json")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return {x["id"]: x["missing"] for x in json.loads(done.stdout)}
+
+    def tool_args(self, *args):
+        return subprocess.run([HOOK, args[0], self.root, *args[1:]], text=True, capture_output=True, env=self.env())
+
+
+class ConsultCard(ConsultBase):
+    """カードの相談（claude/bin/consult --card が CONSULT_CARD を付けて立てる端末）の発言の記録・流し込み・返しの照合（設計 10.3・10.7）。"""
 
     def test_her_words_in_the_consult_are_recorded_with_the_card_without_the_main_role(self):
         self.launch()
@@ -1396,17 +1414,6 @@ class ConsultCard(Base):
         got = json.loads(subprocess.run(["node", fake, self.root], capture_output=True, text=True, check=True).stdout)["checks"]["unsorted"]
         self.assertEqual(sorted(got), sorted(u["id"] for u in rows if u.get("card") == "d21"))
 
-    def write_memo(self, *returns):
-        os.makedirs(os.path.join(self.root, ".orca", "consult"), exist_ok=True)
-        body = "".join("### %s（送った）\n```json\n%s\n```\n" % (r["return_id"], json.dumps(r, ensure_ascii=False)) for r in returns)
-        with open(os.path.join(self.root, ".orca", "consult", "d21.md"), "w", encoding="utf-8") as fh:
-            fh.write("# 相談｜テスト｜d21\n## 決めたこと\n```json\n{\"return_id\": \"d21-9\"}\n```\n## 窓口に返したもの\n" + body + "## 残っている論点\n")
-
-    def unreflected(self):
-        done = self.tool_args("unreflected", "--json")
-        self.assertEqual(done.returncode, 0, done.stderr)
-        return {x["id"]: x["missing"] for x in json.loads(done.stdout)}
-
     def test_a_return_stays_unreflected_until_both_the_rulings_and_the_ledger_have_it(self):
         ret = {"return_id": "d21-1", "card": "d21", "rev": 1, "rulings_seen": "R6", "choice": None,
                "decisions": [{"text": "凡例は 6 つ", "quote": "6 つでいい", "utterance": "u-3"}], "requests": [], "open": [], "affects": []}
@@ -1494,8 +1501,263 @@ class ConsultCard(Base):
         self.assertIn("全文は 帳簿の依頼 r30 の done_when[0]", text)
         self.assertIn("R2 [decision] d21 の凡例は 6 つまで", text)
 
-    def tool_args(self, *args):
-        return subprocess.run([HOOK, args[0], self.root, *args[1:]], text=True, capture_output=True, env=self.env())
+
+class ReturnRecord(ConsultBase):
+    """カードの相談の返しの記録（.orca/consult/<カード id>.returns.jsonl）と consult-return。
+    窓口の反映は cockpit skill の references/consult.md「カードの相談」の 1〜6 を、窓口が読む道具（unreflected・consult-context・
+    返しの記録）だけでなぞる。古い形は、切り替え前の相談のタブが自分で番号を付けてメモに書いた返し。"""
+
+    FORMS = ("old", "new")
+
+    def setUp(self):
+        super().setUp()
+        self.cockpit["main"] = {"agent": "claude", "run_id": "run_main"}
+        self.write_cockpit()
+        with open(self.fake_orca, "w") as fh:
+            fh.write('#!/bin/sh\necho "$@" >> "%s"\necho \'{"ok":true,"result":{"message":{"id":"msg_7"}}}\'\n' % self.orca_log)
+        self.memo_rets = []
+
+    def ret(self, **over):
+        return {"card": "d21", "rev": 1, "rulings_seen": self.seen(), "choice": None, "decisions": [], "requests": [], "open": [], "affects": [], **over}
+
+    def seen(self):
+        return "R%d" % len(self.jsonl("rulings.jsonl"))
+
+    def consult_return(self, ret, card="d21"):
+        return subprocess.run([HOOK, "consult-return", self.root, card], input=json.dumps(ret, ensure_ascii=False),
+                              text=True, capture_output=True, env=self.consult_env())
+
+    def save(self, form, ret):
+        """old: 切り替え前の相談のタブが、自分で付けた番号（ret の return_id）でメモに書く。new: consult-return に番号なしで渡す。"""
+        if form == "old":
+            self.memo_rets.append(ret)
+            self.write_memo(*self.memo_rets)
+            return ret["return_id"]
+        done = self.consult_return({k: v for k, v in ret.items() if k != "return_id"})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        head, sent = done.stdout.splitlines()
+        self.assertEqual(sent, "message msg_7")
+        return head.split()[1]
+
+    def sends(self):
+        return [l for l in read(self.orca_log).splitlines() if l.startswith("orchestration send")] if os.path.exists(self.orca_log) else []
+
+    def record(self):
+        p = os.path.join(self.root, ".orca", "consult", "d21.returns.jsonl")
+        return [json.loads(l) for l in read(p).splitlines()] if os.path.exists(p) else []
+
+    def card(self):
+        return self.cockpit["cards"][-1]
+
+    def requests_from(self, utterance):
+        return [r for r in self.cockpit["requests"] if any(u["id"] == utterance for u in r.get("utterances") or [])]
+
+    def reflect(self, rid, stop_after=None):
+        """窓口が返し rid を反映する（consult.md の 1〜6）。返しの本文は unreflected が指す返しの記録から読む。"""
+        card = self.card()
+        if rid in card.get("from_returns", []):
+            return "反映済み"
+        entry = next(x for x in json.loads(self.tool_args("unreflected", "--json").stdout) if x["id"] == rid)
+        row = next(r for r in (json.loads(l) for l in read(entry["returns"]).splitlines()) if r.get("return_id") == rid)
+        since = self.tool_args("consult-context", "d21", "--since", row["rulings_seen"], "--return", rid).stdout.strip()
+        held = row["rev"] != card["rev"] or since != "- なし"
+        if row.get("replaces") and row["replaces"] not in card.get("held_returns", []):
+            held = True
+        if held:
+            self.rule(kind="none", text="版違いか増えた判断で選択と判断を保留、依頼は受けた", dec="d21", from_return=rid)
+        elif not (row["decisions"] or row.get("choice")):
+            self.rule(kind="none", text="受ける判断は無い。依頼と論点を受けた", dec="d21", from_return=rid)
+        else:
+            for d in row["decisions"]:
+                self.rule(kind="decision", text=d["text"], quote=d["quote"], dec="d21", from_return=rid)
+            if row.get("choice"):
+                self.rule(kind="decision", text="d21 は案 %s" % row["choice"], dec="d21", from_return=rid)
+        if stop_after == "rule":
+            return "中断"
+        for q in row["requests"]:
+            if not self.requests_from(q["utterance"]):
+                self.cockpit["requests"].append({"id": "r%d" % (31 + len(self.cockpit["requests"])), "title": q["quote"],
+                                                 "utterances": [{"id": q["utterance"], "quote": q["quote"]}], "from_return": rid})
+        card["from_returns"] = card.get("from_returns", []) + [rid]
+        card["held_returns"] = [x for x in card.get("held_returns", []) if x != row.get("replaces")] + ([rid] if held else [])
+        self.write_cockpit()
+        return "保留" if held else "反映"
+
+    def from_return(self, rid):
+        return [(r["kind"], r["text"]) for r in self.jsonl("rulings.jsonl") if r.get("from_return") == rid]
+
+    # ---- consult-return の形と出力 ----
+
+    def test_consult_return_numbers_saves_and_sends_the_return(self):
+        done = self.consult_return(self.ret(return_id="d21-9", decisions=[{"text": "凡例は 4 つ", "quote": "4 つで", "utterance": "u-3"}]))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout, "return_id d21-1\nmessage msg_7\n")  # 相手が書いた番号は使わない
+        [row] = [r for r in self.record() if "return_id" in r]
+        self.assertEqual((row["return_id"], row["card"], row["decisions"][0]["quote"]), ("d21-1", "d21", "4 つで"))
+        log = read(self.orca_log)
+        self.assertIn("--to run:run_main", log)
+        self.assertIn("相談 d21: 返し d21-1", log)
+        self.assertIn('{"return_id": "d21-1", "card": "d21", "rev": 1', log)
+        self.assertNotIn("saved_at", log)
+        # 相談のメモは返しに使わない（無くてよく、作りもしない）
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".orca", "consult", "d21.md")))
+
+    def test_consult_return_refuses_a_return_the_main_cannot_reflect_and_saves_nothing(self):
+        good = {"decisions": [{"text": "凡例は 4 つ", "quote": "4 つで", "utterance": "u-3"}]}
+        for broken, why in (({"rev": None}, "rev"), ({"card": "d1"}, "card は相談しているカードの id（d21）"),
+                            ({"decisions": [{"text": "4 つ", "quote": "4 つ"}]}, "utterance"), ({"rulings_seen": "80"}, "rulings_seen"),
+                            ({"replaces": "d1-1"}, "replaces"), ({"decisions": [], "choice": None}, "どれも空"),
+                            ({"op": 99}, "op 99 はこのカード（d21）の操作ではない")):
+            done = self.consult_return(self.ret(**{**good, **broken}))
+            self.assertNotEqual(done.returncode, 0, broken)
+            self.assertIn(why, done.stderr, broken)
+        self.assertEqual(self.consult_return(self.ret(**good), card="zz9").returncode, 1)
+        self.assertEqual([r for r in self.record() if "return_id" in r], [])
+        self.assertFalse(os.path.exists(self.orca_log))
+        # 選択だけの返しは受ける
+        self.assertEqual(self.consult_return(self.ret(choice="a")).returncode, 0)
+
+    def test_without_the_main_run_the_return_is_saved_and_the_reason_is_printed(self):
+        del self.cockpit["main"]
+        self.write_cockpit()
+        done = self.consult_return(self.ret(open=["色"]))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines(), ["return_id d21-1", "送れなかった: 窓口の Run が帳簿（main.run_id）に無い。窓口は開始・再開のときに返しの記録から拾う"])
+        self.assertEqual(self.unreflected(), {"d21-1": ["判断の記録", "帳簿"]})
+
+    def test_the_memo_is_imported_once_and_a_conflicting_block_is_not(self):
+        # 切り替え前に 2 つのタブが同じ d21-7 を別の依頼で書いた
+        self.write_memo({"return_id": "d21-7", "card": "d21", "rev": 1, "requests": [{"quote": "図も", "utterance": "u-1"}]},
+                        {"return_id": "d21-7", "card": "d21", "rev": 1, "requests": [{"quote": "表も", "utterance": "u-2"}]},
+                        {"return_id": "d21-3", "rev": 1})
+        done = self.tool_args("unreflected", "--json")
+        self.assertIn("return_id d21-7 は返しの記録に中身の違う返しがある", done.stderr)
+        self.assertEqual([x["id"] for x in json.loads(done.stdout)], ["d21-7", "d21-3"])
+        rows = self.record()
+        self.assertEqual([r.get("return_id") for r in rows], ["d21-7", "d21-3", None])
+        self.assertEqual(rows[1]["card"], "d21")  # card の無い塊はメモのカード
+        self.assertEqual(rows[-1]["skipped"][0]["return_id"], "d21-7")
+        # 取り込みのあとはメモを読まない（メモを書き直しても、2 回目は取り込まない）
+        self.write_memo({"return_id": "d21-20", "card": "d21", "rev": 1})
+        self.assertEqual(sorted(self.unreflected()), ["d21-3", "d21-7"])
+        self.assertEqual(len(self.record()), 3)
+        self.assertEqual(self.save("new", self.ret(open=["色"])), "d21-8")
+
+    def test_a_memo_that_cannot_be_read_is_not_marked_as_imported(self):
+        self.write_memo({"return_id": "d21-4", "card": "d21", "rev": 1, "open": ["色"]})
+        memo = os.path.join(self.root, ".orca", "consult", "d21.md")
+        os.chmod(memo, 0)
+        self.addCleanup(os.chmod, memo, 0o644)
+        done = self.tool_args("unreflected", "--json")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("返しの記録を読めない", done.stderr)
+        self.assertEqual(self.record(), [])
+        self.assertNotEqual(self.consult_return(self.ret(open=["形"])).returncode, 0)
+        os.chmod(memo, 0o644)
+        self.assertEqual(self.unreflected(), {"d21-4": ["判断の記録", "帳簿"]})
+        self.assertEqual(self.save("new", self.ret(open=["形"])), "d21-5")
+
+    def test_fields_the_tool_writes_are_not_taken_from_the_return(self):
+        done = self.consult_return(self.ret(open=["色"], skipped=1, memo_imported="x", saved_at="昔", imported_from="/x"))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        [row] = [r for r in self.record() if "return_id" in r]
+        self.assertNotIn("skipped", row)
+        self.assertNotIn("memo_imported", row)
+        self.assertNotEqual(row["saved_at"], "昔")
+        self.assertEqual(self.save("new", self.ret(open=["形"])), "d21-2")
+
+    def test_a_card_whose_id_looks_like_a_question_is_still_a_card(self):
+        self.cockpit["cards"].append({"id": "ask3", "rev": 2, "kind": "consult", "title": "名前が質問に似たカード", "state": "open"})
+        self.write_cockpit()
+        done = self.consult_return(self.ret(card="ask3", rev=2, choice="a"), card="ask3")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.splitlines()[0], "return_id ask3-1")
+        self.assertTrue(os.path.exists(os.path.join(self.root, ".orca", "consult", "ask3.returns.jsonl")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".orca", "consult", "ask-ask3.returns.jsonl")))
+        self.assertIn("相談 ask3: 返し ask3-1", read(self.orca_log))
+
+    # ---- 試験 ①〜④（古い形と新しい形の両方で） ----
+
+    def test_1_a_choice_given_before_the_card_changed_is_held_and_its_request_arrives_once(self):
+        for form in self.FORMS:
+            with self.subTest(form=form):
+                self.setUp()  # 形ごとに新しい一時フォルダで始める
+                said = {"choice": "a", "decisions": [{"text": "案 A にする", "quote": "Aで。資料も作って", "utterance": "u-5"}],
+                        "requests": [{"quote": "資料も作って", "utterance": "u-5"}]}
+                r1 = self.save(form, self.ret(return_id="d21-1", **said))
+                self.card()["rev"] = 2  # 反映の前にカードが改訂された
+                self.write_cockpit()
+                self.assertEqual(self.unreflected(), {r1: ["判断の記録", "帳簿"]})
+                self.assertEqual(self.reflect(r1), "保留")
+                self.assertEqual(self.from_return(r1), [("none", "版違いか増えた判断で選択と判断を保留、依頼は受けた")])
+                self.assertEqual(self.unreflected(), {r1: ["保留"]})
+                self.assertEqual(self.reflect(r1), "反映済み")  # 同じ返しがもう一度届いた
+                # 相談が読み直して返し直す（切り替えのあとは consult-return）
+                r2 = self.save("new", self.ret(rev=2, replaces=r1, **said))
+                self.assertEqual(r2, "d21-2")
+                self.assertEqual(self.reflect(r2), "反映")
+                self.assertEqual(self.from_return(r2), [("decision", "案 A にする"), ("decision", "d21 は案 a")])
+                self.assertEqual(len(self.requests_from("u-5")), 1)
+                self.assertEqual(self.requests_from("u-5")[0]["from_return"], r1)
+                self.assertEqual(self.unreflected(), {})
+
+    def test_2_a_reflection_stopped_after_the_rulings_resumes_once_even_if_the_memo_went_back(self):
+        for form in self.FORMS:
+            with self.subTest(form=form):
+                self.setUp()  # 形ごとに新しい一時フォルダで始める
+                r1 = self.save(form, self.ret(return_id="d21-1", decisions=[{"text": "凡例は 4 つ", "quote": "4 つで。見積も出して", "utterance": "u-7"}],
+                                              requests=[{"quote": "見積も出して", "utterance": "u-7"}]))
+                self.assertEqual(self.reflect(r1, stop_after="rule"), "中断")
+                self.write_memo()  # 相談が古い版のメモをもとに書き直し、返しの節が消えた
+                self.assertEqual(self.unreflected(), {r1: ["帳簿"]})
+                [entry] = json.loads(self.tool_args("unreflected", "--json").stdout)
+                [row] = [r for r in (json.loads(l) for l in read(entry["returns"]).splitlines()) if r.get("return_id") == r1]
+                self.assertEqual(row["requests"], [{"quote": "見積も出して", "utterance": "u-7"}])
+                self.assertEqual(self.reflect(r1), "反映")
+                self.assertEqual(self.from_return(r1), [("decision", "凡例は 4 つ")])
+                self.assertEqual(len(self.requests_from("u-7")), 1)
+                self.assertEqual(self.unreflected(), {})
+
+    def test_3_the_same_return_twice_stops_as_reflected_and_a_reworded_answer_to_one_hold_keeps_one_number(self):
+        for form in self.FORMS:
+            with self.subTest(form=form):
+                self.setUp()  # 形ごとに新しい一時フォルダで始める
+                r1 = self.save(form, self.ret(return_id="d21-1", decisions=[{"text": "凡例は 4 つ", "quote": "4 つで", "utterance": "u-3"}]))
+                r2 = self.save(form, self.ret(return_id="d21-2", choice="b"))
+                self.assertEqual(self.reflect(r1), "反映")
+                rows, ledger = self.jsonl("rulings.jsonl"), json.dumps(self.cockpit)
+                self.assertEqual(self.reflect(r1), "反映済み")
+                self.assertEqual((self.jsonl("rulings.jsonl"), json.dumps(self.cockpit)), (rows, ledger))
+                self.assertEqual(self.reflect(r2), "保留")  # r1 の判断が増えた
+                sent = len(self.sends())
+                first = self.consult_return(self.ret(replaces=r2, choice="b", decisions=[{"text": "凡例は 5 つにする", "quote": "B で", "utterance": "u-4"}]))
+                again = self.consult_return(self.ret(replaces=r2, choice="b", decisions=[{"text": "凡例を 5 個にする", "quote": "B で", "utterance": "u-4"}]))
+                self.assertEqual(first.stdout, "return_id d21-3\nmessage msg_7\n")
+                self.assertEqual(again.stdout, first.stdout)
+                self.assertIn("新しい番号を付けずに送り直す", again.stderr)
+                self.assertEqual([r.get("replaces") for r in self.record() if "return_id" in r], [None, None, r2])
+                self.assertEqual(len(self.sends()), sent + 2)
+                self.assertEqual(self.reflect("d21-3"), "反映")
+                self.assertEqual(self.from_return("d21-3"), [("decision", "凡例は 5 つにする"), ("decision", "d21 は案 b")])
+                self.assertEqual(self.card()["held_returns"], [])
+                self.assertEqual(self.unreflected(), {})
+
+    def test_4_two_returns_saved_at_once_get_their_own_numbers_and_both_requests_arrive(self):
+        for form in self.FORMS:
+            with self.subTest(form=form):
+                self.setUp()  # 形ごとに新しい一時フォルダで始める
+                if form == "old":
+                    self.save(form, self.ret(return_id="d21-1", open=["色"]))
+                asks = [self.ret(requests=[{"quote": q, "utterance": u}]) for q, u in (("図を描いて", "u-11"), ("表も作って", "u-12"))]
+                procs = [subprocess.Popen([HOOK, "consult-return", self.root, "d21"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True, env=self.consult_env()) for _ in asks]
+                outs = [p.communicate(json.dumps(a, ensure_ascii=False))[0] for p, a in zip(procs, asks)]
+                ids = sorted(o.splitlines()[0].split()[1] for o in outs)
+                self.assertEqual(ids, ["d21-2", "d21-3"] if form == "old" else ["d21-1", "d21-2"])
+                for rid in ids:
+                    self.assertIn(self.reflect(rid), ("反映", "保留"))  # 先の返しの none の行が増えた判断になれば保留（依頼は受ける）
+                self.assertEqual({k: v for k, v in self.unreflected().items() if k in ids}, {r: ["保留"] for r in ids[1:]})
+                self.assertEqual((len(self.requests_from("u-11")), len(self.requests_from("u-12"))), (1, 1))
 
 
 def read(path):
@@ -1694,6 +1956,27 @@ class AskFromWindow(Base):
         self.assertEqual(len(self.returns()), 1)
         self.assertEqual(len(self.sends()), 1)
 
+    def test_a_reworded_second_return_for_the_same_press_keeps_its_number(self):
+        self.ops([{"op_id": 812, "type": "ask_decide", "item_id": "#ask:ask1"}])
+        self.assertIsNone(self.stop(self.reply_with({**self.RET, "op": 812})))
+        reworded = {**self.RET, "op": 812, "decisions": [{"text": "凡例を五つにする", "quote": "5 つにして", "utterance": "u-1"}]}
+        self.assertIsNone(self.stop(self.reply_with(reworded, before="言い直す。凡例は五つ。")))
+        self.assertEqual([(r["return_id"], r["decisions"][0]["text"]) for r in self.returns()], [("ask1-1", "凡例は 5 つ")])
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_a_return_given_again_for_a_hold_is_saved_even_with_the_same_press(self):
+        self.ops([{"op_id": 812, "type": "ask_decide", "item_id": "#ask:ask1"}])
+        self.stop(self.reply_with({**self.RET, "op": 812}))
+        fixed = {**self.RET, "op": 812, "replaces": "ask1-1", "decisions": [{"text": "凡例は 4 つ", "quote": "4 つにして", "utterance": "u-2"}]}
+        self.assertIsNone(self.stop(self.reply_with(fixed, before="増えた判断を読み直した。")))
+        self.assertEqual([(r["return_id"], r.get("replaces")) for r in self.returns()], [("ask1-1", None), ("ask1-2", "ask1-1")])
+        self.assertEqual(len(self.sends()), 2)
+
+    def test_a_choice_alone_is_not_a_question_return(self):
+        out = self.stop(self.reply_with({"rulings_seen": "R2", "choice": "A"}))
+        self.assertIn("どれも空", out["reason"])
+        self.assertEqual(self.returns(), [])
+
     def test_a_pasted_example_or_one_quoted_mid_reply_is_not_a_return(self):
         example = "【窓口への返し】\n```json\n%s\n```" % json.dumps(self.RET, ensure_ascii=False)
         self.say("返しの書式ってこれで合ってる？\n" + example)
@@ -1702,14 +1985,24 @@ class AskFromWindow(Base):
         self.assertEqual(self.sends(), [])
 
     def test_a_broken_return_at_the_end_is_sent_back_to_be_rewritten(self):
-        out = self.stop(self.reply_with({**self.RET, "return_id": "ask9-1"}))
+        out = self.stop(self.reply_with({**self.RET, "replaces": "ask9-1"}))
         self.assertEqual(out["decision"], "block")
         self.assertIn("ask1-<連番>", out["reason"])
-        self.assertIsNone(self.stop(self.reply_with({**self.RET, "return_id": "ask9-1"}), stop_hook_active=True))  # 2 回目は止めない
-        self.stop(self.reply_with(self.RET))
-        out = self.stop(self.reply_with({**self.RET, "decisions": [{"text": "別の話", "quote": "x", "utterance": "u-2"}]}))
-        self.assertIn("使い済み", out["reason"])
-        self.assertEqual(len(self.returns()), 1)
+        self.assertIsNone(self.stop(self.reply_with({**self.RET, "replaces": "ask9-1"}), stop_hook_active=True))  # 2 回目は止めない
+        self.assertEqual(self.returns(), [])
+
+    def test_the_hook_numbers_the_return_and_ignores_a_number_the_reply_wrote(self):
+        # 古い形の相手が書いた番号（使い済みの ask1-1 や、推し量った ask1-7）は使わず、道具が次の番号を付ける
+        self.assertIsNone(self.stop(self.reply_with(self.RET)))
+        self.assertIsNone(self.stop(self.reply_with({**self.RET, "decisions": [{"text": "別の話", "quote": "x", "utterance": "u-2"}]})))
+        self.rule(kind="decision", text="凡例は 5 つ", quote="5 つにして", from_return="ask1-6")  # 判断の記録の番号も数える
+        self.assertIsNone(self.stop(self.reply_with({**self.RET, "return_id": "ask1-1", "open": ["色"]})))
+        self.assertEqual([r["return_id"] for r in self.returns()], ["ask1-1", "ask1-2", "ask1-7"])
+        self.assertEqual(self.returns()[1]["decisions"][0]["text"], "別の話")
+        self.assertEqual(len(self.sends()), 3)
+        self.assertIn("質問 ask1: 返し ask1-7", self.sends()[-1])
+        self.assertIn('{"return_id": "ask1-7", "rulings_seen"', read(self.orca_log))
+        self.assertNotIn("saved_at", read(self.orca_log))
 
     def test_without_the_hook_field_the_last_reply_is_read_from_the_transcript(self):
         t = os.path.join(self.root, "t.jsonl")

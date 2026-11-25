@@ -19,9 +19,10 @@ cockpit skill の SKILL.md から分けた細部。cockpit.json を作る・欄�
 | `cockpit/figures/<name>.svg` | メインだけ | 図。カードの `figure` から相対パスで指す |
 | `cockpit/rulings.jsonl` | メインだけ（references/rulings.md の「いつ書くか」のコマンドで） | 決定・制約・許可・却下した案の元の記録。追記だけで、撤回も置き換えの行で書く。カードの相談と窓からの質問の返しから書いた行は `from_return`（return_id）を持つ |
 | `cockpit/utterances.jsonl` | hook だけ | 深田の発言の原文。UserPromptSubmit が `id`（`u-<行番号>`）・`at`・`session`・`prompt` を追記する。カードの相談の中の発言は `card`（カード id）、窓からの質問の中の発言は `ask`（質問 id）も付く（窓口と同じロックと採番）。Orca の知らせ（「──── From: … ────」の見出しで始まる本文。`cockpit/notices.jsonl` に別に記録する）、Claude Code の背景の作業の知らせ（本文の全体が `<task-notification>` の塊）と、references/consult.md の「カードの相談」の書式の `【相談の知らせ】` は記録しない。依頼の帳簿の仕分けはこの `id` で発言を指す |
-| `consult/<カード id>.md` | カードの相談（`consult --card` が立てたタブ）だけ | 相談のメモ。前提のカードの rev・決めたこと・新しく出た依頼・残っている論点・窓口に返したもの（返しの JSON をそのまま ```json の塊で）。窓の詳細からリンクする。片付いても消さない |
+| `consult/<カード id>.md` | カードの相談（`consult --card` が立てたタブ）だけ | 相談のメモ（人が読むもの）。前提のカードの rev・決めたこと・新しく出た依頼・残っている論点。窓の詳細からリンクする。返しの採番・再送・回収には使わない。片付いても消さない |
+| `consult/<カード id>.returns.jsonl` | `compaction-keep.py consult-return` だけ | カードの相談の返しの記録（正本）。相談が渡した返しに、道具が return_id（記録と判断の記録の `from_return` の最大の次）・`card`・`saved_at` を付けて 1 行ずつ記録する。同じ `replaces`・同じ `op` の返しは 1 行にする。切り替え前のメモの「窓口に返したもの」の返しは、`compaction-keep.py` が最初に読むときに 1 回だけ取り込み、印の行（`memo_imported`）を書く。窓口と state.ts は返しをここだけから読む |
 | `consult/ask-<質問 id>.md` | `consult --ask`（先頭）と hook（質問と答え）だけ | 窓からの質問と答えの控え（表示専用）。先頭に、結んだカード（`- カード: d21`）とタスク（`- タスク: t50`）、写した窓口の会話を書く。続きに `### 質問 HH:MM（u-12）`・`### 答え HH:MM`・`### 知らせ HH:MM` の節を時刻順に足す。窓口はここから返しを探さない |
-| `consult/ask-<質問 id>.returns.jsonl` | hook だけ | 窓からの質問の返しの記録。相手の最後の返事の末尾にある `【窓口への返し】` の JSON に `ask`・`saved_at`・`session` を足して 1 行ずつ記録する。同じ return_id は 1 行にする。窓口と state.ts は返しをここだけから読む |
+| `consult/ask-<質問 id>.returns.jsonl` | hook だけ | 窓からの質問の返しの記録。相手の最後の返事の末尾にある `【窓口への返し】` の JSON に、hook が return_id（カードの相談と同じ数え方）と `ask`・`saved_at`・`session`・`reply` を足して 1 行ずつ記録する。同じ返事・同じ `replaces`・同じ `op` の返しは 1 行にする。窓口と state.ts は返しをここだけから読む |
 | `cockpit/main-session.json` | hook だけ | 窓からの質問が写す窓口の会話 `{ run_id, session_id, transcript_path, config_dir, cwd, at }`。Orca の今の Run が `main.run_id` と一致する窓口の発言のたびに置き換える（`config_dir` が空なら既定の席） |
 | `cockpit/firstseen.json` | 常駐の窓だけ | `at` の無い開いたカードを最初に見つけた時刻（30 分の猶予を数える） |
 | `cockpit/compactions.jsonl`・`keep.json`・`handoff.json` | hook と下のコマンドだけ | 圧縮の記録・再開の確認と引き継ぎの状態・引き継いだことの窓への知らせ。メインは手で書かない |
@@ -150,7 +151,7 @@ state.ts の `judgeTasks` が、上から順に最初に当たったもので決
 | `elements[]`・`element_map[]` | 判断・確認のカードで、承認してもらう中身の要素（`{ n, text }`）と、承認を取り込んだときの行き先（`{ n, task }`・`{ n, request: "r30#2" }`・`{ n, skip: "<理由>" }`）。書き方は references/cards.md の「承認の前に要素を固める」 |
 | `links[]`・`quote`・`repo` | 資料（`{ "label", "href" }`）・原文・`#123` の解決先。出典として `links`・`quote`・`request`・`href`・`draft.href`・`from.href`・`background.quote` のどれか 1 つは要る |
 | `awaiting` | `who`・`what`・`since`・`resumes`（返事で何を再開するか）・`remind_at`（催促する日時）。送ったあと `state: "waiting"` にして書く。催促の日を過ぎると朱になり、`checks.remind_due` に出る |
-| `from_returns[]`・`held_returns[]` | このカードに反映し終えたカードの相談の返しの return_id（`d21-1`）と、そのうち選択と判断を保留にして相談の返し直しを待つもの。`from_returns` に足すのが反映の最後の書き込み。保留は、相談が `replaces` 付きで返し直したときに外す。メモにあって `from_returns` に無い返しと、`held_returns` に残る返しは `checks.unreflected_returns` に出る（references/consult.md の「カードの相談」） |
+| `from_returns[]`・`held_returns[]` | このカードに反映し終えたカードの相談の返しの return_id（`d21-1`）と、そのうち選択と判断を保留にして相談の返し直しを待つもの。`from_returns` に足すのが反映の最後の書き込み。保留は、相談が `replaces` 付きで返し直したときに外す。返しの記録にあって `from_returns` に無い返しと、`held_returns` に残る返しは `checks.unreflected_returns` に出る（references/consult.md の「カードの相談」） |
 | `resolved_by`・`resolved_at`・`resolved_option`・`resolved_text` | 片付けたとき。`resolved_by` は `user`（深田の操作）か `owner`（担当・窓口が片付けた）。`resolved_text` は別の回答の原文 |
 
 種類ごとの欄:
@@ -288,7 +289,7 @@ state.ts の `judgeTasks` が、上から順に最初に当たったもので決
 | 決めたあとの結果 | カードの `resolved_*` と、要ればカードの `why` の先頭の「結果:」 | タスクの `done[]` は、そのタスクで済んだ作業。同じ文を両方に書かない |
 | 顧客に聞くこと | `project/questions.yaml` や Issue があればそちら | 送信前の `links` で指し、中身を書き写さない |
 | 決定・制約・許可・却下した案と、それが影響するタスク（`affects`） | `.orca/cockpit/rulings.jsonl`（references/rulings.md） | 作業メモ・要約・窓口との会話は ID（R12）で指す。カードの文には番号を書かず、要る中身を平文で書く（窓から開けないため。references/cards.md）。撤回は置き換えの行 |
-| カードの相談で決まったこと | 窓口が書いた判断の記録（`from_return`）と帳簿（カードの `from_returns`・依頼の `from_return`） | 相談のメモは返しの控え。反映されるまでの回収元で、正にしない |
+| カードの相談で決まったこと | 窓口が書いた判断の記録（`from_return`）と帳簿（カードの `from_returns`・依頼の `from_return`） | 返しの記録（`<カード id>.returns.jsonl`）は反映されるまでの回収元、相談のメモは人が読むもので、どちらも正にしない |
 | 窓からの質問で決まったこと | 窓口が書いた判断の記録（`from_return`）と帳簿（`asks[].from_returns`・依頼の `from_return`） | 返しの記録（`ask-<質問 id>.returns.jsonl`）は反映されるまでの回収元、控え（`ask-<質問 id>.md`）は表示だけで、どちらも正にしない |
 | 深田の発言の原文 | `.orca/cockpit/utterances.jsonl`（hook が書く） | 圧縮のあとに直近 10 件が流れる。依頼の帳簿は `utterances[].id` で指し、原文は引用の範囲だけを持つ |
 | 依頼が済んだか | 依頼の `done_when` と `evidence`（state.ts が判定する） | 窓の「まだ済んでいない依頼」と hook は state.ts の出力から。`requests[].state` を手で書かない |

@@ -210,12 +210,12 @@ test('相談: カードの詳細に相談のメモへのリンクと、新しい
     v.cockpit!.cards.find((x) => x.id === 'd21')!.from_returns = ['d21-1']
     v.cockpit!.cards.find((x) => x.id === 'd21')!.held_returns = ['d21-3']
     v.consults = [
-      { card: 'd21', path: '/ws/aoba/.orca/consult/d21.md', returns: [
+      { card: 'd21', path: '/ws/aoba/.orca/consult/d21.md', returnsPath: '/ws/aoba/.orca/consult/d21.returns.jsonl', returns: [
         { return_id: 'd21-1', decisions: [{ text: '入口は 1 つにする' }, { text: '古い決定' }] },
         { return_id: 'd21-2', choice: 'draw', decisions: [{ text: '社内向けは別の図にする' }] },
         { return_id: 'd21-3', decisions: [] }
       ] },
-      { card: 'c4', path: '/ws/aoba/.orca/consult/c4.md', returns: [] }
+      { card: 'c4', path: '/ws/aoba/.orca/consult/c4.md', returnsPath: '/ws/aoba/.orca/consult/c4.returns.jsonl', returns: [] }
     ]
   })
   const d21 = page(m, { sel: '/ws/aoba#d21' })

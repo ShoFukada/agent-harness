@@ -489,15 +489,15 @@ test('担当と協議: 相談のタブは報告のカードでも handle を残�
   assert.deepEqual(talkOps(a), [['a9', 'talk', 'term_consult']])
 })
 
-test('相談のメモは送るカードのものだけを、表示に使う欄に絞って窓に送る（Codex 中 5）', async () => {
+test('相談の返しは送るカードのものだけを、表示に使う欄に絞って窓に送る（Codex 中 5）', async () => {
   const { a, rows } = workspaces()
-  const block = (v: unknown) => '```json\n' + JSON.stringify(v) + '\n```\n'
   mkdirSync(path.join(a, '.orca/consult'), { recursive: true })
-  writeFileSync(path.join(a, '.orca/consult/d22.md'), '## 窓口に返したもの\n' + block({ return_id: 'd22-1', choice: 'send', decisions: [{ text: '送る', quote: '長い原文'.repeat(50) }], open: ['x'], note: 'y'.repeat(5000) }))
-  writeFileSync(path.join(a, '.orca/consult/gone.md'), '## 窓口に返したもの\n' + block({ return_id: 'gone-1' }))
+  writeFileSync(path.join(a, '.orca/consult/d22.returns.jsonl'), JSON.stringify({ return_id: 'd22-1', choice: 'send', decisions: [{ text: '送る', quote: '長い原文'.repeat(50) }], open: ['x'], note: 'y'.repeat(5000) }) + '\n')
+  writeFileSync(path.join(a, '.orca/consult/gone.returns.jsonl'), JSON.stringify({ return_id: 'gone-1' }) + '\n')
   const { s, port } = await start(rows, a)
   const w = await listen(port, s.token).until((v) => ready(v) && !!board(v, a)?.consults)
-  assert.deepEqual(board(w, a)!.consults, [{ card: 'd22', path: path.join(a, '.orca/consult/d22.md'), returns: [{ return_id: 'd22-1', choice: 'send', decisions: [{ text: '送る' }] }] }])
+  assert.deepEqual(board(w, a)!.consults, [{ card: 'd22', path: path.join(a, '.orca/consult/d22.md'), returnsPath: path.join(a, '.orca/consult/d22.returns.jsonl'),
+    returns: [{ return_id: 'd22-1', choice: 'send', decisions: [{ text: '送る' }] }] }])
 })
 
 /**

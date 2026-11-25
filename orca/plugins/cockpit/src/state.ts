@@ -994,7 +994,7 @@ export type StateReport = {
     unproven: { request: string; when: number[] }[]
     /** 判断（rulings.jsonl）の affects に挙がったのに、reviewed_for にその判断の無いタスク（9.5）。 */
     affected_tasks: { ruling: string; task: string }[]
-    /** 相談のメモにあって判断の記録か帳簿に入っていない返しと、保留の返し（設計 10.7 の 1）。 */
+    /** カードの相談と質問の返しの記録にあって判断の記録か帳簿に入っていない返しと、保留の返し（設計 10.7 の 1）。 */
     unreflected_returns: (Unreflected | AskUnreflected)[]
     /** カードが片付いたのに Orca に残っている相談のタブ（10.7 の 8）。 */
     stale_consults: { id: string; terminal: string }[]
@@ -1005,7 +1005,7 @@ export type StateReport = {
   card: string
 }
 
-export type Unreflected = { id: string; card: unknown; missing: ('判断の記録' | '帳簿' | '保留')[]; memo: string | null }
+export type Unreflected = { id: string; card: unknown; missing: ('判断の記録' | '帳簿' | '保留')[]; memo: string | null; returns: string | null }
 /**
  * 窓からの質問の返しの未反映（compaction-keep.py の unreflected_asks と同じ形）。id のある行は返し、id が null の行は返しの無い「これで決める」。
  * missing は 判断の記録・帳簿（asks[].from_returns）・保留（asks[].held_returns）・担当への通知（asks[].notify[] の message_id の無い行）・返し。
@@ -1013,7 +1013,7 @@ export type Unreflected = { id: string; card: unknown; missing: ('判断の記�
 export type AskUnreflected = { id: string | null; ask: string; op?: unknown; missing: string[]; memo: string; returns?: string | null; tasks?: unknown[] }
 
 /**
- * 相談のメモにあって、判断の記録の from_return か帳簿のカード（片付けて移したものも）の from_returns のどちらかに無い返しと、
+ * カードの相談の返しの記録にあって、判断の記録の from_return か帳簿のカード（片付けて移したものも）の from_returns のどちらかに無い返しと、
  * カードの held_returns に残る返し。compaction-keep.py の unreflected と同じ判定・同じ並び（window/state.test.ts で突き合わせる）。
  */
 export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos: ConsultMemo[], asks?: AskSide): (Unreflected | AskUnreflected)[] {
@@ -1025,12 +1025,12 @@ export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos
   for (const m of memos)
     for (const v of m.returns) {
       const missing = [...(inRulings.has(v.return_id) ? [] : ['判断の記録' as const]), ...(inLedger.has(v.return_id) ? [] : ['帳簿' as const]), ...(held.has(v.return_id) ? ['保留' as const] : [])]
-      if (missing.length) out.push({ id: v.return_id, card: pyFalsy(v.card) ? m.card : v.card, missing, memo: m.path })
+      if (missing.length) out.push({ id: v.return_id, card: pyFalsy(v.card) ? m.card : v.card, missing, memo: m.path, returns: m.returnsPath })
     }
-  // メモに書き損ねた返しでも、保留にしたものは相談が返し直すまで名指しする。
+  // 返しの記録に無い返しでも、保留にしたものは相談が返し直すまで名指しする。
   const named = new Set(out.map((x) => x.id))
   const rest = [...held].filter(([id]) => !named.has(id as string)).sort(([a], [b]) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))
-  return [...out, ...rest.map(([id, card]): Unreflected => ({ id: id as string, card, missing: ['保留'], memo: null })), ...(asks ? unreflectedAsks(asks, inRulings) : [])]
+  return [...out, ...rest.map(([id, card]): Unreflected => ({ id: id as string, card, missing: ['保留'], memo: null, returns: null })), ...(asks ? unreflectedAsks(asks, inRulings) : [])]
 }
 
 /**

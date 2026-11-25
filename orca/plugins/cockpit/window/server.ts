@@ -491,8 +491,8 @@ export function createServer(opts: Options) {
   }
 
   /**
-   * 窓に送る相談のメモ。送るカードのメモだけにし、返しは窓が出す分（新しい返しから、選んだ案と決まったことの文を 3 件まで）に絞る
-   * （メモは相談スレッドが書くので、知らない欄や長い返しを毎回の配信に載せない）。
+   * 窓に送るカードの相談。送るカードのものだけにし、返しは窓が出す分（新しい返しから、選んだ案と決まったことの文を 3 件まで）に絞る
+   * （返しは相談が書くので、知らない欄や長い返しを毎回の配信に載せない）。
    */
   function consultsFor(memos: ConsultMemo[], c: Cockpit | undefined, archive: Card[]): ConsultMemo[] {
     const ids = new Set([...(c?.cards ?? []), ...archive].map((x) => x.id))
