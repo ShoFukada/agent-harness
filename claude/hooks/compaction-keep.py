@@ -886,7 +886,13 @@ def unreflected_returns(root):
 
 
 def same_return(rows, ret, reply=None):
-    """既にある返しのうち、因果の鍵（同じ replaces・同じ op・同じ返事）で ret と同じもの。本文の一致では見ない（言い換えた返し直しで番号が増えないように）。"""
+    """既にある返しのうち、ret と同じもの。同じとみなす鍵はここだけに置く:
+      - 返し直し（replaces あり）: 同じ replaces の返し。言い換えた返し直しで番号を増やさない
+      - 同じ op の返し（窓の 1 回の操作に返しは 1 つ）
+      - 質問の hook が同じ返事をもう一度処理した: reply（session と返事の本文の sha256。reply_key）が同じ
+      - 道具が付ける欄（return_id・RECORD_FIELDS）を除いた中身が完全に同じ（相手が出力を見失って同じ返しで呼び直した）。
+        発言の id まで同じなので、言い換えた別の返しは同じにならない"""
+    body = lambda r: {k: v for k, v in r.items() if k != "return_id" and k not in RECORD_FIELDS}
     for r in valid_returns(rows):
         # 返し直しは同じ replaces の返しとだけ比べる（元の返しと同じ op を持っていても、直した中身を捨てない）
         if ret.get("replaces"):
@@ -895,7 +901,7 @@ def same_return(rows, ret, reply=None):
             continue
         if ret.get("op") is not None and r.get("op") is not None and str(r["op"]) == str(ret["op"]):
             return r
-        if reply and r.get("reply") == reply:
+        if (reply and r.get("reply") == reply) or body(r) == body(ret):
             return r
     return None
 
@@ -2206,7 +2212,7 @@ def tool(argv):
             sys.exit("compaction-keep: 返しを保存できなかった: %s" % e)
         if not added:
             print("compaction-keep: 同じ%sの返し %s が保存済みなので、新しい番号を付けずに送り直す" % (
-                "差し戻し（replaces %s）" % ret["replaces"] if ret.get("replaces") else "op", row["return_id"]), file=sys.stderr)
+                "差し戻し（replaces %s）" % ret["replaces"] if ret.get("replaces") else "op" if ret.get("op") is not None else "中身", row["return_id"]), file=sys.stderr)
         print("return_id %s" % row["return_id"])
         mid, why = notify_main(root, rest[1], row, False)
         print("message %s" % mid if mid else "送った（message の id は読めなかった）" if not why else "送れなかった: %s" % why)

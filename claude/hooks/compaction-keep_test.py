@@ -1741,6 +1741,18 @@ class ReturnRecord(ConsultBase):
                 self.assertEqual(self.from_return("d21-3"), [("decision", "凡例は 5 つにする"), ("decision", "d21 は案 b")])
                 self.assertEqual(self.card()["held_returns"], [])
                 self.assertEqual(self.unreflected(), {})
+                # replaces も op も無い返しを、相手が出力を見失ってまったく同じ JSON で呼び直した
+                same = self.ret(requests=[{"quote": "一覧も直して", "utterance": "u-6"}])
+                once, twice = self.consult_return(same), self.consult_return(same)
+                self.assertEqual(once.stdout, "return_id d21-4\nmessage msg_7\n")
+                self.assertEqual(twice.stdout, once.stdout)
+                self.assertIn("同じ中身の返し d21-4", twice.stderr)
+                self.assertEqual(self.reflect("d21-4"), "反映")
+                self.assertEqual(self.reflect("d21-4"), "反映済み")
+                self.assertEqual(len(self.requests_from("u-6")), 1)
+                # 発言の id が違えば、同じ文でも別の返し
+                other = self.consult_return({**same, "requests": [{"quote": "一覧も直して", "utterance": "u-8"}]})
+                self.assertEqual(other.stdout.splitlines()[0], "return_id d21-5")
 
     def test_4_two_returns_saved_at_once_get_their_own_numbers_and_both_requests_arrive(self):
         for form in self.FORMS:
