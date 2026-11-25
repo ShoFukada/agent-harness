@@ -1,6 +1,6 @@
 ---
 name: test-runner
-description: テスト・lint・ビルド・型チェックを実行し、pass/fail と失敗の核心だけ返す。長いログをメインのセッションに入れたくないときに使う
+description: テスト・lint・ビルド・型チェックを実行し、pass/fail と失敗の核心だけ返す。長いログを自分の会話に入れたくないときに使う
 tools: Bash, Read, Glob, Grep
 model: sonnet
 effort: high

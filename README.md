@@ -11,7 +11,7 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 窓口・担当・worker・Botは同じ構造と同じ名前の付け方で動き、受けた依頼を、済んだ証拠がそろうまで手放しません。抜けを人が覚えていることを前提にしないためです。
 
 - 依頼は受けた時点で帳簿に載せ、完了条件と証拠（mainに入ったcommit、公開したページ、人の操作）で済を決める
-- 抜けたら直すだけでなく、抜けた原因まで潰す
+- 抜けたら直すだけでなく、抜けた原因まで取り除く
 - 案件・仕事・タスク・workerは、名前と並びで階層が分かるようにする
 - 決まりは領域ごとに1か所にだけ置き、ほかの文書はそこを指す。名前の形・工程名・必須の欄のように形で決まるものは、書く道具が入口で断る
 
@@ -47,13 +47,13 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 
 - 決めたことは判断の記録に1行で残し、圧縮のあとに原文で流し直して、作業に戻る前に照合する
 - 窓口は人と話すために空けておき、調査はsubagent、コードはworker、1日を超える仕事は担当に出す
-- 写した会話で決まったことはメインのセッションに返し、記録と帳簿に書いてから作業に反映する
-- 閉じた話や関係のない話で、メインのセッションの文脈を汚さない
+- 写した会話で決まったことは元の会話に返し、記録と帳簿に書いてから作業に反映する
+- 閉じた話や関係のない話で、自分の会話の文脈を汚さない
 
 ### 作り方の約束
 
 - 根本から直し、場当たりの継ぎはぎにしない。ただし検査・スクリプト・定期確認をむやみに増やさない。まず写しを消し、今ある仕組みを使い回す
-- 状態は1か所に持ち、どの画面から見ても同じに出す
+- 状態は1か所に持ち、どの画面から見ても同じ内容を表示する
 - 早く出して、使いながら直す
 - 費用・規約・外に出るものは、歯止めを先に決める
 - 設計とコードのレビュー、日本語と見た目の確認には、作ったモデルとは別系統のモデルの目を通す
@@ -64,7 +64,7 @@ Orca で複数のコーディングエージェントを並べて動かすとき
 | orca-launch（`bin/orca-launch`） | worker（別の worktree の端末で動く Claude Code や Codex）を、Orca で今選ばれている Claude の席と worker 用の設定で立ち上げ、指示を Orca の orchestration の Task として渡す |
 | stallwatch（`bin/stallwatch`） | Orca の監視外で止まったもの（Orca そのもの・各ワークスペースのメイン・操縦席の窓・launchd の定時ジョブ）を数分おきに見て、macOS の通知と操縦席の窓の上の帯に出す。モデルは呼ばない |
 | worktree-sweep（`bin/worktree-sweep`） | 取り込み済みで使い終わった worker・担当の worktree を毎晩消し、取り込むか捨てるかを人が決めるものを一覧にする。モデルは呼ばない |
-| account-failover（`bin/account-failover`） | 今の Claude の席が利用枠の上限に当たったら、優先度が高く空いている席へ切り替え、Orca の中で動く claude（端末・チャット）を全部、同じ枠のまま今の席へ移す。全部の席が上限なら戻る時刻を知らせる。モデルは呼ばない |
+| account-failover（`bin/account-failover`） | 今の Claude の席が利用枠の上限に達したら、優先度が高く空いている席へ切り替え、Orca の中で動く claude（端末・チャット）を全部、同じ枠のまま切り替え先の席へ移す。全部の席が上限なら、利用枠が戻る時刻を知らせる。モデルは呼ばない |
 
 ## 毎日の使い方
 
@@ -161,7 +161,7 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提とし�
    <key>StandardOutPath</key><string>/Users/you/Library/Logs/account-failover.log</string>
    <key>StandardErrorPath</key><string>/Users/you/Library/Logs/account-failover.log</string>
    ```
-   入れる前に `--dry-run`（`--assume-full` を足すと今の席を上限と見なす）で、どの席へ移り、どの claude をどう移すかを、`--inventory` で今どの claude がどの席で動いているかを確かめる。stallwatch の `--job` に足すと、失敗した回が窓の帯に出る
+   入れる前に `--dry-run`（`--assume-full` を足すと今の席を上限と見なす）でどの席へ移り、どの claude をどう移すかを確かめる。あわせて `--inventory` で、今どの claude がどの席で動いているかも確かめる。stallwatch の `--job` に足すと、失敗した回が窓の帯に出る
 
 8. Orca本体の見張り（orca-watch）をlaunchdの `KeepAlive` で常駐させる。PATHにはorca CLIのある Orca.app のbinと、`ioreg` のある `/usr/sbin` を入れる。何をするかは [docs/scripts.md](docs/scripts.md) の「Orca本体が落ちたら起動し直す」にある
    ```xml
@@ -207,7 +207,7 @@ home.file.".local/bin/orca-launch".source =
 
 ## 決まりの置き場所
 
-運用の決まりは、領域ごとに次の 1 か所だけに書く。ほかの文書は中身を写さず、ここに挙げた文書の節を指す。名前の形・工程名・カードの種類・必須の欄のように形で決まるものは、入口の道具のコード（cockpit-write・state.ts・orca-launch）が検査する。値を挙げる文書は下の置き場所だけにし、ほかの文書には写さない。決めたことを反映する手順は cockpit skill の references/rulings.md「決めたとき」。
+運用の決まりは、領域ごとに次の 1 か所だけに書く。ほかの文書は中身を写さず、ここに挙げた文書の節を指す。名前の形・工程名・カードの種類・必須の欄のように形で決まるものは、入口の道具のコード（cockpit-write・state.ts・orca-launch）が検査する。値を挙げる文書は下の置き場所だけにし、ほかの文書には写さない。決めたことを反映する手順は cockpit skill の references/rulings.md「決めたとき」にある。
 
 | 領域 | 置き場所 |
 |---|---|
@@ -237,7 +237,7 @@ home.file.".local/bin/orca-launch".source =
 | `bin/orca-launch`・`bin/orca_launch_test.py` | worker の起動とそのテスト。中でしていることは worktree-flow skill の references/launch.md |
 | `bin/stallwatch`・`bin/stallwatch_test.py` | 止まったものの見張りとそのテスト。記録先は `~/Library/Application Support/stallwatch/`（`STALLWATCH_HOME`）、見つけたものの書き出し先は窓が読む `~/Library/Application Support/cockpit/alerts.json`（`COCKPIT_DIR`） |
 | `bin/cockpit-mail` | Orca の外のプロセスから案件の窓口の Run に知らせるコマンド。中身と試験は `orca/plugins/cockpit/window/mail.ts`・`mail.test.ts` |
-| `bin/account-failover`・`bin/account_failover_test.py` | 利用枠の上限での席の切り替えとそのテスト。記録先は stallwatch と同じ `STALLWATCH_HOME`（`failover-state.json`・`failover.json`・`failover-history.jsonl`） |
+| `bin/account-failover`・`bin/account_failover_test.py` | 利用枠の上限に達したときの席の切り替えとそのテスト。記録先は stallwatch と同じ `STALLWATCH_HOME`（`failover-state.json`・`failover.json`・`failover-history.jsonl`） |
 | `bin/orca-watch`・`bin/orca_watch_test.py` | Orca本体が人のいないあいだに落ちたときの起動し直しとそのテスト。記録先はstallwatchと同じ `STALLWATCH_HOME`（`orca-watch-state.json`・`orca-watch.json`・`orca-watch.pause`） |
 | `bin/worktree-sweep`・`bin/worktree_sweep_test.py` | 使い終わった worktree の片付けとそのテスト。結果の書き出し先は `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`） |
 | `claude/` | Claude Codeに読ませるskill・agent・hookと、workerのsandboxの外で動くスクリプト（下の「claude/」） |
@@ -248,7 +248,7 @@ home.file.".local/bin/orca-launch".source =
 
 ## claude/
 
-Claude Codeの `~/.claude/` に張る道具です。並びは `~/.claude/` と同じで、nix-darwin がこのcloneの各フォルダへのsymlinkを張ります。settings.json・CLAUDE.md・rolesなど持ち主の環境に依るものは、このリポジトリに置きません。
+Claude Codeの `~/.claude/` に張る道具です。並びは `~/.claude/` と同じで、nix-darwin がこのcloneの各フォルダへのsymlinkを張ります。settings.json・CLAUDE.md・rolesなど持ち主の環境によるものは、このリポジトリに置きません。
 
 | 場所 | 中身 |
 |---|---|
@@ -260,7 +260,7 @@ Claude Codeの `~/.claude/` に張る道具です。並びは `~/.claude/` と�
 外に置くものは環境変数で受け取ります。
 
 - `claude/bin/` のスクリプトは、workerのsettingsの `denyRead` を自分でも塞ぐため、そのパスを `$ORCA_WORKER_SETTINGS` から読む（無ければ動かずに止まる）。orca-launch は worker を起こすときに `--settings` と同じ絶対パスをこの変数にも入れ、account-failover は端末の claude を今の席で起こし直すときに元のプロセスの値をそのまま渡す
-- `claude/hooks/periodic-reminder.sh` は、カードの相談の役割の文書を `$CLAUDE_ROLES_DIR`（既定は `~/.config/nix-darwin/claude/roles`）から読む
+- `claude/hooks/periodic-reminder.sh` は、カードの相談で使う役割の文書を `$CLAUDE_ROLES_DIR`（既定は `~/.config/nix-darwin/claude/roles`）から読む
 - `claude/hooks/sandbox-exclude-guard.py` は、sandboxの外で動かしてよいスクリプトを、自分の場所から見た `../bin` で決める。settings.worker.json の `excludedCommands` には、このcloneの `claude/bin/` のパスを書く
 
 ## テスト
