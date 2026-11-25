@@ -8,6 +8,7 @@ import { markdown } from './markdown.ts'
 import { answeredCount, askBoxHtml, viewAsks } from './window-asks.ts'
 import { answerHtml, answerWay, withAnswerActs } from './window-answer.ts'
 import { fold, tag } from './window-parts.ts'
+import { tidyDetail, tidyHead } from './window-tidy.ts'
 import { MARK_LABEL, type Mark, type Since } from './since.ts'
 import type { AutomationFact } from './protocol.ts'
 
@@ -476,6 +477,9 @@ function sentHtml(xs: Sent[], jump?: (c: Card) => string | undefined): string {
 
 const CARD_STATE = { mine: '要対応', fixing: '修正待ち', waiting: '顧客待ち', closed: '対応済み' } as const
 
+/** 窓の一覧で開けるカードの鍵。済んだカードは表示の 14 日を過ぎても対応済みのタブで開く（settled は期間外も持つ）。 */
+const listedKeys = (b: Board) => new Set([...todoOrder(b), ...b.d.reports.map(keyOf), ...b.d.settled.map(keyOf)])
+
 /** 全体の右: 押したタスクの詳細（info-needs 4.2 の順）。開いたカードは要対応か対応済みの一覧にあれば押してそのカードへ移る。 */
 function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const c = b.v.cockpit!
@@ -484,8 +488,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const st = stageOf(task.phase)
   const a = b.v.workers.find((w) => w.task === task.id)
   const owner = b.d.jobs.find((j) => j.id === task.stream)?.owner
-  // 済んだカードは表示の 14 日を過ぎても対応済みのタブで開く（settled は期間外も持つ）。
-  const listed = new Set([...todoOrder(b), ...b.d.reports.map(keyOf), ...b.d.settled.map(keyOf)])
+  const listed = listedKeys(b)
   const cards = [...b.d.views.map((v) => ({ ...v, root: b.root })), ...b.d.queue.filter((r) => isSynthetic(r.card.id) || r.card.id.startsWith(IDLE_ID))].filter((v) => v.card.tasks?.includes(task.id))
   // 頼んでいることは済んでいないカードだけ（済んだものは「出した指示」で返答を読める）。
   const asking = cards.filter((v) => v.status !== 'closed')
@@ -682,7 +685,7 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   // 進行中の仕事のある置き場所を先に、空の置き場所は最後に 1 行でまとめる（見張るは経路と届いた連絡があれば空にしない）。
   const filled = (f: StreamForm) => live.some((j) => form(j) === f) || (f === 'watch' && (routes.length > 0 || inbox.length > 0 || watches.length > 0))
   const ms = upcomingMilestones(c.workspace.milestones, now)[0]
-  const main = (ms ? `<p class="mut">次の節目: ${esc(ms.label)}（${esc(fmtDate(ms.date))}）</p>` : '')
+  const main = tidyHead(b, ui, now) + (ms ? `<p class="mut">次の節目: ${esc(ms.label)}（${esc(fmtDate(ms.date))}）</p>` : '')
     // 仕事の一覧を先に、見張る（経路と届いた連絡）は最後に置く。空の置き場所は出さない。
     + FORM_ORDER.filter((f) => f !== 'watch' && filled(f)).map((f) => sec(f)).join('')
     + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo, now)).join('')}</section>` : '')
@@ -693,8 +696,8 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const t = b.d.tasks.get(ui.task ?? '')
   const w = watches.find((x) => x.key === ui.watch)
   const j = b.d.jobs.find((x) => x.id === ui.stream)
-  const side = w ? watchDetail(w, now) : j ? streamDetail(b, j, ui, now) : t ? taskDetail(b, t, ui, now) : ''
-  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${w ? '見張る仕事の詳細' : j ? '仕事の詳細' : 'タスクの詳細'}">${side}</aside>`
+  const side = ui.tidy ? tidyDetail(b, ui, listedKeys(b)) : w ? watchDetail(w, now) : j ? streamDetail(b, j, ui, now) : t ? taskDetail(b, t, ui, now) : ''
+  return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${ui.tidy ? '整理・棚卸し' : w ? '見張る仕事の詳細' : j ? '仕事の詳細' : 'タスクの詳細'}">${side}</aside>`
 }
 
 function streamDetail(b: Board, j: JobView, ui: Ui, now: number): string {

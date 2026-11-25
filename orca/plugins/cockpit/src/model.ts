@@ -284,6 +284,8 @@ export type Card = {
    * 書かなければ種類の今の意味で決める（state.ts の cardEffect。R204）。
    */
   effects?: Record<string, CardEffect>
+  /** 窓の「整理・棚卸し」の指示（tidy の op_id）への結果のカード。窓はこの番号で指示の行から結果へ移る。 */
+  tidy_op?: number
 }
 /** カードを押したときに、結んだタスクに起きること。done: 済、start: このカードの待ちが解けて着手できる、none: 何も起きない。 */
 export type CardEffect = 'done' | 'start' | 'none'
@@ -480,8 +482,16 @@ export type Cockpit = {
  * text は深田さんの言葉の原文（選んだら選択肢の文）、via は届け方、to は届け先、key は端末に送った番号。届けてから書く（届かなければ書かない）。
  * 窓口はこの op で何も届け直さず、判断の記録に残すものがあれば残して applied_ops に足す（cockpit skill の ops.md）。
  */
-export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide' | 'answer'
-export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide', 'answer']
+/**
+ * tidy: 窓の全体の「整理・棚卸し」から窓口に出した指示（r132）。item_id は空、item_rev は 0、option_id は既定の指示の種類（自由に書いたときは無い）、
+ * text は送った指示の文の全文。窓口は cockpit skill の references/tidy.md の手順で実行し、結果の報告のカードの tidy_op にこの op_id を書く。
+ */
+export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide' | 'answer' | 'tidy'
+export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide', 'answer', 'tidy']
+/** 整理・棚卸しの既定の指示の種類（tidy の option_id）。値は画面の語を変えても変えない（窓口の手順が種類で分かれるため）。 */
+export type TidyKind = 'workers' | 'cockpit' | 'inventory'
+export const TIDY_KINDS: TidyKind[] = ['workers', 'cockpit', 'inventory']
+export const TIDY_LABEL: Record<TidyKind, string> = { workers: 'workerとworktreeの整理', cockpit: '操縦席の整理', inventory: '棚卸し' }
 /** answer の届け方。reply は問いへの返事（と宛先への写し）、dispatch は担当の今の Dispatch への知らせ、keys は端末へのキー。 */
 export type AnswerVia = 'reply' | 'dispatch' | 'keys'
 export const ANSWER_VIA: AnswerVia[] = ['reply', 'dispatch', 'keys']
@@ -598,7 +608,8 @@ export const CARD_SHAPE: Record<string, Shape> = {
   elements: list((v) => isObj(v) && Number.isInteger(v.n) && str(v.text)),
   element_map: list((v) => isObj(v) && Number.isInteger(v.n) && ['task', 'request', 'skip'].filter((k) => v[k] !== undefined).length === 1 && ['task', 'request', 'skip'].every((k) => v[k] === undefined || str(v[k]))),
   repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str)),
-  effects: (v) => isObj(v) && Object.values(v).every((x) => CARD_EFFECTS.includes(x as CardEffect))
+  effects: (v) => isObj(v) && Object.values(v).every((x) => CARD_EFFECTS.includes(x as CardEffect)),
+  tidy_op: (v) => Number.isInteger(v) && (v as number) > 0
 }
 
 /** 形の違う欄の名前（書く道具は書く前に断り、読み込みは外して名指しする）。 */

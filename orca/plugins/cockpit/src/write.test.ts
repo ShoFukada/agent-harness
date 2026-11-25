@@ -33,6 +33,19 @@ test('書く道具: 全体の置き換え・知らない欄・形の違う欄・
   assert.match(applyChange(c, { tasks: [{ id: 't1', stream: 's1', phase: '実装', title: 'x', state: 'going' }] }).errors[0]!, /state は/)
 })
 
+test('書く道具: 結果の報告の tidy_op は、cockpit.user.json の整理・棚卸しの指示（tidy の操作）だけを指せる（r132）', () => {
+  const c = aoba()
+  const log = { ops: [
+    { op_id: 3, at: '2026-11-21T01:00:00.000Z', item_id: '', item_rev: 0, type: 'tidy' as const, option_id: 'workers', text: 'workerとworktreeを整理する' },
+    { op_id: 4, at: '2026-11-21T01:00:00.000Z', item_id: 'd21', item_rev: 1, type: 'talk' as const }
+  ] }
+  const report = (tidy_op: unknown) => ({ id: 'x1', rev: 1, kind: 'report', state: 'open', at: '2026-11-21T02:00:00+09:00', stream: c.streams[0]!.id, title: 'workerとworktreeを整理した', done: [{ what: '済んだ worker の worktree を 2 件削除', why: '取り込み済み', undo: 'ブランチから worktree を作り直す' }], tidy_op })
+  assert.deepEqual(applyChange(c, { cards: [report(3)], applied_ops: [3] }, [], log).errors, [])
+  assert.match(applyChange(c, { cards: [report(4)] }, [], log).errors.join('\n'), /カード x1: tidy_op 4 は cockpit.user.json の整理・棚卸しの指示/)
+  assert.match(applyChange(c, { cards: [report(9)] }, [], log).errors.join('\n'), /tidy_op 9/)
+  assert.match(applyChange(c, { cards: [report('3')] }, [], log).errors.join('\n'), /カード x1: tidy_op の形が違う/)
+})
+
 test('書く道具: 中身を変えたら rev を 1 上げる。片付けるだけなら rev はそのまま（「これでよい」の版の照合を保つ）', () => {
   const c = aoba()
   const edited = { ...card(c, 'd21'), title: '図を描き足すか' }

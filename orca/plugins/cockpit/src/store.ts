@@ -2,7 +2,7 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  dismissable, isSynthetic, KIND_LABEL, OTHER, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
+  dismissable, isSynthetic, KIND_LABEL, OTHER, TIDY_KINDS, TIDY_LABEL, type TidyKind, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
   ANSWER_VIA, ASK_ID, isAnswerItem, isAskItem, latestAnswer, latestChoices, RETURN_ID, taskSig, type TaskSeen, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
@@ -10,14 +10,15 @@ import type { NotifyResult, OpInput } from './protocol.ts'
 export const SIGNAL = '【操縦席】未反映の操作があります'
 
 /** 深田さんが文を書いた（か選んだ）操作。合図にどのカードかと本文の頭を載せる。 */
-const saidOp = (o: Op) => o.type === 'talk' || o.type === 'repeat' || o.type === 'answer' || (o.type === 'decide' && o.option_id === OTHER)
+const saidOp = (o: Op) => o.type === 'talk' || o.type === 'repeat' || o.type === 'answer' || o.type === 'tidy' || (o.type === 'decide' && o.option_id === OTHER)
 
 /** 合図の 1 行。別の答えと「担当と話す」があれば、どのカードかと本文の頭を載せる（端末に送るので改行は空白にする）。 */
 export function signalText(ops: Op[]): string {
   const said = ops.filter(saidOp).at(-1)
   if (!said) return SIGNAL
   const t = (said.text ?? '').replace(/\s+/g, ' ').trim()
-  const what = said.type === 'talk' ? (t ? '直してほしい' : '担当と話す') : said.type === 'repeat' ? '前にも言った' : said.type === 'answer' ? '窓から答えた' : '別の答え'
+  const what = said.type === 'talk' ? (t ? '直してほしい' : '担当と話す') : said.type === 'repeat' ? '前にも言った' : said.type === 'answer' ? '窓から答えた'
+    : said.type === 'tidy' ? `整理・棚卸し（${TIDY_LABEL[said.option_id as TidyKind] ?? '自由な指示'}）op ${said.op_id}` : '別の答え'
   return `${SIGNAL}（${what}${said.item_id ? ` ${said.item_id}` : ''}${t ? `: ${t.length > 60 ? t.slice(0, 60) + '…' : t}` : ''}）`
 }
 
@@ -429,6 +430,16 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
     if (input.item_id !== '') throw invalid('「前にも言った」はカードに付けません')
     return
   }
+  // 整理・棚卸しの指示（r132）もカードを持たない。種類は既定の 3 つか無し（自由な指示）で、文は必ず要る。
+  if (input.type === 'tidy') {
+    if (input.item_id !== '' || input.item_rev !== 0) throw invalid('整理・棚卸しの指示はカードに付けません')
+    if (input.option_id !== undefined && !TIDY_KINDS.includes(input.option_id as TidyKind)) throw invalid('整理・棚卸しの種類の形が違います')
+    if (!(typeof input.text === 'string' && input.text.trim())) throw invalid('指示の文を書いてください')
+    const bad = textError(input.text)
+    if (bad) throw invalid(bad)
+    return
+  }
+  if (input.type === 'undo' && input.item_id === '' && log.ops.some((o) => o.op_id === input.undo_of && o.type === 'tidy')) return
   if (input.type === 'answer') {
     if (!isAnswerItem(input.item_id) || !Number.isInteger(input.item_rev)) throw invalid('窓から答えられるのは停止の行と一緒に作る仕事の行だけです')
     if (!(typeof input.text === 'string' && input.text.trim())) throw invalid('答えの文がありません')

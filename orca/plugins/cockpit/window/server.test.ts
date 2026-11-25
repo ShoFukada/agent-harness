@@ -1210,6 +1210,43 @@ test('取り消しの猶予が過ぎた操作は、窓口が端末で動いて�
   assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'notified.json'), 'utf8')), { [a]: 2 })
 })
 
+test('整理・棚卸しの指示（r132）: カードを持たない tidy の操作として追記し、種類・文・カードへの付け方の違うものは断る。取り消しも受ける', async () => {
+  const { a, rows } = workspaces()
+  const { s, port, post, calls } = await start(rows, a)
+  await listen(port, s.token).until(ready)
+  const text = '操縦席を整理する。\n見る範囲: docs/'
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'tidy', option_id: 'cockpit', text })).status, 200)
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'tidy', text: '#pj-xxx を見て棚卸し' })).status, 200, '自由な指示は種類を持たない')
+  assert.deepEqual(calls, [], '押した瞬間には窓口に送らない（取り消しの猶予）')
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'tidy', option_id: 'all', text })).status, 400)
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'tidy', option_id: 'workers', text: '  ' })).status, 400)
+  assert.equal((await post('op', { root: a, item_id: 'r5', item_rev: 1, type: 'tidy', text })).status, 400)
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'undo', undo_of: 2 })).status, 200)
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'undo', undo_of: 99 })).status, 400, '整理・棚卸しの指示でない番号の取り消しは断る')
+  const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))
+  assert.deepEqual(log.ops.map((o: Op) => [o.op_id, o.type, o.item_id, o.item_rev, o.option_id ?? null, o.text ?? null, o.undo_of ?? null]), [
+    [1, 'tidy', '', 0, 'cockpit', text, null],
+    [2, 'tidy', '', 0, null, '#pj-xxx を見て棚卸し', null],
+    [3, 'undo', '', 0, null, null, 2]
+  ])
+})
+
+test('整理・棚卸しの指示（r132）: 猶予が過ぎたら郵便受けから窓口の Run に知らせ、件名はほかの操作と同じ、本文に種類と op の番号と指示の全文を載せる', async () => {
+  const old = new Date(Date.now() - 60_000).toISOString()
+  const text = 'Slack・関連ファイル・これまでのやり取りを読み、帳簿に無い依頼と古くなったタスクを棚卸しして報告する。\n見る範囲: #pj-xxx と docs/'
+  const a = workspace('a', {
+    '.orca/cockpit.json': cockpit('案件A'),
+    '.orca/cockpit.user.json': JSON.stringify({ ops: [{ op_id: 4, at: old, item_id: '', item_rev: 0, type: 'tidy', option_id: 'inventory', text }] })
+  })
+  const { s, port, calls } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
+  await listen(port, s.token).until((w) => board(w, a)?.notifiedOp === 4)
+  const run = calls.filter((c) => c[0] === 'run')
+  assert.equal(run.length, 1)
+  assert.deepEqual(run[0]!.slice(2, 4), ['run_main', SIGNAL])
+  assert.match(run[0]![4]!, /^案件A の操縦席の窓から: 【操縦席】未反映の操作があります（整理・棚卸し（棚卸し）op 4: Slack・関連ファイル/)
+  assert.ok(run[0]![4]!.includes(`書いた文（全文）:\n${text}`), '指示の全文（改行も）を本文に載せる')
+})
+
 test('自動の合図と押した送り直しが重なっても、同じ操作は Run に 1 度だけ送る（Codex 追加 44）', async () => {
   const old = new Date(Date.now() - 60_000).toISOString()
   const a = workspace('a', {

@@ -1,5 +1,5 @@
 // クリック・キーボードを操作につなぐ。パネルと窓のページが共有し、送り先（Transport）だけが違う。
-import { DRAFT_FORMATS, draftFormat, FORMAT_LABEL, OTHER, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftCheck, type DraftFormat, type OpType } from './model.ts'
+import { DRAFT_FORMATS, draftFormat, FORMAT_LABEL, OTHER, TIDY_KINDS, TIDY_LABEL, UNDO_GRACE_MS, type AskAnswer, type Draft, type DraftCheck, type DraftFormat, type OpType } from './model.ts'
 import { morph } from './morph.ts'
 import type { AnswerInput, AnswerResult, AskDecideResult, AskInput, AskResult, ClipResult, CockpitView, FocusResult, NotifyResult, OpenResult, OpInput, RulingHit, TalkResult } from './protocol.ts'
 import { sanitize } from './sanitize.ts'
@@ -9,6 +9,7 @@ import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, focusMessage, openedMessage, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
 import { boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
 import { askOpened, askOrder, askPending, askRows, askStarted, parseAskKey } from './window-asks.ts'
+import { tidyDraftFor } from './window-tidy.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -191,8 +192,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       if (ui.tab === 'done' && !(ui.doneSel && (order.includes(ui.doneSel) || b?.d.settled.some((r) => keyOf(r) === ui.doneSel)))) ui.doneSel = order[0]
       if (ui.tab === 'whole') {
         if (ui.stream && !b?.d.jobs.some((j) => j.id === ui.stream)) ui.stream = undefined
-        if (!ui.stream && !ui.watch && !(ui.task && b?.d.tasks.has(ui.task))) ui.task = order[0]
-        if (!ui.stream && !ui.watch && !ui.task) ui.stream = b?.d.jobs.find((j) => j.state !== 'done')?.id
+        if (!ui.tidy && !ui.stream && !ui.watch && !(ui.task && b?.d.tasks.has(ui.task))) ui.task = order[0]
+        if (!ui.tidy && !ui.stream && !ui.watch && !ui.task) ui.stream = b?.d.jobs.find((j) => j.state !== 'done')?.id
       }
       if (ui.tab === 'asks' && !(ui.thread && b && askRows(b, ui).some((r) => r.id === ui.thread))) ui.thread = order[0]
     }
@@ -315,7 +316,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       if (!u) return
       ui.undos = ui.undos.filter((x) => x !== u)
       void t.op({ root: u.root, item_id: u.itemId, item_rev: u.rev, type: 'undo', undo_of: u.opId }).then((res) => {
-        ui.sel = `${u.root}#${u.itemId}`
+        // 整理・棚卸しの指示はカードを持たないので、選ぶ行が無い。
+        if (u.itemId) ui.sel = `${u.root}#${u.itemId}`
         replace(res.view)
         toast('元に戻しました')
       }, fail)
@@ -396,6 +398,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   function pickWhole(p: { task?: string; stream?: string; watch?: string }): void {
+    ui.tidy = undefined
     ui.task = p.task
     ui.stream = p.stream
     ui.watch = p.watch
@@ -578,12 +581,62 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     }
   }
 
+  // ── 整理・棚卸し（r132） ──
+  /** 種類を選ぶと既定の文を欄に入れ、右に欄を出す。「送る」は tidy の操作を書き、合図はほかの操作と同じく常駐のプロセスが窓口に送る。 */
+  function onTidy(el: HTMLElement, root: string | undefined): void {
+    const k = el.dataset.tidy!
+    if (!root) return
+    if (k === 'send') return void tidySend(root)
+    pickWhole({})
+    ui.tab = 'whole'
+    const drafts = (ui.tidyDraft ??= {})
+    if (k === 'open') ui.tidy ??= 'free'
+    else {
+      ui.tidy = k
+      drafts[root] = tidyDraftFor(k, drafts[root] ?? '')
+    }
+    draw()
+    if (k === 'open') return void app.querySelector('.tidyd .sent')?.scrollIntoView({ block: 'nearest' })
+    const ta = app.querySelector<HTMLTextAreaElement>('textarea[data-tidydraft]')
+    if (!ta) return
+    ta.focus()
+    ta.setSelectionRange(ta.value.length, ta.value.length)
+    ta.scrollIntoView({ block: 'nearest' })
+  }
+
+  async function tidySend(root: string): Promise<void> {
+    const text = (ui.tidyDraft?.[root] ?? '').trim()
+    if (!text || ui.tidySending) return
+    const kind = TIDY_KINDS.find((x) => x === ui.tidy)
+    ui.tidySending = root
+    draw()
+    try {
+      const res = await t.op({ root, item_id: '', item_rev: 0, type: 'tidy', ...(kind && { option_id: kind }), text })
+      const op = res.view.log.ops.at(-1)!
+      // 送っているあいだに書き換えていたら、書きかけを残す。
+      if ((ui.tidyDraft?.[root] ?? '').trim() === text) delete ui.tidyDraft![root]
+      replace(res.view)
+      ui.toast = undefined
+      ui.undos.push({ root, opId: op.op_id, itemId: '', rev: 0, label: '送りました', title: kind ? TIDY_LABEL[kind] : '自由な指示', to: '窓口', until: Date.now() + UNDO_GRACE_MS })
+      tick()
+    } catch (e) {
+      fail(e)
+    } finally {
+      ui.tidySending = undefined
+      draw()
+    }
+  }
+
   /** 窓だけの操作（タブ・畳み・タスクの詳細・カードへ移る・worker の端末・仕事の担当）。扱ったら true。 */
   function onWindow(el: HTMLElement): boolean {
     const d = el.dataset
     const root = boardOf(model(Date.now()), ui.filter)?.root
     if (d.ask !== undefined) {
       onAsk(el)
+      return true
+    }
+    if (d.tidy !== undefined) {
+      onTidy(el, root)
       return true
     }
     if (d.side !== undefined) {
@@ -646,7 +699,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   }
 
   app.addEventListener('click', (e) => {
-    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask],[data-side],[data-orca],[data-watch],[data-thread],[data-askall],[data-stream]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-sel],[data-filter],[data-pane],[data-pick],[data-act],[data-url],[data-file],[data-theme],[data-tab],[data-toggle],[data-task],[data-jump],[data-dsel],[data-term],[data-talkstream],[data-ask],[data-side],[data-orca],[data-watch],[data-thread],[data-askall],[data-stream],[data-tidy]')
     if (!el || !app.contains(el)) return
     if (win && onWindow(el)) return
     if (el.dataset.sel !== undefined) return select(el.dataset.sel)
@@ -689,6 +742,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       if (send) send.disabled = !el.value.trim() || !!(ui.askWait[k] && !ui.askWait[k]!.error)
       const reply = el.closest('.askin')?.querySelector<HTMLButtonElement>('button[data-ask="reply"]')
       if (reply) reply.disabled = !el.value.trim()
+    }
+    const tk = el.dataset.tidydraft
+    if (tk !== undefined) {
+      ;(ui.tidyDraft ??= {})[tk] = el.value
+      const send = el.closest('.tidyin')?.querySelector<HTMLButtonElement>('button[data-tidy="send"]')
+      if (send) send.disabled = !el.value.trim() || ui.tidySending === tk
     }
     const ak = el.dataset.ansdraft
     if (ak !== undefined) {

@@ -58,6 +58,12 @@ export type Ui = {
   askWait: Record<string, AskWait>
   answerDraft?: Record<string, string>
   answering?: Record<string, { error?: string }>
+  /** 窓の全体で右に出している「整理・棚卸し」の欄と、選んでいる既定の指示の種類（TidyKind か free）。タスク・仕事・見張るの詳細と入れ替わりに出す。 */
+  tidy?: string
+  /** 整理・棚卸しの指示の書きかけ（案件の root → 文）。 */
+  tidyDraft?: Record<string, string>
+  /** 整理・棚卸しの指示を送っている案件（二度押しで 2 通送らない）。 */
+  tidySending?: string
   /** 窓を前に見たときからの変化（追加 24）。描くたびに controller がブラウザの控えから作る。控えが無ければ無い。 */
   since?: Since
 }

@@ -529,6 +529,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     for (const t of card.tasks ?? []) if (!has(tasks, t)) errors.push(`カード ${card.id}: タスク ${t} が無い`)
     if (!has(owners, card.owner)) errors.push(`カード ${card.id}: 担当 ${card.owner} が無い`)
     if (!has(requests, card.request_id)) errors.push(`カード ${card.id}: 依頼 ${card.request_id} が無い`)
+    if (card.tidy_op !== undefined && !log.ops.some((o) => o.op_id === card.tidy_op && o.type === 'tidy'))
+      errors.push(`カード ${card.id}: tidy_op ${card.tidy_op} は cockpit.user.json の整理・棚卸しの指示（type が tidy の操作）に無い`)
     for (const e of card.elements ?? []) if (e.n < 1) errors.push(`カード ${card.id}: 要素の番号は 1 から（${e.n}）`)
     errors.push(...mapErrors(card))
     const raw = c.cards.find((y) => y.id === card.id)

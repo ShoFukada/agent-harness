@@ -534,7 +534,7 @@ a{color:var(--focus)}
 </table>
 <details><summary>細部</summary>
 <ul>
-<li>操作の種類（<code>type</code>）: 決定 <code>decide</code>・承認と許可 <code>accept</code>・送信済み <code>sent</code>・却下 <code>skip</code>・一任 <code>delegate</code>・協議と直し <code>talk</code>・既読 <code>ack</code>・戻させる <code>revert</code>・取り消し <code>undo</code>・記録の再読 <code>repeat</code>・停止の票を片付ける <code>dismiss</code>・質問の答えを返す <code>ask_decide</code>。種類ごとの反映はcockpit skillの <code>references/ops.md</code></li>
+<li>操作の種類（<code>type</code>）: 決定 <code>decide</code>・承認と許可 <code>accept</code>・送信済み <code>sent</code>・却下 <code>skip</code>・一任 <code>delegate</code>・協議と直し <code>talk</code>・既読 <code>ack</code>・戻させる <code>revert</code>・取り消し <code>undo</code>・記録の再読 <code>repeat</code>・停止の票を片付ける <code>dismiss</code>・質問の答えを返す <code>ask_decide</code>・停止の行に窓から答えた記録 <code>answer</code>・整理・棚卸しの指示 <code>tidy</code>（カードを持たず、結果は報告のカードの <code>tidy_op</code> で結ぶ）。種類ごとの反映はcockpit skillの <code>references/ops.md</code></li>
 <li>「直しを伝える」は本文つきの <code>talk</code>。窓口は本文を担当に <code>send --to dispatch:</code> で送り、<code>applied_ops</code> に足すだけにする。カードの <code>rev</code> を上げると直す前に私の番に戻るので上げない。直したものができたら <code>rev</code> を上げ、私の番に戻る</li>
 <li><code>dismiss</code> と、質問の <code>ask_decide</code> はこの知らせを送らない（<code>ask_decide</code> は返しが届いてから5.3の流れで反映する）</li>
 </ul>

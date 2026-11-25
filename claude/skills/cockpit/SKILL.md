@@ -18,6 +18,7 @@ metadata:
 | 決定・制約・許可・却下を記録する、決めたことを置き場所に反映する | [references/rulings.md](references/rulings.md)「いつ書くか」「決めたとき」 |
 | 作業メモを書く、hook に「今の順番」が無い・作業メモが大きいと言われた | [references/memo.md](references/memo.md)「メインの作業メモ」 |
 | 未反映の操作がある | [references/ops.md](references/ops.md) |
+| 未反映の操作に整理・棚卸しの指示（`type: "tidy"`）がある | [references/tidy.md](references/tidy.md) |
 | hook が `【操縦席】`・`【見張り】`・`【worktree】` の行で何かを名指しした、開始・圧縮のあとの文に「全文は」が付いていた | [references/checks.md](references/checks.md) |
 | 担当・worker を立てる、担当から判断の依頼が届いた | [references/workers.md](references/workers.md) |
 | サイドバーの名前・親子・状態をそろえる | worktree-flow skill の [references/sidebar.md](../worktree-flow/references/sidebar.md) |

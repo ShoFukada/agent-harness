@@ -1,0 +1,43 @@
+# 整理・棚卸しの指示を実行する
+
+cockpit skill の SKILL.md から分けた手順。窓の全体のタブの「整理・棚卸し」から深田が送った指示（`cockpit.user.json` の `type: "tidy"` の操作）を反映するときに読む（r132。深田の依頼「workerとかコックピットとかが古くなることあって」）。
+
+指示はほかの操作と同じ合図（`【操縦席】未反映の操作があります（整理・棚卸し（<種類>）op <番号>: <文の頭>）`）で届き、本文に指示の全文が載る。定期では動かさない。深田が送ったときだけ実行する（R181）。
+
+## 操作の形
+- `item_id` は空、`item_rev` は 0、`text` は深田が送った指示の全文（既定の文を書き換えたもの・書き足したものを含む）
+- `option_id` は既定の指示の種類。`workers`（workerとworktreeの整理）・`cockpit`（操縦席の整理）・`inventory`（棚卸し）のどれかで、自由に書いた指示には無い
+- 手順は種類で選び、`text` は範囲と注文として読む（「#pj-xxx と docs/ を見て」「s3 は触らない」など）。`text` が既定の手順と食い違えば `text` を採る。自由な指示は、`text` に近い種類の手順を使い、どれにも当たらなければ書かれたとおりに進める
+
+## 進め方（種類に共通）
+1. 受けたら、深田への答えを待たずに実行する。窓は合図を送った時点から「実行中」と出す
+2. 戻せる片付け・直しは窓口がそのまま行う。戻せない操作は行わず、許可のカード（`kind: "permit"`、`target` に対象の全部、`undo` に戻せない理由）にする。戻せない操作に当たるもの:
+   - 未 commit の変更か main に無い commit がある worktree の削除・ブランチの削除
+   - 深田の判断待ち（判断・許可・確認・送信前・停止）のカードを閉じる・中身を変える
+   - 外に出る操作（Slack・メールへの送信、push、本番の変更）
+3. 3 ファイル以上を読む調べもの（棚卸しの Slack・ファイル・やり取りの読み込み、worker の結果の読み比べ）は subagent に出す。会話に依存しない読み物は researcher、会話の文脈が要るものは fork。結論と出典だけを受け取る
+4. 結果は報告のカード 1 枚で返す（`kind: "report"`、`tidy_op` にこの op の番号、`done[]` に 1 件ずつ `what`・`why`・`undo`）。窓は送った指示の行から、このカードへ移れる。何も見つからなかったときも「見つけたもの 0 件」の報告を書く（窓が完了と出す元になるため）。許可のカードを出したら報告の `done[]` の最後に「許可待ち: <題>」を足す
+5. 報告のカード・許可のカード・直した帳簿と、反映した op の番号（`applied_ops`）を、`cockpit-write` の 1 回で書く（references/ops.md の 5）
+6. 題・概要・状況の文は、深田が前の流れを覚えていなくても初見で分かる文にする（R187）。報告の題は「workerとworktreeを整理した（4件を片付け、1件は許可待ち）」のように、した数と残りを入れる
+
+## workerとworktreeの整理（workers）
+この案件（この窓口の帳簿）の worker と worktree だけを見る。別の案件の分は触らず、出さない（R132）。
+
+1. 今を読む: `node ~/.config/agent-harness/orca/plugins/cockpit/window/state.ts <root>` の `tasks`（今の Dispatch と worker の様子）と `checks.stale_tasks`、`orca orchestration worker-list`、`orca worktree ps --json`（この案件の root の子孫の worktree）、`~/.config/agent-harness/bin/worktree-sweep`（`--apply` なし。一覧を出すだけ）
+2. 片付けるもの:
+   - worker_done を返したのに取り込んでいない worker: 取り込みの手順（worktree-flow skill の「窓口・担当・worker」）で取り込むか、取り込めない理由を報告に書く
+   - 止まったまま・Orca に見つからない worker: 結んだタスクの `worker` を消すか、立て直す。どちらにしたかを報告に書く
+   - 取り込み済みで使い終わった worktree: worktree-flow skill の references/cleanup.md の順で消す。`worktree-sweep` が「消してよい」と出したものは `worktree-sweep --apply` で消してよい。「判断が要る」と出したもの・未 commit や main に無い commit があるものは許可のカードにする
+   - 帳簿のタスクに結ばれていない worktree・worker: 取り込むか捨てるかが分からなければ許可のカードにする
+3. サイドバーの名前と状態を、worktree-flow skill の references/sidebar.md の「状態と片付け」でそろえる
+
+## 操縦席の整理（cockpit）
+1. 今を読む: state.ts の出力の `checks`（`stale_tasks`・`loose_tasks`・`incomplete_cards`・`incomplete_requests`・`unsorted`・`stale_status`・`stale_consults`・`unreflected_returns`・`no_form`・`unknown_phase`・`long_names`・`local_deliverables` など）と `jobs`・`mine`、`cockpit.json` の開いたカード、作業メモ（`.orca/cockpit/state.md`）
+2. 直すもの: `checks` が名指ししたもの（直し方は references/checks.md）、済んだのに `open` のタスク（済の証拠を結んで `ok` にする）、元の事実が変わった仕事の `status`、片付けた相談のタブ、作業メモの古い「今の順番」
+3. 深田の判断待ちのカードが古い（前提が変わった・もう要らない）と見えたら、窓口は閉じずに、閉じるかを許可のカードにする
+
+## 棚卸し（inventory）
+1. 見る範囲は `text` の「見る範囲」に従う。書いていなければ、この案件の見張る経路（`routes`・見張る仕事の `watch.targets`）、発言の記録（`.orca/cockpit/utterances.jsonl`）の直近 2 週間、案件の docs（questions.yaml・Issue）を見る
+2. 読み込みは subagent に出す（上の 3）。渡すもの: 見る範囲、帳簿の依頼の一覧（`requests[]` の id・題・済の条件）と開いたタスクの一覧、探すもの（帳簿に無い依頼・返していない連絡・古くなったタスク）、返す形（1 件ごとに原文・出典・どの依頼かタスクに当たるか）
+3. 見つけた抜けた依頼は、深田の発言の原文があれば依頼の帳簿に足す（references/intake.md の「受付と仕分け」）。原文が無く深田が決めることなら判断のカードにする。古くなったタスクは、操縦席の整理の 2 と同じに直す
+4. 同じ種類の直しを深田が 2 回言っている、のような仕組みに上げる話は、週 1 の手直しの棚卸し（nix-darwin の操縦席の見張る仕事 s14、harness-desk）が受け持つ。この棚卸しでは拾わず、見つけたら報告に 1 行書くだけにする（同じ手順を 2 か所に持たない）
