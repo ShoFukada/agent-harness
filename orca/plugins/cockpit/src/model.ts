@@ -345,6 +345,7 @@ export type Ruling = {
 export type ConsultReturn = {
   return_id: string; card?: unknown; rev?: number; choice?: string | null
   decisions?: { text?: string; quote?: string; utterance?: string }[]; requests?: { quote?: string; utterance?: string }[]; open?: string[]
+  conflict_of?: unknown
 }
 /** 返しの照合に使う、帳簿と移したカードの生の欄（画面の形の検査で外したカードも含める。compaction-keep.py の ledger_cards と同じ）。 */
 export type ReturnMark = { id: unknown; from_returns?: unknown[]; held_returns?: unknown[] }

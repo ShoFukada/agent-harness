@@ -377,13 +377,12 @@ function consultRoot(): string {
   put('.orca/cockpit.json', JSON.stringify({ ...c, cards: [...c.cards, { id: 'd1', rev: 1, kind: 'decide', state: 'open', held_returns: ['d1-1'] }] }))
   put('.orca/cockpit.archive.json', JSON.stringify({ cards: [{ id: 'x9', rev: 1, kind: 'decide', state: 'done', title: '移したカード', held_returns: ['x9-1'] }] }))
   put('.orca/cockpit/rulings.jsonl', [{ id: 'R1', from_return: 'd21-1' }, { from_return: 'd21-2' }, { id: 'R3', from_return: 'd22-1' }, { id: 'R4' }].map((x) => JSON.stringify(x)).join('\n') + '\n')
-  const mark = { memo_imported: '2026-11-25T10:00:00+09:00', memo: '', skipped: [] }
   const rows = (...xs: unknown[]) => xs.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join('\n') + '\n'
-  put('.orca/consult/d21.md', '# 相談｜案件A｜d21\n## 窓口に返したもの\n```json\n{"return_id": "d21-8", "card": "d21"}\n```\n')
-  put('.orca/consult/d21.returns.jsonl', rows(mark, { return_id: 'd21-1', card: 'd21', rev: 1, decisions: [{ text: '入口は 1 つにする' }] }, { return_id: 'd21-2', card: 'd21', rev: 1 },
+  put('.orca/consult/d21.md', '# 相談｜案件A｜d21\n## 決めたこと\n```json\n{"return_id": "d21-8", "card": "d21"}\n```\n')
+  put('.orca/consult/d21.returns.jsonl', rows({ return_id: 'd21-1', card: 'd21', rev: 1, decisions: [{ text: '入口は 1 つにする' }] }, { return_id: 'd21-2', card: 'd21', rev: 1 },
     { return_id: 'd21-2', card: 'x' }, '{ 書きかけ', { card: 'd21' }, ['配列'], { return_id: 'd21-3', card: 'd21', rev: 1 }))
   // 改行が CRLF の記録・card が空の配列の行・全角数字の連番も python と同じに読む（Codex 重大 4・軽微）。
-  put('.orca/consult/d22.returns.jsonl', rows(mark, { return_id: 'd22-1', rev: 2 }, { return_id: 'd22-２', card: [] }).replace(/\n/g, '\r\n'))
+  put('.orca/consult/d22.returns.jsonl', rows({ return_id: 'd22-1', rev: 2 }, { return_id: 'd22-２', card: [] }).replace(/\n/g, '\r\n'))
   put('.orca/consult/c4.md', '# 返しはまだ無い\n')
   return root
 }
@@ -413,17 +412,20 @@ test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), pyUnreflected(root))
 })
 
-test('相談の返し: 切り替え前のメモの返しは compaction-keep.py が最初に読むときに記録へ取り込み、窓はそのあと記録から同じ結果を読む', async () => {
+test('相談の返し: 切り替え前のメモの返しは compaction-keep.py が読むときに記録へ足し、番号がぶつかった返しは新しい番号で「番号の衝突」として出す。窓はそのあと記録から同じ結果を読む', async () => {
   const root = consultRoot()
   rmSync(path.join(root, '.orca/consult/d22.returns.jsonl'))
   const block = (v: unknown) => '```json\n' + JSON.stringify(v, null, 1) + '\n```\n'
-  writeFileSync(path.join(root, '.orca/consult/d22.md'), '## 窓口に返したもの\n' + block({ return_id: 'd22-1', rev: 2 }) + block({ return_id: 'd22-5', card: 'd22', requests: [{ quote: '資料も', utterance: 'u-9' }] }))
-  assert.deepEqual((await loadFiles(root, emptyFiles())).consults.find((m) => m.card === 'd22')!.returns, [], '取り込む前の窓はメモを読まない')
+  writeFileSync(path.join(root, '.orca/consult/d22.md'), '## 窓口に返したもの\n' + block({ return_id: 'd22-1', rev: 2 }) + block({ return_id: 'd22-5', card: 'd22', requests: [{ quote: '資料も', utterance: 'u-9' }] })
+    + block({ return_id: 'd22-5', card: 'd22', requests: [{ quote: '表も', utterance: 'u-10' }] }))
+  assert.deepEqual((await loadFiles(root, emptyFiles())).consults.find((m) => m.card === 'd22')!.returns, [], '足す前の窓はメモを読まない')
   const py = pyUnreflected(root)
   const f = await loadFiles(root, emptyFiles())
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), py)
-  assert.deepEqual(py.filter((x: { card?: string }) => x.card === 'd22').map((x: { id: string }) => x.id), ['d22-1', 'd22-5'])
-  assert.deepEqual(f.consults.find((m) => m.card === 'd22')!.returns.at(-1)!.requests, [{ quote: '資料も', utterance: 'u-9' }])
+  const d22 = py.filter((x: { card?: string }) => x.card === 'd22')
+  assert.deepEqual(d22.map((x: { id: string; missing: string[]; conflict_of?: string }) => [x.id, x.missing, x.conflict_of]),
+    [['d22-1', ['帳簿'], undefined], ['d22-5', ['判断の記録', '帳簿'], undefined], ['d22-6', ['判断の記録', '帳簿', '番号の衝突'], 'd22-5']])
+  assert.deepEqual(f.consults.find((m) => m.card === 'd22')!.returns.at(-1)!.requests, [{ quote: '表も', utterance: 'u-10' }])
 })
 
 /**

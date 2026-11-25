@@ -79,7 +79,7 @@ function returnMarks(text: string | undefined): ReturnMark[] {
 }
 
 /**
- * カードの相談の返しの記録の行のうち、return_id を持つもの（同じ id は先の行）。切り替え前のメモから取り込んだ印の行など、return_id の無い行は飛ばす。
+ * カードの相談の返しの記録の行のうち、return_id を持つもの（同じ id は先の行）。return_id の無い行は飛ばす。
  * 読み方は compaction-keep.py の valid_returns と同じにする（checks.unreflected_returns を python と食い違わせないため）。
  */
 export function consultReturns(text: string): ConsultReturn[] {
@@ -91,7 +91,7 @@ export function consultReturns(text: string): ConsultReturn[] {
 
 /**
  * .orca/consult/ の <カード id>.md（相談のメモ）か <カード id>.returns.jsonl（返しの記録）のあるカードを、id の順に読む（compaction-keep.py の consult_cards と同じ）。
- * 返しは記録だけから読む。切り替え前のメモの返しは compaction-keep.py が最初に読むときに記録へ取り込むので、窓はメモを読まない。置き場所が無ければ空。
+ * 返しは記録だけから読む。切り替え前のメモの返しは compaction-keep.py が読むたびに記録へ足すので、窓はメモを読まない。置き場所が無ければ空。
  */
 async function readConsults(root: string): Promise<ConsultMemo[]> {
   const dir = path.join(root, '.orca', 'consult')

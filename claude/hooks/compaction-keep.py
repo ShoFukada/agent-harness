@@ -779,9 +779,14 @@ def append_text(path, text):
 RETURN_BLOCK = re.compile(r"```json[ \t]*\n(.*?)\n[ \t]*```", re.S)
 # 返しの記録の行のうち、道具が足す欄（窓口に送る返しの JSON には入れない）
 RECORD_FIELDS = ("ask", "saved_at", "session", "reply", "imported_from")
-# 切り替え前のメモの返しを取り込み終えた印の行（return_id を持たないので、返しとしては読まれない）
-MEMO_MARK = "memo_imported"
+# 切り替え前のメモで、記録の同じ番号の返しと中身が違ったために、道具が新しい番号を付けた返しの元の番号
+CONFLICT = "conflict_of"
 CONSULT_FILE = re.compile(r"([A-Za-z0-9_]+)\.(?:md|returns\.jsonl)")
+
+
+def return_body(r):
+    """返しの中身（道具が付ける欄を除いたもの）。同じ返しかどうかを中身で比べるときに使う。"""
+    return {k: v for k, v in r.items() if k not in ("return_id", CONFLICT) + RECORD_FIELDS}
 
 
 def card_returns_path(root, card_id):
@@ -803,46 +808,46 @@ def memo_blocks(text):
     return out
 
 
-def import_memo(root, card_id, rows):
-    """切り替え前のメモの返しを返しの記録に足し、取り込んだ印の行を書く（呼ぶ側が locked(root) を持つ）。
-    同じ return_id の返しが記録かメモの前の塊に中身違いであれば、取り込まずに理由を印の行に残して標準エラーに出す。"""
-    memo, path = consult_memo_path(root, card_id), card_returns_path(root, card_id)
+def memo_pending(root, card_id, rows):
+    """切り替え前のメモの返しのうち、記録にまだ無いもの [(塊, 衝突した番号か None)]。
+    記録に同じ番号の返しが無ければそのまま、中身の違う返しがあれば番号の衝突として返す。同じ中身の取り込み済みは返さない。"""
     try:
-        with open(memo, encoding="utf-8") as fh:
+        with open(consult_memo_path(root, card_id), encoding="utf-8") as fh:
             text = fh.read()
     except FileNotFoundError:
-        text = ""
-    # ほかの読み取りの誤り（権限など）は印を書かずに上げる。空として印を書くと、直したあとも取り込まれない
-    have = {r["return_id"]: r for r in valid_returns(rows)}
-    body = lambda r: {k: v for k, v in r.items() if k not in RECORD_FIELDS}
-    added, skipped = [], []
+        return []
+    # ほかの読み取りの誤り（権限など）は上げる。黙って空とすると、そのメモの返しと番号を数え落とす
+    have = [(r, return_body(r)) for r in valid_returns(rows)]
+    out = []
     for v in memo_blocks(text):
         v = {**v, "card": v.get("card") or card_id}
-        old = have.get(v["return_id"])
-        if old is None:
-            row = {**v, "imported_from": memo, "saved_at": iso()}
-            have[v["return_id"]] = row
-            added.append(row)
-        elif body(old) != body(v):
-            why = "return_id %s は返しの記録に中身の違う返しがあるので、メモの塊を取り込まなかった" % v["return_id"]
-            skipped.append({"return_id": v["return_id"], "why": why})
-            print("compaction-keep: %s（%s）" % (why, memo), file=sys.stderr)
-    mark = {MEMO_MARK: iso(), "memo": memo, "skipped": skipped}
-    for row in added + [mark]:
-        append_jsonl(path, row)
-    return added + [mark]
+        body = return_body(v)
+        if any(r.get(CONFLICT, r["return_id"]) == v["return_id"] and b == body for r, b in have):
+            continue
+        clash = any(r["return_id"] == v["return_id"] for r, _ in have)
+        out.append((v, v["return_id"] if clash else None))
+        have.append(({**v, "return_id": "" if clash else v["return_id"], **({CONFLICT: v["return_id"]} if clash else {})}, body))
+    return out
 
 
 def card_returns(root, card_id):
-    """カードの相談の返しの記録の全部の行。切り替え前のメモの返しは、最初に読むときにロックの中で 1 回だけ取り込む。"""
+    """カードの相談の返しの記録の全部の行。切り替え前のメモの返しのうち記録に無いものは、読むたびにロックの中で記録へ足す
+    （古いタブが閉じる前にメモに書いた返しも拾う。return_id で冪等）。番号がぶつかった返しは、新しい番号を付け、
+    元の番号を conflict_of に残して足す（本文を落とさず、窓口が「番号の衝突」として拾う）。"""
     path = card_returns_path(root, card_id)
     rows = read_jsonl(path)
-    if any(MEMO_MARK in r for r in rows):
+    if not memo_pending(root, card_id, rows):
         return rows
     with locked(root):
         rows = read_jsonl(path)
-        if not any(MEMO_MARK in r for r in rows):
-            rows += import_memo(root, card_id, rows)
+        # ぶつからない返しを先に足してから、ぶつかった返しに番号を付ける（メモにある番号を新しい番号に使わない）
+        for v, clash in sorted(memo_pending(root, card_id, rows), key=lambda x: x[1] is not None):
+            row = {**v, "imported_from": consult_memo_path(root, card_id), "saved_at": iso()}
+            if clash:
+                row = {**row, "return_id": next_return_id(root, card_id, rows), CONFLICT: clash}
+                print("compaction-keep: メモの返し %s は記録の同じ番号の返しと中身が違うので、%s として取り込んだ" % (clash, row["return_id"]), file=sys.stderr)
+            append_jsonl(path, row)
+            rows.append(row)
     return rows
 
 
@@ -867,7 +872,8 @@ def consult_cards(root):
 def unreflected_returns(root):
     """カードの相談の返しの記録にあって、判断の記録の from_return か帳簿のカードの from_returns のどちらかに無い返し（設計 10.7 の 1）と、
     窓口が版違い・増えた判断で保留にした返し（カードの held_returns。相談が返し直すまで残す）。
-    形は state.ts の checks.unreflected_returns と同じ { id, card, missing[], memo, returns }。missing は 判断の記録・帳簿・保留。"""
+    形は state.ts の checks.unreflected_returns と同じ { id, card, missing[], memo, returns, conflict_of? }。missing は 判断の記録・帳簿・保留と、
+    反映し終えていない間の番号の衝突（切り替え前のメモで同じ番号の別の返しがあった。conflict_of に元の番号）。"""
     in_rulings = {r.get("from_return") for r in rulings(root)}
     in_ledger = {x for card in ledger_cards(root) if isinstance(card.get("from_returns"), list) for x in card["from_returns"]}
     # 片付いた・移したカードの保留も数える（窓口が片付けるときに held_returns を空にするまで残す）
@@ -878,8 +884,10 @@ def unreflected_returns(root):
             missing = [label for label, have in (("判断の記録", in_rulings), ("帳簿", in_ledger)) if v["return_id"] not in have]
             missing += ["保留"] if v["return_id"] in held else []
             if missing:
+                missing += ["番号の衝突"] if v.get(CONFLICT) else []
                 out.append({"id": v["return_id"], "card": v.get("card") or card_id, "missing": missing,
-                            "memo": consult_memo_path(root, card_id), "returns": card_returns_path(root, card_id)})
+                            "memo": consult_memo_path(root, card_id), "returns": card_returns_path(root, card_id),
+                            **({CONFLICT: v[CONFLICT]} if v.get(CONFLICT) else {})})
     named = {x["id"] for x in out}
     out += [{"id": x, "card": c, "missing": ["保留"], "memo": None, "returns": None} for x, c in sorted(held.items()) if x not in named]
     return out + unreflected_asks(root, in_rulings)
@@ -892,7 +900,6 @@ def same_return(rows, ret, reply=None):
       - 質問の hook が同じ返事をもう一度処理した: reply（session と返事の本文の sha256。reply_key）が同じ
       - 道具が付ける欄（return_id・RECORD_FIELDS）を除いた中身が完全に同じ（相手が出力を見失って同じ返しで呼び直した）。
         発言の id まで同じなので、言い換えた別の返しは同じにならない"""
-    body = lambda r: {k: v for k, v in r.items() if k != "return_id" and k not in RECORD_FIELDS}
     for r in valid_returns(rows):
         # 返し直しは同じ replaces の返しとだけ比べる（元の返しと同じ op を持っていても、直した中身を捨てない）
         if ret.get("replaces"):
@@ -901,16 +908,16 @@ def same_return(rows, ret, reply=None):
             continue
         if ret.get("op") is not None and r.get("op") is not None and str(r["op"]) == str(ret["op"]):
             return r
-        if (reply and r.get("reply") == reply) or body(r) == body(ret):
+        if (reply and r.get("reply") == reply) or return_body(r) == return_body(ret):
             return r
     return None
 
 
 def next_return_id(root, owner, rows):
-    """<カード id か質問 id>-<n>。n は記録（取り込めなかったメモの番号も）と判断の記録の from_return の最大に 1 を足す。"""
+    """<カード id か質問 id>-<n>。n は、その id のカードの記録と質問の記録（カード ask3 と質問 ask3 が同じ番号を採らないよう両方）と、
+    判断の記録の from_return の最大に 1 を足す。呼ぶ側が locked(root) を持つ。rows は呼ぶ側が読んだ記録（足したばかりの行を含む）。"""
     pat = re.compile(r"%s-(\d+)" % re.escape(owner))
-    ids = [r.get("return_id") for r in rows]
-    ids += [s.get("return_id") for r in rows if MEMO_MARK in r and isinstance(r.get("skipped"), list) for s in r["skipped"] if isinstance(s, dict)]
+    ids = [r.get("return_id") for r in rows + read_jsonl(card_returns_path(root, owner)) + read_jsonl(ask_returns_path(root, owner))]
     ids += [r.get("from_return") for r in rulings(root)]
     n = max([int(m.group(1)) for x in ids if isinstance(x, str) for m in [pat.fullmatch(x)] if m] + [0])
     return "%s-%d" % (owner, n + 1)
@@ -939,7 +946,8 @@ def unreflected_lines(root):
 
     def line(x):
         if "ask" not in x:
-            return "- %s（カード %s。無いもの: %s。返しの記録: %s）" % (x["id"], x["card"], "・".join(x["missing"]), x["returns"] or "無い")
+            clash = "。切り替え前のメモで %s と番号がぶつかった別の返し。%s と同じ判断・依頼が帳簿にあれば足さない" % (x[CONFLICT], x[CONFLICT]) if x.get(CONFLICT) else ""
+            return "- %s（カード %s。無いもの: %s%s。返しの記録: %s）" % (x["id"], x["card"], "・".join(x["missing"]), clash, x["returns"] or "無い")
         if x.get("op") is not None:
             return "- 質問 %s の「この答えを窓口に返す」（op %s）に結ばれた返しが無い。質問のタブに返しを頼み直すか、答えの控え %s から窓口が反映して op を applied_ops に足す" % (
                 x["ask"], x["op"], x["memo"])
@@ -1114,8 +1122,8 @@ def reply_return(text, ask_id, ops=None):
 def check_return(v, owner, ask, ops=None):
     """(返し, 断る理由)。質問の返し（owner が質問 id）とカードの相談の返し（owner がカード id）の形を同じ規則で確かめる。
     return_id は書かなくてよく、書いてあっても外す（番号は save_return が付ける。相手が推し量った番号で衝突しないように）。"""
-    # 道具が付ける欄と取り込みの印の欄は、相手が書いても使わない
-    v = {k: x for k, x in v.items() if k not in ("return_id", MEMO_MARK, "skipped") + RECORD_FIELDS}
+    # 道具が付ける欄は、相手が書いても使わない
+    v = {k: x for k, x in v.items() if k not in ("return_id", CONFLICT) + RECORD_FIELDS}
     if not ask:
         if v.get("card") not in (None, owner):
             return None, "card は相談しているカードの id（%s）" % owner

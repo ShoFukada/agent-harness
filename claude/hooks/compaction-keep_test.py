@@ -1565,16 +1565,16 @@ class ReturnRecord(ConsultBase):
             held = True
         if held:
             self.rule(kind="none", text="版違いか増えた判断で選択と判断を保留、依頼は受けた", dec="d21", from_return=rid)
-        elif not (row["decisions"] or row.get("choice")):
+        elif not (row.get("decisions", []) or row.get("choice")):
             self.rule(kind="none", text="受ける判断は無い。依頼と論点を受けた", dec="d21", from_return=rid)
         else:
-            for d in row["decisions"]:
+            for d in row.get("decisions", []):
                 self.rule(kind="decision", text=d["text"], quote=d["quote"], dec="d21", from_return=rid)
             if row.get("choice"):
                 self.rule(kind="decision", text="d21 は案 %s" % row["choice"], dec="d21", from_return=rid)
         if stop_after == "rule":
             return "中断"
-        for q in row["requests"]:
+        for q in row.get("requests", []):
             if not self.requests_from(q["utterance"]):
                 self.cockpit["requests"].append({"id": "r%d" % (31 + len(self.cockpit["requests"])), "title": q["quote"],
                                                  "utterances": [{"id": q["utterance"], "quote": q["quote"]}], "from_return": rid})
@@ -1625,25 +1625,37 @@ class ReturnRecord(ConsultBase):
         self.assertEqual(done.stdout.splitlines(), ["return_id d21-1", "送れなかった: 窓口の Run が帳簿（main.run_id）に無い。窓口は開始・再開のときに返しの記録から拾う"])
         self.assertEqual(self.unreflected(), {"d21-1": ["判断の記録", "帳簿"]})
 
-    def test_the_memo_is_imported_once_and_a_conflicting_block_is_not(self):
-        # 切り替え前に 2 つのタブが同じ d21-7 を別の依頼で書いた
-        self.write_memo({"return_id": "d21-7", "card": "d21", "rev": 1, "requests": [{"quote": "図も", "utterance": "u-1"}]},
-                        {"return_id": "d21-7", "card": "d21", "rev": 1, "requests": [{"quote": "表も", "utterance": "u-2"}]},
-                        {"return_id": "d21-3", "rev": 1})
+    def test_the_memo_is_read_each_time_and_a_clashing_return_gets_a_new_number_and_is_named(self):
+        # 切り替え前に 2 つのタブが同じ d21-7 を別の依頼で書いた（Astra の 2 回目の指摘 2）
+        self.write_memo({"return_id": "d21-7", "card": "d21", "rev": 1, "rulings_seen": "R6", "requests": [{"quote": "図も", "utterance": "u-1"}]},
+                        {"return_id": "d21-7", "card": "d21", "rev": 1, "rulings_seen": "R6", "requests": [{"quote": "表も", "utterance": "u-2"}]},
+                        {"return_id": "d21-3", "rev": 1, "open": ["色"]})
         done = self.tool_args("unreflected", "--json")
-        self.assertIn("return_id d21-7 は返しの記録に中身の違う返しがある", done.stderr)
-        self.assertEqual([x["id"] for x in json.loads(done.stdout)], ["d21-7", "d21-3"])
+        self.assertIn("メモの返し d21-7 は記録の同じ番号の返しと中身が違うので、d21-8 として取り込んだ", done.stderr)
+        got = {x["id"]: (x["missing"], x.get("conflict_of")) for x in json.loads(done.stdout)}
+        self.assertEqual(got, {"d21-7": (["判断の記録", "帳簿"], None), "d21-3": (["判断の記録", "帳簿"], None),
+                               "d21-8": (["判断の記録", "帳簿", "番号の衝突"], "d21-7")})
         rows = self.record()
-        self.assertEqual([r.get("return_id") for r in rows], ["d21-7", "d21-3", None])
+        self.assertEqual([(r["return_id"], r.get("conflict_of")) for r in rows], [("d21-7", None), ("d21-3", None), ("d21-8", "d21-7")])
         self.assertEqual(rows[1]["card"], "d21")  # card の無い塊はメモのカード
-        self.assertEqual(rows[-1]["skipped"][0]["return_id"], "d21-7")
-        # 取り込みのあとはメモを読まない（メモを書き直しても、2 回目は取り込まない）
-        self.write_memo({"return_id": "d21-20", "card": "d21", "rev": 1})
-        self.assertEqual(sorted(self.unreflected()), ["d21-3", "d21-7"])
+        self.assertEqual(rows[2]["requests"], [{"quote": "表も", "utterance": "u-2"}])  # ぶつかった返しの本文も残る
+        text = json.loads(self.hook("SessionStart", source="compact"))["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("- d21-8（カード d21。無いもの: 判断の記録・帳簿・番号の衝突。切り替え前のメモで d21-7 と番号がぶつかった別の返し", text)
+        # 読み直しても足さない（return_id と中身で冪等）
+        self.unreflected()
         self.assertEqual(len(self.record()), 3)
-        self.assertEqual(self.save("new", self.ret(open=["色"])), "d21-8")
+        # 取り込みのあとに、閉じる前の古いタブがメモに書いた返しも拾う（Astra の 2 回目の指摘 1）
+        self.memo_rets = [{"return_id": "d21-7", "card": "d21", "rev": 1, "rulings_seen": "R6", "requests": [{"quote": "図も", "utterance": "u-1"}]},
+                          {"return_id": "d21-9", "card": "d21", "rev": 1, "rulings_seen": "R6", "requests": [{"quote": "地図も", "utterance": "u-4"}]}]
+        self.write_memo(*self.memo_rets)
+        self.assertEqual(sorted(self.unreflected()), ["d21-3", "d21-7", "d21-8", "d21-9"])
+        self.assertEqual(self.save("new", self.ret(open=["形"])), "d21-10")
+        # 窓口が衝突した返しを反映すると、名指しが消えて依頼が届く
+        self.assertIn(self.reflect("d21-8"), ("反映", "保留"))
+        self.assertNotIn("d21-8", self.unreflected())
+        self.assertEqual(len(self.requests_from("u-2")), 1)
 
-    def test_a_memo_that_cannot_be_read_is_not_marked_as_imported(self):
+    def test_a_memo_that_cannot_be_read_stops_reading_and_saving_until_it_can(self):
         self.write_memo({"return_id": "d21-4", "card": "d21", "rev": 1, "open": ["色"]})
         memo = os.path.join(self.root, ".orca", "consult", "d21.md")
         os.chmod(memo, 0)
@@ -1658,11 +1670,11 @@ class ReturnRecord(ConsultBase):
         self.assertEqual(self.save("new", self.ret(open=["形"])), "d21-5")
 
     def test_fields_the_tool_writes_are_not_taken_from_the_return(self):
-        done = self.consult_return(self.ret(open=["色"], skipped=1, memo_imported="x", saved_at="昔", imported_from="/x"))
+        done = self.consult_return(self.ret(open=["色"], conflict_of="d21-3", saved_at="昔", imported_from="/x"))
         self.assertEqual(done.returncode, 0, done.stderr)
-        [row] = [r for r in self.record() if "return_id" in r]
-        self.assertNotIn("skipped", row)
-        self.assertNotIn("memo_imported", row)
+        [row] = self.record()
+        self.assertNotIn("conflict_of", row)
+        self.assertNotIn("imported_from", row)
         self.assertNotEqual(row["saved_at"], "昔")
         self.assertEqual(self.save("new", self.ret(open=["形"])), "d21-2")
 
@@ -1675,6 +1687,14 @@ class ReturnRecord(ConsultBase):
         self.assertTrue(os.path.exists(os.path.join(self.root, ".orca", "consult", "ask3.returns.jsonl")))
         self.assertFalse(os.path.exists(os.path.join(self.root, ".orca", "consult", "ask-ask3.returns.jsonl")))
         self.assertIn("相談 ask3: 返し ask3-1", read(self.orca_log))
+        # 同じ id の質問 ask3 の返しは、カードの記録の番号も数えて次の番号になる（Astra の 2 回目の指摘 3）
+        ret = {"rulings_seen": "R6", "decisions": [{"text": "凡例は 5 つ", "quote": "5 つにして", "utterance": "u-1"}]}
+        reply = "答え\n\n【窓口への返し】\n```json\n%s\n```\n" % json.dumps(ret, ensure_ascii=False)
+        self.hook("Stop", env=self.env(CONSULT_THREAD="1", CONSULT_ASK="%s#ask3" % self.root), session_id="s-ask", last_assistant_message=reply)
+        [row] = [json.loads(l) for l in read(os.path.join(self.root, ".orca", "consult", "ask-ask3.returns.jsonl")).splitlines()]
+        self.assertEqual(row["return_id"], "ask3-2")
+        done = self.consult_return(self.ret(card="ask3", rev=2, choice="b"), card="ask3")
+        self.assertEqual(done.stdout.splitlines()[0], "return_id ask3-3")
 
     # ---- 試験 ①〜④（古い形と新しい形の両方で） ----
 
@@ -1763,7 +1783,16 @@ class ReturnRecord(ConsultBase):
                 asks = [self.ret(requests=[{"quote": q, "utterance": u}]) for q, u in (("図を描いて", "u-11"), ("表も作って", "u-12"))]
                 procs = [subprocess.Popen([HOOK, "consult-return", self.root, "d21"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                           stderr=subprocess.PIPE, text=True, env=self.consult_env()) for _ in asks]
-                outs = [p.communicate(json.dumps(a, ensure_ascii=False))[0] for p, a in zip(procs, asks)]
+                # 両方に入力を渡し終えてから終わりを待つ（片方が保存し終える前に、もう片方も走らせる）
+                for p, a in zip(procs, asks):
+                    p.stdin.write(json.dumps(a, ensure_ascii=False))
+                    p.stdin.close()
+                outs = [p.stdout.read() for p in procs]
+                for p in procs:
+                    p.wait()
+                    p.stdout.close()
+                    p.stderr.close()
+                self.assertEqual([p.returncode for p in procs], [0, 0])
                 ids = sorted(o.splitlines()[0].split()[1] for o in outs)
                 self.assertEqual(ids, ["d21-2", "d21-3"] if form == "old" else ["d21-1", "d21-2"])
                 for rid in ids:

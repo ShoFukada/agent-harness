@@ -1005,7 +1005,8 @@ export type StateReport = {
   card: string
 }
 
-export type Unreflected = { id: string; card: unknown; missing: ('判断の記録' | '帳簿' | '保留')[]; memo: string | null; returns: string | null }
+/** conflict_of は、切り替え前のメモで同じ番号の別の返しとぶつかったため compaction-keep.py が新しい番号を付けた返しの元の番号（反映し終えるまで missing に「番号の衝突」）。 */
+export type Unreflected = { id: string; card: unknown; missing: ('判断の記録' | '帳簿' | '保留' | '番号の衝突')[]; memo: string | null; returns: string | null; conflict_of?: string }
 /**
  * 窓からの質問の返しの未反映（compaction-keep.py の unreflected_asks と同じ形）。id のある行は返し、id が null の行は返しの無い「これで決める」。
  * missing は 判断の記録・帳簿（asks[].from_returns）・保留（asks[].held_returns）・担当への通知（asks[].notify[] の message_id の無い行）・返し。
@@ -1024,8 +1025,9 @@ export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos
   const out: Unreflected[] = []
   for (const m of memos)
     for (const v of m.returns) {
-      const missing = [...(inRulings.has(v.return_id) ? [] : ['判断の記録' as const]), ...(inLedger.has(v.return_id) ? [] : ['帳簿' as const]), ...(held.has(v.return_id) ? ['保留' as const] : [])]
-      if (missing.length) out.push({ id: v.return_id, card: pyFalsy(v.card) ? m.card : v.card, missing, memo: m.path, returns: m.returnsPath })
+      const missing: Unreflected['missing'] = [...(inRulings.has(v.return_id) ? [] : ['判断の記録' as const]), ...(inLedger.has(v.return_id) ? [] : ['帳簿' as const]), ...(held.has(v.return_id) ? ['保留' as const] : [])]
+      const clash = typeof v.conflict_of === 'string' && v.conflict_of ? v.conflict_of : undefined
+      if (missing.length) out.push({ id: v.return_id, card: pyFalsy(v.card) ? m.card : v.card, missing: clash ? [...missing, '番号の衝突'] : missing, memo: m.path, returns: m.returnsPath, ...(clash && { conflict_of: clash }) })
     }
   // 返しの記録に無い返しでも、保留にしたものは相談が返し直すまで名指しする。
   const named = new Set(out.map((x) => x.id))
