@@ -669,7 +669,7 @@ test('一緒に作る仕事の担当が自分の Run の worker を待ってい�
   const w = ws(0)
   w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
   w.cockpit.cards = w.cockpit.cards.filter((x) => x.stream !== 's2')
-  // 2026-11-23 18:07 の INTLOOP の場面: 担当は worker に直しを送り、問いの無い報告でターンを終えた。
+  // ある案件の担当の場面: 担当は worker に直しを送り、問いの無い報告でターンを終えた。
   const last = 'worker に直しを送りました。\n\nworker の報告が来たら PDF を差し替えます。'
   const facts = (state: AgentRow['state'], coordinating?: Record<string, string[]>, workers: AgentRow[] = [], text = last): OrcaFacts => ({
     workers, owners: [{ session: 'sess-aws', kind: 'chat', state, worktree: '/ws/aoba-aws', updatedAt: NOW - 60_000, last: text }],
@@ -731,7 +731,7 @@ test('一緒に作る仕事の担当が自分の Run の worker を待ってい�
 test('hook の CLI（orcaFacts）も、作業中でない一緒に作る担当の Run の worker を読み、読めなければ分からないまま渡す（t153）', async () => {
   const w = ws(0)
   w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
-  // 担当の Dispatch のタスクが済になり、帳簿からは handle を引けない（2026-11-23 の INTLOOP）。窓口の Run の worker から session で引く。
+  // 担当の Dispatch のタスクが済になり、帳簿からは handle を引けない。窓口の Run の worker から session で引く。
   w.cockpit.owners = [{ id: 'o1', title: 'AWS 構成案', stream: 's2', session: 'sess-aws' }]
   w.cockpit.main = { ...w.cockpit.main, run_id: 'run_main' }
   const read: string[] = []

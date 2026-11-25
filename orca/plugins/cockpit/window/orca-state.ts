@@ -474,7 +474,7 @@ export async function readRuns(list: (cursor?: string) => Promise<RunPage>, cach
 /**
  * 一緒に作る仕事の担当（id）→ その担当の Run で終わっていない worker の Dispatch。読めなかった担当は入れない（分からないものを「待っていない」と言い切らない）。
  * handle の引けないチャットの担当は、窓口の Run（mainRun）の worker から session で引く（担当は窓口の Run の worker として立つ。
- * 帳簿のタスクが済になると担当の Dispatch を読まなくなるため。2026-11-23 の INTLOOP の担当がこれだった）。
+ * 帳簿のタスクが済になると担当の Dispatch を読まなくなるため）。
  */
 export async function coordinating(owners: IdleOwner[], runs: Map<string, string | null>, workers: (run: string) => Promise<RunWorker[]>, mainRun?: string): Promise<Record<string, string[]>> {
   const out: Record<string, string[]> = {}

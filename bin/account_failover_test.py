@@ -674,7 +674,7 @@ class ConvergeTest(FailoverTestBase):
                          ["claude", "--plugin-dir", "/Users/x/Library/Application Support/orca/view", "--model", "opus", "--resume", S2])
 
     def ask_argv(self, prompt):
-        """consult --ask が起こした claude の引数（2026-11-23 の「質問｜FitFounder AI 基盤｜ask2」と同じ形）。最後が最初の指示の位置引数。"""
+        """consult --ask が起こした claude の引数（実際の質問の端末と同じ形）。最後が最初の指示の位置引数。"""
         return ["--resume", S2, "--fork-session", "--name", "質問｜FitFounder AI 基盤｜ask2", "--tools", "Read,Grep,Glob",
                 "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Bash,Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch,Task,Agent",
                 "--permission-mode", "dontAsk", "--strict-mcp-config", "--system-prompt-snapshot", "off",
