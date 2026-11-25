@@ -15,7 +15,7 @@ cockpit skill の SKILL.md から分けた詳細。担当か worker を立てた
 - 担当が質問で止まって深田の答えが要るなら、停止のカード（`reason` に担当の問いの原文、`answerable: true`）にする
 - 担当が、案が分かれる前に深田と話して詰めたいなら、相談のカード（`issue`・`stance`・`owner`）にする
 - worker が終わって worktree を片付けたら、`worker` を消す
-- 2026-11-25 より前の帳簿には、担当の受け取りがタスクの `worker` にある行が残る。窓は、Dispatch のチャットが同じ仕事の開いた担当のものなら、worker として判定せず「担当「<題>」が受け持つ」と出す。その仕事に触る次の書き込みで、受け取りを担当の行の `worker` に移し、タスクの `worker` を消す
+- 担当の受け取りを `owners[].worker` に分ける前の帳簿には、担当の受け取りがタスクの `worker` にある行が残る。窓は、Dispatch のチャットが同じ仕事の開いた担当のものなら、worker として判定せず「担当「<題>」が受け持つ」と出す。その仕事に触る次の書き込みで、受け取りを担当の行の `worker` に移し、タスクの `worker` を消す
 
 ## サイドバーをそろえる
 窓のカードと Orca のサイドバーを同じ名前・同じ状態にそろえる手順（`jobs[]` から打つコマンド・状態の対応・カードのコメント）と、表示名・題・親子の形は、worktree-flow skill の references/sidebar.md の「階層と題」「状態と片付け」。取り込んだ仕事の worktree の消し方は worktree-flow skill の references/cleanup.md。

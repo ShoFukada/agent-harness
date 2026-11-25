@@ -71,7 +71,7 @@ orca-launch --worktree id:<worktree id> --title "<短い題>" --spec-file <brief
 - brief の書き方（文脈の圧縮・所有の 1 文）は references/launch.md の「brief の書き方」、worker 用の設定と検証用の設定は同じファイルの「worker の設定」、Orca のプラグインを触る worker の決まりは「Orca のプラグインを触る worker」
 
 ## 担当を立てる・知らせ
-- 担当の立て方（brief・`worker-start` のコマンド・続きの渡し方）は references/launch.md の「担当を立てる（窓口）」
+- 担当の立て方（brief・`orca-launch --lead`・続きの渡し方）は references/launch.md の「担当を立てる（窓口）」
 - 知らせは `orca orchestration send` の 1 本にそろえる（R191）。宛先ごとの `--to`・送り主・`orca terminal send` を使う例外は references/notify.md の「知らせの経路」、届いた `worker_done`・`question`・`escalation` への対応は同じファイルの「知らせを受ける（coordinator）」
 - 知らせは Orca に起こされて受ける。見張りのスクリプト・`check` の繰り返し・`terminal read` のポーリングはしない
 
