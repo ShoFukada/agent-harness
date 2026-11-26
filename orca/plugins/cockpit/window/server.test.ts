@@ -273,8 +273,6 @@ test('送る量を絞る: 14 日より前に片付いたカードと、タスク
   c.cards.push({ id: 'proof', rev: 1, kind: 'review', title: '昔の見て', state: 'done', resolved_at: old })
   c.cards.push({ id: 'linked', rev: 1, kind: 'decide', title: '昔の決める', state: 'done', resolved_at: old, request_id: 'q2' })
   c.requests = [{ id: 'q1', at: old, title: '依頼', evidence: [{ when: 1, kind: 'op', ref: '1', card: 'proof' }] }, { id: 'q2', at: old, title: '依頼 2' }]
-  // 整理・棚卸しの結果の報告は、送った指示の行から開くので古くても送る（Codex 中 5）。
-  c.cards.push({ id: 'tidied', rev: 1, kind: 'report', title: '昔の整理', state: 'done', resolved_at: old, tidy_op: 3 })
   c.tasks[0].done = ['長い作業の記録']
   const a = workspace('a', { '.orca/cockpit.json': JSON.stringify(c) })
   const { s, port } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }], a)
@@ -284,7 +282,6 @@ test('送る量を絞る: 14 日より前に片付いたカードと、タスク
   assert.ok(got.cards.some((x) => x.id === 'proof'))
   assert.ok(got.cards.some((x) => x.id === 'linked'), '依頼に結ばれたカードも送る（依頼の今の判定が読む）')
   assert.ok(got.cards.some((x) => x.id === 'd19'))
-  assert.ok(got.cards.some((x) => x.id === 'tidied'), '整理・棚卸しの結果の報告も送る')
   assert.equal(got.tasks[0]!.done, undefined)
 })
 
@@ -1226,11 +1223,19 @@ test('整理・棚卸しの指示（r132）: カードを持たない tidy の�
   assert.equal((await post('op', { root: a, item_id: 'r5', item_rev: 1, type: 'tidy', text })).status, 400)
   assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'undo', undo_of: 2 })).status, 200)
   assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'undo', undo_of: 99 })).status, 400, '整理・棚卸しの指示でない番号の取り消しは断る')
+  // 反映待ちの同じ指示（種類と、前後の空白を除いた文が同じ）は重ねない（t163）。反映した指示（見本の帳簿は op 1 を反映済みに持つ）と取り消した指示と同じ文は送れる。
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'tidy', option_id: 'workers', text })).status, 200, '種類が違えば別の指示')
+  const again = await post('op', { root: a, item_id: '', item_rev: 0, type: 'tidy', option_id: 'workers', text: `${text}\n` })
+  assert.equal(again.status, 409)
+  assert.match(JSON.stringify(again.body), /同じ指示が反映待ちです（op 4）/)
+  assert.equal((await post('op', { root: a, item_id: '', item_rev: 0, type: 'tidy', text: '#pj-xxx を見て棚卸し' })).status, 200, '取り消した指示と同じ文')
   const log = JSON.parse(readFileSync(path.join(a, '.orca/cockpit.user.json'), 'utf8'))
   assert.deepEqual(log.ops.map((o: Op) => [o.op_id, o.type, o.item_id, o.item_rev, o.option_id ?? null, o.text ?? null, o.undo_of ?? null]), [
     [1, 'tidy', '', 0, 'cockpit', text, null],
     [2, 'tidy', '', 0, null, '#pj-xxx を見て棚卸し', null],
-    [3, 'undo', '', 0, null, null, 2]
+    [3, 'undo', '', 0, null, null, 2],
+    [4, 'tidy', '', 0, 'workers', text, null],
+    [5, 'tidy', '', 0, null, '#pj-xxx を見て棚卸し', null]
   ])
 })
 

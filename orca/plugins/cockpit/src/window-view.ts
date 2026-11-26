@@ -696,7 +696,7 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const t = b.d.tasks.get(ui.task ?? '')
   const w = watches.find((x) => x.key === ui.watch)
   const j = b.d.jobs.find((x) => x.id === ui.stream)
-  const side = ui.tidy ? tidyDetail(b, ui, listedKeys(b)) : w ? watchDetail(w, now) : j ? streamDetail(b, j, ui, now) : t ? taskDetail(b, t, ui, now) : ''
+  const side = ui.tidy ? tidyDetail(b, ui, now) : w ? watchDetail(w, now) : j ? streamDetail(b, j, ui, now) : t ? taskDetail(b, t, ui, now) : ''
   return `<div class="wpane" aria-label="全体">${main}</div><aside class="wside" aria-label="${ui.tidy ? '整理・棚卸し' : w ? '見張る仕事の詳細' : j ? '仕事の詳細' : 'タスクの詳細'}">${side}</aside>`
 }
 

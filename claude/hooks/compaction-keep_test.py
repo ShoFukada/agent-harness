@@ -1227,6 +1227,68 @@ class LedgerGuard(Base):
         self.assertEqual(self.hook("Stop", env=self.on(COCKPIT_STATE=os.path.join(self.root, "none.js")), last_assistant_message="はい"), "")
 
 
+class TidyNudge(Base):
+    """窓の整理・棚卸しの指示を反映しないまま残してターンを終えない（t163）。fitf で、合図は届いて読まれたのに、別の依頼と圧縮のあいだに 9 件たまった。"""
+
+    def setUp(self):
+        super().setUp()
+        self.fake_state = os.path.join(self.root, "fake-state.js")
+        self.tidy([])
+
+    def tidy(self, ops):
+        # どれが残るかは state.ts（ここでは偽のスクリプト）が決める。hook は操作のログに反映していない tidy があるときだけ state.ts を呼ぶ
+        with open(self.fake_state, "w") as fh:
+            fh.write("console.log(JSON.stringify({checks: {unapplied_tidy: %s}}))" % json.dumps(ops))
+        with open(os.path.join(self.root, ".orca", "cockpit.user.json"), "w") as fh:
+            json.dump({"ops": [{"op_id": n, "at": "2026-11-21T00:00:00.000Z", "item_id": "", "item_rev": 0, "type": "tidy", "text": "整理"} for n in ops]}, fh)
+
+    def turn(self, prompt="状況を教えて"):
+        env = self.env(COCKPIT_STATE=self.fake_state)
+        self.hook("UserPromptSubmit", env=env, prompt=prompt)
+        out = self.hook("Stop", env=env, last_assistant_message="こうです")
+        return json.loads(out)["reason"] if out else ""
+
+    def test_unapplied_tidy_stops_the_turn_and_names_the_ops(self):
+        self.tidy([76, 77])
+        reason = self.turn()
+        self.assertIn("窓の整理・棚卸しの指示 op 76・77 が反映待ち", reason)
+        self.assertIn("tidy_ops", reason)
+        self.assertIn("何を待っているかを一言書いて終える", reason)
+
+    def test_the_same_ops_are_not_named_again_soon_but_new_ones_are(self):
+        self.tidy([76])
+        self.assertIn("op 76", self.turn())
+        # subagent を待つあいだの知らせのターンでは、同じ指示で続けて止めない
+        self.assertEqual(self.turn("──── From: X (x) (status) ────\nSubject: 途中経過"), "")
+        self.tidy([76, 79])
+        self.assertIn("op 76・79", self.turn())
+
+    def test_an_unreadable_state_keeps_the_mark(self):
+        self.tidy([76])
+        self.assertIn("op 76", self.turn())
+        # state.ts を読めない回（タイムアウトなど）は、何も返さず印も消さない（次の正常な回で 30 分の間を保つ）
+        with open(self.fake_state, "w") as fh:
+            fh.write("process.exit(1)")
+        self.assertEqual(self.turn(), "")
+        self.tidy([76])
+        self.assertEqual(self.turn(), "")
+        # 操作のログを読めない回も同じ
+        with open(os.path.join(self.root, ".orca", "cockpit.user.json"), "w") as fh:
+            fh.write("{壊れた")
+        self.assertEqual(self.turn(), "")
+        self.tidy([76])
+        self.assertEqual(self.turn(), "")
+
+    def test_nothing_unapplied_passes_and_resets(self):
+        self.assertEqual(self.turn(), "")
+        self.tidy([76])
+        self.assertIn("op 76", self.turn())
+        self.tidy([])
+        self.assertEqual(self.turn(), "")
+        self.tidy([76])
+        self.assertIn("op 76", self.turn(), "反映して消えたあとに同じ番号が出直したら、また名指しする")
+
+
 class ConsultBase(Base):
     """カードの相談のテストの操縦席（d21 と、関係する判断・しない判断 R1〜R6）と道具。"""
 

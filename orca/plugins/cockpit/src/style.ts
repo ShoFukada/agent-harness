@@ -534,7 +534,7 @@ body { margin:0; }
 .ck.win .st.cur > .sh { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); }
 
 /*
- * 全体の先頭の整理・棚卸し（r132）。見出しと既定の指示のボタンを 1 段に並べ、済んでいない指示は要対応と同じ行の形で出す。
+ * 全体の先頭の整理・棚卸し（r132）。見出しと既定の指示のボタンを 1 段に並べ、反映待ちの指示は要対応と同じ行の形で出す（反映した指示は消える。t163）。
  * 右の欄の入力欄は 4 行から伸びる（R90）。選んでいる種類は質問の絞り込みと同じ塗りのボタンで示す。
  */
 .ck.win .tidy { padding-bottom:16px; border-bottom:1px solid var(--rule); }
@@ -548,12 +548,9 @@ body { margin:0; }
 .ck.win .tidyin .afil { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:4px; }
 .ck.win .tidyin .afil button { white-space:normal; }
 .ck.win .tidyd .sent .tds { min-width:4.5em; font-size:var(--fs-xs); font-weight:700; color:var(--ink); }
-.ck.win .tidyd .sent li.s-done .tds, .ck.win .tidyd .sent li.s-done .sl b, .ck.win .tidyd .sent li.s-done .quote { color:var(--ink3); font-weight:400; }
 .ck.win .tidyd .sent li[aria-current="true"] { background:var(--sunk); box-shadow:inset 3px 0 0 var(--focus); padding-inline:8px; }
 .ck.win .tidyin textarea { min-height:calc(4lh + 18px); }
 .ck.win .tidyin .acts { position:static; margin:0; padding:0; background:none; border:0; }
-.ck.win .tidyd .tres { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; font-size:var(--fs-s); }
-.ck.win .tidyd .tres > .lb { font-size:var(--fs-xs); font-weight:600; color:var(--ink3); }
 
 /* 全体: 形ごとの置き場所と仕事の箱 */
 .ck.win .f-delegate { --fc:var(--f-delegate); } .ck.win .f-cowork { --fc:var(--f-cowork); } .ck.win .f-watch { --fc:var(--f-watch); }

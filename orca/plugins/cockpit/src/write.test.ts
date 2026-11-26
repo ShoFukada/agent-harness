@@ -39,17 +39,59 @@ test('書く道具: 全体の置き換え・知らない欄・形の違う欄・
   assert.match(applyChange(c, { tasks: [{ id: 't1', stream: 's1', phase: '実装', title: 'x', state: 'going' }] }).errors[0]!, /state は/)
 })
 
-test('書く道具: 結果の報告の tidy_op は、cockpit.user.json の整理・棚卸しの指示（tidy の操作）だけを指せる（r132）', () => {
+const tidyLog = { ops: [
+  { op_id: 3, at: '2026-11-21T01:00:00.000Z', item_id: '', item_rev: 0, type: 'tidy' as const, option_id: 'workers', text: 'workerとworktreeを整理する' },
+  { op_id: 4, at: '2026-11-21T01:00:00.000Z', item_id: 'd21', item_rev: 1, type: 'talk' as const },
+  { op_id: 5, at: '2026-11-21T01:01:00.000Z', item_id: '', item_rev: 0, type: 'tidy' as const, text: '議事録を作って' },
+  { op_id: 6, at: '2026-11-21T01:02:00.000Z', item_id: '', item_rev: 0, type: 'tidy' as const, option_id: 'cockpit', text: '操縦席を整理する' },
+  { op_id: 7, at: '2026-11-21T01:02:05.000Z', item_id: '', item_rev: 0, type: 'undo' as const, undo_of: 6 }
+] }
+const tidyReport = (c: Cockpit, more: Record<string, unknown>) => ({ id: 'x1', rev: 1, kind: 'report', state: 'open', at: '2026-11-21T02:00:00+09:00', stream: c.streams[0]!.id, title: 'workerとworktreeを整理した', done: [{ what: '済んだ worker の worktree を 2 件削除', why: '取り込み済み', undo: 'ブランチから worktree を作り直す' }], ...more })
+
+test('書く道具: 結果の報告の tidy_ops は、cockpit.user.json の整理・棚卸しの指示（tidy の操作）だけを指し、報告にだけ書ける（r132）', () => {
   const c = aoba()
-  const log = { ops: [
-    { op_id: 3, at: '2026-11-21T01:00:00.000Z', item_id: '', item_rev: 0, type: 'tidy' as const, option_id: 'workers', text: 'workerとworktreeを整理する' },
-    { op_id: 4, at: '2026-11-21T01:00:00.000Z', item_id: 'd21', item_rev: 1, type: 'talk' as const }
-  ] }
-  const report = (tidy_op: unknown) => ({ id: 'x1', rev: 1, kind: 'report', state: 'open', at: '2026-11-21T02:00:00+09:00', stream: c.streams[0]!.id, title: 'workerとworktreeを整理した', done: [{ what: '済んだ worker の worktree を 2 件削除', why: '取り込み済み', undo: 'ブランチから worktree を作り直す' }], tidy_op })
-  assert.deepEqual(applyChange(c, { cards: [report(3)], applied_ops: [3] }, [], log).errors, [])
-  assert.match(applyChange(c, { cards: [report(4)] }, [], log).errors.join('\n'), /カード x1: tidy_op 4 は cockpit.user.json の整理・棚卸しの指示/)
-  assert.match(applyChange(c, { cards: [report(9)] }, [], log).errors.join('\n'), /tidy_op 9/)
-  assert.match(applyChange(c, { cards: [report('3')] }, [], log).errors.join('\n'), /カード x1: tidy_op の形が違う/)
+  assert.match(applyChange(c, { cards: [tidyReport(c, { tidy_ops: [4] })] }, [], tidyLog).errors.join('\n'), /カード x1: tidy_ops の 4 は cockpit.user.json の整理・棚卸しの指示/)
+  assert.match(applyChange(c, { cards: [tidyReport(c, { tidy_ops: [9] })] }, [], tidyLog).errors.join('\n'), /tidy_ops の 9/)
+  assert.match(applyChange(c, { cards: [tidyReport(c, { tidy_ops: ['3'] })] }, [], tidyLog).errors.join('\n'), /カード x1: tidy_ops の形が違う/)
+  assert.match(applyChange(c, { cards: [tidyReport(c, { tidy_ops: [] })] }, [], tidyLog).errors.join('\n'), /カード x1: tidy_ops の形が違う/)
+  assert.match(applyChange(c, { cards: [tidyReport(c, { tidy_ops: 3 })] }, [], tidyLog).errors.join('\n'), /カード x1: tidy_ops の形が違う/, '配列で書き忘れても落ちずに形の誤りとして返す')
+  const broken = { ...aoba(), cards: [...aoba().cards, tidyReport(c, { tidy_ops: 3 }) as unknown as Card] }
+  assert.deepEqual(applyChange(broken, { applied_ops: [4] }, [], tidyLog).errors, [], '帳簿に形の違う報告があっても、ほかの書き込みは止めない')
+  assert.match(applyChange(c, { cards: [{ ...card(c, 'd21'), rev: 2, tidy_ops: [3] }] }, [], tidyLog).errors.join('\n'), /カード d21: tidy_ops は結果の報告（kind: report）にだけ書く/)
+  assert.match(applyChange(c, { cards: [tidyReport(c, { tidy_op: 3 })] }, [], tidyLog).errors.join('\n'), /カード x1: tidy_op は前の形。tidy_ops: \[3\] で書く/, '新しく書くカードは前の形を使わない')
+})
+
+test('書く道具: 整理・棚卸しの指示は、報告と反映済みの印を同じ書き込みで持つ。報告に並べた番号は反映済みになり、報告の無い番号は反映済みにしない（t163）', () => {
+  const c = aoba()
+  // 重なった指示は 1 枚の報告で済ませ、applied_ops を渡し忘れても報告の番号で反映済みになる。
+  const r = applyChange(c, { cards: [tidyReport(c, { tidy_ops: [3, 5] })] }, [], tidyLog)
+  assert.deepEqual(r.errors, [])
+  assert.ok([3, 5].every((n) => r.next!.applied_ops!.includes(n)))
+  assert.match(applyChange(c, { applied_ops: [3] }, [], tidyLog).errors.join('\n'), /applied_ops の 3 は整理・棚卸しの指示。結果の報告のカード（kind: report、tidy_ops に 3）を同じ書き込みで書く/)
+  assert.deepEqual(applyChange(c, { applied_ops: [6, 7] }, [], tidyLog).errors, [], '取り消した指示は報告なしで反映済みにしてよい')
+  // 指示と取り消しは組で反映済みにする（片方だけ残ると、窓の合図が残った方を窓口へ送る）。
+  for (const one of [6, 7]) assert.ok([6, 7].every((n) => applyChange(c, { applied_ops: [one] }, [], tidyLog).next!.applied_ops!.includes(n)))
+  assert.ok(applyChange({ ...c, applied_ops: [7] }, { applied_ops: [4] }, [], tidyLog).next!.applied_ops!.includes(6), '片方だけ反映済みの帳簿は、次の書き込みで残りを補う')
+  const twice = { ops: [...tidyLog.ops, { op_id: 8, at: '2026-11-21T01:02:06.000Z', item_id: '', item_rev: 0, type: 'undo' as const, undo_of: 6 }] }
+  assert.ok([6, 7, 8].every((n) => applyChange(c, { applied_ops: [8] }, [], twice).next!.applied_ops!.includes(n)), '同じ指示への取り消しが 2 つあっても全部を組にする')
+  assert.deepEqual(applyChange(c, { applied_ops: [4] }, [], tidyLog).errors, [], 'ほかの操作は今までどおり')
+  // 報告が控え（cockpit.archive.json）にあれば、まだ反映済みでない番号も入れられる。控えにも無ければ断る。
+  const done = r.next!
+  const report = done.cards.find((x) => x.id === 'x1')!
+  assert.deepEqual(applyChange(c, { applied_ops: [3] }, [], tidyLog, {}, {}, { archive: [report] }).errors, [])
+  assert.match(applyChange(c, { applied_ops: [3] }, [], tidyLog, {}, {}, { archive: [] }).errors.join('\n'), /applied_ops の 3 は整理・棚卸しの指示/)
+  // 報告を書き換えて番号を落とすと、報告の無い反映済みが残るので断る。
+  assert.match(applyChange(done, { cards: [tidyReport(c, { rev: 2, title: '整理した', tidy_ops: [5] })] }, [], tidyLog).errors.join('\n'), /整理・棚卸しの指示 3 の報告がこの書き込みで無くなる/)
+})
+
+test('書く道具: 前の形（tidy_op）の報告は、帳簿の値のまま閉じられ、反映済みの照合でも報告として数える', () => {
+  const c = aoba()
+  c.cards.push(tidyReport(c, { tidy_op: 3 }) as Card)
+  const closed = { ...tidyReport(c, { tidy_op: 3 }), state: 'done', resolved_by: 'user', resolved_at: '2026-11-21T10:00:00+09:00' }
+  assert.deepEqual(applyChange(c, { cards: [closed], applied_ops: [3] }, [], tidyLog).errors, [])
+  // 帳簿にある報告が無い古い反映済み（intloop の op 51 の形）は、ほかの書き込みを止めない。
+  const legacy = { ...aoba(), applied_ops: [3] }
+  assert.deepEqual(applyChange(legacy, { applied_ops: [4] }, [], tidyLog).errors, [])
 })
 
 test('書く道具: 中身を変えたら rev を 1 上げる。片付けるだけなら rev はそのまま（「これでよい」の版の照合を保つ）', () => {

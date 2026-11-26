@@ -1,7 +1,7 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, isSynthetic, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, unmappedElements, metCount, waitMet, worstState,
+  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, isSynthetic, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, openTidyOps, UNDO_GRACE_MS, unmappedElements, metCount, waitMet, worstState,
   type AskMark, type AskThread, type Card, type CardEffect, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type ShownWhy, type Stream, type StreamForm, type Task, type TaskSeen, type TaskShown, type TaskState, type UserLog, type Utterance, type Wait, type WaitKind
 } from './model.ts'
 import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
@@ -939,6 +939,8 @@ export type StateReport = {
   workers: { task?: string; job?: string; state: string; stop?: StopReason }[]
   checks: {
     pending_ops: number
+    /** 取り消しの猶予を過ぎ、窓口がまだ反映していない整理・棚卸しの指示の op_id。Stop の hook が、残したままターンを終えないよう差し戻す（t163）。 */
+    unapplied_tidy: number[]
     /** 決めるのに「これは何か」など 5 欄が欠けたカード。 */
     missing_context: string[]
     /** 手作業を頼むのに、打つコマンドも手順も書いていない許す（manual）。 */
@@ -1220,6 +1222,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
     workers: (facts?.workers ?? []).map((w) => ({ task: w.task, job: w.job, state: w.state, stop: w.stop })),
     checks: {
       pending_ops: unappliedOps(c, log).length,
+      unapplied_tidy: openTidyOps(c, log).filter((o) => Date.parse(o.at) + UNDO_GRACE_MS <= now).map((o) => o.op_id),
       missing_context: open.filter((x) => x.kind === 'decide' && CONTEXT_KEYS.some((k) => !String(x.context?.[k] ?? '').trim())).map((x) => x.id),
       empty_manual: open.filter((x) => x.manual && !x.manual.command?.trim() && !x.manual.steps?.some((s) => s.trim())).map((x) => x.id),
       remind_due: d.waiting.filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).map((r) => r.card.id),

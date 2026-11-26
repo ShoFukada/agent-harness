@@ -9,7 +9,7 @@ import { CSS } from './style.ts'
 import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, focusMessage, openedMessage, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
 import { boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
 import { askOpened, askOrder, askPending, askRows, askStarted, parseAskKey } from './window-asks.ts'
-import { tidyDraftFor } from './window-tidy.ts'
+import { pendingSame, tidyDraftFor } from './window-tidy.ts'
 
 export type Transport = {
   op(input: OpInput): Promise<{ view: CockpitView }>
@@ -749,8 +749,13 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const tk = el.dataset.tidydraft
     if (tk !== undefined) {
       ;(ui.tidyDraft ??= {})[tk] = el.value
+      // 同じ指示が反映待ちなら送らせない（送っても store が断る）。描き直さずにボタンと添え書きだけ切り替える。
+      const b = boardOf(model(Date.now()), ui.filter)
+      const same = !!el.value.trim() && b?.root === tk && !!pendingSame(b, ui.tidyKind?.[tk], el.value)
       const send = el.closest('.tidyin')?.querySelector<HTMLButtonElement>('button[data-tidy="send"]')
-      if (send) send.disabled = !el.value.trim() || ui.tidySending === tk
+      if (send) send.disabled = !el.value.trim() || ui.tidySending === tk || same
+      const note = el.closest('.tidyin')?.querySelector<HTMLElement>('[data-tidysame]')
+      if (note) note.hidden = !same
     }
     const ak = el.dataset.ansdraft
     if (ak !== undefined) {

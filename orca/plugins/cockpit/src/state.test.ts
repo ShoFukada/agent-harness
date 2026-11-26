@@ -89,6 +89,15 @@ test('サイドバーの状態は案件の今と同じ判定: 私待ちは in-re
   assert.deepEqual(r.jobs[3]!.orca, { display_name: '外部 API の繋ぎ込み', status: 'in-progress', unread: false })
 })
 
+test('hook が読む検査: 取り消しの猶予を過ぎて窓口が反映していない整理・棚卸しの指示（Stop の hook が差し戻す。t163）', () => {
+  const w = ws(0)
+  const at = (sec: number) => new Date(NOW - sec * 1000).toISOString()
+  const tidy = (op_id: number, sec: number) => ({ op_id, at: at(sec), item_id: '', item_rev: 0, type: 'tidy' as const, text: `指示 ${op_id}` })
+  const log: UserLog = { ops: [tidy(91, 3600), tidy(92, 3600), tidy(93, 3600), { op_id: 94, at: at(3590), item_id: '', item_rev: 0, type: 'undo', undo_of: 93 }, tidy(95, 5)] }
+  const r = report({ ...w.cockpit, applied_ops: [...(w.cockpit.applied_ops ?? []), 92] }, log, [], undefined, 'skipped', NOW)
+  assert.deepEqual(r.checks.unapplied_tidy, [91], '反映した 92・取り消した 93・猶予の中の 95 は出さない')
+})
+
 test('hook が読む全体の 1 行と検査: 催促の日を過ぎた顧客待ち・つながらないカード・長すぎる名前・push の確認', () => {
   const w = ws(0)
   const c: Cockpit = { ...w.cockpit, streams: [...w.cockpit.streams, { id: 's9', title: 'あ'.repeat(NAME_MAX + 1) }], tasks: [...w.cockpit.tasks, { id: 't9', stream: 's9', phase: '実装', title: 'x', state: 'run' }] }

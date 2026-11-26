@@ -287,7 +287,12 @@ export type Card = {
    * 書かなければ種類の今の意味で決める（state.ts の cardEffect。R204）。
    */
   effects?: Record<string, CardEffect>
-  /** 窓の「整理・棚卸し」の指示（tidy の op_id）への結果のカード。窓はこの番号で指示の行から結果へ移る。 */
+  /**
+   * 窓の「整理・棚卸し」の指示（tidy の op_id）への結果の報告（kind: report）が、どの指示に答えたか。重なった指示は 1 枚で全部の番号を並べる。
+   * 書く道具は、このカードを書いた同じ書き込みでこれらの番号を applied_ops に足す（報告の無い反映済みを作らない。t163）。
+   */
+  tidy_ops?: number[]
+  /** tidy_ops の前の形（1 つの番号）。読むときだけ tidy_ops と同じに扱い、新しく書くカードには使わない（tidyOpsOf）。 */
   tidy_op?: number
 }
 /** カードを押したときに、結んだタスクに起きること。done: 済、start: このカードの待ちが解けて着手できる、none: 何も起きない。 */
@@ -488,7 +493,7 @@ export type Cockpit = {
  */
 /**
  * tidy: 窓の全体の「整理・棚卸し」から窓口に出した指示（r132）。item_id は空、item_rev は 0、option_id は既定の指示の種類（自由に書いたときは無い）、
- * text は送った指示の文の全文。窓口は cockpit skill の references/tidy.md の手順で実行し、結果の報告のカードの tidy_op にこの op_id を書く。
+ * text は送った指示の文の全文。窓口は cockpit skill の references/tidy.md の手順で実行し、結果の報告のカードの tidy_ops にこの op_id を書く。
  */
 export type OpType = 'decide' | 'accept' | 'sent' | 'skip' | 'delegate' | 'talk' | 'ack' | 'revert' | 'undo' | 'repeat' | 'dismiss' | 'ask_decide' | 'answer' | 'tidy'
 export const OP_TYPES: OpType[] = ['decide', 'accept', 'sent', 'skip', 'delegate', 'talk', 'ack', 'revert', 'undo', 'repeat', 'dismiss', 'ask_decide', 'answer', 'tidy']
@@ -613,8 +618,18 @@ export const CARD_SHAPE: Record<string, Shape> = {
   element_map: list((v) => isObj(v) && Number.isInteger(v.n) && ['task', 'request', 'skip'].filter((k) => v[k] !== undefined).length === 1 && ['task', 'request', 'skip'].every((k) => v[k] === undefined || str(v[k]))),
   repo: (v) => str(v) || (isObj(v) && Object.values(v).every(str)),
   effects: (v) => isObj(v) && Object.values(v).every((x) => CARD_EFFECTS.includes(x as CardEffect)),
+  tidy_ops: (v) => Array.isArray(v) && v.length > 0 && v.every((n) => Number.isInteger(n) && n > 0),
   tidy_op: (v) => Number.isInteger(v) && (v as number) > 0
 }
+
+/** 報告が答えた整理・棚卸しの指示の番号（前の形の tidy_op も含める）。形の違う値は数えない（形の誤りは badFields が名指しする）。 */
+export const tidyOpsOf = (c: Card): number[] => [
+  ...new Set([...(CARD_SHAPE.tidy_ops!(c.tidy_ops) ? c.tidy_ops! : []), ...(CARD_SHAPE.tidy_op!(c.tidy_op) ? [c.tidy_op!] : [])])
+]
+
+/** 同じ整理・棚卸しの指示か（種類と、前後の空白を除いた文が同じ）。文の中の改行や引用は比べる（窓口は文を範囲と注文として読むため）。 */
+export const sameTidy = (o: Op, kind: string | undefined, text: string | undefined): boolean =>
+  o.type === 'tidy' && (o.option_id ?? undefined) === (kind ?? undefined) && (o.text ?? '').trim() === (text ?? '').trim()
 
 /** 形の違う欄の名前（書く道具は書く前に断り、読み込みは外して名指しする）。 */
 export function badFields(c: Card): string[] {
@@ -982,6 +997,13 @@ export function unappliedOps(c: Cockpit | undefined, log: UserLog): Op[] {
   // 詰まりの「済ませた」とその取り消しは窓だけの記録で、窓口に反映させるものが無い。
   const dismiss = new Set(log.ops.filter((o) => o.type === 'dismiss').map((o) => o.op_id))
   return log.ops.filter((o) => !applied.has(o.op_id) && !dismiss.has(o.op_id) && !(o.type === 'undo' && dismiss.has(o.undo_of ?? -1)))
+}
+
+/** 窓口の反映を待っている整理・棚卸しの指示（applied_ops に無く、取り消されていない tidy の操作）。窓の一覧・重ねて送らない検査・Stop の差し戻しが同じ判定を使う。 */
+export function openTidyOps(c: Cockpit | undefined, log: UserLog): Op[] {
+  const applied = new Set(c?.applied_ops ?? [])
+  const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+  return log.ops.filter((o) => o.type === 'tidy' && !applied.has(o.op_id) && !undone.has(o.op_id))
 }
 
 const SEV: Record<TaskState, number> = { stop: 0, run: 1, wait: 2, idle: 3, ok: 4 }

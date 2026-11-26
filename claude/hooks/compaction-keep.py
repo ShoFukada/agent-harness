@@ -67,6 +67,8 @@ WORKER_LIMIT = 4
 HANDOFF_FRESH_SEC = 1800
 # 作業メモの目安は CLAUDE.md の 1〜2k トークン。日本語は 1 字 3 バイト・1 字 1 トークン前後なので、2k トークンでおよそ 6〜8KB
 MEMO_LIMIT = 8 * 1024
+# 反映待ちの整理・棚卸しの指示で Stop を差し戻す間隔。subagent を待つあいだに知らせのターンが続いても、同じ指示で毎ターン止めない（t163）
+TIDY_NUDGE_SEC = 1800
 # Claude Code は hook の 1 つの出力が 10,000 字を超えると、全文をファイルに逃がして先頭 2,000 字だけを会話に渡す。
 HOOK_TEXT_LIMIT = 9500
 FIT_MIN_LINE = 24
@@ -2005,11 +2007,31 @@ def state_report(root):
     return v if isinstance(v, dict) else None
 
 
-def unsorted_utterances(root):
+def unsorted_utterances(report):
     """state.ts の checks.unsorted（仕分けていない発言の id）。読めなければ空（ターンの終わりを止めない）。"""
-    v = state_report(root) or {}
-    got = (v.get("checks") or {}).get("unsorted") or []
+    got = (report.get("checks") or {}).get("unsorted") or []
     return [x.get("id") if isinstance(x, dict) else x for x in got if isinstance(x, (str, dict))] if isinstance(got, list) else []
+
+
+def tidy_reason(keep, pending):
+    """窓の整理・棚卸しの指示（state.ts の checks.unapplied_tidy）を、報告を書かずに残したままターンを終えないための差し戻し（t163）。
+
+    fitf で、合図は届いて読まれたのに、圧縮・別の依頼・許可待ちのあいだに後回しになり、窓に「実行中」のまま 9 件たまった。
+    同じ指示の組には TIDY_NUDGE_SEC に 1 回だけ返す（subagent を待つあいだの知らせのターンで毎回止めない）。新しい指示が増えたらすぐ返す。
+    pending は state.ts の checks.unapplied_tidy。None は読めなかったときで、何も返さず印も消さない。"""
+    if pending is None:
+        return None
+    ops = [n for n in pending if isinstance(n, int)]
+    if not ops:
+        keep.pop("tidy_nudge", None)
+        return None
+    last = keep.get("tidy_nudge") or {}
+    if set(ops) <= set(last.get("ops") or []) and time.time() - (last.get("clock") or 0) < TIDY_NUDGE_SEC:
+        return None
+    keep["tidy_nudge"] = {"ops": ops, "clock": time.time()}
+    return ("窓の整理・棚卸しの指示 op %s が反映待ち（窓に「反映待ち」と出ている）。cockpit skill の references/tidy.md で実行し、"
+            "結果の報告のカード（tidy_ops に番号）を cockpit-write で書く（書けば反映済みになり、窓の一覧から消える）。"
+            "subagent などを待っている途中なら、何を待っているかを一言書いて終える" % "・".join(str(n) for n in ops))
 
 
 def english_reply(msg):
@@ -2065,7 +2087,24 @@ def record_reasons(root, keep, session):
     hit = PERMISSION_WORDS.search(last.get("prompt", "")) if last and (ts(last.get("at")) or 0) >= (ts(turn_at) or 0) else None
     if hit and not wrote:
         reasons.append("このターンの深田さんの発言に許可・禁止・撤回らしい言い回し（「%s」）がある。判断なら compaction-keep.py rule で原文付きで書く（撤回は supersedes で置き換える）。違うならそう一言書いて終える" % hit.group(0))
-    loose = unsorted_utterances(root) if ledger_guard(os.path.join(root, ".orca")) else []
+    guard = ledger_guard(os.path.join(root, ".orca"))
+    # state.ts は 1〜2 秒かかるので、未仕分けを見るときか、反映していない整理・棚卸しの指示がありうるときだけ呼ぶ（どれが残るかは state.ts が決める）
+    applied = set(c.get("applied_ops") or [])
+    try:
+        with open(os.path.join(root, ".orca", "cockpit.user.json"), encoding="utf-8") as fh:
+            log = json.load(fh).get("ops") or []
+        maybe_tidy = any(isinstance(o, dict) and o.get("type") == "tidy" and o.get("op_id") not in applied for o in log)
+    except FileNotFoundError:
+        maybe_tidy = False
+    except (OSError, ValueError, AttributeError):
+        maybe_tidy = None  # 読めない回は分からない
+    report = (state_report(root) if guard or maybe_tidy else None) or {}
+    # 反映していない tidy が操作のログに無ければ空と分かる。ログか state.ts を読めなかったときは分からないので、差し戻しの印を残す
+    pending = (report.get("checks") or {}).get("unapplied_tidy")
+    tidy = tidy_reason(keep, [] if maybe_tidy is False else pending if maybe_tidy and isinstance(pending, list) else None)
+    if tidy:
+        reasons.append(tidy)
+    loose = unsorted_utterances(report) if guard else []
     if loose:
         reasons.append("仕分けていない深田さんの発言がある（%s）。発言ごとに、新しい依頼（requests に utterances で結ぶ）・既存の依頼への追記か返答・依頼でない（intake.none）を"
                        "cockpit-write で書き、intake.through を進める（cockpit skill の references/schema.md「依頼の帳簿」）" % "・".join(str(x) for x in loose[:10]))

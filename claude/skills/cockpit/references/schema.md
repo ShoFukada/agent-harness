@@ -147,7 +147,7 @@ state.ts の `judgeTasks` が、上から順に最初に当たったもので決
 | `purpose` | 何のため 1 行（例「構成案の図が決まり、送る版を作れる」）。窓は題の直下に出す |
 | `fallback` | 返事が無いとき窓口が何をするか（references/cards.md） |
 | `request_id` | このカードが応える依頼の帳簿の id（`r30`）。依頼の原文は `request`（確認）に、帳簿への参照はこちらに分ける |
-| `tidy_op` | 窓の「整理・棚卸し」から届いた指示（`cockpit.user.json` の `type: "tidy"` の op_id）への結果の報告に書く数。書く道具は tidy の操作だけを受ける。窓は送った指示の行から、このカードへ移る（references/tidy.md） |
+| `tidy_ops` | 窓の「整理・棚卸し」から届いた指示（`cockpit.user.json` の `type: "tidy"` の op_id）への結果の報告（`kind: "report"`）に書く番号の配列。重なった指示は 1 枚に全部並べる。書く道具は tidy の操作だけを受け、この書き込みで番号を `applied_ops` に足す（窓の一覧から消える）。前の形の `tidy_op`（1 つの番号）は読むだけで、新しく書かない（references/tidy.md） |
 | `elements[]`・`element_map[]` | 判断・確認のカードで、承認してもらう中身の要素（`{ n, text }`）と、承認を取り込んだときの行き先（`{ n, task }`・`{ n, request: "r30#2" }`・`{ n, skip: "<理由>" }`）。書き方は references/cards.md の「承認の前に要素を固める」 |
 | `links[]`・`quote`・`repo` | 資料（`{ "label", "href" }`）・原文・`#123` の解決先。出典として `links`・`quote`・`request`・`href`・`draft.href`・`from.href`・`background.quote` のどれか 1 つは要る |
 | `awaiting` | `who`・`what`・`since`・`resumes`（返事で何を再開するか）・`remind_at`（催促する日時）。送ったあと `state: "waiting"` にして書く。催促の日を過ぎると朱になり、`checks.remind_due` に出る |

@@ -1,7 +1,7 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  ASK_ID, badFields, CARD_SHAPE, returnId, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, LEGACY_TASK_KEYS, missingFields, overlay, parseCockpit, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_MARKS, TASK_SHAPE, timeOf, unmappedElements, upgradeCard, upgradeTask, WATCH_SHAPE, WORKER_SHAPE,
+  ASK_ID, badFields, CARD_SHAPE, returnId, tidyOpsOf, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, LEGACY_TASK_KEYS, missingFields, overlay, parseCockpit, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_MARKS, TASK_SHAPE, timeOf, unmappedElements, upgradeCard, upgradeTask, WATCH_SHAPE, WORKER_SHAPE,
   type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskMark, type UserLog, type Utterance
 } from './model.ts'
 import type { DeferCheck, DeferItem } from './defer.ts'
@@ -569,8 +569,11 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     for (const t of card.tasks ?? []) if (!has(tasks, t)) errors.push(`カード ${card.id}: タスク ${t} が無い`)
     if (!has(owners, card.owner)) errors.push(`カード ${card.id}: 担当 ${card.owner} が無い`)
     if (!has(requests, card.request_id)) errors.push(`カード ${card.id}: 依頼 ${card.request_id} が無い`)
-    if (card.tidy_op !== undefined && !log.ops.some((o) => o.op_id === card.tidy_op && o.type === 'tidy'))
-      errors.push(`カード ${card.id}: tidy_op ${card.tidy_op} は cockpit.user.json の整理・棚卸しの指示（type が tidy の操作）に無い`)
+    // 前の形（tidy_op）は、帳簿にある値のまま書き戻すときだけ受ける（閉じる・既読にする）。新しく書くなら tidy_ops に並べる。
+    if (card.tidy_op !== undefined && prev?.tidy_op !== card.tidy_op) errors.push(`カード ${card.id}: tidy_op は前の形。tidy_ops: [${card.tidy_op}] で書く`)
+    for (const n of tidyOpsOf(card))
+      if (!log.ops.some((o) => o.op_id === n && o.type === 'tidy')) errors.push(`カード ${card.id}: tidy_ops の ${n} は cockpit.user.json の整理・棚卸しの指示（type が tidy の操作）に無い`)
+    if (tidyOpsOf(card).length && card.kind !== 'report') errors.push(`カード ${card.id}: tidy_ops は結果の報告（kind: report）にだけ書く`)
     for (const e of card.elements ?? []) if (e.n < 1) errors.push(`カード ${card.id}: 要素の番号は 1 から（${e.n}）`)
     errors.push(...mapErrors(card))
     const raw = c.cards.find((y) => y.id === card.id)
@@ -609,6 +612,26 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (miss.length) errors.push(`カード ${card!.id}: 「これでよい」の op ${id} を取り込む前に、要素 ${miss.join('・')} の行き先を element_map に書く（task・request・skip のどれか）`)
   }
 
+  // 整理・棚卸しの指示は、報告のカードと反映済みの印（applied_ops）を同じ書き込みで持たせる（t163）。報告に並べた番号はこの書き込みで反映済みにし、
+  // 報告の無い番号を反映済みにする書き込みと、反映済みの指示の報告を書き換えで無くす書き込みを断る。取り消した指示は報告なしで反映済みにしてよい。
+  const applied = [...new Set([...(c.applied_ops ?? []), ...(ch.applied_ops ?? []), ...(ch.cards ?? []).flatMap((x) => tidyOpsOf(x as Card))])]
+  {
+    const undone = new Set(log.ops.filter((o) => o.type === 'undo' && o.undo_of != null).map((o) => o.undo_of!))
+    // 指示とその取り消しは組で反映済みにする（片方だけ残ると、窓の合図が残った方を取り消しの組と見ずに窓口へ送る）。
+    // 窓は猶予の 10 秒のうちしか指示を取り消させないので、組は必ず窓口が実行する前のもの。
+    const undos = log.ops.filter((u) => u.type === 'undo' && log.ops.some((o) => o.op_id === u.undo_of && o.type === 'tidy'))
+    const paired = new Set(undos.filter((u) => applied.includes(u.op_id) || applied.includes(u.undo_of!)).map((u) => u.undo_of!))
+    for (const id of [...paired, ...undos.filter((u) => paired.has(u.undo_of!)).map((u) => u.op_id)]) if (!applied.includes(id)) applied.push(id)
+    const reported = (xs: Card[]) => new Set([...xs, ...(more.archive ?? [])].filter((x) => x.kind === 'report').flatMap(tidyOpsOf))
+    const [before, after] = [reported(c.cards), reported(cards)]
+    const was = new Set(c.applied_ops ?? [])
+    for (const id of applied) {
+      if (after.has(id) || undone.has(id) || log.ops.find((o) => o.op_id === id)?.type !== 'tidy') continue
+      if (!was.has(id)) errors.push(`applied_ops の ${id} は整理・棚卸しの指示。結果の報告のカード（kind: report、tidy_ops に ${id}）を同じ書き込みで書く（何も無かったときも「見つけたもの 0 件」の報告。cockpit skill の references/tidy.md）`)
+      else if (before.has(id)) errors.push(`整理・棚卸しの指示 ${id} の報告がこの書き込みで無くなる。報告のカードの tidy_ops に ${id} を残す`)
+    }
+  }
+
   let intake = c.intake
   if (ch.intake) {
     intake = { ...c.intake, ...ch.intake }
@@ -632,7 +655,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     ...(ch.main ? { main: withRun(c.main, ch.main.run_id) } : {}),
     ...(ch.workspace ? { workspace: { ...c.workspace, name: ch.workspace.name } } : {}),
     ...(c.asks || ch.asks ? { asks: upsert(c.asks ?? [], ch.asks ?? []) } : {}),
-    applied_ops: [...new Set([...(c.applied_ops ?? []), ...(ch.applied_ops ?? [])])]
+    applied_ops: applied
   }
   // Run だけの main を消したら、空の main を残さない（main の無い帳簿に戻す）。
   if (next.main && !Object.keys(next.main).length) delete next.main

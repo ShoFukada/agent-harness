@@ -2,7 +2,7 @@
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import {
-  dismissable, isSynthetic, KIND_LABEL, OTHER, TIDY_KINDS, TIDY_LABEL, type TidyKind, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS,
+  dismissable, isSynthetic, KIND_LABEL, OTHER, TIDY_KINDS, TIDY_LABEL, type TidyKind, nextOp, overlay, parseHandoff, textError, parseArchive, parseCockpit, parseUserLog, unappliedOps, UNDO_GRACE_MS, openTidyOps, sameTidy,
   ANSWER_VIA, ASK_ID, isAnswerItem, isAskItem, latestAnswer, latestChoices, RETURN_ID, taskSig, type TaskSeen, type AskAnswer, type AskEntry, type AskMark, type AskReturn, type AskThread, type ReturnMark, type Card, type Cockpit, type ConsultMemo, type ConsultReturn, type Handoff, type Op, type Ruling, type UserLog, type Utterance
 } from './model.ts'
 import type { NotifyResult, OpInput } from './protocol.ts'
@@ -428,6 +428,9 @@ function check(cockpit: Cockpit, log: UserLog, input: Omit<OpInput, 'root'>): vo
     if (!(typeof input.text === 'string' && input.text.trim())) throw invalid('指示の文を書いてください')
     const bad = textError(input.text)
     if (bad) throw invalid(bad)
+    // 反映待ち（送信待ちも含む）の同じ指示は重ねない。重ねると窓口には同じ指示が何件も届き、窓の行も増える（t163。fitf で 9 件たまった）。
+    const same = openTidyOps(cockpit, log).find((o) => sameTidy(o, input.option_id, input.text))
+    if (same) throw conflict(`同じ指示が反映待ちです（op ${same.op_id}）。窓口が反映すると一覧から消え、結果は報告に出ます`)
     return
   }
   const tidy = input.type === 'undo' && input.item_id === '' ? log.ops.find((o) => o.op_id === input.undo_of && o.type === 'tidy') : undefined
