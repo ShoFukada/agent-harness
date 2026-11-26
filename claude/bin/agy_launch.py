@@ -8,6 +8,7 @@ agy -p を第三者のコーディングエージェントで包む使い方を�
   python3 -I agy_launch.py agy <agy の引数...>   環境を絞って agy に置き換わる
 """
 
+import json
 import os
 import re
 import shutil
@@ -58,6 +59,15 @@ def _exe(name):
 
 
 DEFAULT_MODEL = "gemini-4-neon-high"
+DENY_TOOLS = ["command(*)", "write_file(*)", "read_url(*)", "mcp(*)"]
+
+
+def text_only_args(deny_read=()):
+    """本文を stdin で渡し、本文だけを返させる呼び出し（仕上げ・書き直し）の引数。ファイルも読ませない。
+    agentMode "" は Default（Auto は workspace の外のファイルを聞かずに読む）。
+    未検証: read_file(*) が全部のパスに当たるかは agy 1.5.3 の help と changelog に無いので、鍵の置き場は deny_read で名指しもする"""
+    deny = DENY_TOOLS + ["read_file(*)"] + ["read_file(%s)" % p for p in deny_read]
+    return ["--sandbox", "--settings", json.dumps({"agentMode": "", "permissions": {"deny": deny}})]
 
 
 def pin_gemini(args):

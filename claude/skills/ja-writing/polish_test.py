@@ -201,6 +201,15 @@ class Output(Agy):
         self.assertEqual(message["event"], "user")
         self.assertIn("カワセミ", message["message"]["content"][0]["text"])
 
+    def test_agy_may_not_use_tools(self):
+        self.succeed("整えた本文")
+        self.run_main([], stdin="本文")
+        command = self.commands[0][0]
+        self.assertEqual(command[1:3], ["--sandbox", "--settings"])
+        deny = json.loads(command[3])["permissions"]["deny"]
+        for rule in ("command(*)", "write_file(*)", "read_file(*)", "read_url(*)", "mcp(*)"):
+            self.assertIn(rule, deny)
+
     def test_model_can_be_overridden(self):
         self.succeed("整えた本文")
         self.run_main(["--model", "gemini-4-neon-low"], stdin="本文")

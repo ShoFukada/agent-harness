@@ -81,7 +81,7 @@ def agy_settings(shots):
     # 未検証: deny と allow のどちらが勝つか、read_file(<フォルダ>) が下のファイルに当たるかは agy 1.5.3 の help と changelog に無い
     return {"agentMode": "", "permissions": {
         "allow": [f"read_file({shots})"],
-        "deny": ["command(*)", "write_file(*)", "read_url(*)", "mcp(*)"] + [f"read_file({p})" for p in denied_paths()]}}
+        "deny": agy_launch.DENY_TOOLS + [f"read_file({p})" for p in denied_paths()]}}
 
 
 def agy_args(shots, argv):

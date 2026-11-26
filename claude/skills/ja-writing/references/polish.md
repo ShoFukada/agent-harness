@@ -15,6 +15,12 @@ python3 ~/.config/agent-harness/claude/skills/ja-writing/polish.py --diff <file>
 python3 ~/.config/agent-harness/claude/skills/ja-writing/polish.py --audience client --doc-type proposal <file>
 ```
 
+   worker（sandbox の中）からは、文章を `/tmp/claude-<uid>` の中に写し、sandbox の外で動く入口を他のコマンドとつながずに 1 行で呼ぶ（引数は上と同じ 3 つだけ。`--model` と stdin は通らない）
+
+```bash
+/Users/fukadasho/.config/agent-harness/claude/bin/neon-polish /tmp/claude-501/<名前>.md --diff
+```
+
 3. stderr に「yomiyasu_diff が意味の変わる恐れを見つけた」と出たら、その種類の箇所を差分で先に見る。差分を確認し、事実・数値・固有名詞・引用・識別子、敬体と常体、Markdown の構造（見出し・箇条書き・表・コードブロック）が変わっていたら戻す
 4. 採用する部分だけを元ファイルに反映する。全部を機械的に上書きしない
 

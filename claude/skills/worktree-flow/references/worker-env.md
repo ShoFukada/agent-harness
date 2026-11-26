@@ -38,6 +38,10 @@ worktree-flow skill の SKILL.md から分けた細部。worker の作業が san
 ### Neon の画面の採点（dev-standards の design-review）
 - brief には「撮った画像を `/tmp/claude-<uid>` の中のフォルダに置き、`/Users/fukadasho/.config/agent-harness/claude/bin/neon-design-review <フォルダ> --kind business|lp` を他のコマンドとつながずに 1 行で呼ぶ」と書く
 
+### Neon の日本語の仕上げ（ja-writing skill の polish.py）
+- worker の sandbox の中では polish.py の agy が Google に届かず、「agy の呼び出しに失敗した」で止まる。brief には「仕上げる文章を `/tmp/claude-<uid>` の中に写し、`/Users/fukadasho/.config/agent-harness/claude/bin/neon-polish <file> --diff` を他のコマンドとつながずに 1 行で呼ぶ」と書く
+- 通せる引数は `--diff`・`--audience client|internal`・`--doc-type <種類>` だけ。結果は stdout に出るので、採る部分を自分で元のファイルに反映する（リダイレクトやパイプはつなげない）
+
 ## dev サーバー（既定と検証用の両方）
 - 127.0.0.1 と ::1 での listen と、そこへの curl・ブラウザの接続は通る（`allowLocalBinding`）
 - 1 回の Bash でバックグラウンド起動したプロセスは、次の Bash からは kill できない。dev サーバーは Bash の `run_in_background` で起動するか、起動・確認・停止を 1 つの Bash の中で済ませる。`pkill`・`pgrep` は sandbox の中では動かない

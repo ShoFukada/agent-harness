@@ -404,7 +404,7 @@ def call_agy(prompt, deadline=None):
     """(応答, 失敗の原因)。応答が取れたときの原因は None。"""
     try:
         done = agy_launch.run(
-            ["agy", "--model", CLI_MODEL,
+            ["agy", *agy_launch.text_only_args(), "--model", CLI_MODEL,
              "--input-format", "stream-json", "--output-format", "stream-json",
              "--print-timeout", PRINT_TIMEOUT, "--disable-slash-commands"],
             input=agy_input(prompt), timeout=slice_timeout(deadline), prefix="ja-review-",

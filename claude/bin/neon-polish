@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""worker の sandbox の外で、日本語の仕上げ（ja-writing skill の polish.py）を Gemini 4 Neon に通す。
+
+  neon-polish <file> [--diff] [--audience client|internal] [--doc-type <種類>]
+
+settings.worker.json の sandbox.excludedCommands がこのスクリプトだけを sandbox の外に出す。
+agy は ~/.gemini に書き、Google に通信するので、Claude の sandbox の中では起動できない。
+外に出す代わりに、鍵を外へ送る道をここで塞ぐ:
+- <file> は Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限り、symlink と hard link をたどらずに 1 回だけ読み、
+  読んだ本文をこのプロセスの中で polish.py に渡す。ファイルを写さないので、読んだ後に差し替えられても効かない
+- 走らせるのは、この入口の隣の polish.py（../skills/ja-writing/polish.py。worker が書けない clone の中）だけで、
+  引数では受けない。通す引数は --diff・--audience・--doc-type だけ（--model は polish.py の既定の Gemini）
+- agy には --sandbox と、コマンド・書き込み・ファイルと URL の読み取り・MCP を拒否する settings を渡す
+  （polish.py が agy_launch.text_only_args で付ける）。worker の denyRead も名指しで拒否する
+仕上げた本文か diff は stdout、理由は stderr に出る。終了コードは polish.py のもの（失敗は 1、引数の誤りは 2）。
+"""
+
+import argparse
+import importlib.machinery
+import importlib.util
+import os
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import agy_launch  # noqa: E402
+from sandbox_tmp import read_file, worker_denied_paths  # noqa: E402
+
+POLISH = os.path.join(HERE, "..", "skills", "ja-writing", "polish.py")
+
+
+def load_polish():
+    loader = importlib.machinery.SourceFileLoader("ja_polish", POLISH)
+    spec = importlib.util.spec_from_loader("ja_polish", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def main(argv):
+    # polish.py が yomiyasu_diff に渡す原文と仕上げ後の本文の一時ファイルを、worker が書ける TMPDIR（/tmp/claude-<uid>）に
+    # 置くと、書き込む前に link へ差し替えられ、sandbox の外の権限で任意のファイルを上書きさせられる
+    os.environ["TMPDIR"] = tempfile.tempdir = agy_launch.workdir_root()
+    polish = load_polish()
+    p = argparse.ArgumentParser(prog="neon-polish", allow_abbrev=False,
+                                description="日本語の仕上げを Gemini 4 Neon に通す（sandbox の外）")
+    p.add_argument("file", help="仕上げる文章（/tmp/claude-<uid> の中）")
+    p.add_argument("--diff", action="store_true", help="元テキストとの unified diff を出す")
+    p.add_argument("--audience", choices=("client", "internal"))
+    p.add_argument("--doc-type", choices=polish._REVIEW.ja_yomiyasu.DOC_TYPES)
+    a = p.parse_args(argv[1:])
+    deny_read = worker_denied_paths()  # 読む前に、塞ぐ一覧が取れないなら止める
+    try:
+        text = read_file(a.file, limit=polish.MAX_CHARS * 4).decode("utf-8")  # UTF-8 は 1 字が最大 4 バイト
+    except UnicodeDecodeError:
+        sys.exit(f"neon-polish: {a.file} は UTF-8 で読めない")
+    except OSError as e:
+        sys.exit(f"neon-polish: {a.file} が読めない（{e.strerror}）")
+    return polish.run(text, a.file, a.diff, a.audience, a.doc_type, deny_read=deny_read)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -50,7 +50,7 @@ def open_dir_nofollow(path):
     return fd
 
 
-def read_file(path):
+def read_file(path, limit=None):
     dfd = open_dir_nofollow(os.path.dirname(os.path.abspath(path)))
     try:
         # O_NONBLOCK: FIFO を置かれても書き手を待って止まらず、下の S_ISREG で断る
@@ -62,7 +62,12 @@ def read_file(path):
         # hard link は O_NOFOLLOW で止まらず、一時領域の外のファイルを指せる
         if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
             sys.exit(f"{_prog()}: {path} は hard link のない普通のファイルにする")
-        return f.read()
+        if limit is None:
+            return f.read()
+        data = f.read(limit + 1)  # fstat のあとに追記されても上限より多くは読まない
+        if len(data) > limit:
+            sys.exit(f"{_prog()}: {path} が {limit} バイトを超える")
+        return data
 
 
 def write_file(path, data, overwrite=True):
