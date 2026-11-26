@@ -79,7 +79,7 @@ Claude の書く日本語は硬い語彙と詰め込んだ構造に寄る。学�
 .md / .html / .txt と gh の Issue/PR 本文は、hook（ja-review）が Stop 時に同じ仕上げを自動でかけ、数値・コード・リンク・敬体と常体が変わっていないことを確かめたうえで直接書き換える。hook がかからない渡し方（Slack 文面・メール本文・チャット・artifact の公開だけ・Docs）は、下の手順で手で通す。顧客に渡す提案書・規程・メールの下書きには、`audience: client` とあわせて `doc-type:` も付ける。仕上げ役に渡す規則・文書の種類の決め方・hook が捨てる書き直し・polish.py の細部は [references/polish.md](references/polish.md) にある。
 
 手で通すときは、本文を書き終えてから `python3 ~/.config/agent-harness/claude/skills/ja-writing/polish.py --diff <file>` で差分を取り、事実・数値・固有名詞・引用・識別子・敬体と常体・Markdown の構造が変わった所を戻し、採る部分だけを元ファイルに反映する。手順の全体と引数は references/polish.md の「手で通す手順」にある。
-worker（sandbox の中）からは polish.py の agy が Google に届かないので、文章を `/tmp/claude-<uid>` の中に写し、`/Users/fukadasho/.config/agent-harness/claude/bin/neon-polish <file> --diff` を他のコマンドとつながずに 1 行で呼ぶ（引数は `--diff`・`--audience`・`--doc-type` だけ）。
+worker（sandbox の中）からは polish.py の agy が Google と通信できないので、文章を `/tmp/claude-<uid>` の中にコピーし、`/Users/fukadasho/.config/agent-harness/claude/bin/neon-polish <file> --diff` を他のコマンドとつながずに 1 行で呼ぶ（引数は `--diff`・`--audience`・`--doc-type` だけ）。
 顧客に出す文書は、仕上げに渡す前に相手の担当者になったつもりで一文ずつ読み、新たな質問が出る所・後退や手抜きに見える所・社内の事情が透ける所を直し、直した箇所を報告に並べる。
 
 エージェント向けの指示文（rule・skill・CLAUDE.md・AGENTS.md・roles）を書き直したときも、commit の前に手で polish.py を通す。ja-review の hook は指示文にかけない（`is_instruction_file` で除いている。見出し・印など機械が読む文字列が変わるのを防ぐため）。採るのは語と文の自然さの直しだけで、和文と英数字の間の空白・見出し・機械が読む文字列・許可と禁止・条件の形（「と」を「や」にするなど）を変える直しは採らない。

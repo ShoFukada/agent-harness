@@ -15,7 +15,7 @@ python3 ~/.config/agent-harness/claude/skills/ja-writing/polish.py --diff <file>
 python3 ~/.config/agent-harness/claude/skills/ja-writing/polish.py --audience client --doc-type proposal <file>
 ```
 
-   worker（sandbox の中）からは、文章を `/tmp/claude-<uid>` の中に写し、sandbox の外で動く入口を他のコマンドとつながずに 1 行で呼ぶ（引数は上と同じ 3 つだけ。`--model` と stdin は通らない）
+   worker（sandbox の中）からは、文章を `/tmp/claude-<uid>` の中にコピーし、sandbox の外で動く入口を他のコマンドとつながずに 1 行で呼ぶ（引数は上と同じ 3 つだけ。`--model` と stdin は通らない）
 
 ```bash
 /Users/fukadasho/.config/agent-harness/claude/bin/neon-polish /tmp/claude-501/<名前>.md --diff
