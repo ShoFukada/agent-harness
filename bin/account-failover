@@ -5,7 +5,8 @@ launchd が 1 分おきに 1 回ずつ起こす。モデルは呼ばず、トー
 引数と環境変数だけを読む）。切り替えは `orca account select` に任せる。Orca の設定「アカウントを切り替えたとき端末の Claude を」は
 keep（端末に何もしない）にしておく前提で、claude のプロセスがどの席（CLAUDE_CONFIG_DIR）で動いているかを毎回数え、
 今の席と違うものを移す（R205）。自動の切り替えのあとも、人が手で切り替えたあとも同じ処理が拾う。
-- 端末（worker を含む）: 入力待ちになったら /exit を送り、同じ端末で同じ引数・同じ会話のまま今の席で起こし直す。
+- 端末（worker を含む）: 入力待ちになったら /exit を送り、同じ端末で同じ引数・同じ会話のまま今の席で起こし直す。上限の選択画面が
+  出ていれば Esc で閉じてから送る。/exit が効かなければ、入力待ちに戻ったのを確かめて打ち直す。
   Orca が閉じた worker の Dispatch は、coordinator の名で続き（follow-up の Dispatch）を送って付け直す
 - チャット（窓口・担当）: 作業中のターンが無いか上限で止まっていれば裏の claude を止める。Orca は次の発言で今の席の claude を起こす
 今の席と違うプロセスが無ければ、プロセスの一覧を 1 回読んで終える。移せないものは名前・理由・次に要る操作を窓の帯に出す。
@@ -53,6 +54,15 @@ BLIND_MS = 15 * MIN
 WINDOWS = ("session", "weekly")
 # 端末の画面に出る Claude Code の上限の 1 行。stallwatch の LIMIT は「rate limit」も拾い、開発サーバーのログにも当たるので狭める。
 TERMINAL_LIMIT = re.compile(r"(?i)\b(?:hit|reached) your [\w -]*limit\b|usage limit")
+# 上限に当たると Claude Code は上限の 1 行の下に選択画面を出し、閉じるまで入力を受けない（2026-11-26 09:55 の実機。
+# 「1. Stop and wait for limit to reset / 2. Wait here, then continue automatically / 3. Switch to usage credits」と
+# 「Enter to confirm · Esc to cancel」）。ここへ /exit と Enter を打つと /exit は効かず、Enter はそのとき選ばれている
+# 選択肢を確定する（3 は従量課金）ので、Esc だけで閉じる。
+LIMIT_DIALOG = re.compile(r"(?i)what do you want to do\?")
+# Claude Code の選択画面の下の 1 行と、上限の選択画面の従量課金の選択肢。どれかが出ている間は、Enter が選択肢を確定するので文字を打たない。
+# 狭い端末では行が折り返されるので、行をつないだ文で当てる
+CHOICE_FOOT = re.compile(r"(?i)esc to cancel|enter to confirm|switch to usage credits")
+DIALOG_LINES = 12
 SHOWN = {"full": "上限", "free": "空き", "unknown": "使用量不明"}
 # Orca の使用量の失敗のうち、席のログインが切れていることを示すもの。stale-token は「しばらく動いていない席のトークンが古いだけで、
 # 次に Claude が動けば更新される」（Orca の説明）なので入れない。
@@ -62,6 +72,7 @@ LOGIN_NEEDED = {"missing-credentials"}
 EXIT_WAIT_S = int(os.environ.get("FAILOVER_EXIT_WAIT_S") or 30)
 APPEAR_WAIT_S = int(os.environ.get("FAILOVER_APPEAR_WAIT_S") or 30)
 STOP_WAIT_S = int(os.environ.get("FAILOVER_STOP_WAIT_S") or 15)
+DIALOG_WAIT_S = int(os.environ.get("FAILOVER_DIALOG_WAIT_S") or 10)
 # 作業中のまま手が空かないプロセスを、移そうと試し続ける時間。過ぎたら諦めて名指しする。
 GIVE_UP_MS = 6 * 60 * MIN
 # 同じ段階でこの回数うまくいかなければ諦めて名指しする。
@@ -394,15 +405,29 @@ def last_reply(row):
     return None
 
 
-def limited(row, preview=""):
-    """会話の最後が利用枠の上限の 1 行で止まっているか。会話記録を読めればそれだけで決め（画面には上限のあとに続けた作業の前の行が残る）、
-    読めないときだけ端末の画面の上限の 1 行を見る。"""
-    reply = last_reply(row)
+def said_limit(reply):
+    """last_reply の結果から、会話記録が上限で止まったと言っているか。True・False、読めなければ None。"""
     if reply == "input":
         return False
     if reply:
         return (sw.stop_cause(reply[1], reply[0], sw.now_ms()) or "").startswith("利用枠の上限")
-    return bool(TERMINAL_LIMIT.search(preview or ""))
+    return None
+
+
+def limited(row, preview=""):
+    """会話の最後が利用枠の上限の 1 行で止まっているか。会話記録を読めればそれだけで決め（画面には上限のあとに続けた作業の前の行が残る）、
+    読めないときだけ端末の画面の上限の 1 行を見る。"""
+    said = said_limit(last_reply(row))
+    return bool(TERMINAL_LIMIT.search(preview or "")) if said is None else said
+
+
+def choice_screen(lines):
+    """画面の下に出ている Claude Code の選択画面。上限の選択画面（問いと下の 1 行）なら "limit"、ほかの選択画面なら "other"、無ければ None。
+    下の DIALOG_LINES 行だけを見る（上は会話の文）。上限の 1 行は見ない（端末が低いと選択画面の上に押し出される）。"""
+    text = " ".join(" ".join((lines or [])[-DIALOG_LINES:]).split())
+    if not CHOICE_FOOT.search(text):
+        return None
+    return "limit" if LIMIT_DIALOG.search(text) else "other"
 
 
 def screen(handle):
@@ -529,6 +554,7 @@ class Mover:
     def terminal(self, key, row, rec):
         t = self.terms.get(key) or {}
         label = rec["label"] if rec else "%s（端末 %s）" % (t.get("title") or key, os.path.basename(str(t.get("worktreePath") or "")))
+        sent = False
         if rec is None:
             if not t:
                 return self.issue(key, label, "gone", "Orca の端末の一覧に無い端末で claude が動いている（pid %d）。手で終える" % row["pid"])
@@ -544,45 +570,40 @@ class Mover:
             lines = screen(key)
             if lines is None:
                 return self.issue(key, label, "busy", "端末の画面を読めない。次の回に見る")
-            why = sw.startup_screen(lines)
-            if why:
-                return self.issue(key, label, "screen", "確認の画面「%s」で止まっている（自動では答えない）。端末で答える" % why)
-            lim = limited(row, t.get("preview"))
-            # 入力待ちかは、Orca の状態と claude 自身の sessions/<pid>.json の status で見る。Orca の `terminal wait --for tui-idle` は
-            # 入力待ちの古い席の端末でも時間切れになった（2026-11-23 の実機。上限の「continuing automatically at …」を待つものも、そうでないものも）
-            state = (self.panes.get(pane(t)) or {}).get("state")
-            working = state in BUSY_STATES or row["busy"]
-            if working and not lim:
-                return self.issue(key, label, "busy", "作業中。手が空いたら移す")
-            if state is None and not lim:
-                return self.issue(key, label, "busy", "Orca が claude の状態を出していないので、入力待ちか分からない。次の回に見る")
+            lim, dialog, working, problem = self.exit_ready(key, row, lines)
+            if problem:
+                return self.issue(key, label, *problem)
             try:
                 disp = self.live_dispatch(key)
             except RuntimeError as e:
                 return self.issue(key, label, "moving", "worker の Dispatch を確かめられない（%s）ので、まだ移していない。次の回に見る" % e)
             rec = {"kind": "terminal", "pid": row["pid"], "session": row["session"], "argv": row["argv"], "ws": row["ws"],
-                   "limited": lim, "working": bool(working), "label": label, "from": row["seat"], "stage": "exit", "at": self.now, "tries": 0,
+                   "limited": lim, "working": working, "label": label, "from": row["seat"], "stage": "exit", "at": self.now, "tries": 0,
                    **(disp or {})}
             if self.dry_run:
-                self.lines.append("  移す: %s: /exit → %s%s%s" % (
-                    label, relaunch_line(rec, self.home), "（続きを頼む）" if lim else "",
+                self.lines.append("  移す: %s: %s/exit → %s%s%s" % (
+                    label, "上限の選択画面を Esc で閉じ、" if dialog else "", relaunch_line(rec, self.home), "（続きを頼む）" if lim else "",
                     "（Dispatch %s が閉じたら%s）" % (disp["dispatch"], "続きを送る" if disp["coordinator"] else "coordinator に続きを頼む")
                     if disp else ""))
                 return
+            if dialog and not self.close_dialog(key):
+                return self.issue(key, label, "moving", "上限の選択画面を Esc で閉じられない（まだ移していない）。次の回に見る")
             # 「立て直さない」が coordinator に届く前に Orca の「Worker exited」が届かないよう、送れなければまだ終わらせない
             if disp and not send_tell({"from": key, "to": "run:" + disp["run"], "subject": "席の切り替えで worker の claude を起こし直す",
                                        "body": WORKER_NOTICE % (label, disp["dispatch"], WORKER_NOTICE_TAIL if disp["coordinator"]
                                                                 else WORKER_NOTICE_ASK % disp["dispatch"])}):
                 return self.issue(key, label, "moving", "先の知らせを run:%s に送れなかったので、まだ移していない。次の回に見る" % disp["run"])
             self.moves[key] = rec
-            self.save()
-            # 送信が失敗に見えても届いていることがある（応答だけの時間切れ）ので、記録は残し、pid が消えるかで進める
-            sw.orca("terminal", "send", "--terminal", key, "--text", "/exit", "--enter", "--wait-submit", "10")
+            self.send_exit(key, rec)
+            sent = True
         if self.dry_run:
             return self.lines.append("  移しかけ: %s（%s の段階から続ける）" % (label, rec["stage"]))
         if rec["stage"] == "exit":
+            # 前の回の /exit で終わらなかった claude には、入力待ちに戻ったのを確かめてから打ち直す
+            if not sent and row and row["pid"] == rec["pid"] and alive(rec["pid"], key) and not self.exit_again(key, rec, row):
+                return
             if not self.wait(lambda: not alive(rec["pid"], key), EXIT_WAIT_S):
-                return self.retry(key, rec, "/exit のあと claude が終わらない（/exit は打ち直さない）")
+                return self.retry(key, rec, "/exit のあと claude が終わらない（入力待ちに戻ったら次の回に打ち直す）")
             others = [r for r in inventory() if r["handle"] == key]
             if others and not (len(others) == 1 and others[0]["seat"] == self.target and others[0]["session"] == rec["session"]):
                 # 人が同じ端末で claude を起こし直した。今の席なら済み、古い席なら次の回に新しいプロセスとして見る
@@ -663,6 +684,79 @@ class Mover:
              "to": self.email, "nudged": bool(nudge), "dispatch": rec.get("dispatch"), "follow_up": rec.get("follow_up"),
              "asked": bool(rec.get("asked"))})
         self.done.append(label)
+
+    def exit_ready(self, key, row, lines):
+        """端末の claude に /exit を打ってよいか。(上限で止まっているか, 上限の選択画面が出ているか, 作業中か, 打てなければ (帯の種類, 理由))。
+        入力待ちかは、Orca の状態と claude 自身の sessions/<pid>.json の status で見る。Orca の `terminal wait --for tui-idle` は
+        入力待ちの古い席の端末でも時間切れになった（2026-11-23 の実機。上限の「continuing automatically at …」を待つものも、そうでないものも）。
+        ターンの途中で上限に当たったものは、Orca の状態が working のままでも会話記録の最後が上限の 1 行になる
+        （2026-11-26 の ca-first-publish-notice）ので、ここで拾う。上限の選択画面は、会話記録が上限と言っているか読めないときだけ
+        上限のものと見なす（会話の文に選択画面の写しが出ても、作業中の claude に Esc を送らない）。ほかの選択画面には何も打たない。"""
+        t = self.terms.get(key) or {}
+        why = sw.startup_screen(lines)
+        if why:
+            return False, False, False, ("screen", "確認の画面「%s」で止まっている（自動では答えない）。端末で答える" % why)
+        said = said_limit(last_reply(row))
+        choice = choice_screen(lines)
+        if choice == "other" or (choice == "limit" and said is False):
+            return False, False, False, ("busy", "選択画面で答えを待っている（自動では答えない）。閉じたら移す")
+        dialog = choice == "limit"
+        lim = dialog or (bool(TERMINAL_LIMIT.search(t.get("preview") or "")) if said is None else said)
+        state = (self.panes.get(pane(t)) or {}).get("state")
+        working = bool(state in BUSY_STATES or row["busy"])
+        if working and not lim:
+            return lim, dialog, working, ("busy", "作業中。手が空いたら移す")
+        if state is None and not lim:
+            return lim, dialog, working, ("busy", "Orca が claude の状態を出していないので、入力待ちか分からない。次の回に見る")
+        return lim, dialog, working, None
+
+    def close_dialog(self, key):
+        """上限の選択画面に Esc を 1 回だけ送り、閉じたのを画面で確かめる。閉じたら True。"""
+        sw.orca("terminal", "send", "--terminal", key, "--text", "\x1b")
+        def closed():
+            lines = screen(key)
+            return bool(lines) and not choice_screen(lines)
+        return self.wait(closed, DIALOG_WAIT_S)
+
+    def send_exit(self, key, rec):
+        """/exit を送り、送った回数を記録に残す（gave-up のあとに入力待ちへ戻った端末を、送った回数が足りなければ移し直すため）。
+        送信が失敗に見えても届いていることがある（応答だけの時間切れ）ので、結果は見ず、pid が消えるかで進める。"""
+        rec["exits"] = rec.get("exits", 0) + 1
+        self.save()
+        sw.orca("terminal", "send", "--terminal", key, "--text", "/exit", "--enter", "--wait-submit", "10")
+
+    def exit_again(self, key, rec, row):
+        """前の回の /exit で終わらなかった claude に、入力待ちに戻っていれば /exit を打ち直す。打ったら True、打てなければ帯に出して False。
+        /exit は、起きたばかりの worker に Orca が最初の指示を打つのと重なって消えた（2026-11-26 09:43 の kintone-kq-record と ge-slack-intake。
+        そのまま 12 分作業して上限の選択画面で止まった）ほか、上限の選択画面に打つと効かない。
+        試した回数（tries）は /exit を打って終わるのを待った回だけ数え、待つだけの回は GIVE_UP_MS で打ち切る。"""
+        if self.now - rec["at"] > GIVE_UP_MS:
+            why = "/exit が効かないまま %d 時間たった" % (GIVE_UP_MS // (60 * MIN))
+            rec.update(stage="failed", failed_at="exit", exits=MAX_TRIES, why=why + "。手で移す")
+            self.save()
+            log({"event": "gave-up", "key": key, "label": rec["label"], "stage": "exit", "why": why})
+            self.issue(key, rec["label"], "failed", rec["why"])
+            return False
+        here = [r["pid"] for r in inventory() if r["handle"] == key]
+        if here != [rec["pid"]]:
+            # 端末の前に出ているのが記録の claude と限らないので打たない
+            self.issue(key, rec["label"], "moving", "前の回の /exit は効かなかった。端末の claude が記録の pid %d だけでない（pid %s）ので打ち直さない。"
+                                                    "端末を確かめて手で移す" % (rec["pid"], ", ".join(map(str, here)) or "なし"))
+            return False
+        lines = screen(key)
+        if lines is None:
+            self.issue(key, rec["label"], "moving", "端末の画面を読めない。次の回に見る")
+            return False
+        lim, dialog, _working, problem = self.exit_ready(key, row, lines)
+        if problem:
+            self.issue(key, rec["label"], problem[0], "前の回の /exit は効かなかった。" + problem[1])
+            return False
+        if dialog and not self.close_dialog(key):
+            self.issue(key, rec["label"], "moving", "前の回の /exit は効かなかった。上限の選択画面を Esc で閉じられない。次の回に見る")
+            return False
+        rec["limited"] = rec["limited"] or lim
+        self.send_exit(key, rec)
+        return True
 
     def still_open(self, key):
         """端末がいま Orca にあるか（一覧を読み直す）。読めなければあると見なす（次の回に見る）。"""
@@ -826,6 +920,14 @@ class Mover:
         mine = [r for r in rows if key_of(r) == key]
         if rec["kind"] == "terminal" and key not in self.terms:
             return self.gone(key, rec)
+        old = next((r for r in mine if r["pid"] == rec["pid"] and r["seat"] != self.target), None)
+        if rec["kind"] == "terminal" and rec.get("failed_at") == "exit" and rec.get("exits", 1) < MAX_TRIES and old:
+            # /exit を 1 回しか打たなかった修正前のコードが諦めたもの（2026-11-26 の ca-first-publish-notice は選択画面に打ち、
+            # kintone-kq-record は起きたばかりの worker で消えた）。入力待ちに戻っていれば移し直す
+            rec.update(stage="exit", exits=rec.get("exits", 1), tries=rec.get("exits", 1), at=self.now)
+            rec.pop("failed_at")
+            rec.pop("why", None)
+            return self.terminal(key, old, rec)
         if rec["kind"] == "terminal":
             fixed = mine and all(r["seat"] == self.target for r in mine)
         else:

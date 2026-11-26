@@ -25,6 +25,11 @@ S1, S2 = "58edbc6e-ae7a-4cad-b6c9-613f01bceda8", "73147483-b7f2-48de-83f1-b2428f
 EXTERNAL_IMPORTS = ["Allow external CLAUDE.md file imports?",
                     "This project's CLAUDE.md imports files outside the current working directory.",
                     "❯ 1. Yes, allow external imports", "  2. No, disable external imports"]
+# 上限に当たった Claude Code の選択画面（2026-11-26 09:55 の実機の画面の写し）。
+LIMIT_DIALOG = ["  ⎿  You've hit your weekly limit · resets Nov 30 at 4am (Asia/Tokyo)", "✻ Brewed for 11m 40s · done 9:55 AM",
+                "   What do you want to do?", "   ❯ 1. Stop and wait for limit to reset",
+                "     2. Wait here, then continue automatically at Nov 30 at 4am", "     3. Switch to usage credits",
+                "   Enter to confirm · Esc to cancel"]
 AUTO_MODE_SCREEN = ["Auto mode lets Claude handle permission prompts automatically.",
                     "❯ Yes, set auto mode as my default permission mode", "  No, keep bypass permissions"]
 
@@ -107,8 +112,15 @@ elif cmd == "orchestration send":
 elif cmd == "terminal send":
     h, text = val("--terminal"), val("--text")
     procs = load("processes.json", [])
-    if text == "/exit":
-        if not flag("exit-hangs"):
+    if text == "\x1b":  # Esc は上限の選択画面を閉じ、入力待ちに戻る
+        if not flag("esc-ignored"):
+            screens = load("screens.json", {})
+            screens[h] = load("after-esc.json", ["❯"])
+            save("screens.json", screens)
+    elif text == "/exit":
+        # 上限の選択画面が出ている間は入力欄が無く、/exit は効かない
+        in_dialog = any("What do you want to do?" in l for l in load("screens.json", {}).get(h, []))
+        if not flag("exit-hangs") and not in_dialog:
             save("processes.json", [p for p in procs if p["env"].get("ORCA_TERMINAL_HANDLE") != h])
             if flag("exit-closes-dispatch"):  # Orca 1.4.271: claude が終わると、その端末の Dispatch を failed で閉じる
                 workers, shows = load("workers.json", []), load("shows.json", {})
@@ -863,12 +875,12 @@ class ConvergeTest(FailoverTestBase):
         self.old_terminal()
         self.flag("exit-hangs")
         self.run_failover()
-        # 終わらなくても /exit は打ち直さない（入力先の状態を確かめないまま文字を重ねない）。
         self.assertEqual(self.typed("term_1"), ["/exit"])
-        self.assertIn("/exit のあと claude が終わらない（/exit は打ち直さない）。次の回に続きから試す", self.band())
+        self.assertIn("/exit のあと claude が終わらない（入力待ちに戻ったら次の回に打ち直す）。次の回に続きから試す", self.band())
+        # 入力待ちのままなので、次の回からは打ち直す。打った回数が 3 回になったら諦める。
         for _ in range(3):
             self.run_failover()
-        self.assertEqual(self.typed("term_1"), ["/exit"])
+        self.assertEqual(self.typed("term_1"), ["/exit"] * 3)
         # 諦めた印は残し、手で直るまで帯に出し続ける（最初からやり直さない）。
         self.assertIn("3 回試して諦めた。手で移す", self.band())
         self.assertEqual(self.state()["moves"]["term_1"]["stage"], "failed")
@@ -879,6 +891,130 @@ class ConvergeTest(FailoverTestBase):
         self.run_failover()
         self.assertEqual(self.status(), [])
         self.assertEqual(self.state()["moves"], {})
+
+    def assert_closed_then_moved(self, typed):
+        """Esc で選択画面を閉じ、/exit・起こし直し・続きの依頼の順に打った。選択画面には Enter も番号も打たない。"""
+        self.assertEqual(typed[:2], ["\x1b", "/exit"])
+        self.assertTrue(typed[2].startswith("env "), typed[2])
+        self.assertIn("続けてください", typed[3])
+        for c in self.calls():
+            if c[:2] == ["terminal", "send"] and c[c.index("--text") + 1] == "\x1b":
+                self.assertNotIn("--enter", c)
+        self.assertEqual(self.state()["moves"], {})
+
+    def test_a_terminal_at_the_limit_dialog_is_closed_with_escape_and_moved(self):
+        # 2026-11-26 09:55: 上限の選択画面で止まった端末は、/exit を打っても終わらず、3 回で諦めていた。
+        # 会話記録を読めなくても、選択画面は上限でしか出ないので上限で止まったと見なす。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(state="waiting")
+        self.put("screens.json", {"term_1": LIMIT_DIALOG})
+        out = self.run_failover("--dry-run")
+        self.assertIn("上限の選択画面を Esc で閉じ、/exit", out)
+        self.assertEqual(self.typed(), [])
+        self.run_failover()
+        self.assert_closed_then_moved(self.typed("term_1"))
+
+    def test_a_terminal_that_hit_the_limit_in_the_middle_of_a_turn_is_moved_the_same_way(self):
+        # ターンの途中（ツールの結果のあと）で上限に当たったもの。Orca の状態は working のまま、会話記録の最後は上限の 1 行。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(state="working", reply=LIMIT_LINE)
+        self.put("screens.json", {"term_1": LIMIT_DIALOG})
+        self.run_failover()
+        self.assert_closed_then_moved(self.typed("term_1"))
+
+    def test_a_limit_dialog_whose_limit_line_scrolled_away_is_still_closed_with_escape(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(reply=LIMIT_LINE)
+        self.put("screens.json", {"term_1": LIMIT_DIALOG[2:]})
+        self.run_failover()
+        self.assert_closed_then_moved(self.typed("term_1"))
+
+    def test_nothing_is_typed_into_a_dialog_the_conversation_does_not_explain(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        # 作業中の worker の出力に選択画面の写しが出た（会話記録は上限で止まっていない）。Esc で作業を止めない。
+        self.old_terminal(state="working", reply="調べている", then="続けて")
+        self.put("screens.json", {"term_1": LIMIT_DIALOG})
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        # 上限で止まっていても、ほかの選択画面（許可の確認など）には Enter も Esc も打たない。
+        self.put("processes.json", [])
+        self.old_terminal(reply=LIMIT_LINE)
+        self.put("screens.json", {"term_1": ["Do you want to proceed?", "❯ 1. Yes", "  2. No", "Esc to cancel"]})
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        self.assertIn("選択画面で答えを待っている（自動では答えない）", self.band())
+
+    def test_a_terminal_the_previous_version_gave_up_on_is_moved_once_it_waits_for_input(self):
+        # 2026-11-26 の ca-first-publish-notice: 修正前のコードは選択画面に /exit を 1 回打ち、打ち直さずに 3 回で諦めた（exits の記録が無い）。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(reply=LIMIT_LINE)
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--model", "opus", "--settings", self.settings, "--resume", S1],
+               "ws": self.settings, "limited": True, "working": False, "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A),
+               "stage": "failed", "failed_at": "exit", "why": "/exit のあと claude が終わらない（/exit は打ち直さない）。3 回試して諦めた。手で移す",
+               "at": now_ms() - 20 * MIN, "tries": 3}
+        self.edit_state(moves={"term_1": rec})
+        self.put("screens.json", {"term_1": LIMIT_DIALOG})
+        # 同じ端末に別の claude もいれば、端末の前に出ているのがどちらか分からないので打たない。
+        self.proc(102, seat=A, handle="term_1", session=S2)
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        self.assertIn("端末の claude が記録の pid 101 だけでない（pid 101, 102）ので打ち直さない", self.band())
+        # 修正前のコードが送った 1 回を数えに入れ、あと 2 回で諦める。
+        self.assertEqual({k: self.state()["moves"]["term_1"][k] for k in ("stage", "exits", "tries")}, {"stage": "exit", "exits": 1, "tries": 1})
+        self.put("processes.json", [p for p in self.processes() if p["pid"] != 102])
+        self.run_failover()
+        self.assert_closed_then_moved(self.typed("term_1"))
+
+    def test_a_terminal_whose_exit_was_lost_and_stays_busy_is_given_up_after_six_hours(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(state="working")
+        rec = {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--resume", S1], "ws": None, "limited": False, "working": False,
+               "label": "題 term_1（端末 term_1）", "from": self.seat_dir(A), "stage": "exit", "at": now_ms() - 7 * HOUR, "tries": 0, "exits": 1}
+        self.edit_state(moves={"term_1": rec})
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+        self.assertEqual(self.state()["moves"]["term_1"]["stage"], "failed")
+        self.assertIn("/exit が効かないまま 6 時間たった。手で移す", self.band())
+        # 諦めたものは、入力待ちに戻っても移し直さない（送った回数を使い切った扱い）。
+        self.put("agents.json", [pane_agent("term_1", "done")])
+        self.run_failover()
+        self.assertEqual(self.typed(), [])
+
+    def test_a_limit_dialog_that_does_not_close_gets_no_exit(self):
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(reply=LIMIT_LINE)
+        self.put("screens.json", {"term_1": LIMIT_DIALOG})
+        self.flag("esc-ignored")
+        self.run_failover()
+        self.assertEqual(self.typed("term_1"), ["\x1b"])
+        self.assertIn("上限の選択画面を Esc で閉じられない（まだ移していない）。次の回に見る", self.band())
+        self.assertEqual(self.state().get("moves"), {})
+        self.flag("esc-ignored", False)
+        self.run_failover()
+        self.assertEqual(self.typed("term_1")[:3], ["\x1b", "\x1b", "/exit"])
+        self.assertEqual(self.state()["moves"], {})
+
+    def test_a_lost_exit_is_typed_again_once_the_terminal_waits_for_input(self):
+        # 2026-11-26 09:43 の kintone-kq-record: 起きたばかりの worker に打った /exit が、Orca が最初の指示を打つのと重なって消えた。
+        # worker はそのまま作業を続け、09:56 に上限の選択画面で止まった。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal()
+        self.flag("exit-hangs")
+        self.run_failover()
+        self.assertEqual(self.typed("term_1"), ["/exit"])
+        # 作業中は打ち直さず、試した回数にも数えない。
+        self.put("agents.json", [pane_agent("term_1", "working")])
+        for _ in range(3):
+            self.run_failover()
+        self.assertEqual(self.typed("term_1"), ["/exit"])
+        self.assertIn("前の回の /exit は効かなかった。作業中。手が空いたら移す", self.band())
+        self.assertEqual(self.state()["moves"]["term_1"]["stage"], "exit")
+        # 上限に当たって選択画面で止まったら、Esc で閉じて /exit を打ち直し、上限で止まった分の続きも頼む。
+        self.flag("exit-hangs", False)
+        self.put("screens.json", {"term_1": LIMIT_DIALOG})
+        self.run_failover()
+        self.assertEqual(self.typed("term_1")[0], "/exit")
+        self.assert_closed_then_moved(self.typed("term_1")[1:])
 
     def test_a_launch_interrupted_before_it_was_recorded_is_not_typed_again(self):
         # 前の回が起こすコマンドを送ったあと、記録する前に落ちた。起きた claude（の入力欄）にコマンドを打ち直さない。
@@ -1441,6 +1577,25 @@ class UnitTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     self.mod.stop(12345)
                 kill.assert_not_called()
+
+    def test_the_limit_dialog_is_recognised_only_at_the_bottom_of_the_screen(self):
+        dialog = lambda lines: self.mod.choice_screen(lines) == "limit"
+        self.assertTrue(dialog(LIMIT_DIALOG))
+        self.assertTrue(dialog(["前の作業"] * 30 + LIMIT_DIALOG + ["● off  $7.95", "─" * 40]))
+        # 端末が低く、上限の 1 行が上に押し出されても選択画面と見なす（Enter を打たないため）。
+        self.assertTrue(dialog(LIMIT_DIALOG[2:]))
+        # Esc で閉じたあと（2026-11-26 の kintone-kq-record の画面）。上限の 1 行は残るが、問いは消える。
+        closed = ["  ⎿  You've hit your weekly limit · resets Nov 30 at 4am (Asia/Tokyo)", "✻ Churned for 1s · done 9:56 AM",
+                  "● off  $4.18  last $0.00  11m 48s", "─" * 40, "❯", "─" * 40, "  ⏵⏵ bypass permissions on (shift+tab to cycle)"]
+        self.assertIsNone(self.mod.choice_screen(closed))
+        # 会話の文に選択画面の写しが出ても、その下に作業が続いていれば選択画面とは見なさない。
+        self.assertIsNone(self.mod.choice_screen(LIMIT_DIALOG + ["⏺ 次の作業"] * 12 + closed[2:]))
+        # 問いの無い選択画面（許可の確認など）は、上限の選択画面ではない。
+        self.assertEqual(self.mod.choice_screen(["Do you want to proceed?", "❯ 1. Yes", "  2. No", "Esc to cancel"]), "other")
+        # 狭い端末で下の 1 行が折り返されても、従量課金の選択肢だけが見えていても選択画面と見なす。
+        self.assertEqual(self.mod.choice_screen(LIMIT_DIALOG[:-1] + ["   Enter to confirm · Esc to", "cancel"]), "limit")
+        self.assertEqual(self.mod.choice_screen(LIMIT_DIALOG[2:-1]), "limit")
+        self.assertIsNone(self.mod.choice_screen(None))
 
     def test_the_external_imports_screen_is_recognised(self):
         self.assertEqual(self.mod.sw.startup_screen(EXTERNAL_IMPORTS), "CLAUDE.md の外部 import の承認（External imports）")
