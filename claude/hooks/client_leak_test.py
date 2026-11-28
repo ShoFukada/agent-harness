@@ -32,6 +32,37 @@ class ClientLeakTest(unittest.TestCase):
         self.assertEqual(client_leak.problems(CLIENT_HTML % "窓口は弊社の担当者です。作業者が対応します。"), [])
         self.assertEqual(client_leak.problems(CLIENT_HTML % "ご担当者様がお使いになる Claude Code・Codex と Cloudflare Workers の利用料"), [])
 
+    def test_waiting_state(self):
+        # pasona 11/25 の直し「貴社のご回答待ちとか入れなくていいよ」
+        found = client_leak.problems(CLIENT_HTML % "No.12 は貴社のご回答待ちです。No.14 は先方の確認待ち、No.15 はお返事待ちです。")
+        self.assertEqual(found, ["進行の状態の語（お返事待ち・ご回答待ち・確認待ち）"])
+        self.assertTrue(client_leak.problems(CLIENT_MD % "- 連絡待ち: 2件", markdown=True))
+
+    def test_waiting_closings_and_screen_status_are_not_flagged(self):
+        ok = ("ご確認をお待ちしております。ご回答をお待ちしています。お返事お待ちしております。"
+              "申請は承認待ちの状態になります。状態が「回答待ち」の行を選びます。")
+        self.assertEqual(client_leak.problems(CLIENT_HTML % ok), [])
+
+    def test_maker_explanation(self):
+        # pasona の比較版 HTML から 3 回外した前書き（c9e24ec・78dc291・7ee339c）と、u-48「今回の対応まとめ不要」
+        found = client_leak.problems(CLIENT_HTML % "助言の中身と定型文は 11/21 修正版と同じです。" + "<h2>生成の記録</h2>")
+        self.assertEqual(found, ["作り手の説明（修正版と同じ・生成の記録）"])
+        self.assertEqual(client_leak.problems(CLIENT_HTML % "" + "<h3>今回の対応まとめ</h3>"), ["作り手の説明（今回の対応まとめ）"])
+        self.assertEqual(client_leak.problems(CLIENT_MD % "## 今回の変更点\n\n本文", markdown=True), ["作り手の説明（今回の変更点）"])
+
+    def test_maker_words_in_body_and_incident_headings_are_not_flagged(self):
+        self.assertEqual(client_leak.problems(CLIENT_HTML % "今回の対応により、通知の遅れは解消しました。" + "<h2>対応内容</h2>"), [])
+        self.assertEqual(client_leak.problems(CLIENT_MD % "## 対応内容\n\n今回の修正で解消しました。", markdown=True), [])
+
+    def test_deck_data_audience(self):
+        # medurance-web-docs の deck は .deck の data-audience で顧客向けを示す
+        deck = '<div class="deck" data-audience="%s"><section><p>貴社のご回答待ちです。</p></section></div>'
+        self.assertTrue(client_leak.problems(deck % "ドクターズ株式会社さま向け"))
+        self.assertTrue(client_leak.problems(deck % "社外共有用"))
+        self.assertEqual(client_leak.problems(deck % "internal"), [])
+        self.assertEqual(client_leak.problems(deck % "社内・協力会社向けの見本（架空の案件）"), [])
+        self.assertEqual(client_leak.problems("<pre>&lt;div data-audience=&quot;x&quot;&gt;</pre><code>data-audience='A社さま向け'</code><p>確認待ち</p>"), [])
+
     def test_notice_names_rule(self):
         self.assertIn("要ることだけ", client_leak.notice("a.html", ["手元のパス（/Users/a）"]))
 

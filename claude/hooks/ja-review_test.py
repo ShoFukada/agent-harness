@@ -159,6 +159,10 @@ class Audience(Isolated):
     def test_html_meta_marks_a_client_document(self):
         self.assertEqual(review.audience('<title>報告</title>\n<meta name="audience" content="client">'), "client")
 
+    def test_deck_data_audience_marks_the_reader(self):
+        self.assertEqual(review.audience('<div class="deck" data-audience="ドクターズ株式会社さま向け">'), "client")
+        self.assertEqual(review.audience('<div class="deck" data-audience="internal">'), "internal")
+
     def test_internal_marker_keeps_the_tone(self):
         self.stub("OK")
         review.rewrite("<!-- audience: internal -->\nざっくり直しました。")

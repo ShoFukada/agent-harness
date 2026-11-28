@@ -9,7 +9,7 @@
 書き直し役は agy の gemini-4-neon-high。ja-writing skill の「書き方の規則」節と、
 dev-standards プラグインの ja-vocab-lint.py の単語表が拾った硬い語を規則として渡し、判定と書き直しを 1 回の呼び出しで済ませる。
 yomiyasu の規則（ja_yomiyasu.py が切り出す）も足し、文書の種類が分かればその種類の規則、顧客向けなら
-書き手と読み手の規則を添える。語調の扱いは本文の読み手の印で切り替える（frontmatter の audience: client、HTML の meta、<!-- audience: … -->）。
+書き手と読み手の規則を添える。語調の扱いは本文の読み手の印で切り替える（frontmatter の audience: client、HTML の meta、<!-- audience: … -->、medurance-web-docs の deck の data-audience）。
 client なら口語を業務文書の語に直させ、internal なら元の語調を保たせ、印が無ければ本文の手がかりで判断させる。
 stop はそのターンに書いた .md / .mdx / .html / .txt をファイルごとに見て、書き直しが返ったら
 ファイルを更新し、件数と差分の置き場を systemMessage で知らせる（安全確認は hook が済ませているので
@@ -83,6 +83,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "bin"))
 import agy_launch  # noqa: E402
+import client_leak  # noqa: E402
 import ja_spacing  # noqa: E402
 import ja_yomiyasu  # noqa: E402
 
@@ -182,7 +183,7 @@ PROMPT = """以下の日本語の本文を、規則に従って読みやすく�
 
 # 読み手の印。顧客向けの文書が軽い言い方のまま残らないよう、印か本文の手がかりで語調の扱いを切り替える。
 # 判定は dev-standards の ja-vocab-lint.py の audience() とそろえる（frontmatter は先頭のブロックの中、
-# meta とコメントはコード・引用の外だけを読む）
+# meta とコメントはコード・引用の外だけを読む）。deck の data-audience は ja-vocab-lint が読まないが、client_leak と同じ読み替えでこちらは読む
 FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n(.*?)^---[ \t]*$", re.S | re.M)
 FRONTMATTER_AUDIENCE_RE = re.compile(r"(?m)^audience:[ \t]*[\"']?(client|internal)[\"']?[ \t]*\r?$")
 META_RE = re.compile(r"<meta\b[^>]*>", re.I)
@@ -210,7 +211,7 @@ def audience(text):
         if attrs.get("name", "").lower() == "audience" and attrs.get("content") in ("client", "internal"):
             return attrs["content"]
     m = COMMENT_AUDIENCE_RE.search(prose)
-    return m.group(1) if m else None
+    return m.group(1) if m else client_leak.deck_audience(prose)
 
 
 def _load_vocab_lint():

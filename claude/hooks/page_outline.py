@@ -5,7 +5,12 @@ common.md「書く」と ja-writing の references/pages.mdに章立ての決ま
 短いページ・章の少ないページ・顧客向けの印のあるページ（提案書や LP は別の章立て）は見ない。
 """
 
+import os
 import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import client_leak  # noqa: E402
 
 H2_RE = re.compile(r"<h2\b[^>]*>(.*?)</h2>", re.S | re.I)
 TAG_RE = re.compile(r"<[^>]+>")
@@ -13,24 +18,13 @@ HIDDEN_RE = re.compile(r"<(script|style)\b.*?</\1>", re.S | re.I)
 JAPANESE_RE = re.compile(r"[ぁ-ゖァ-ヺ一-龯]")
 BACKGROUND_RE = re.compile(r"背景|前提|経緯|いきさつ|なぜ")
 FIGURE_RE = re.compile(r"<svg\b|<img\b[^>]*\.svg\b", re.I)
-META_RE = re.compile(r"<meta\b[^>]*>", re.I)
-ATTR_RE = re.compile(r"""([\w-]+)\s*=\s*["']([^"']*)["']""")
 COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
-CLIENT_COMMENT_RE = re.compile(r"<!--\s*audience:\s*client\s*-->", re.I)
 MIN_JAPANESE = 800
 MIN_SECTIONS = 3
 
 
-def is_client(html):
-    for tag in META_RE.findall(html):
-        attrs = {k.lower(): v for k, v in ATTR_RE.findall(tag)}
-        if attrs.get("name", "").lower() == "audience" and attrs.get("content") == "client":
-            return True
-    return bool(CLIENT_COMMENT_RE.search(html))
-
-
 def problems(html):
-    if is_client(html):
+    if client_leak.is_client(html, markdown=False):
         return []
     body = COMMENT_RE.sub("", HIDDEN_RE.sub("", html))
     heads = [TAG_RE.sub("", h).strip() for h in H2_RE.findall(body)]
