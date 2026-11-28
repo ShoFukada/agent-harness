@@ -30,6 +30,28 @@ LIMIT_DIALOG = ["  ⎿  You've hit your weekly limit · resets Nov 30 at 4am (As
                 "   What do you want to do?", "   ❯ 1. Stop and wait for limit to reset",
                 "     2. Wait here, then continue automatically at Nov 30 at 4am", "     3. Switch to usage credits",
                 "   Enter to confirm · Esc to cancel"]
+# 2026-11-28 15:35 からの Claude Code の上限の画面。選択画面の代わりに、入力欄の下へ帯を出す（t178-stallwatch・t178-run-takeover の画面の写し）。
+RULE_LINE = "─" * 80
+LIMIT_BAND = ["  Ran 2 shell commands", "  ⎿  You've hit your 5-hour limit · resets 6:30pm (Asia/Tokyo)",
+              "     /usage-credits to finish what you’re working on.",
+              "⏺ Usage limit reached · continuing automatically at 6:30pm · esc to cancel",
+              "✻ Sautéed for 20m 10s · done 3:35 PM", "● off  $5.53  last $0.00  20m 11s  no test since change",
+              RULE_LINE, "❯", RULE_LINE, "  ⚠ Usage limit reached · limit resets 6:30pm",
+              "    Continuing automatically at 6:30pm · Esc to cancel", "  ⏵⏵ bypass permissions on (shift+tab to cycle)"]
+# 上の帯を Esc で閉じたあと（16:16:57 に担当が Esc を送った画面の写し）。会話の文に上限の 1 行と「esc to cancel」が残る。
+LIMIT_BAND_CLOSED = ["⏺ Usage limit reached · continuing automatically at 6:30pm · esc to cancel",
+                     "✻ Sautéed for 20m 10s · done 3:35 PM", "❯ 続けて",
+                     "⏺ Usage limit reached again · continuing automatically at 6:30pm · esc to cancel",
+                     "  ⎿  You've hit your 5-hour limit · resets 6:30pm (Asia/Tokyo)",
+                     "     /usage-credits to finish what you’re working on.", "✻ Sautéed for 0s · done 4:16 PM",
+                     "⏺ Automatic continue cancelled · /rate-limit-options to re-arm",
+                     "● off  $5.53  last $0.00  20m 11s  no test since change", RULE_LINE, "❯", RULE_LINE,
+                     "  ⏵⏵ bypass permissions on (shift+tab to cycle)"]
+# 上限の席へ起こし直した claude が、会話記録に何も書かずに出した選択画面（2026-11-28 の DST-4945 の端末の写し。上は前のターンの報告）。
+LIMIT_DIALOG_AFTER_LAUNCH = ["  coordinator への完了の報告は送り済みで、出し直していません。", "✻ Baked for 3m 21s · done Thursday 11:08 AM",
+                             "▔" * 80, "   What do you want to do?", "   ❯ 1. Stop and wait for limit to reset",
+                             "     2. Wait here, then continue automatically at Nov 30 at 4am", "     3. Switch to usage credits",
+                             "   Enter to confirm · Esc to cancel"]
 AUTO_MODE_SCREEN = ["Auto mode lets Claude handle permission prompts automatically.",
                     "❯ Yes, set auto mode as my default permission mode", "  No, keep bypass permissions"]
 
@@ -522,6 +544,90 @@ class SwitchTest(FailoverTestBase):
         self.run_failover()
         self.assertTrue(any(x["id"] == "failover:blind:" + C for x in self.status()))
 
+    def limited_old_terminal(self):
+        self.put("terminals.json", [terminal("term_1")])
+        self.put("agents.json", [pane_agent("term_1")])
+        self.proc(101, seat=A, handle="term_1", session=S1, argv=["--settings", self.settings, "--resume", S1], reply=LIMIT_LINE)
+
+    def switch_like_11_28(self):
+        """2026-11-28 15:31 の seats: 今の席 A（t.mizuno@）が上限、B（s.fukada@）と C（admin@）は使用量不明。B は実は週の上限だった。"""
+        self.accounts(A, {A: usage(session=100), B: usage(status="error"), C: usage(status="error")})
+        self.limited_old_terminal()
+        self.run_failover()
+        self.assertEqual(self.selects(), [B])
+        self.assertEqual(self.typed(), [])
+        self.assertIn("seat-b@example.com の使用量を Orca がまだ読んでいない", self.band())
+        self.run_failover()
+        self.assertEqual((self.selects(), self.typed()), ([B], []))
+
+    def test_does_not_move_claude_to_a_seat_of_unknown_usage_until_orca_reads_it_full_then_switches_on(self):
+        self.switch_like_11_28()
+        self.accounts(B, {B: usage(weekly=100, updated=now_ms()), A: usage(session=100), C: usage(status="error")})
+        self.run_failover()
+        self.assertEqual((self.selects(), self.typed()), ([B, C], []))
+        self.accounts(C, {C: usage(updated=now_ms()), A: usage(session=100), B: usage(weekly=100)})
+        self.run_failover()
+        self.assertEqual(self.typed("term_1")[0], "/exit")
+        moved = [h for h in self.history() if h["event"] == "moved"]
+        self.assertEqual([(h["from"], h["to"]) for h in moved], [(EMAIL[A], EMAIL[C])])
+        self.assertEqual(self.selects(), [B, C])
+
+    def test_does_not_move_claude_to_the_seat_read_full_when_no_seat_is_left(self):
+        self.switch_like_11_28()
+        self.accounts(B, {B: usage(weekly=100, updated=now_ms()), A: usage(session=100), C: usage(weekly=100)})
+        self.run_failover()
+        self.assertEqual((self.selects(), self.typed()), ([B], []))
+        self.assertIn("seat-b@example.com が利用枠の上限なので、古い席の claude を移さない", self.band())
+
+    def test_an_old_free_reading_of_the_next_seat_is_checked_before_moving_claude(self):
+        # 席を使わずに Orca が読んだ値が 2 時間前のものなら、切り替えたあと読み直すまで移さない。
+        self.accounts(A, {A: usage(session=100), B: usage(session=20, updated=now_ms() - 2 * HOUR), C: usage(status="error")})
+        self.limited_old_terminal()
+        self.run_failover()
+        self.assertEqual((self.selects(), self.typed()), ([B], []))
+        self.accounts(B, {B: usage(session=20, updated=now_ms()), A: usage(session=100), C: usage(status="error")})
+        self.run_failover()
+        self.assertEqual(self.typed("term_1")[0], "/exit")
+
+    def test_a_move_half_done_is_finished_without_waiting_for_the_reading(self):
+        # /exit のあとで起こし直す前に止まった端末は、シェルのまま待たせない。
+        self.accounts(A, {A: usage(session=100), B: usage(status="error"), C: usage(status="error")})
+        self.put("terminals.json", [terminal("term_1")])
+        self.edit_state(moves={"term_1": {"kind": "terminal", "pid": 101, "session": S1, "argv": ["--settings", self.settings, "--resume", S1],
+                                          "ws": self.settings, "limited": True, "working": False, "label": "題 term_1（端末 term_1）",
+                                          "from": self.seat_dir(A), "stage": "launch", "at": now_ms() - MIN, "tries": 0}})
+        self.run_failover()
+        self.assertEqual(self.selects(), [B])
+        self.assertTrue(any(t.startswith("env 'CLAUDE_CONFIG_DIR=%s'" % self.seat_dir(B)) for t in self.typed("term_1")), self.typed())
+
+    def test_time_spent_waiting_for_a_free_seat_does_not_count_toward_giving_up(self):
+        self.accounts(B, {B: usage(session=100), A: usage(session=100), C: usage(weekly=100)})
+        self.limited_old_terminal()
+        self.edit_state(converge={"term_1": {"label": "題 term_1", "kind": "busy", "text": "作業中。手が空いたら移す", "since": now_ms() - 7 * HOUR}})
+        self.run_failover()
+        self.assertEqual((self.selects(), self.typed()), ([], []))
+        self.accounts(B, {B: usage(session=100), A: usage(session=100), C: usage(updated=now_ms())})
+        self.run_failover()
+        self.assertEqual(self.selects(), [C])
+        self.assertEqual(self.typed("term_1")[0], "/exit")
+
+    def test_moves_claude_once_orca_reads_the_seat_of_unknown_usage_free(self):
+        self.switch_like_11_28()
+        self.accounts(B, {B: usage(updated=now_ms()), A: usage(session=100), C: usage(status="error")})
+        self.run_failover()
+        self.assertEqual(self.selects(), [B])
+        self.assertEqual([(h["from"], h["to"]) for h in self.history() if h["event"] == "moved"], [(EMAIL[A], EMAIL[B])])
+
+    def test_moves_claude_when_orca_cannot_read_the_seat_for_a_while(self):
+        self.switch_like_11_28()
+        st = self.state()
+        st["moved_to"]["at"] -= 16 * MIN
+        self.edit_state(**st)
+        self.accounts(B, {B: usage(status="error"), A: usage(session=100), C: usage(status="error")})
+        self.run_failover()
+        self.assertEqual(self.typed("term_1")[0], "/exit")
+        self.assertTrue(any(x["id"] == "failover:blind:" + B for x in self.status()))
+
     def test_a_refused_switch_is_not_counted_and_is_retried(self):
         self.accounts(A, {A: usage(session=100), B: usage(), C: usage()})
         self.flag("select-fails")
@@ -942,7 +1048,38 @@ class ConvergeTest(FailoverTestBase):
         self.put("screens.json", {"term_1": ["Do you want to proceed?", "❯ 1. Yes", "  2. No", "Esc to cancel"]})
         self.run_failover()
         self.assertEqual(self.typed(), [])
-        self.assertIn("選択画面で答えを待っている（自動では答えない）", self.band())
+        self.assertIn("選択画面で答えを待っている（自動では答えない）。閉じたら移す。画面の下:「Do you want to proceed? / ❯ 1. Yes / 2. No / Esc to cancel」",
+                      self.band())
+
+    def test_a_terminal_at_the_new_limit_band_is_closed_with_escape_and_moved(self):
+        # 2026-11-28 15:35 の t178-stallwatch: 上限の帯（Continuing automatically at … · Esc to cancel）を、ほかの選択画面と見て 40 分残した。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(state="waiting", reply=LIMIT_LINE)
+        self.put("screens.json", {"term_1": LIMIT_BAND})
+        self.put("after-esc.json", LIMIT_BAND_CLOSED)
+        self.run_failover()
+        self.assert_closed_then_moved(self.typed("term_1"))
+        self.assertEqual(self.history()[0]["event"], "moved")
+
+    def test_a_terminal_whose_limit_band_was_closed_by_hand_is_moved_without_escape(self):
+        # 2026-11-28 16:17:25: 担当が Esc で帯を閉じたあとも、会話の文の「esc to cancel」で選択画面と見て残した。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(reply=LIMIT_LINE)
+        self.put("screens.json", {"term_1": LIMIT_BAND_CLOSED})
+        self.run_failover()
+        typed = self.typed("term_1")
+        self.assertEqual(typed[0], "/exit")
+        self.assertTrue(typed[1].startswith("env "), typed)
+        self.assertIn("続けてください", typed[2])
+        self.assertEqual(self.state()["moves"], {})
+
+    def test_a_limit_dialog_the_conversation_does_not_record_is_closed_when_it_replaces_the_input_box(self):
+        # 2026-11-28 の DST-4945: 上限の席へ起こし直した claude は、会話記録に何も書かずに上限の選択画面を出した。
+        self.accounts(B, {A: usage(), B: usage(), C: usage()})
+        self.old_terminal(state="waiting", reply="PR #2181 の本文を書き直しました。")
+        self.put("screens.json", {"term_1": LIMIT_DIALOG_AFTER_LAUNCH})
+        self.run_failover()
+        self.assert_closed_then_moved(self.typed("term_1"))
 
     def test_a_terminal_the_previous_version_gave_up_on_is_moved_once_it_waits_for_input(self):
         # 2026-11-26 の ca-first-publish-notice: 修正前のコードは選択画面に /exit を 1 回打ち、打ち直さずに 3 回で諦めた（exits の記録が無い）。
@@ -1596,6 +1733,37 @@ class UnitTest(unittest.TestCase):
         self.assertEqual(self.mod.choice_screen(LIMIT_DIALOG[:-1] + ["   Enter to confirm · Esc to", "cancel"]), "limit")
         self.assertEqual(self.mod.choice_screen(LIMIT_DIALOG[2:-1]), "limit")
         self.assertIsNone(self.mod.choice_screen(None))
+
+    def test_the_limit_band_below_the_input_box_is_the_limit_screen(self):
+        # 2026-11-28 の担当の報告にあった画面の下（orca terminal read の tail）。
+        reported = ["⏺ Usage limit reached · continuing automatically at 6:30pm · esc to cancel", "...", "❯", "─────",
+                    "  ⚠ Usage limit reached · limit resets 6:30pm", "    Continuing automatically at 6:30pm · Esc to cancel",
+                    "  ⏵⏵ bypass permissions on (shift+tab to cycle)"]
+        for lines in (reported, LIMIT_BAND):
+            self.assertEqual(self.mod.choice_screen(lines), "limit")
+            self.assertEqual(self.mod.choice_screen(lines, said=False), "limit")
+        self.assertIsNone(self.mod.choice_screen(LIMIT_BAND_CLOSED))
+        self.assertIsNone(self.mod.choice_screen(LIMIT_BAND_CLOSED, said=True))
+        self.assertEqual(self.mod.choice_screen(LIMIT_DIALOG_AFTER_LAUNCH, said=False), "limit")
+        self.assertEqual(self.mod.choice_screen(LIMIT_DIALOG, said=False), "other")
+        permission = LIMIT_BAND_CLOSED[:-4] + [RULE_LINE, " Bash command", "   ls", " Do you want to proceed?", " ❯ 1. Yes", "   2. No",
+                                               " Esc to cancel"]
+        self.assertEqual(self.mod.choice_screen(permission, said=True), "other")
+        # 許可を求めるコマンドの文に上限の画面と同じ語があっても、上限の画面ではない（Codex のレビューで見つかった形）。
+        quoting = LIMIT_BAND_CLOSED[:-4] + [RULE_LINE, " Bash command", '   rg "Usage limit reached" bin', " Do you want to proceed?",
+                                            " ❯ 1. Yes", "   2. No", " Esc to cancel"]
+        self.assertEqual(self.mod.choice_screen(quoting, said=False), "other")
+        # claude 2.1.332 の文言。帯の下の行は「when it resets」か「shortly」になることがあり、会話の文の 1 行から「esc to cancel」が消えた。
+        for foot in ("Continuing automatically when it resets · Esc to cancel", "Continuing shortly · Esc to cancel"):
+            self.assertEqual(self.mod.choice_screen(LIMIT_BAND[:-3] + ["  ⚠ Usage limit reached", "    " + foot, LIMIT_BAND[-1]], said=False), "limit")
+            self.assertEqual(self.mod.choice_screen(LIMIT_BAND[:-3] + ["    " + foot, LIMIT_BAND[-1]], said=False), "limit")
+        closed_332 = ["⏺ Usage limit reached · set to continue automatically at 6:30pm", "❯ 続けて",
+                      "⏺ Usage limit reached again · set to continue automatically at 6:30pm", "✻ Sautéed for 0s · done 4:16 PM",
+                      "⏺ Automatic continue cancelled · /rate-limit-options to wait again"] + LIMIT_BAND_CLOSED[-5:]
+        self.assertIsNone(self.mod.choice_screen(closed_332, said=True))
+        heredoc = quoting[:-6] + ["   rg -f - bin <<'PATTERN'", "   Usage limit reached", "   PATTERN", " Do you want to proceed?", " ❯ 1. Yes",
+                                  " Esc to cancel"]
+        self.assertEqual(self.mod.choice_screen(heredoc, said=False), "other")
 
     def test_the_external_imports_screen_is_recognised(self):
         self.assertEqual(self.mod.sw.startup_screen(EXTERNAL_IMPORTS), "CLAUDE.md の外部 import の承認（External imports）")

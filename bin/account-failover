@@ -59,11 +59,20 @@ TERMINAL_LIMIT = re.compile(r"(?i)\b(?:hit|reached) your [\w -]*limit\b|usage li
 # 「1. Stop and wait for limit to reset / 2. Wait here, then continue automatically / 3. Switch to usage credits」と
 # 「Enter to confirm · Esc to cancel」）。ここへ /exit と Enter を打つと /exit は効かず、Enter はそのとき選ばれている
 # 選択肢を確定する（3 は従量課金）ので、Esc だけで閉じる。
-LIMIT_DIALOG = re.compile(r"(?i)what do you want to do\?")
+# 2026-11-28 15:35 の実機からは、選択画面の代わりに入力欄の下へ帯（「⚠ Usage limit reached · limit resets 6:30pm」
+# 「Continuing automatically at 6:30pm · Esc to cancel」）を出す形も出る。こちらも Esc で閉じる（閉じると「Automatic continue cancelled」）。
+# 行の頭で当てる（許可の確認に出るコマンドの文に同じ語があっても、上限の画面と取り違えない）。
+# claude 2.1.332 の帯の下の行は「Continuing automatically {at 6:30pm|when it resets} · Esc to cancel」か「Continuing shortly · Esc to cancel」
+# （担当が 2.1.321・2.1.332 の本体から文言を取り出して確かめた）。
+LIMIT_SCREEN = re.compile(r"(?i)^\s*(?:what do you want to do\?|⚠?\s*usage limit reached\b|continuing (?:automatically|shortly)\b)")
 # Claude Code の選択画面の下の 1 行と、上限の選択画面の従量課金の選択肢。どれかが出ている間は、Enter が選択肢を確定するので文字を打たない。
 # 狭い端末では行が折り返されるので、行をつないだ文で当てる
 CHOICE_FOOT = re.compile(r"(?i)esc to cancel|enter to confirm|switch to usage credits")
 DIALOG_LINES = 12
+# 許可の確認の問い。複数行のコマンドの文が行の頭に上限の画面と同じ語を持っても、この問いがあれば上限の画面ではない。
+PERMISSION = re.compile(r"(?i)do you want to proceed\?")
+# 入力欄の上下の線と、選択画面の上の線（▔）。
+RULE = re.compile(r"^\s*[─━═▔]{3,}\s*$")
 SHOWN = {"full": "上限", "free": "空き", "unknown": "使用量不明"}
 # Orca の使用量の失敗のうち、席のログインが切れていることを示すもの。stale-token は「しばらく動いていない席のトークンが古いだけで、
 # 次に Claude が動けば更新される」（Orca の説明）なので入れない。
@@ -418,13 +427,28 @@ def limited(row, preview=""):
     return bool(TERMINAL_LIMIT.search(preview or "")) if said is None else said
 
 
-def choice_screen(lines):
-    """画面の下に出ている Claude Code の選択画面。上限の選択画面（問いと下の 1 行）なら "limit"、ほかの選択画面なら "other"、無ければ None。
-    下の DIALOG_LINES 行だけを見る（上は会話の文）。上限の 1 行は見ない（端末が低いと選択画面の上に押し出される）。"""
-    text = " ".join(" ".join((lines or [])[-DIALOG_LINES:]).split())
+def bottom(lines):
+    """(画面の下で Claude Code が今出している行, 罫線で会話の文と切り分けられたか)。下の DIALOG_LINES 行のうち、下に行のある最後の罫線
+    （入力欄の下の線か、入力欄の代わりに出た選択画面の上の線）より下を返す。会話の文には上限の 1 行や「esc to cancel」の写しが残る
+    （2026-11-28 の t178-stallwatch は、Esc で帯を閉じたあとも会話の文の「continuing automatically … · esc to cancel」で止まった）。
+    罫線が無ければ DIALOG_LINES 行をそのまま返す（上に会話の文が混ざりうる）。"""
+    tail = (lines or [])[-DIALOG_LINES:]
+    for i in range(len(tail) - 2, -1, -1):
+        if RULE.match(tail[i]):
+            return tail[i + 1:], True
+    return tail, False
+
+
+def choice_screen(lines, said=None):
+    """画面の下に出ている Claude Code の選択画面。上限の画面（選択画面か帯）なら "limit"、ほかの選択画面なら "other"、無ければ None。
+    上限の 1 行は見ない（端末が低いと選択画面の上に押し出される）。罫線で切り分けられず、会話記録が上限で止まっていない（said が False）ときは、
+    上限の画面の文が会話の文の写しかもしれないので "other" にする（作業中の claude に Esc を送らない）。"""
+    region, cut = bottom(lines)
+    text = " ".join(" ".join(region).split())
     if not CHOICE_FOOT.search(text):
         return None
-    return "limit" if LIMIT_DIALOG.search(text) else "other"
+    shown = any(LIMIT_SCREEN.match(l) for l in region) and not PERMISSION.search(text)
+    return "limit" if shown and (cut or said is not False) else "other"
 
 
 def screen(handle):
@@ -687,16 +711,18 @@ class Mover:
         入力待ちかは、Orca の状態と claude 自身の sessions/<pid>.json の status で見る。Orca の `terminal wait --for tui-idle` は
         入力待ちの古い席の端末でも時間切れになった（2026-11-23 の実機。上限の「continuing automatically at …」を待つものも、そうでないものも）。
         ターンの途中で上限に当たったものは、Orca の状態が working のままでも会話記録の最後が上限の 1 行になる
-        （2026-11-26 の ca-first-publish-notice）ので、ここで拾う。上限の選択画面は、会話記録が上限と言っているか読めないときだけ
-        上限のものと見なす（会話の文に選択画面の写しが出ても、作業中の claude に Esc を送らない）。ほかの選択画面には何も打たない。"""
+        （2026-11-26 の ca-first-publish-notice）ので、ここで拾う。上限の画面かどうかは choice_screen が決める。
+        ほかの選択画面には何も打たず、Claude Code の画面が変わっても黙って残らないよう、画面の下に出ていた行を帯に添える。"""
         t = self.terms.get(key) or {}
         why = sw.startup_screen(lines)
         if why:
             return False, False, False, ("screen", "確認の画面「%s」で止まっている（自動では答えない）。端末で答える" % why)
         said = said_limit(last_reply(row))
-        choice = choice_screen(lines)
-        if choice == "other" or (choice == "limit" and said is False):
-            return False, False, False, ("busy", "選択画面で答えを待っている（自動では答えない）。閉じたら移す")
+        choice = choice_screen(lines, said)
+        if choice == "other":
+            shown = " / ".join(l.strip() for l in bottom(lines)[0] if l.strip())
+            return False, False, False, ("busy", "選択画面で答えを待っている（自動では答えない）。閉じたら移す。画面の下:「%s」" % (
+                shown if len(shown) <= 160 else shown[:159] + "…"))
         dialog = choice == "limit"
         lim = dialog or (bool(TERMINAL_LIMIT.search(t.get("preview") or "")) if said is None else said)
         state = (self.panes.get(pane(t)) or {}).get("state")
@@ -1092,7 +1118,9 @@ def log(record):
 
 
 def switch(a, state, accounts, now):
-    """今の席が上限なら切り替える。(帯に出す知らせ, 今の席の id（dry_run では切り替えたなら移る先）)。"""
+    """今の席が上限なら切り替える。(帯に出す知らせ, 今の席の id（dry_run では切り替えたなら移る先）, 古い席の claude を移さない理由か None)。
+    使用量の分からない席へ切り替えたら、Orca がその席を読むまで claude を移さない。2026-11-28 15:31 に使用量不明の s.fukada@ へ切り替えて
+    担当・窓口・端末 17 本を移したが、その席は週の上限で、移したものはすぐ止まり、15:48 に全部を移し直した。読んで上限なら次の席へ切り替える。"""
     claude, limits = accounts.get("claude"), accounts.get("rateLimits")
     by_email = {(x.get("email") or "").lower(): x["id"] for x in claude.get("accounts") or []}
     missing = [e for e in a.seat if e.lower() not in by_email]
@@ -1112,29 +1140,36 @@ def switch(a, state, accounts, now):
     if a.dry_run and blocked:
         print("行き先にできない席: " + blocked_text)
     if (seats.get(active) or {}).get("state") != "full":
-        blind = None
+        blind = hold = None
         # 往復の数え（switches）は 6 時間で消えるので、最後に移った先は別に持つ。
         moved = state.get("moved_to") or {}
-        if (seats.get(active) or {}).get("state") == "unknown" and moved.get("id") == active and now - moved["at"] >= BLIND_MS:
-            blind = {"id": "failover:blind:%s" % active,
-                     "text": "今の Claude の席 %s の使用量を Orca が読めていない。上限に当たっても自動では切り替えられない" % email(active)}
+        if (seats.get(active) or {}).get("state") == "unknown" and moved.get("id") == active:
+            if now - moved["at"] >= BLIND_MS:
+                blind = {"id": "failover:blind:%s" % active,
+                         "text": "今の Claude の席 %s の使用量を Orca が読めていない。上限に当たっても自動では切り替えられない"
+                                 "（古い席の claude は今の席へ移す）" % email(active)}
+            else:
+                hold = unread_text(email(active), now - moved["at"])
         if a.dry_run:
             print("今の席 %s は上限ではない%s。切り替えない。[%s]" % (
                 email(active), "（使用量が読めない）" if seats.get(active, {}).get("state") == "unknown" else "", summary))
-            return [], active
+            return [], active, hold
         state.pop("all_full", None)
         sw.save(STATE, state)
         keep = [x for x in previous if x.get("until") and now < x["until"]]
         ahead = [{"id": "failover:seat:%s" % sid, "text": "上限に当たっても Claude の席 %s へは切り替えない: %s" % (email(sid), why)}
                  for sid, why in blocked.items()]
-        return keep + ([blind] if blind else []) + ahead, active
+        return keep + ([blind] if blind else []) + ahead, active, hold
+    # 上限の席へ移しても止まるだけなので、空きの席へ切り替えるまで移さない
+    full_hold = "今の Claude の席 %s が利用枠の上限なので、古い席の claude を移さない（空きの席へ切り替えたら移す）" % email(active)
     if active not in order:
         print("今の席 %s は --seat に無いので切り替えない。[%s]" % (email(active), summary))
-        return previous, active
+        return previous, active, full_hold
     last = max((s["at"] for s in state["switches"]), default=0)
-    if now - last < GAP_MS and not a.dry_run:
+    # Orca が切り替えたあとの今の席を読んで上限と言っていれば、待たずに次の席へ切り替える
+    if now - last < GAP_MS and seats[active]["updatedAt"] <= last and not a.dry_run:
         print("前の切り替えから %d 分なので待つ。[%s]" % ((now - last) // MIN, summary))
-        return previous, active
+        return previous, active, full_hold
     target = choose(order, active, seats, state["left"], now, blocked)
     if target is None:
         back = earliest_back(order, active, seats, state["left"], now)
@@ -1145,14 +1180,14 @@ def switch(a, state, accounts, now):
                 if spare else "Claude の全部の席が利用枠の上限。切り替えずに待つ" + when)
         if a.dry_run:
             print(text + " [%s]" % summary)
-            return [], active
+            return [], active, full_hold
         aid = "failover:%s:%s" % ("no-seat" if spare else "all-full", back[0] if back else "")
         if state.get("all_full") != aid:
             sw.notify([text], title="Claude の席")
             log({"event": "all-full", "seats": summary, "text": text})
             state["all_full"] = aid
         sw.save(STATE, state)
-        return [{"id": aid, "text": text}], active
+        return [{"id": aid, "text": text}], active, full_hold
     if len(state["switches"]) >= FLAP_MAX and not a.dry_run:
         text = "Claude の席の切り替えが %d 時間で %d 回を超えたので、自動の切り替えを止めた（往復していないか確かめる）" % (
             FLAP_WINDOW_MS // (60 * MIN), FLAP_MAX)
@@ -1162,10 +1197,13 @@ def switch(a, state, accounts, now):
             log({"event": "flapping", "seats": summary})
             state["all_full"] = aid
         sw.save(STATE, state)
-        return [{"id": aid, "text": text}], active
+        return [{"id": aid, "text": text}], active, full_hold
+    # 席を使わずに Orca が読んだ値は古いことがあるので、今の席の値と同じく新しいときだけ空きと信じて移す
+    fresh_free = seats[target]["state"] == "free" and now - seats[target]["updatedAt"] <= FRESH_MS
+    hold = None if fresh_free else unread_text(email(target), 0)
     if a.dry_run:
         print("切り替える: %s → %s [%s]" % (email(active), email(target), summary))
-        return [], target
+        return [], target, hold
     orca_ok("account", "select", "--agent", "claude", "--account", target)
     after = sw.orca("account", "list")[0]
     if after is not None and (after.get("claude") or {}).get("activeAccountId") != target:
@@ -1175,11 +1213,16 @@ def switch(a, state, accounts, now):
     state["moved_to"] = {"id": target, "at": now}
     state.pop("all_full", None)
     sw.save(STATE, state)
-    text = "Claude の席を %s から %s に切り替えた。古い席で動いている claude を、手が空いたものから今の席へ移す（移せないものは帯に出す）" % (
-        email(active), email(target))
+    text = "Claude の席を %s から %s に切り替えた。%s古い席で動いている claude を、手が空いたものから今の席へ移す（移せないものは帯に出す）" % (
+        email(active), email(target), "Orca がこの席の使用量を読んで空きと分かったら、" if hold else "")
     sw.notify([text], title="Claude の席を切り替えた")
     log({"event": "switched", "from": email(active), "to": email(target), "seats": summary})
-    return [{"id": "failover:switched:%d" % now, "text": text, "until": now + BAND_MS}], target
+    return [{"id": "failover:switched:%d" % now, "text": text, "until": now + BAND_MS}], target, hold
+
+
+def unread_text(seat, waited):
+    return ("Claude の席 %s の使用量を Orca がまだ読んでいない（切り替えて %d 分）。読んで空きと分かるまで古い席の claude を移さない"
+            "（上限なら次の席へ切り替える。%d 分たっても読めなければ移す）" % (seat, waited // MIN, BLIND_MS // MIN))
 
 
 def run(a):
@@ -1192,12 +1235,24 @@ def run(a):
     claude, limits = accounts.get("claude"), accounts.get("rateLimits")
     if not isinstance(claude, dict) or not isinstance(claude.get("accounts"), list) or not isinstance(limits, dict):
         raise RuntimeError("orca account list の形が変わった（claude.accounts と rateLimits が無い）")
-    alerts, active = switch(a, state, accounts, now)
+    alerts, active, hold = switch(a, state, accounts, now)
     if not a.dry_run and os.path.exists(TELLS):
         flush_tells(now)
     acc = next((x for x in claude["accounts"] if x.get("id") == active), {})
     emails = {seat_key(x.get("home")): x.get("email") for x in claude["accounts"]}
+    st = sw.load(STATE, {})
+    # 移しかけ（/exit を送ったあとや起こし直したあと）を止めると、端末がシェルのまま残るか、起こし直した先の席と今の席が食い違うので、
+    # 移しかけがあれば待たずに続ける
+    if hold and not any(m.get("stage") != "failed" for m in (st.get("moves") or {}).values()):
+        waiting = any(r["seat"] != seat_key(acc.get("home")) for r in inventory())
+        if a.dry_run:
+            return print(hold if waiting else "移す claude は無い")
+        if st.pop("converge", None) is not None:
+            # 待つ間を、手が空かないまま移せずにいる時間（GIVE_UP_MS）に数えない
+            sw.save(STATE, st)
+        return write_status(alerts + ([{"id": CONVERGE_ID + "hold", "text": hold}] if waiting else []))
     # 切り替えの判断の早い戻りに関わらず、毎回、古い席のプロセスを移す（手で切り替えたときも、自動の切り替えの直後も）。
+    # 今の席が上限のときと、使用量の分からない席へ自動で切り替えた直後は、上の hold で待つ。
     try:
         alerts = alerts + converge(acc.get("home"), acc.get("email") or str(active), emails, now, a.dry_run)
     except Exception as e:  # 切り替えの知らせは帯に残し、移す処理の失敗も帯に出してから落とす（main が 1 回だけ通知する）

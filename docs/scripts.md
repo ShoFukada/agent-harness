@@ -67,9 +67,10 @@ Orca の外（launchd）から案件の窓口の会話に知らせを届ける�
 3. 次の席は行き先にしない。上限でないあいだも窓の帯に「上限に当たってもこの席へは切り替えない」と出し、行き先が無くなったら切り替えずに通知と帯で名指しする
    - ログインが切れている席（Orca の使用量取得が `missing-credentials` で失敗している）。Orca のアカウント画面でログインし直す
    - claude を対話で起こすと、席で一度だけの確認画面で止まる席（その席の `.claude.json` で、初回設定が済んでいないか、`settings.json` の `permissions.defaultMode` が auto 以外なのに「auto mode を既定にするか」に答えた記録 `hasSeenAutoDefaultNudge` が無い）。その席で一度 claude を対話で起こして答えると、記録が残って行き先に戻る
-4. 切り替えたことを、通知・窓の帯（30 分）・`~/Library/Application Support/stallwatch/failover-history.jsonl`（`STALLWATCH_HOME`）の `switched` に残す。同じ実行の中で、続けて下の「古い席の claude を移す」を行う
+4. 切り替えたことを、通知・窓の帯（30 分）・`~/Library/Application Support/stallwatch/failover-history.jsonl`（`STALLWATCH_HOME`）の `switched` に残す。空きと分かっている席へ切り替えたときは、同じ実行の中で続けて下の「古い席の claude を移す」を行う
+5. 使用量の分からない席へ切り替えたとき（空きと読んだ値が 30 分より古いときも含む）は、Orca がその席の使用量を読むまで claude を移さない（窓の帯に「使用量を Orca がまだ読んでいない」と出す）。読んで空きなら移し、上限なら移さずに次の席へ切り替える。15 分たっても読めなければ移す。今の席が上限のあいだ（行き先が無い・往復で止めたときを含む）も、上限の席へ移しても止まるだけなので移さない。どちらも、移しかけ（`/exit` を送ったあとや起こし直したあと）の記録があれば待たずに続け、待つ間は「手が空かないまま 6 時間たったら諦める」の時間に数えない。2026-11-28 15:31 に使用量不明の s.fukada@ へ切り替えて担当・窓口・端末 17 本を移したが、その席は週の上限で、移したものはすぐ止まり、15:48 に admin@ へ切り替えて全部を移し直した
 - 全部の席が上限なら切り替えず、最初に戻る席と時刻を 1 回だけ通知し、窓の帯に出し続ける。どれかの席の枠が戻ると、次に上限に当たったときに優先度の高い席から選び直す。上限に当たっていないときに優先度の高い席へ戻ることはしない（作業中の claude を止めないため）
-- 切り替えたあと 10 分は次の切り替えをしない（Orca が新しい席の使用量を読むのを待つ）。6 時間に 6 回を超えたら往復していると見なして止め、知らせる。使用量の分からない席へ移って 15 分たっても Orca が読めなければ、「上限に当たっても自動では切り替えられない」と帯に出す
+- 切り替えたあと、Orca が新しい席の使用量を読むまでの 10 分は次の切り替えをしない（読んで上限と分かれば 10 分を待たずに次の席へ切り替える）。6 時間に 6 回を超えたら往復していると見なして止め、知らせる。使用量の分からない席へ移って 15 分たっても Orca が読めなければ、「上限に当たっても自動では切り替えられない」と帯に出す
 
 ### 古い席の claude を移す
 
@@ -81,9 +82,11 @@ claude がどの席で動くかは、起動したときの環境変数 `CLAUDE_C
    - 席は `CLAUDE_CONFIG_DIR`（無ければ既定の `~/.claude`）。目標は `orca account list` の `activeAccountId` の席の `home`。会話 id は claude が動いている間に書く `<席>/sessions/<pid>.json` の `sessionId`、無ければ引数の `--resume`・`--session-id`（確認画面で止まった claude は書かないことがある）
    - `account-failover --inventory` で、1 プロセス 1 行（席・種類・handle・題・状態）で出す。今の席と違うものがあれば終了コード 1。次の本物の切り替えのあと 5 分ほどして打って確かめる
 2. 端末（worker を含む）: 入力待ち（Orca の状態が作業中・許可待ち・返事待ちでなく、`sessions/<pid>.json` の status も busy でない）か、会話の最後か画面に上限の 1 行が出ているときだけ移す。Orca の `terminal wait --for tui-idle` は、入力待ちの古い席の端末でも時間切れになった（2026-11-23 の実機。上限の「continuing automatically at …」を待つものも、そうでないものも）ので使わない
-   - 上限に当たると、Claude Codeは上限の1行の下に選択画面を出し、閉じるまで入力を受けない。画面には「What do you want to do?」、選択肢「1. Stop and wait for limit to reset / 2. Wait here, then continue automatically / 3. Switch to usage credits」、「Enter to confirm · Esc to cancel」が出る。ターンの途中（ツールの結果のあと）で当たったものも同じ画面になり、Orcaの状態はworkingのまま、会話記録の最後は上限の1行になる
-     - 画面の下12行をつないだ文に「Esc to cancel」「Enter to confirm」「Switch to usage credits」のどれかがあれば選択画面と見なし（狭い端末では行が折り返される）、その中に問いがあれば上限の選択画面と見なす。上限の1行は見ない（端末が低いと選択画面の上に押し出され、見落とすと `/exit` のEnterが選択肢を確定する）
-     - 上限の選択画面は、会話記録の最後が上限の1行か、会話記録を読めないときだけ上限のものと扱う。会話記録がほかのことを言っていれば（作業中のworkerの出力に選択画面の写しが出たなど）、Escを送らない。問いの無い選択画面（許可の確認など）には何も打たず、閉じるのを待つ
+   - 上限に当たると、Claude Codeは上限の1行の下に選択画面を出し、閉じるまで入力を受けない。画面には「What do you want to do?」、選択肢「1. Stop and wait for limit to reset / 2. Wait here, then continue automatically / 3. Switch to usage credits」、「Enter to confirm · Esc to cancel」が出る。ターンの途中（ツールの結果のあと）で当たったものも同じ画面になり、Orcaの状態はworkingのまま、会話記録の最後は上限の1行になる。2026-11-28 15:35からは、選択画面の代わりに入力欄の下へ帯「⚠ Usage limit reached · limit resets 6:30pm」「Continuing automatically at 6:30pm · Esc to cancel」を出す形も出る（Escで閉じると会話の文に「Automatic continue cancelled」が出る）。どちらも上限の画面として扱う
+     - 見るのは画面の下12行のうち、下に行のある最後の罫線（入力欄の下の線か、入力欄の代わりに出た選択画面の上の線 `▔`）より下だけ。会話の文には上限の1行や「esc to cancel」の写しが残る（2026-11-28のt178-stallwatchは、Escで帯を閉じたあとも会話の文の「continuing automatically … · esc to cancel」で選択画面と見られて残った）。罫線が無ければ下12行をそのまま見る
+     - その行をつないだ文に「Esc to cancel」「Enter to confirm」「Switch to usage credits」のどれかがあれば選択画面と見なし（狭い端末では行が折り返される）、その中に、行の頭に問い（What do you want to do?）か帯の文（Usage limit reached・Continuing automatically・Continuing shortly。claude 2.1.332 の文言も含む）があれば上限の画面と見なす。許可の確認（Do you want to proceed?）は、コマンドの文に同じ語があっても上限の画面と見なさない。上限の1行は見ない（端末が低いと選択画面の上に押し出され、見落とすと `/exit` のEnterが選択肢を確定する）
+     - 罫線で切り分けられない画面では、会話記録の最後が上限の1行か会話記録を読めないときだけ上限の画面と扱う（作業中のworkerの出力に選択画面の写しが出ても、Escを送らない）。罫線より下に出た上限の画面は、会話記録が何を言っていても上限の画面と扱う（2026-11-28のDST-4945は、上限の席へ起こし直したclaudeが会話記録に何も書かずに選択画面を出した）
+     - ほかの選択画面（許可の確認など）には何も打たず、閉じるのを待つ。Claude Codeの画面がまた変わっても黙って残らないよう、帯の「選択画面で答えを待っている」に、罫線より下に出ていた行を添える
      - `/exit` の前にEscを1回だけ送り（`orca terminal send --text $'\e'`。Enterは付けない）、画面から問いが消えて入力待ちに戻ったのを確かめてから `/exit` を送る。閉じなければ `/exit` を送らず、次の回に見る
      - Enterや番号は送らない。選択画面のEnterはそのとき選ばれている選択肢を確定し、並びが変わると従量課金（3）を選ぶおそれがある
      - 2026-11-26 09:55に、選択画面に `/exit` を打った端末（ca-first-publish-notice）は終わらず、3回で諦めた。窓口がEscを送った端末（tidy-rows）は次の回に移った
