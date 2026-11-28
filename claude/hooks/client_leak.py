@@ -30,7 +30,7 @@ MD_HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$")
 # 待ちの語は結びの「ご確認をお待ちしております」に当たらない形にし、「」で括った画面の状態名（「AI確認待ち」）を除く。
 # 「承認待ち」は申請の画面の状態として操作マニュアルに出るので入れない
 WAIT = r"(?:ご|お)?(?:回答|確認|返事|返答|連絡)待ち"
-STATUS_LABEL_RE = re.compile(r"「[A-Za-z0-9ァ-ヺー・ ]{0,12}%s」" % WAIT)
+STATUS_LABEL_RE = re.compile(r"「[A-Za-z0-9ァ-ヺー・ ]{0,12}%s\s*」" % WAIT)
 LEAKS = [
     ("手元のパス", re.compile(r"/Users/[\w.-]+|/private/tmp/|/tmp/claude|/var/folders/|~/\.(?:claude|config)")),
     ("作業用の置き場", re.compile(r"scratchpad|worktree", re.I)),
@@ -69,7 +69,7 @@ def is_client(text, markdown):
 
 def _markdown_body(text):
     body = FENCE_RE.sub("", FRONTMATTER_RE.sub("", text, count=1))
-    return INLINE_CODE_RE.sub("", HTML_CODE_RE.sub("", body))
+    return HTML_CODE_RE.sub("", INLINE_CODE_RE.sub("", body))
 
 
 def _html_body(text):
