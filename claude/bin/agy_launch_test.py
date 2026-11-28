@@ -113,6 +113,10 @@ class NeonHome(unittest.TestCase):
                      "config/mcp_config.json"):
             with open(os.path.join(g, name), "w") as f:
                 f.write(name)
+        lib = os.path.join(self.real, "Library")
+        os.makedirs(os.path.join(lib, "Keychains"))
+        os.makedirs(os.path.join(lib, "Application Support", "orca", "claude-profiles"))
+        os.makedirs(os.path.join(lib, "Preferences"))
         self.root = os.path.join(self.dir.name, "T")
 
     def build(self):
@@ -156,6 +160,27 @@ class NeonHome(unittest.TestCase):
             _, err = p.communicate(timeout=60)
             self.assertEqual(p.returncode, 0, err)
         self.assertEqual(self.view(os.path.join(self.root, "agy-neon-home"))[1], ["config.json"])
+        self.assertEqual(os.listdir(os.path.join(self.root, "agy-neon-home", "Library")), ["Keychains"])
+
+    def test_library_shows_only_the_real_keychains(self):
+        # agy 1.5.18 は認証を keychain から読む。~/Library のほか（Application Support の Claude のプロフィールなど）は見せない
+        home = self.build()
+        lib = os.path.join(home, "Library")
+        self.assertFalse(os.path.islink(lib))
+        self.assertEqual(sorted(os.listdir(lib)), ["Keychains"])
+        self.assertEqual(os.readlink(os.path.join(lib, "Keychains")), os.path.join(self.real, "Library", "Keychains"))
+
+    def test_rebuilding_repairs_keychains_and_drops_other_library_links(self):
+        home = self.build()
+        lib = os.path.join(home, "Library")
+        # agy が Keychains を実フォルダに替えた・前に見せていた別の場所・agy が Neon の HOME に書いたもの
+        os.unlink(os.path.join(lib, "Keychains"))
+        os.makedirs(os.path.join(lib, "Keychains"))
+        os.symlink(os.path.join(self.real, "Library", "Application Support"), os.path.join(lib, "Application Support"))
+        os.makedirs(os.path.join(lib, "Caches"))
+        self.assertEqual(self.build(), home)
+        self.assertEqual(sorted(os.listdir(lib)), ["Caches", "Keychains"])
+        self.assertEqual(os.readlink(os.path.join(lib, "Keychains")), os.path.join(self.real, "Library", "Keychains"))
 
     def test_a_home_without_gemini_still_builds(self):
         home = agy_launch.neon_home(os.path.join(self.dir.name, "empty"), self.root)

@@ -6,7 +6,8 @@ agy -p を第三者のコーディングエージェントで包む使い方を�
 - 使い捨ての cwd は利用者の一時フォルダ（/var/folders/…/T）に作る。agy は cwd を作業場所として扱う
 - HOME は利用者の一時フォルダの agy-neon-home にする（neon_home）。~/.gemini に置いた対話用の決まり（GEMINI.md・
   AGENTS.md）と config/ の skill・プラグインの hook・MCP を、Neon の単発の呼び出しに読ませないため（R241）。
-  ANTIGRAVITY_CONFIG_REL_DIR では決まりと skill が分かれなかった（11/28 の試し）
+  ANTIGRAVITY_CONFIG_REL_DIR では決まりと skill が分かれなかった（11/28 の試し）。Library/ には keychain の
+  Keychains だけを並べる（agy 1.5.18 から認証が keyring になったため）
 
   python3 -I agy_launch.py agy <agy の引数...>   環境を絞って agy に置き換わる
 """
@@ -20,7 +21,7 @@ import subprocess
 import sys
 import tempfile
 
-# agy 1.5.3 のバイナリが読む変数のうち、動くのに要るもの（認証は HOME の ~/.gemini、アカウントは AGY_ACCOUNT）
+# agy 1.5.3 のバイナリが読む変数のうち、動くのに要るもの（認証は HOME の ~/.gemini と keychain、アカウントは AGY_ACCOUNT）
 KEEP = {"HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "LANG", "LANGUAGE", "TERM", "COLORTERM", "NO_COLOR",
         "TZ", "EDITOR", "VISUAL", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
         "SSL_CERT_FILE", "SSL_CERT_DIR", "NIX_SSL_CERT_FILE"}
@@ -48,6 +49,8 @@ NEON_HOME = "agy-neon-home"
 # config/ からは config.json（アカウントと既定の設定）だけを見せる。skills.json・plugins.json・hooks.json・mcp_config.json は対話用
 HIDDEN = {"GEMINI.md", "AGENTS.md", "config"}
 CONFIG_KEEP = {"config.json"}
+# ~/Library からは Keychains だけを見せる。丸ごと見せると Application Support の Claude のプロフィールが読める
+LIBRARY_KEEP = {"Keychains"}
 
 
 def _link(target, path):
@@ -75,7 +78,8 @@ def _mirror(src, dst, keep):
 def neon_home(real_home=None, root=None):
     """Neon を起こすときの HOME。.gemini/ に本当の ~/.gemini の中身を symlink で並べ、HIDDEN を除く。
     パスに claude を含めない（clean_env が HOME ごと捨て、agy が起動しない）。"""
-    real = os.path.join(real_home or os.path.expanduser("~"), ".gemini")
+    real_home = real_home or os.path.expanduser("~")
+    real = os.path.join(real_home, ".gemini")
     home = os.path.join(root or workdir_root(), NEON_HOME)
     dst = os.path.join(home, ".gemini")
     os.makedirs(home, exist_ok=True)
@@ -85,6 +89,9 @@ def neon_home(real_home=None, root=None):
         fcntl.flock(lock, fcntl.LOCK_EX)
         _mirror(real, dst, lambda names: [n for n in names if n not in HIDDEN])
         _mirror(os.path.join(real, "config"), os.path.join(dst, "config"), lambda names: [n for n in names if n in CONFIG_KEEP])
+        # agy 1.5.18 は認証を macOS の keyring から読み、keychain は HOME の下の Library/Keychains で探す（11/28 に確かめた）
+        _mirror(os.path.join(real_home, "Library"), os.path.join(home, "Library"),
+                lambda names: [n for n in names if n in LIBRARY_KEEP])
     return home
 
 
