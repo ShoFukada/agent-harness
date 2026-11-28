@@ -6,6 +6,7 @@ compaction-keep.py が hook と道具の口から呼ぶ。中身は 3 つ:
   switch               窓口を替える道具の本体（新しい窓口の会話の中で 1 回打つ）
 
 窓口を替える道具は、次をまとめて行う（cockpit skill の references/resume.md「窓口を替える」）:
+  0. 窓口の端末を決める（main_terminal。決まらなければ何も書かずに止める）
   1. 帳簿の main.run_id の Run を `orca orchestration run-use` で引き継ぐ（担当・worker からの知らせの宛先を変えない）
   2. 窓口の種類と会話 id を main-session.json に書き、再開の確かめ（keep.json の verify.pending）を立てる。
      通るまで worker・担当への新しい指示は PreToolUse が止める
@@ -141,6 +142,28 @@ def who_am_i(agent, keep):
                   "このコマンドを見ていない。窓口の会話の中で Bash（agy では run_command）から打ち直す")
 
 
+def main_terminal(root, agent):
+    """(帳簿の main.terminal に書く端末の handle, 決まらなかった理由)。環境変数 ORCA_TERMINAL_HANDLE を先に使う。
+    agy の run_command にはこの値が渡らないので、同じ worktree で生きている agy の端末が 1 つだけならその handle を使う
+    （setup.md の「最初に作るとき」と同じ引き方）。0 か複数なら handle を決めずに止める（空で上書きすると窓が窓口の端末を開けなくなる）。
+    Claude で値が無いのはチャットの窓口で、端末が無いので空にする（同じ worktree の Claude の端末はカードの相談なので引かない）。"""
+    if os.environ.get("ORCA_TERMINAL_HANDLE"):
+        return os.environ["ORCA_TERMINAL_HANDLE"], None
+    if agent == "claude":
+        return "", None
+    retry = "自分の端末の handle を `ORCA_TERMINAL_HANDLE=term_… %s` の形で前に付けて打ち直す" % switch_command(agent, root)
+    got, err = orca_call(["terminal", "list", "--worktree", "path:" + root, "--limit", "500"])
+    if err:
+        return None, "窓口の端末を引けなかった（orca terminal list: %s）。何も書き換えていない。%s" % (err, retry)
+    here = os.path.realpath(root)
+    rows = [t for t in got.get("terminals") or [] if isinstance(t, dict) and t.get("agentIdentity") == agent and t.get("handle")
+            and not t.get("orphaned") and os.path.realpath(t.get("worktreePath") or "") == here]
+    if len(rows) == 1:
+        return rows[0]["handle"], None
+    found = "見つからなかった" if not rows else " %d 個あった（%s）" % (len(rows), "・".join(t["handle"] for t in rows))
+    return None, "ORCA_TERMINAL_HANDLE が無く、この worktree の %s の端末が%s。どれが窓口か決められないので何も書き換えていない。%s" % (agent, found, retry)
+
+
 def read_inbox():
     """受信箱の未読を全部読む（既読にする）。(知らせの一覧, 読み切れなかった理由)。"""
     msgs = []
@@ -175,7 +198,10 @@ def switch(root, agent, reassemble):
         return None, "Claude Code の中で動いている。Claude の窓口なら --agent を付けずに打つ"
     if agent == "claude" and os.environ.get("CLAUDECODE") != "1":
         return None, "Claude Code の外で動いている。Gemini（agy）の窓口なら --agent antigravity を付けて打つ"
-    terminal = os.environ.get("ORCA_TERMINAL_HANDLE") or ""
+    # 端末は Run を引き継ぐ前に決める（決まらないまま引き継ぐと、Run と記録が新しい窓口なのに帳簿の端末が古い・空になる）
+    terminal, err = main_terminal(root, agent)
+    if terminal is None:
+        return None, err
     # Run の引き継ぎから帳簿までを 1 つずつにする（2 つの会話の switch が混ざると、Run と記録と帳簿が別々の窓口を指す）
     with locked(root):
         keep = load_keep(root)

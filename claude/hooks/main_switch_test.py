@@ -28,6 +28,8 @@ class Switch(Base):
         # Run の結び付きは偽の orca が bound に持つ。前の窓口（Claude）が Run を持っている
         self.bound = os.path.join(self.root, "bound")
         self.inbox_file = os.path.join(self.root, "inbox")
+        self.terminals_file = os.path.join(self.root, "terminals")
+        self.terminals([])
         with open(self.bound, "w") as fh:
             fh.write("run_main")
         self.fake("")
@@ -38,9 +40,15 @@ class Switch(Base):
                   ' run-use) %s;;' % (run_use or 'printf %%s "$4" > "%s"; echo \'{"ok":true,"result":{}}\'' % self.bound),
                   ' run-current) echo "{\\"ok\\":true,\\"result\\":{\\"runId\\":\\"$(cat "%s")\\"}}";;' % self.bound,
                   ' check) if [ -f "%s" ]; then cat "%s"; rm "%s"; else echo \'{"ok":true,"result":{"messages":[]}}\'; fi;;' % ((self.inbox_file,) * 3),
+                  ' list) cat "%s";;' % self.terminals_file,
                   ' *) echo \'{"ok":true,"result":{}}\';;', 'esac']
         with open(self.fake_orca, "w") as fh:
             fh.write("\n".join(script) + "\n")
+
+    def terminals(self, rows, ok=True):
+        """偽の orca の terminal list の結果。ok=False なら失敗を返す。"""
+        with open(self.terminals_file, "w") as fh:
+            json.dump({"ok": True, "result": {"terminals": rows}} if ok else {"ok": False, "error": "runtime_unavailable"}, fh)
 
     def agy_env(self, **extra):
         env = self.env(**{"COCKPIT_WRITE": COCKPIT_WRITE, "ORCA_TERMINAL_HANDLE": "term_gem", **extra})
@@ -101,6 +109,55 @@ class Switch(Base):
         self.assertIn("窓口を替えたあとの組み直し", text)
         self.assertIn("compaction-keep.py resume", text)
         self.assertEqual(self.jsonl("compactions.jsonl")[-1]["type"], "switch")
+        # 環境変数の handle があれば端末の一覧は引かない
+        self.assertNotIn("terminal list", self.calls())
+
+    def gemini_rows(self):
+        """窓口の worktree の agy 1 つと、引いてはいけない端末（カードの相談の Claude・別の worktree の agy・孤立した agy）。"""
+        here = {"worktreePath": self.root, "orphaned": False}
+        return [{"handle": "term_gem", "agentIdentity": "antigravity", **here},
+                {"handle": "term_card", "agentIdentity": "claude", **here},
+                {"handle": "term_mail", **here},
+                {"handle": "term_lead", "agentIdentity": "antigravity", "worktreePath": self.root + "-lead", "orphaned": False},
+                {"handle": "term_dead", "agentIdentity": "antigravity", "worktreePath": self.root, "orphaned": True}]
+
+    def test_a_gemini_main_without_the_handle_finds_its_own_terminal(self):
+        # agy の run_command には ORCA_TERMINAL_HANDLE が渡らない。同じ worktree で生きている agy の端末が 1 つならそれを書く
+        self.cockpit["main"]["terminal"] = "term_old"
+        self.write_cockpit()
+        self.terminals(self.gemini_rows())
+        env = self.agy_env()
+        env.pop("ORCA_TERMINAL_HANDLE")
+        self.pretool(SWITCH_AGY, "g-1", env=env)
+        done = self.switch(env, "--agent", "antigravity")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("terminal list --worktree path:%s --limit 500 --json" % self.root, self.calls())
+        self.assertEqual(self.ledger()["main"], {"agent": "antigravity", "terminal": "term_gem", "run_id": "run_main"})
+        self.assertEqual(self.session()["terminal"], "term_gem")
+
+    def test_a_gemini_main_whose_terminal_cannot_be_told_writes_nothing(self):
+        # 候補が 0・複数・一覧を引けないときは、Run を引き継ぐ前に止め、帳簿の端末を空で上書きしない
+        self.cockpit["main"]["terminal"] = "term_old"
+        self.write_cockpit()
+        before = self.session()
+        env = self.agy_env()
+        env.pop("ORCA_TERMINAL_HANDLE")
+        cases = [(self.gemini_rows()[1:], True, "antigravity の端末が見つからなかった"),
+                 (self.gemini_rows() + [{"handle": "term_gem2", "agentIdentity": "antigravity", "worktreePath": self.root}], True,
+                  "antigravity の端末が 2 個あった（term_gem・term_gem2）"),
+                 ([], False, "窓口の端末を引けなかった（orca terminal list: runtime_unavailable）")]
+        for rows, ok, why in cases:
+            with self.subTest(why=why):
+                self.terminals(rows, ok)
+                self.pretool(SWITCH_AGY, "g-1", env=env)
+                done = self.switch(env, "--agent", "antigravity")
+                self.assertEqual(done.returncode, 1)
+                self.assertIn(why, done.stderr)
+                self.assertIn("ORCA_TERMINAL_HANDLE=term_… ", done.stderr)
+                self.assertNotIn("run-use", self.calls())
+                self.assertEqual(self.ledger()["main"], {"agent": "claude", "terminal": "term_old", "run_id": "run_main"})
+                self.assertEqual(self.session(), before)
+                self.assertNotIn("verify", self.keep())
 
     def test_the_new_main_cannot_send_to_workers_until_the_resume_passes(self):
         self.take_over_with_gemini()

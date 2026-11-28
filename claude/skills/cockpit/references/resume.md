@@ -33,6 +33,7 @@ cwd に `.orca/cockpit.json` があれば、ほかの作業の前に次をやる
    ```bash
    ~/.claude/hooks/compaction-keep.py switch <ワークスペースの root> --agent antigravity
    ```
+   - 先に窓口の端末を決める。`ORCA_TERMINAL_HANDLE` が無ければ（agy の run_command）、references/setup.md の `terminal` と同じく `orca terminal list` で同じ worktree の Gemini の端末を引く。0 か複数なら何も書き換えずに止まるので、自分の端末の handle を `ORCA_TERMINAL_HANDLE=term_… ` と前に付けて打ち直す。Claude のチャットは端末が無いので空にする
    - 帳簿の `main.run_id` が指す Run を `orca orchestration run-use` で引き継ぐ。担当・worker からの知らせは同じ Run に届く
    - 窓口の種類と会話 id を `.orca/cockpit/main-session.json` に書く（窓からの質問が写す元）。帳簿の `main.agent`・`main.terminal` も書き換える
    - 受信箱を `orca orchestration check` で読み直し、届いていた知らせを出す
