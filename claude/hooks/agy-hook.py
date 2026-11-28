@@ -2,12 +2,18 @@
 """agy（Antigravity CLI）の hook から、Claude Code と同じ hook を動かす入口（判断の記録 R246）。
 
   agy-hook.py <SessionStart|PreInvocation|PreToolUse|PostToolUse|Stop>   < agy の hook の入力 JSON
-  agy-hook.py SyncSkills   ~/.gemini/config/skills.json を ~/.claude/skills と有効なプラグインの skill のフォルダで作り直す
+  agy-hook.py SyncSkills   ~/.gemini/config/skills.json を ~/.claude/skills・追加のフォルダ・有効なプラグインの skill のフォルダで作り直す
 
 skill（R262）: agy の skills.json は絶対パスしか受け付けず、リポジトリの .claude/skills も読まない（agy 1.5.18 で確かめた）。
-そこで skills.json は SyncSkills が enabledPlugins から作り（nix-darwin の activation と SessionStart が呼ぶ。symlink の間は
+そこで skills.json は SyncSkills が次の順に作り（nix-darwin の activation と SessionStart が呼ぶ。symlink の間は
 nix の管理なので書かない）、作業場所の git の根の .claude/skills は SessionStart で一覧と SKILL.md のパスを渡して読ませる。
 案件のリポジトリには agy 用のファイルを置かない。
+  1. ~/.claude/skills
+  2. ~/.claude/settings.json の permissions.additionalDirectories の各フォルダの .claude/skills（R267）。Claude には
+     ファイルの読み書きの許可、agy には skill の一覧として同じ 1 か所を使う。Claude はこの設定のフォルダの skill を
+     読まないので、Claude のチャットには起動の引数の --add-dir で同じフォルダを足す
+  3. $CLAUDE_CONFIG_DIR（無ければ ~/.claude）の settings.json の enabledPlugins のプラグインの skill のフォルダ
+  無いフォルダは飛ばす。
 
 agy からは gemini/plugins/harness/hooks.json が呼ぶ。どの hook を動かすかはここに持たない。Claude の設定
 （$CLAUDE_CONFIG_DIR か ~/.claude の settings.json と、cwd の .claude/settings.json・settings.local.json）の hooks と、
@@ -197,11 +203,31 @@ def strict_json(path, key):
     return value
 
 
+def extra_skill_dirs():
+    """~/.claude/settings.json の permissions.additionalDirectories の <dir>/.claude/skills（R267）。
+
+    席の settings.json（$CLAUDE_CONFIG_DIR）ではなく利用者のものを読む: skills.json はどの席の agy も使う 1 つの
+    ファイルで、activation は $CLAUDE_CONFIG_DIR 無しで呼ぶ。席のものは nix が同じファイルへの symlink にしているが、
+    Orca で足した席は作成時の写しのままになり、その席で起動するたびに一覧が入れ替わるため。
+    相対パスは飛ばす。agy は絶対パスしか受け付けず、hook の cwd に寄せると起動した場所で一覧が変わる。"""
+    extra = strict_json(os.path.expanduser("~/.claude/settings.json"), "permissions").get("additionalDirectories", [])
+    if not isinstance(extra, list):
+        raise ValueError("~/.claude/settings.json の permissions.additionalDirectories が JSON の配列でない")
+    out = []
+    for d in extra:
+        d = os.path.expanduser(d) if isinstance(d, str) else ""
+        if os.path.isabs(d):
+            out.append(os.path.join(d, ".claude", "skills"))
+    return out
+
+
 def skill_dirs():
-    """~/.claude/skills は $CLAUDE_CONFIG_DIR（席のフォルダ）ではなく利用者のもの。実体は nix の symlink で、席には無い。"""
-    dirs = [os.path.expanduser("~/.claude/skills")]
+    """~/.claude/skills は $CLAUDE_CONFIG_DIR（席のフォルダ）ではなく利用者のもの。実体は nix の symlink で、席には無い。
+    追加のフォルダの skill はプラグインより前に置く。プラグインには、同じ名前でそのフォルダの skill へ引き継ぐだけの
+    もの（例: office の deck）があり、本物を先に見せるため。"""
     # read_json と違い、壊れた・読めない設定では止める。{} として進むと、直前まで正しかった skills.json を
     # 利用者の skill だけに書き換えてしまう
+    dirs = [os.path.expanduser("~/.claude/skills")] + extra_skill_dirs()
     enabled = strict_json(os.path.join(config_dir(), "settings.json"), "enabledPlugins")
     installed = strict_json(os.path.join(config_dir(), "plugins", "installed_plugins.json"), "plugins")
     for pid, on in enabled.items():

@@ -605,6 +605,33 @@ class SyncSkills(Base):
                                           os.path.join(extra, "more")])
         self.assertTrue(all(os.path.isabs(p) for p in self.entries()))
 
+    def user_settings(self, doc):
+        with open(os.path.join(self.home, ".claude", "settings.json"), "w") as f:
+            f.write(doc if isinstance(doc, str) else json.dumps(doc))
+
+    def test_skills_of_the_additional_directories_come_before_the_plugins(self):
+        docs = os.path.join(self.home, "docs")
+        os.makedirs(os.path.join(docs, ".claude", "skills"))
+        no_skills = os.path.join(self.dir, "no-skills")
+        os.makedirs(no_skills)
+        dev = self.plugin("dev")
+        self.setup_plugins({"dev@m": dev}, {"dev@m": True})
+        # 席の settings.json の additionalDirectories は読まない（skills.json はどの席の agy も使う 1 つのファイル）
+        self.settings({}, enabledPlugins={"dev@m": True},
+                      permissions={"additionalDirectories": [no_skills]})
+        self.user_settings({"permissions": {"additionalDirectories": [
+            "~/docs", no_skills, os.path.join(self.dir, "missing"), "relative/docs", 1]}})
+        self.sync()
+        self.assertEqual(self.entries(), [self.user_skills, os.path.join(docs, ".claude", "skills"),
+                                          os.path.join(dev, "skills")])
+
+    def test_broken_additional_directories_fail_without_touching_the_file(self):
+        self.sync()
+        for bad in ("{壊れた", {"permissions": []}, {"permissions": {"additionalDirectories": "/docs"}}):
+            self.user_settings(bad)
+            self.assertIn("SyncSkills", self.sync(code=1))
+            self.assertEqual(self.entries(), [self.user_skills])
+
     def test_a_plugin_switched_off_drops_out_on_the_next_sync(self):
         dev = self.plugin("dev")
         self.setup_plugins({"dev@m": dev}, {"dev@m": True})

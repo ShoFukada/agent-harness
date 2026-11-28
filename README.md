@@ -242,7 +242,7 @@ home.file.".local/bin/orca-launch".source =
 | `bin/orca-watch`・`bin/orca_watch_test.py` | Orca本体が人のいないあいだに落ちたときの起動し直しとそのテスト。記録先はstallwatchと同じ `STALLWATCH_HOME`（`orca-watch-state.json`・`orca-watch.json`・`orca-watch.pause`） |
 | `bin/worktree-sweep`・`bin/worktree_sweep_test.py` | 使い終わった worktree の片付けとそのテスト。結果の書き出し先は `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`） |
 | `claude/` | Claude Codeに読ませるskill・agent・hookと、workerのsandboxの外で動くスクリプト（下の「claude/」） |
-| `gemini/plugins/harness/` | agy（Antigravity CLI）のプラグイン。`hooks.json` はagyの5つのイベントで `claude/hooks/agy-hook.py` を呼ぶだけで、どのhookを動かすかは持たない。nix-darwinが `~/.gemini/config/plugins.json` のentriesに `gemini/plugins` のフォルダを書く。`~/.gemini/config/skills.json` は、nix-darwinのactivationとagyの起動のたびに、`agy-hook.py SyncSkills` が `~/.claude/skills` と有効なプラグイン（enabledPlugins）のskillのフォルダから作る。作業中のリポジトリの `.claude/skills` は、起動のときに一覧と SKILL.md のパスを渡す |
+| `gemini/plugins/harness/` | agy（Antigravity CLI）のプラグイン。`hooks.json` はagyの5つのイベントで `claude/hooks/agy-hook.py` を呼ぶだけで、どのhookを動かすかは持たない。nix-darwinが `~/.gemini/config/plugins.json` のentriesに `gemini/plugins` のフォルダを書く。`~/.gemini/config/skills.json` は、nix-darwinのactivationとagyの起動のたびに、`agy-hook.py SyncSkills` が `~/.claude/skills`、`~/.claude/settings.json` の `permissions.additionalDirectories` の各フォルダの `.claude/skills`、有効なプラグイン（enabledPlugins）のskillのフォルダから作る。作業中のリポジトリの `.claude/skills` は、起動のときに一覧と SKILL.md のパスを渡す |
 | `docs/harness-map.html` | 見取り図。役・知らせの経路・帳簿の読み書き・状態の決め方・席の切り替えを図で示す1つのHTML。設計が変わる取り込みのたびに直す（cockpit skillの references/workers.md） |
 | `docs/harness-detail.html` | 詳しい図。ファイルごとの読み書き・仕事の形と工程・カードの種類・タスクの状態の決まり方・処理の流れ5本・書く道具が断る規則を図で示す1つのHTML |
 | `docs/scripts.md` | 常駐スクリプト（worktree-sweep・orca-watch・account-failover）が何をどの条件でするかの詳しい説明 |
