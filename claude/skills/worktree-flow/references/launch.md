@@ -24,13 +24,26 @@ worktree-flow skill の SKILL.md から分けた細部。`orca-launch` が確認
 - 立てる（窓口のワークスペースの root から）:
   ```bash
   orca-launch --lead <仕事の id> --name <slug>-lead --spec-file <brief>
+  # 一緒に作る仕事の担当は Gemini（agy）で立てる（R245）
+  orca-launch --lead <仕事の id> --name <slug>-lead --spec-file <brief> --agent antigravity
   ```
-  - 道具が、窓口の子の worktree（new-child）に Orca のチャットで担当を立て、表示名とチャットの題を「<形>｜<仕事の題>」にする（頭は仕事の形から。references/sidebar.md の仕事の行）。形を手で打たない。形の無い仕事・見張る仕事には立てない。担当の立て直し（`--replace`）と、形を変えながら立てる（`--form`）ときの書き方は cockpit skill の references/workers.md
-  - 道具が出した担当の行（`owner`。session と受け取りの `worker` を持つ）を、そのまま操縦席の `owners[]` に、立てた直後の 1 回の書き込みで書く。タスクの `worker` には書かない（書く欄は cockpit skill の references/workers.md）
+  - 道具が、窓口の子の worktree（new-child）に担当を立て、表示名とチャットの題を「<形>｜<仕事の題>」にする（頭は仕事の形から。references/sidebar.md の仕事の行）。形を手で打たない。形の無い仕事・見張る仕事には立てない。担当の立て直し（`--replace`）と、形を変えながら立てる（`--form`）ときの書き方は cockpit skill の references/workers.md
+  - `--agent` の既定は `claude`（Orca のチャット、モデル `claude-opus-5-5`）。`--agent antigravity` は `orca orchestration worker-start --agent antigravity --model gemini-4-neon-high` で立てる。Orca は agy をチャットで開けないので、担当は Orca の端末のタブに立ち、深田はそのタブで話す。`--model` に Gemini 以外を渡すと断る（agy では Gemini のモデルだけを使う。R108）
+  - 道具が出した担当の行（`owner`。Claude なら `session`、Gemini なら端末の `terminal` と、受け取りの `worker` を持つ）を、立てた直後に 1 回の書き込みでそのまま操縦席の `owners[]` に書く。タスクの `worker` には書かない（書く欄は cockpit skill の references/workers.md）
   - チャットの題をあとで変えるときは `orca chat rename --session <id> --name "<題>"`。id は `orca worktree ps --json` の、そのチャットの `agents[].orcaSessionId`
 - 担当は窓口の子の worktree（担当の居場所。commit はしない）に立つ。窓口と同じ worktree に立てると、操縦席を見つけた窓口用の hook（periodic-reminder・compaction-keep）が担当をメインと見なし、操縦席の更新を求め、圧縮のあとに担当の送信を止めてしまう。Orca の worker-start には環境変数を渡す手段が無いので、居場所で分ける（操縦席は git に入れないため、子の worktree には無い）
-- 担当は窓口と同じ設定（sandboxなし）で動き、立てたときにOrcaで選ばれている席（Claudeのアカウント）を使う。席が切り替わると、account-failover が担当の裏で動く claude を止め、担当は次のメッセージで同じ会話・同じ Dispatch のまま現在の席で再起動する（references/notify.md の「利用枠の上限に当たったとき」）
+- Gemini の担当は、Orca が `agy --dangerously-skip-permissions` で起動する（確認の画面は出ない）。危険な操作は agy の hook（agent-harness の claude/hooks/agy-hook.py が Claude と同じ hook を呼ぶ）だけが止める。別系統の目として Claude に相談・レビューを頼むときは `claude-ro` を使う（下の「Gemini から Claude に相談する」）
+- Claude の担当は窓口と同じ設定（sandboxなし）で動き、立てたときにOrcaで選ばれている席（Claudeのアカウント）を使う。席が切り替わると、account-failover が担当の裏で動く claude を止め、担当は次のメッセージで同じ会話・同じ Dispatch のまま現在の席で再起動する（references/notify.md の「利用枠の上限に当たったとき」）
 - 続きの仕事を渡す: `orca orchestration send --to dispatch:<担当の今の Dispatch の id> --subject "<題>" --body-file <brief>`。担当が作業中なら今の応答の後に届き、終わっていれば続きの Task になる。操縦席の担当の行の `worker` は最初の Task のまま書き換えない（現在の Dispatch は操縦席の判定がたどる）
+
+## Gemini から Claude に相談する
+- Gemini の窓口・担当が、別系統の目として Claude（Opus）に相談・レビューを頼む道具。Claude の窓口・担当・worker は使わない（自分が Claude なので、相談は Codex か Neon に出す）
+  ```bash
+  /Users/fukadasho/.config/agent-harness/claude/bin/claude-ro <リポジトリの絶対パス> <prompt のファイル> <答えのファイル>
+  ```
+  - prompt と答えは `/tmp/claude-<uid>`（`/tmp/claude-501`）の中に置く。答えの本文は答えのファイル、エラーと失敗したときの出力は `<答えのファイル>.log` に出る
+  - Claude はリポジトリを読むだけで、書く・コマンドを実行する・Web を見る・MCP を使うことはできない。調べものや書かせる作業は頼まない
+  - サブスクリプションの `claude -p`（モデル `claude-opus-5-5`）で動き、API キーの環境変数は渡さない（従量課金にしない）
 
 ## brief の書き方
 - 会話で方針を固めたタスクは、出た文脈・決定事項を brief に圧縮して渡す。brief の質がそのまま引き継ぎの質になるので、目的・制約・決定済み事項・期待する出力をすべて書く。人間に直接引き継ぐ worker は、`--activate` と `terminal switch` でカードとターミナルを人間の画面に出して「続きはこの worker と」と伝える（その worker は見張らない）

@@ -7,10 +7,12 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
 
   orca-launch --worktree <selector> --title <短い題> --spec-file <brief> [--keep-open] [--run <run_id>] [-- <追加の引数>]
   orca-launch --worktree <selector> --cockpit-task <task id> --spec-file <brief> [--cockpit-root <root>] ...
-  orca-launch --lead <仕事の id> --name <slug> --spec-file <brief> [--cockpit-root <root>]
+  orca-launch --lead <仕事の id> --name <slug> --spec-file <brief> [--agent claude|antigravity] [--cockpit-root <root>]
 
 --lead は仕事（streams[]）の担当を立てる（t159）。表示名とチャットの題を「<形の頭>｜<仕事の題>」にし（頭は state.ts の NAME_HEAD を仕事の form で引く）、
-窓口の子の worktree（new-child）に Orca のチャットで立て、帳簿の owners[] にそのまま書ける担当の行（session と受け取り worker）を出す。
+窓口の子の worktree（new-child）に立て、帳簿の owners[] にそのまま書ける担当の行（session か terminal と、受け取り worker）を出す。
+担当は既定で Claude（Orca のチャット）。--agent antigravity は Gemini（agy）で立てる。Orca は agy をチャットで開けず端末で開くので、
+行には session ではなく端末の handle（terminal）を書く。agy では Gemini のモデルだけを使う（R108。判定は claude/bin/agy_launch.py の pin_gemini）。
 形の無い仕事・見張る仕事・開いた担当がいる仕事には立てない。担当の形を手で打つと、帳簿の形と食い違う（2026-11-25 の整理のあと、
 任せる仕事に「一緒に｜」の担当がいた）。
 --cockpit-task は、タスクの仕事に形が無い・見張る仕事なら断る。一緒に作る仕事は担当が --run を付けて立てるときだけ通し、窓口が直接立てるのは断る
@@ -49,6 +51,9 @@ import sys
 import tempfile
 import time
 from importlib.machinery import SourceFileLoader
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "claude", "bin"))
+import agy_launch  # noqa: E402
 
 _loader = SourceFileLoader("stallwatch", os.path.join(os.path.dirname(os.path.realpath(__file__)), "stallwatch"))
 sw = importlib.util.module_from_spec(importlib.util.spec_from_loader("stallwatch", _loader))
@@ -284,16 +289,34 @@ def brief(spec_file, tail):
     return path
 
 
-def session_of(dispatch, tries=15):
-    """担当の Dispatch のチャットのセッション（worker-show --full の endpointIncarnation「structured:<id>」）。チャットができるまで少し待つ。"""
+def endpoint_of(dispatch, tries=15):
+    """担当の話し相手の場所。チャットなら {"session": <id>}（worker-show --full の endpointIncarnation「structured:<id>」）、
+    端末なら {"terminal": <term_…>}。チャットの handle（structworker_…）は端末ではないので terminal にしない。できるまで少し待つ。"""
     for i in range(tries):
         r = (orca("orchestration", "worker-show", "--dispatch", dispatch, "--full").get("result") or {})
-        inc = (r.get("terminalResource") or {}).get("endpointIncarnation") or ""
+        res = r.get("terminalResource") or {}
+        inc = res.get("endpointIncarnation") or ""
         if inc.startswith("structured:"):
-            return inc[len("structured:"):]
+            return {"session": inc[len("structured:"):]}
+        handle = res.get("terminalHandle") or (r.get("worker") or {}).get("agentTerminalHandle") or ""
+        if handle.startswith("term_"):
+            return {"terminal": handle}
         if i + 1 < tries:
             time.sleep(2)
-    return None
+    return {}
+
+
+def lead_model(a):
+    """担当のモデル。Claude は既定 LEAD_MODEL、Gemini（agy）は既定 agy_launch.DEFAULT_MODEL で、Gemini 以外は断る（R108）。"""
+    if a.agent == "claude":
+        return a.model or LEAD_MODEL
+    if a.agent != "antigravity":
+        sys.exit("orca-launch: --lead の --agent は claude か antigravity")
+    try:
+        args = agy_launch.pin_gemini(["agy"] + (["--model", a.model] if a.model else []))
+    except ValueError as e:
+        sys.exit("orca-launch: %s" % e)
+    return args[args.index("--model") + 1]
 
 
 def start_lead(a):
@@ -321,19 +344,20 @@ def start_lead(a):
         sys.exit("orca-launch: 仕事 %s に開いた担当 %s がいない（--replace は今の担当を立て直すときだけ）" % (a.lead, a.replace))
     if not a.name or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", a.name):
         sys.exit("orca-launch: --lead には --name <英小文字・数字・- の slug> が要る（担当の worktree の名前。例 backlog-lead）")
+    model = lead_model(a)
     _, limit = name_rule()
     name = "%s｜%s" % (form_heads()[form], s.get("title") or a.lead)
     if len(name) > limit:
         sys.exit("orca-launch: 名前「%s」が %d 字で、上限の %d 字を超える。仕事の題を cockpit-write で短くして打ち直す" % (name, len(name), limit))
     started = orca("orchestration", "worker-start", "--spec-file", a.spec_file, "--worktree", "new-child", "--name", a.name,
-                   "--display-name", name, "--agent", "claude", "--model", a.model or LEAD_MODEL, "--keep-open", "--task-title", name)
+                   "--display-name", name, "--agent", a.agent, "--model", model, "--keep-open", "--task-title", name)
     r = started.get("result") or {}
     if not started.get("ok") or not r.get("runId") or not r.get("taskId"):
         sys.exit("orca-launch: 担当を立てられなかった")
-    session = session_of(r["dispatchId"]) if r.get("dispatchId") else None
+    where = endpoint_of(r["dispatchId"]) if r.get("dispatchId") else {}
     nums = [int(m.group(1)) for o in owners if (m := re.fullmatch(r"o(\d+)", str(o.get("id"))))]
-    row = {"id": "o%d" % (max(nums, default=0) + 1), "title": s.get("title") or a.lead, "stream": a.lead, "agent": "claude",
-           **({"session": session} if session else {}), "worker": {"run_id": r["runId"], "task_id": r["taskId"]}, "state": "open"}
+    row = {"id": "o%d" % (max(nums, default=0) + 1), "title": s.get("title") or a.lead, "stream": a.lead, "agent": a.agent,
+           **where, "worker": {"run_id": r["runId"], "task_id": r["taskId"]}, "state": "open"}
     out = {"runId": r["runId"], "taskId": r["taskId"], "dispatchId": r.get("dispatchId"), "owner": row}
     if have:
         out["replaced"] = {**have, "state": "done"}
@@ -341,8 +365,9 @@ def start_lead(a):
         # 書く道具は仕事の行を丸ごと置き換えるので、今の行に形だけを変えたものを出す。
         out["stream"] = {**s, "form": form}
     print(json.dumps(out, ensure_ascii=False))
-    if not session:
-        sys.exit("orca-launch: 担当は立ったが、チャットの session を引けなかった。orca worktree ps --json の %s の agents[].orcaSessionId を owner の session に足して書く" % a.name)
+    if not where:
+        sys.exit("orca-launch: 担当は立ったが、話し相手の場所を引けなかった。orca worktree ps --json の %s で、チャットなら agents[].orcaSessionId を owner の session に、"
+                 "端末なら term_… を owner の terminal に足して書く" % a.name)
     sys.exit(0)
 
 
@@ -358,8 +383,10 @@ def main():
     ap.add_argument("--cockpit-root", help="操縦席のあるワークスペースの root（省くと探す）")
     ap.add_argument("--spec-file", required=True, help="brief のファイル")
     ap.add_argument("--task-title")
-    ap.add_argument("--agent", choices=("claude", "codex"), default="claude")
-    ap.add_argument("--model", help="既定は worker が opus、担当が %s" % LEAD_MODEL)
+    ap.add_argument("--agent", choices=("claude", "codex", "antigravity"), default="claude",
+                    help="antigravity（Gemini の agy）は --lead だけ。担当は Orca の端末に立つ")
+    ap.add_argument("--model", help="既定は worker が opus、担当が %s（antigravity は %s。Gemini 以外は断る）"
+                    % (LEAD_MODEL, agy_launch.DEFAULT_MODEL))
     ap.add_argument("--settings", help="既定は $ORCA_WORKER_SETTINGS")
     ap.add_argument("--keep-open", action="store_true")
     ap.add_argument("--run")
@@ -370,6 +397,8 @@ def main():
         sys.exit("orca-launch: brief が無い: %s" % a.spec_file)
     if a.lead:
         start_lead(a)
+    if a.agent == "antigravity":
+        sys.exit("orca-launch: --agent antigravity は --lead で担当を立てるときだけ（worker は claude か codex）")
     if not a.worktree:
         sys.exit("orca-launch: --worktree が要る（担当を立てるなら --lead）")
     a.model = a.model or "opus"

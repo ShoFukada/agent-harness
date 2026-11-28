@@ -49,7 +49,7 @@ elif args[:2] == ["orchestration", "worker-start"]:
         fh.write(open(spec).read())
     out({"runId": "run_1", "taskId": "task_1", "dispatchId": "ctx_1", "terminal": "term_x", "state": "ready"})
 elif args[:2] == ["orchestration", "worker-show"]:
-    out({"terminalResource": {"endpointIncarnation": "structured:sess_new"}})
+    out(json.loads(os.environ.get("FAKE_SHOW") or '{"terminalResource": {"endpointIncarnation": "structured:sess_new"}}'))
 elif args[:2] == ["agent", "list"]:
     out({"agents": [{"orcaSessionId": "sess_lead", "worktreeId": "repo::/lead"}]})
 elif args[:2] == ["terminal", "list"]:
@@ -72,7 +72,7 @@ class LaunchTest(unittest.TestCase):
             fh.write("brief")
         # 決まりの文言はリポジトリの中から読むので、入口と読む相手を一時のリポジトリの形に写して差し替える
         repo = os.path.join(self.tmp, "repo")
-        for rel in ("bin/orca-launch", "bin/stallwatch", "orca/plugins/cockpit/src/state.ts"):
+        for rel in ("bin/orca-launch", "bin/stallwatch", "orca/plugins/cockpit/src/state.ts", "claude/bin/agy_launch.py"):
             os.makedirs(os.path.dirname(os.path.join(repo, rel)), exist_ok=True)
             shutil.copy(os.path.join(HERE, "..", rel), os.path.join(repo, rel))
         self.launch = os.path.join(repo, "bin", "orca-launch")
@@ -359,6 +359,45 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(self.spec_text(), "brief", "担当の brief に worker の決まりを足さない")
         self.assertEqual(json.loads(r.stdout)["owner"], {"id": "o4", "title": "操縦席の窓", "stream": "s1", "agent": "claude", "session": "sess_new",
                                                          "worker": {"run_id": "run_1", "task_id": "task_1"}, "state": "open"})
+
+    def test_gemini_lead_starts_in_a_terminal_and_writes_the_terminal(self):
+        # Orca は agy をチャットで開けず端末で開く。担当の行には session ではなく端末の handle を書く。
+        root = self.cockpit([], form="cowork")
+        show = {"terminalResource": {"endpointIncarnation": "repo::/lead", "terminalHandle": "term_g"}}
+        r = subprocess.run([sys.executable, self.launch, "--lead", "s1", "--name", "win-lead", "--cockpit-root", root, "--spec-file", self.spec,
+                            "--agent", "antigravity"], capture_output=True, text=True, env={**self.env, "FAKE_SHOW": json.dumps(show)}, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        (start,) = [x for x in self.calls() if x[:2] == ["orchestration", "worker-start"]]
+        self.assertEqual(start[start.index("--agent") + 1], "antigravity")
+        self.assertEqual(start[start.index("--model") + 1], "gemini-4-neon-high")
+        self.assertEqual(json.loads(r.stdout)["owner"], {"id": "o1", "title": "操縦席の窓", "stream": "s1", "agent": "antigravity", "terminal": "term_g",
+                                                         "worker": {"run_id": "run_1", "task_id": "task_1"}, "state": "open"})
+
+    def test_gemini_lead_refuses_other_models_and_workers(self):
+        root = self.cockpit([], form="cowork")
+        for model in ("claude-opus-5-5", "gpt-6.2-astra"):
+            r = self.run_lead(root, "--agent", "antigravity", "--model", model)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("R108", r.stderr)
+            self.assertFalse(os.path.exists(self.log), "orca を 1 回も呼ばない")
+        r = self.run_lead(root, "--agent", "codex")
+        self.assertIn("claude か antigravity", r.stderr)
+        r = self.run_launch("--agent", "antigravity", "--run", "run_lead")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--lead で担当を立てるときだけ", r.stderr)
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_endpoint_takes_a_chat_session_or_a_real_terminal(self):
+        from unittest import mock
+        shows = [{"terminalResource": {"terminalHandle": "structworker_1"}},  # チャットができる前の handle は端末ではない
+                 {"terminalResource": {"terminalHandle": "structworker_1", "endpointIncarnation": "structured:sess_9"}}]
+        with mock.patch.object(ol, "orca", side_effect=[{"ok": True, "result": x} for x in shows]), mock.patch.object(ol.time, "sleep"):
+            self.assertEqual(ol.endpoint_of("ctx_1"), {"session": "sess_9"})
+        with mock.patch.object(ol, "orca", return_value={"ok": True, "result": {"worker": {"agentTerminalHandle": "term_w"}}}):
+            self.assertEqual(ol.endpoint_of("ctx_1"), {"terminal": "term_w"})
+        with mock.patch.object(ol, "orca", return_value={"ok": True, "result": {"terminalResource": {"terminalHandle": "structworker_1"}}}), \
+                mock.patch.object(ol.time, "sleep"):
+            self.assertEqual(ol.endpoint_of("ctx_1", tries=3), {})
 
     def test_lead_is_refused_without_a_form_or_with_an_open_owner(self):
         for form, owners, said in ((None, [], "形（form）が決まっていない"), ("watch", [], "見張る仕事で、担当を置かない"),

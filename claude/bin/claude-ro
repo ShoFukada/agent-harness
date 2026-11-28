@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""読むだけの Claude（Opus）に相談する。Gemini（agy）の窓口・担当が、別系統の目として Claude を使うための道具（neon-ro・codex-ro と同じ引数）。
+
+  claude-ro <リポジトリ> <prompt.md> <out.md>
+
+- サブスクリプションの `claude -p` で動かす。環境変数は許可リストで選び、API キー（ANTHROPIC_*）・Bedrock・Vertex の変数と
+  sandbox の proxy を渡さない（従量課金の API に流れないように）。席は Orca で今選ばれている Claude の席（orca-launch と同じ）
+- 読むだけ: --restricted（ユーザー・プロジェクトの settings・hook・plugin を読まず、ファイルの道具を作業ディレクトリに閉じる）と
+  --tools Read,Grep,Glob で、書く・コマンドを実行する・Web を見る道具を持たせない。MCP も載せない（--strict-mcp-config）。
+  聞かれたら断る（--permission-mode dontAsk・--permission-prompts none）。読めるのは <リポジトリ> だけで、worker の denyRead も塞ぐ
+- cwd は使い捨ての空ディレクトリにして、CLAUDE.md や project の設定を拾わせない。会話は残さない（--no-session-persistence）
+- prompt と out は Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限り、symlink をたどらずに開く（sandbox_tmp.py）
+答えの本文は <out.md>、claude の stderr と、本文を取り出せなかったときの stdout は <out.md>.log に書く。
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from sandbox_tmp import open_dir_nofollow, read_file as read_prompt, worker_denied_paths, write_file  # noqa: E402
+
+MODEL = "claude-opus-5-5"
+TOOLS = "Read,Grep,Glob"
+KILL_AFTER = 16 * 60
+# claude が動くのに要るものだけ。認証は席（CLAUDE_CONFIG_DIR）のログインを使う
+KEEP = {"HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "LANG", "LANGUAGE", "TERM", "TZ",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "NIX_SSL_CERT_FILE"}
+KEEP_PREFIXES = ("LC_",)
+
+
+def seat_home():
+    """Orca で今選ばれている Claude の席の置き場所。システムの既定のログインなら None。Orca が読めなければ呼んだ側の CLAUDE_CONFIG_DIR。"""
+    try:
+        r = subprocess.run([os.environ.get("ORCA_CLI_COMMAND") or "orca", "account", "list", "--agent", "claude", "--json"],
+                           capture_output=True, text=True, timeout=30)
+        res = json.loads(r.stdout).get("result")
+    except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):
+        res = None
+    if not isinstance(res, dict) or not isinstance(res.get("accounts"), list):
+        return os.environ.get("CLAUDE_CONFIG_DIR")
+    return next((x for x in res["accounts"] if x.get("id") == res.get("activeAccountId")), {}).get("home")
+
+
+def clean_env(home):
+    env = {k: v for k, v in os.environ.items() if k in KEEP or k.startswith(KEEP_PREFIXES)}
+    if home:
+        env["CLAUDE_CONFIG_DIR"] = home
+    return env
+
+
+def settings(repo):
+    """権限の規則。// で始めると絶対パス（/ 1 つだと settings の置き場所からの相対になる）。hook はコマンドを走らせるので切る。"""
+    deny = [r for p in worker_denied_paths() for r in (f"Read(/{p})", f"Read(/{p}/**)")]
+    return {"disableAllHooks": True, "permissions": {"allow": [f"Read(/{repo}/**)"], "deny": deny}}
+
+
+def claude_args(repo):
+    return ["claude", "-p", "--model", MODEL, "--restricted", "--tools", TOOLS,
+            "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
+            "--no-session-persistence", "--disable-slash-commands", "--no-chrome",
+            "--add-dir", repo, "--settings", json.dumps(settings(repo)), "--output-format", "json"]
+
+
+def answer_of(stdout):
+    """--output-format json の結果から本文を取り出す。失敗の結果（is_error）なら None。"""
+    try:
+        d = json.loads(stdout)
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or d.get("is_error") or not isinstance(d.get("result"), str):
+        return None
+    return d["result"]
+
+
+def main(argv):
+    if len(argv) != 4:
+        sys.exit(__doc__)
+    repo, prompt, out = argv[1:4]
+    if not os.path.isdir(repo):
+        sys.exit(f"claude-ro: {repo} はディレクトリではない")
+    repo = os.path.realpath(repo)
+    body = read_prompt(prompt).decode("utf-8")
+    if not body.strip():
+        sys.exit(f"claude-ro: {prompt} が空")
+    os.close(open_dir_nofollow(os.path.dirname(os.path.abspath(out))))  # 枠を使う前に、書けない out で止める
+    args = claude_args(repo)
+    exe = shutil.which(args[0])  # 名前のまま渡すと、execve が cwd の同じ名前のファイルを起動しうる
+    if not exe:
+        sys.exit("claude-ro: claude が PATH に無い")
+    env = clean_env(seat_home())
+    try:
+        with tempfile.TemporaryDirectory(prefix="claude-ro-") as cwd:
+            r = subprocess.run(args, executable=exe, input=body, cwd=cwd, env=env, timeout=KILL_AFTER,
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        code, stdout, stderr = r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired as e:
+        text = lambda b: b.decode(errors="replace") if isinstance(b, bytes) else (b or "")  # noqa: E731
+        code, stdout = 124, text(e.stdout)
+        stderr = text(e.stderr) + f"claude-ro: {KILL_AFTER} 秒で打ち切った\n"
+    answer = answer_of(stdout) if code == 0 else None
+    if answer is None or not answer.strip():
+        write_file(out + ".log", (stderr + "\n--- stdout ---\n" + stdout).encode())
+        print(f"exit {code or 1}: 答えを取り出せなかった（timeout・ログイン切れ・利用枠の上限のいずれか）。ログは {out}.log")
+        return code or 1
+    write_file(out + ".log", stderr.encode())
+    write_file(out, answer.encode())
+    print(f"exit 0: 答えは {out}、ログは {out}.log")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
