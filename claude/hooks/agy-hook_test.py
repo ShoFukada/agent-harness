@@ -56,7 +56,8 @@ class Base(unittest.TestCase):
         self.config = os.path.join(self.dir, "claude")
         self.work = os.path.join(self.dir, "work")
         self.fakes = os.path.join(self.dir, "fakes")
-        for d in (self.config, self.work, os.path.join(self.fakes, "replies")):
+        self.home = os.path.join(self.dir, "home")
+        for d in (self.config, self.work, self.home, os.path.join(self.fakes, "replies")):
             os.makedirs(d)
         self.fake = os.path.join(self.fakes, "fake.py")
         with open(self.fake, "w") as f:
@@ -99,12 +100,19 @@ class Base(unittest.TestCase):
         inp.update(override)
         return inp
 
-    def run_hook(self, event, inp):
+    def env(self, home=False):
         env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, AGY_HOOK_STATE=os.path.join(self.dir, "state"),
                    TMPDIR=self.dir)
         env.pop("COCKPIT_LEDGER_GUARD", None)  # このテストを動かす Claude Code の設定の env から入ってくる
-        r = subprocess.run([HOOK, event], input=json.dumps(inp), capture_output=True, text=True, env=env,
-                           cwd=os.path.realpath(PLUGIN), timeout=60)
+        if home:
+            # 偽の HOME は ~/.gemini に書く SessionStart と SyncSkills だけにする。ほかでも替えると、sandbox の中で
+            # /usr/bin/python3（xcrun）が stderr に cache の警告を足し、hook の理由の文を比べるテストが落ちる
+            env["HOME"] = self.home
+        return env
+
+    def run_hook(self, event, inp):
+        r = subprocess.run([HOOK, event], input=json.dumps(inp), capture_output=True, text=True,
+                           env=self.env(home=event == "SessionStart"), cwd=os.path.realpath(PLUGIN), timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout) if r.stdout.strip() else None
 
@@ -537,6 +545,191 @@ class Stops(Base):
         out = self.run_hook("PreInvocation", self.recorded("pre-invocation-1.json"))
         self.assertEqual(out["injectSteps"][-1],
                          {"systemMessage": {"systemMessage": "", "metadata": {"user_markdown": "ja-review: 1 ファイルを書き直した"}}})
+
+
+class SyncSkills(Base):
+    def setUp(self):
+        Base.setUp(self)
+        self.gemini = os.path.join(self.home, ".gemini", "config")
+        self.target = os.path.join(self.gemini, "skills.json")
+        os.makedirs(self.gemini)
+        self.user_skills = os.path.join(self.home, ".claude", "skills")
+        os.makedirs(self.user_skills)
+        os.makedirs(os.path.join(self.config, "plugins"))
+
+    def plugin(self, name, skills=True, manifest=None):
+        root = os.path.join(self.dir, "seat", "cache", name, "1.0.0")
+        os.makedirs(os.path.join(root, "skills") if skills else root)
+        if manifest is not None:
+            os.makedirs(os.path.join(root, ".claude-plugin"))
+            with open(os.path.join(root, ".claude-plugin", "plugin.json"), "w") as f:
+                json.dump(manifest, f)
+        return root
+
+    def setup_plugins(self, installed, enabled):
+        with open(os.path.join(self.config, "plugins", "installed_plugins.json"), "w") as f:
+            json.dump({"version": 2, "plugins": {pid: [{"scope": "user", "installPath": r}] for pid, r in installed.items()}}, f)
+        self.settings({}, enabledPlugins=enabled)
+
+    def sync(self, code=0):
+        # 標準入力を開いたままにする: 入力を読みに行くと、閉じるまで終わらずに timeout で落ちる
+        p = subprocess.Popen([HOOK, "SyncSkills"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, env=self.env(home=True))
+        try:
+            p.wait(timeout=30)
+        finally:
+            p.kill()
+            p.stdin.close()
+        out, err = p.stdout.read(), p.stderr.read()
+        p.stdout.close()
+        p.stderr.close()
+        self.assertEqual(p.returncode, code, err)
+        return out if code == 0 else err
+
+    def entries(self):
+        with open(self.target, encoding="utf-8") as f:
+            return [e["path"] for e in json.load(f)["entries"]]
+
+    def test_enabled_plugins_with_skills_are_listed_after_the_user_skills(self):
+        dev = self.plugin("dev", manifest={"name": "dev"})
+        extra = self.plugin("extra", manifest={"skills": ["./more", "./skills", "./missing"]})
+        os.makedirs(os.path.join(extra, "more"))
+        lsp = self.plugin("lsp", skills=False)
+        off = self.plugin("off")
+        self.setup_plugins({"dev@m": dev, "extra@m": extra, "lsp@m": lsp, "off@m": off,
+                            "gone@m": os.path.join(self.dir, "removed")},
+                           {"dev@m": True, "extra@m": True, "lsp@m": True, "off@m": False, "gone@m": True,
+                            "unknown@m": True})
+        self.assertIn("書いた（4 件）", self.sync())
+        self.assertEqual(self.entries(), [self.user_skills, os.path.join(dev, "skills"), os.path.join(extra, "skills"),
+                                          os.path.join(extra, "more")])
+        self.assertTrue(all(os.path.isabs(p) for p in self.entries()))
+
+    def test_a_plugin_switched_off_drops_out_on_the_next_sync(self):
+        dev = self.plugin("dev")
+        self.setup_plugins({"dev@m": dev}, {"dev@m": True})
+        self.sync()
+        self.settings({}, enabledPlugins={"dev@m": False})
+        self.sync()
+        self.assertEqual(self.entries(), [self.user_skills])
+
+    def test_the_same_content_is_not_written_again(self):
+        self.setup_plugins({"dev@m": self.plugin("dev")}, {"dev@m": True})
+        self.sync()
+        before = os.stat(self.target)
+        self.assertIn("変わりなし", self.sync())
+        after = os.stat(self.target)
+        self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+        self.assertEqual(sorted(os.listdir(self.gemini)), ["skills.json"])
+
+    def test_a_symlink_managed_by_nix_is_left_alone(self):
+        managed = os.path.join(self.dir, "nix-store-skills.json")
+        with open(managed, "w") as f:
+            f.write('{"entries": []}\n')
+        os.symlink(managed, self.target)
+        self.setup_plugins({"dev@m": self.plugin("dev")}, {"dev@m": True})
+        self.assertIn("symlink", self.sync())
+        self.assertTrue(os.path.islink(self.target))
+        with open(managed) as f:
+            self.assertEqual(f.read(), '{"entries": []}\n')
+
+    def test_the_first_sync_creates_the_agy_config_folder(self):
+        shutil.rmtree(os.path.join(self.home, ".gemini"))
+        self.sync()
+        self.assertEqual(self.entries(), [self.user_skills])
+
+    def test_broken_claude_settings_fail_without_touching_the_file(self):
+        dev = self.plugin("dev")
+        self.setup_plugins({"dev@m": dev}, {"dev@m": True})
+        self.sync()
+        for broken in (os.path.join(self.config, "settings.json"),
+                       os.path.join(self.config, "plugins", "installed_plugins.json")):
+            with open(broken) as f:
+                good = f.read()
+            for bad in ("{壊れた", '{"enabledPlugins": [], "plugins": []}'):
+                with open(broken, "w") as f:
+                    f.write(bad)
+                self.assertIn("SyncSkills", self.sync(code=1))
+                self.assertEqual(self.entries(), [self.user_skills, os.path.join(dev, "skills")])
+            with open(broken, "w") as f:
+                f.write(good)
+        os.chmod(os.path.join(self.config, "plugins"), 0)
+        try:
+            self.assertIn("Permission denied", self.sync(code=1))
+        finally:
+            os.chmod(os.path.join(self.config, "plugins"), 0o755)
+        self.assertEqual(self.entries(), [self.user_skills, os.path.join(dev, "skills")])
+
+    def test_other_keys_of_the_file_are_kept(self):
+        with open(self.target, "w") as f:
+            json.dump({"entries": [{"path": "/old"}], "other": 1}, f)
+        self.sync()
+        with open(self.target) as f:
+            self.assertEqual(json.load(f), {"entries": [{"path": self.user_skills}], "other": 1})
+
+    def test_session_start_syncs_and_a_failure_does_not_stop_the_other_hooks(self):
+        self.setup_plugins({"dev@m": self.plugin("dev")}, {"dev@m": True})
+        self.settings({"SessionStart": [group("start")]}, enabledPlugins={"dev@m": True})
+        self.reply("start", "【操縦席】窓口\n")
+        self.run_hook("SessionStart", self.recorded("session-start.json"))
+        self.assertEqual(len(self.entries()), 2)
+        os.remove(self.target)
+        os.makedirs(self.target)
+        out = self.run_hook("SessionStart", self.recorded("session-start.json"))
+        self.assertEqual(out, {"injectSteps": [{"systemMessage": {"systemMessage": "【操縦席】窓口"}}]})
+        with open(os.path.join(self.dir, "agy-hook.log"), encoding="utf-8") as f:
+            self.assertIn("SessionStart SyncSkills", f.read())
+
+
+class RepoSkills(Base):
+    def skill(self, root, folder, text):
+        d = os.path.join(root, ".claude", "skills", folder)
+        os.makedirs(d)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write(text)
+        return os.path.join(d, "SKILL.md")
+
+    def start(self, work):
+        out = self.run_hook("SessionStart", self.recorded("session-start.json", workspacePaths=[work]))
+        return [s["systemMessage"]["systemMessage"] for s in (out or {}).get("injectSteps", [])]
+
+    def test_the_skills_of_the_repository_root_are_listed_from_a_subfolder(self):
+        repo = os.path.realpath(self.work)
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        deck = self.skill(repo, "deck", "---\nname: deck\ndescription: >\n  提案資料を作る。\n  「スライド作って」で発動する。\n---\n本文\n")
+        quoted = self.skill(repo, "estimate", '---\nname: "estimate-x"\ndescription: "見積書を作る"\n---\n')
+        bare = self.skill(repo, "plain", "# 前置きなし\n")
+        os.makedirs(os.path.join(repo, ".claude", "skills", "empty"))
+        sub = os.path.join(repo, "docs", "a")
+        os.makedirs(sub)
+        (text,) = self.start(sub)
+        lead, *rows = text.split("\n- ")
+        self.assertIn("このリポジトリ（%s）の skill" % repo, lead)
+        self.assertIn("read_file でその SKILL.md を読み", lead)
+        self.assertIn("office の deck）よりこちらを優先する", lead)
+        self.assertEqual(rows, ["deck: 提案資料を作る。 「スライド作って」で発動する。\n  %s" % deck,
+                                "estimate-x: 見積書を作る\n  %s" % quoted,
+                                "plain: （説明なし）\n  %s" % bare])
+
+    def test_a_repository_without_skills_adds_nothing(self):
+        subprocess.run(["git", "init", "-q", self.work], check=True)
+        os.makedirs(os.path.join(self.work, ".claude"))
+        self.assertEqual(self.start(self.work), [])
+
+    def test_a_folder_outside_git_adds_nothing(self):
+        # $HOME で起動したときに ~/.claude/skills をリポジトリの skill として出さない
+        self.skill(self.work, "deck", "---\ndescription: x\n---\n")
+        self.assertEqual(self.start(self.work), [])
+
+    def test_many_skills_and_long_descriptions_are_cut(self):
+        subprocess.run(["git", "init", "-q", self.work], check=True)
+        for i in range(45):
+            self.skill(self.work, "s%02d" % i, "---\ndescription: %s\n---\n" % ("長" * 300))
+        (text,) = self.start(self.work)
+        rows = text.split("\n- ")[1:]
+        self.assertEqual(len(rows), 41)
+        self.assertTrue(rows[0].startswith("s00: " + "長" * 199 + "…\n"), rows[0][:20])
+        self.assertTrue(rows[-1].startswith("ほか 5 件は"), rows[-1])
 
 
 class PluginFile(unittest.TestCase):

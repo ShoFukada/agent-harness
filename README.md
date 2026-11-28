@@ -226,7 +226,7 @@ home.file.".local/bin/orca-launch".source =
 | 担当だけの動き方 | `~/.config/nix-darwin/claude/roles/lead.md` |
 | 日本語の語の選び方（業務の漢語など） | dev-standards の rules/docs/writing.md |
 | 外に出す文面の書式 | dev-standards の rules/docs/message-formats.md |
-| agy（Gemini）で Claude と同じ hook を動かす仕組み（イベント・道具名・返事の対応） | `claude/hooks/agy-hook.py` の冒頭の説明 |
+| agy（Gemini）でClaudeと同じhookとskillを使う仕組み（イベント・道具名・返事の対応、skills.json の作り方、リポジトリのskillの渡し方） | `claude/hooks/agy-hook.py` の冒頭の説明 |
 | 従量課金の LLM API の使い方 | dev-standards の rules/dev/principles.md「AI の使い方」 |
 | Bot の受け持ちと動き | `~/.orca/bots/<名前>/SOUL.md`（帳簿への載せ方は cockpit skill の SKILL.md「仕事の形」） |
 
@@ -242,7 +242,7 @@ home.file.".local/bin/orca-launch".source =
 | `bin/orca-watch`・`bin/orca_watch_test.py` | Orca本体が人のいないあいだに落ちたときの起動し直しとそのテスト。記録先はstallwatchと同じ `STALLWATCH_HOME`（`orca-watch-state.json`・`orca-watch.json`・`orca-watch.pause`） |
 | `bin/worktree-sweep`・`bin/worktree_sweep_test.py` | 使い終わった worktree の片付けとそのテスト。結果の書き出し先は `~/Library/Application Support/worktree-sweep/sweep.json`（`WORKTREE_SWEEP_HOME`） |
 | `claude/` | Claude Codeに読ませるskill・agent・hookと、workerのsandboxの外で動くスクリプト（下の「claude/」） |
-| `gemini/plugins/harness/` | agy（Antigravity CLI）のプラグイン。`hooks.json` は agy の5つのイベントで `claude/hooks/agy-hook.py` を呼ぶだけで、どの hook を動かすかは持たない。nix-darwin が `~/.gemini/config/plugins.json` の entries に `gemini/plugins` のフォルダを書く |
+| `gemini/plugins/harness/` | agy（Antigravity CLI）のプラグイン。`hooks.json` はagyの5つのイベントで `claude/hooks/agy-hook.py` を呼ぶだけで、どのhookを動かすかは持たない。nix-darwinが `~/.gemini/config/plugins.json` のentriesに `gemini/plugins` のフォルダを書く。`~/.gemini/config/skills.json` は、nix-darwinのactivationとagyの起動のたびに、`agy-hook.py SyncSkills` が `~/.claude/skills` と有効なプラグイン（enabledPlugins）のskillのフォルダから作る。作業中のリポジトリの `.claude/skills` は、起動のときに一覧と SKILL.md のパスを渡す |
 | `docs/harness-map.html` | 見取り図。役・知らせの経路・帳簿の読み書き・状態の決め方・席の切り替えを図で示す1つのHTML。設計が変わる取り込みのたびに直す（cockpit skillの references/workers.md） |
 | `docs/harness-detail.html` | 詳しい図。ファイルごとの読み書き・仕事の形と工程・カードの種類・タスクの状態の決まり方・処理の流れ5本・書く道具が断る規則を図で示す1つのHTML |
 | `docs/scripts.md` | 常駐スクリプト（worktree-sweep・orca-watch・account-failover）が何をどの条件でするかの詳しい説明 |

@@ -2,6 +2,12 @@
 """agy（Antigravity CLI）の hook から、Claude Code と同じ hook を動かす入口（判断の記録 R246）。
 
   agy-hook.py <SessionStart|PreInvocation|PreToolUse|PostToolUse|Stop>   < agy の hook の入力 JSON
+  agy-hook.py SyncSkills   ~/.gemini/config/skills.json を ~/.claude/skills と有効なプラグインの skill のフォルダで作り直す
+
+skill（R262）: agy の skills.json は絶対パスしか受け付けず、リポジトリの .claude/skills も読まない（agy 1.5.18 で確かめた）。
+そこで skills.json は SyncSkills が enabledPlugins から作り（nix-darwin の activation と SessionStart が呼ぶ。symlink の間は
+nix の管理なので書かない）、作業場所の git の根の .claude/skills は SessionStart で一覧と SKILL.md のパスを渡して読ませる。
+案件のリポジトリには agy 用のファイルを置かない。
 
 agy からは gemini/plugins/harness/hooks.json が呼ぶ。どの hook を動かすかはここに持たない。Claude の設定
 （$CLAUDE_CONFIG_DIR か ~/.claude の settings.json と、cwd の .claude/settings.json・settings.local.json）の hooks と、
@@ -67,6 +73,10 @@ STOP_REASONS = ("", "NO_TOOL_CALL")
 ASK_DENIED = ("agy では確認の画面を出せないので止めた。別のコマンドや道具で通そうとせず、深田さんに回数・額・コマンドを示して"
               "許可を取り、深田さんが自分で打つ。")
 MAX_ORIGINAL = 1024 * 1024
+MAX_REPO_SKILLS = 40
+MAX_DESCRIPTION = 200
+REPO_SKILLS_LEAD = ("このリポジトリ（%s）の skill。依頼が説明に当たるときは、作業の前に read_file でその SKILL.md を読み、"
+                    "手順に従う。グローバルの同じ名前の skill（例: office の deck）よりこちらを優先する。")
 
 
 def read_json(path, default):
@@ -171,6 +181,129 @@ def configured(event, cwd):
         for doc in plugin_hook_docs(root):
             hooks += entries(doc, event, plugin)
     return hooks
+
+
+# ---------- skill ----------
+
+def strict_json(path, key):
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except FileNotFoundError:
+        return {}
+    value = doc.get(key, {}) if isinstance(doc, dict) else None
+    if not isinstance(value, dict):
+        raise ValueError("%s の %s が JSON の object でない" % (path, key))
+    return value
+
+
+def skill_dirs():
+    """~/.claude/skills は $CLAUDE_CONFIG_DIR（席のフォルダ）ではなく利用者のもの。実体は nix の symlink で、席には無い。"""
+    dirs = [os.path.expanduser("~/.claude/skills")]
+    # read_json と違い、壊れた・読めない設定では止める。{} として進むと、直前まで正しかった skills.json を
+    # 利用者の skill だけに書き換えてしまう
+    enabled = strict_json(os.path.join(config_dir(), "settings.json"), "enabledPlugins")
+    installed = strict_json(os.path.join(config_dir(), "plugins", "installed_plugins.json"), "plugins")
+    for pid, on in enabled.items():
+        root = install_path(installed.get(pid)) if on is True else None
+        if not root:
+            continue
+        dirs.append(os.path.join(root, "skills"))
+        extra = read_json(os.path.join(root, ".claude-plugin", "plugin.json"), {}).get("skills")
+        dirs += [os.path.join(root, item) for item in (extra if isinstance(extra, list) else [extra])
+                 if isinstance(item, str)]
+    out, seen = [], set()
+    for d in dirs:
+        d = os.path.normpath(os.path.abspath(d))
+        if os.path.isdir(d) and os.path.realpath(d) not in seen:
+            seen.add(os.path.realpath(d))
+            out.append(d)
+    return out
+
+
+def sync_skills():
+    target = os.path.expanduser("~/.gemini/config/skills.json")
+    if os.path.islink(target):
+        return "symlink のため書かない: %s" % target
+    entries = [{"path": d} for d in skill_dirs()]
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    doc = read_json(target, {})
+    doc["entries"] = entries
+    text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    try:
+        with open(target, encoding="utf-8") as f:
+            if f.read() == text:
+                return "変わりなし: %s" % target
+    except (OSError, UnicodeDecodeError):
+        pass
+    tmp = "%s.%d.tmp" % (target, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return "書いた（%d 件）: %s" % (len(doc["entries"]), target)
+
+
+def frontmatter(text):
+    m = re.match(r"---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(\r?\n|$)", text, re.S)
+    out, lines, i = {}, (m.group(1).splitlines() if m else []), 0
+    while i < len(lines):
+        km = re.match(r"([A-Za-z_][\w-]*):(.*)$", lines[i])
+        i += 1
+        if not km:
+            continue
+        value, more = km.group(2).strip(), []
+        while i < len(lines) and (not lines[i].strip() or lines[i][:1] in (" ", "\t")):
+            more.append(lines[i].strip())
+            i += 1
+        if value[:1] in ("|", ">"):
+            value = ""
+        value = " ".join([value] + more).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        out[km.group(1)] = value
+    return out
+
+
+def git_root(work):
+    try:
+        r = subprocess.run(["git", "-C", work, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def repo_skills(work):
+    root = git_root(work)
+    if not root:
+        return ""
+    base = os.path.join(root, ".claude", "skills")
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return ""
+    rows, rest = [], 0
+    for folder in names:
+        path = os.path.join(base, folder, "SKILL.md")
+        if len(rows) >= MAX_REPO_SKILLS:
+            rest += os.path.isfile(path)
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                meta = frontmatter(f.read(64 * 1024))
+        except OSError:
+            continue
+        description = " ".join((meta.get("description") or "").split())
+        if len(description) > MAX_DESCRIPTION:
+            description = description[:MAX_DESCRIPTION - 1] + "…"
+        rows.append("- %s: %s\n  %s" % (meta.get("name") or folder, description or "（説明なし）", path))
+    if not rows:
+        return ""
+    tail = ["- ほか %d 件は %s の下を見る" % (rest, base)] if rest else []
+    return "\n".join([REPO_SKILLS_LEAD % root] + rows + tail)
 
 
 def matches(matcher, target):
@@ -425,8 +558,18 @@ def inject(context, notice):
 
 
 def on_session_start(inp):
-    o = run_event("SessionStart", dict(common(inp, "SessionStart"), source="startup"), target="startup")
-    return inject(o["context"], o["notice"])
+    try:
+        sync_skills()
+    except Exception as e:
+        log("SessionStart", "SyncSkills", "%s: %s" % (type(e).__name__, e))
+    base = common(inp, "SessionStart")
+    o = run_event("SessionStart", dict(base, source="startup"), target="startup")
+    try:
+        listing = repo_skills(base["cwd"] or os.getcwd())
+    except Exception as e:
+        log("SessionStart", "repo skills", "%s: %s" % (type(e).__name__, e))
+        listing = ""
+    return inject(o["context"] + ([listing] if listing else []), o["notice"])
 
 
 def on_pre_invocation(inp):
@@ -527,6 +670,14 @@ HANDLERS = {"SessionStart": on_session_start, "PreInvocation": on_pre_invocation
 
 
 def main(argv):
+    if argv[:1] == ["SyncSkills"]:
+        # nix-darwin の activation から呼ぶ。標準入力は読まない（端末から呼ぶと待ち続ける）
+        try:
+            print(sync_skills())
+        except (OSError, ValueError) as e:
+            sys.stderr.write("agy-hook SyncSkills: %s\n" % e)
+            return 1
+        return 0
     handler = HANDLERS.get(argv[0] if argv else "")
     try:
         inp = json.loads(sys.stdin.read() or "{}")
