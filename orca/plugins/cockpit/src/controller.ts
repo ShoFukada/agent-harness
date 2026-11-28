@@ -376,7 +376,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const label = (el.querySelector('span') ?? el).textContent ?? ''
     const { url, file } = el.dataset
     if (url) void t.openUrl(url).then((x) => toast(x.opened ? openedMessage(label, url) : `開けませんでした${x.reason ? `: ${x.reason}` : ''}`), fail)
-    else if (file) void t.open(root, file).then((x) => toast(x.opened ? openedMessage(label, file) : `開けませんでした: ${x.reason ?? 'ワークスペースの中にファイルが見つかりません'}`), fail)
+    else if (file) void t.open(root, file).then((x) => toast(x.opened ? openedMessage(label, file, x.how) : `開けませんでした: ${x.reason ?? 'ワークスペースの中にファイルが見つかりません'}`), fail)
   }
 
   const CSS_ESC = (s: string) => (window.CSS?.escape ? window.CSS.escape(s) : s.replace(/"/g, '\\"'))

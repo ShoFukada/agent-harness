@@ -125,6 +125,8 @@ test('成果物・差分などを開いたら、窓は変わらないので何�
   // ボタンの語が「開く」だけ・本文の「リンク」のときは、開く先の種類で言う。
   assert.equal(openedMessage('開く', 'https://docs.google.com/x'), '「Drive」をブラウザで開きました')
   assert.equal(openedMessage('リンク', 'https://example.com/'), '「ページ」をブラウザで開きました')
+  // 手元の HTML のページは窓のサーバーが Chrome で開き、開いた先を返す。
+  assert.equal(openedMessage('成果物を開く', '/Users/fukada/orca-pages/aoba/plan.html', 'Chrome'), '「成果物」を Chrome で開きました')
 })
 
 test('見て: 「直しを伝える」で書く欄を開き、本文が空のうちは伝えられない。欄では伝える・担当と話す・やめるだけ。伝えたら直し待ちになり、伝えた文を出す（R115）', () => {

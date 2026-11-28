@@ -178,7 +178,8 @@ export type AnswerResult = { sent: boolean; how?: string; op?: number; reason?: 
  */
 export type TalkResult = { opened: boolean; how: string; tab?: string; reason?: string; note?: string; terminal?: string }
 /** 開く系の結果。開けなければ理由を返し、画面が黙って何も起きないようにしない。 */
-export type OpenResult = { opened: boolean; reason?: string }
+/** how は Orca の外で開いたときの開いた先（手元の HTML のページは「Chrome」）。無ければ Orca で開いた。 */
+export type OpenResult = { opened: boolean; how?: string; reason?: string }
 /** 送る文面を宛先の書式でクリップボードに入れた結果。subject はメールの先頭の「件名:」行（本文からは外す）。 */
 export type ClipResult = { copied: boolean; subject?: string; reason?: string }
 /** 帯の印・「端末を開く」の結果。how は前に出したもの（端末かワークスペース）。 */

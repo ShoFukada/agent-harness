@@ -18,6 +18,7 @@ import {
   type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsRow, type RunPage, type RunTask, type RunWorker, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { deliverAnswer, type AnswerPlan } from './answer.ts'
+import { localPage, openInChrome } from './local-page.ts'
 import { mailboxOf, type MailOrca } from './mail.ts'
 import { askTabs, type AskWs } from './ask-tabs.ts'
 import { signals, type SignalWs } from './notify.ts'
@@ -288,8 +289,9 @@ export type AskCmd = (root: string, id: string, o: { card?: string; task?: strin
 /**
  * clip はテストで差し替える（既定は clip-draft を呼ぶ）。tailnetHosts は tailscale serve が HTTPS で渡す Host（例: mac.tail1234.ts.net）で、
  * その Host と Origin（https://<Host>）も許す。待ち受けは 127.0.0.1 のまま（serve が Mac の中から繋ぐ）。
+ * pagesDir（既定は ~/orca-pages）と openPage（既定は Chrome で開く）はテストで差し替える。
  */
-export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft; lint?: ReturnType<typeof draftLinter>; consult?: Consult; ask?: AskCmd; tailnetHosts?: string[] }
+export type Options = { port: number; dir: string; orca: Orca; host?: string; clip?: typeof clipDraft; lint?: ReturnType<typeof draftLinter>; consult?: Consult; ask?: AskCmd; tailnetHosts?: string[]; pagesDir?: string; openPage?: (file: string) => Promise<void> }
 
 /** COCKPIT_TAILNET_HOSTS（カンマ区切り）を読む。ホスト名[:ポート] の形でないものは捨てて理由を出す（ワイルドカードや URL を許す一覧に入れない）。 */
 export function parseTailnetHosts(v: string | undefined): string[] {
@@ -1086,6 +1088,8 @@ export function createServer(opts: Options) {
       const ws = knownWs(b.root)
       const href = str(b.path)
       if (!href) return { opened: false, reason: '開く先がありません' }
+      const page = await localPage(href, opts.pagesDir)
+      if (page) return 'reason' in page ? { opened: false, reason: page.reason } : (await (opts.openPage ?? openInChrome)(page.file), { opened: true, how: 'Chrome' })
       const { file, line } = splitLine(href.startsWith('file://') ? fileURLToPath(href) : href)
       // 開けるのは、操縦席のある本線と、orca worktree ps で本線の子孫（担当とその worker）と分かる worktree の中のファイルだけ。
       const row = rowOf(ws.root)

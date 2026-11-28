@@ -175,6 +175,8 @@ test('hook が読む検査: 一時フォルダのままの成果物。タスク�
       { id: 'a2', rev: 1, kind: 'review', title: 'a2', state: 'open', stream: 's1', links: [{ label: '比較', href: 'file:///tmp/cmp.html' }] },
       { id: 'a3', rev: 1, kind: 'review', title: 'a3', state: 'open', stream: 's1', href: 'https://claude.ai/artifact/abc' },
       { id: 'a4', rev: 1, kind: 'review', title: 'a4', state: 'done', stream: 's1', href: '/tmp/old.html' },
+      // Gemini の窓口・担当が渡す手元の HTML（~/orca-pages）は消えない置き場所なので、一時フォルダとして拾わない（R252）。
+      { id: 'a5', rev: 1, kind: 'report', title: 'a5', state: 'open', stream: 's1', tasks: ['t4'], href: '/Users/fukada/orca-pages/agent-harness/w5.html', links: [{ label: '比較', href: 'file:///Users/fukada/orca-pages/agent-harness/cmp.html' }] },
       // 送ったあと顧客の返事を待つカードが指すタスクは、外の相手を待っているので名指ししない
       { id: 'w1', rev: 1, kind: 'send', title: 'w1', state: 'waiting', stream: 's1', tasks: ['t6'], awaiting: { who: '田中さん', what: '回答', since: '2026-11-20T10:00:00+09:00' } },
       // 担当と話し始めたカードも私の番に残る（R46）ので、それが指すタスクは名指ししない

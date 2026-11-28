@@ -962,7 +962,7 @@ export type StateReport = {
     remind_due: string[]
     /** 仕事にも担当にもつながらない開いたカード。 */
     orphan_cards: string[]
-    /** 成果物（href・links）が一時フォルダのファイルのままの、開いた見て・報告（artifact にして URL で渡す）。 */
+    /** 成果物（href・links）が一時フォルダのファイルのままの、開いた見て・報告（artifact の URL か ~/orca-pages の HTML にして渡す）。 */
     local_deliverables: string[]
     intake: string[]
     missing_workers: string[]

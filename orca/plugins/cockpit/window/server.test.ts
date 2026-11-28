@@ -80,7 +80,7 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; notifyRun?: Orca['notifyRun']; mailbox?: Orca['mailbox']; mailboxFile?: string; tailnetHosts?: string[]; lint?: Options['lint']; runs?: Orca['runs']; runWorkers?: Orca['runWorkers'] } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; notifyRun?: Orca['notifyRun']; mailbox?: Orca['mailbox']; mailboxFile?: string; tailnetHosts?: string[]; lint?: Options['lint']; runs?: Orca['runs']; runWorkers?: Orca['runWorkers']; pagesDir?: string } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
@@ -94,7 +94,7 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
   if (more.runs) fake.orca.runs = more.runs
   if (more.runWorkers) fake.orca.runWorkers = more.runWorkers
   if (more.mailboxFile) writeFileSync(path.join(dir, 'mailbox.json'), more.mailboxFile)
-  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts, lint: more.lint })
+  const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts, lint: more.lint, pagesDir: more.pagesDir, openPage: async (file) => void fake.calls.push(['chrome', file]) })
   servers.push(s)
   const port = await s.listen()
   const origin = `http://127.0.0.1:${port}`
@@ -1377,6 +1377,25 @@ test('Orca に無い Dispatch は null で渡して詰まりの票にし、済�
   assert.ok(showCalls.includes('ctx_gone') && !showCalls.includes('ctx_old'))
   // 見つからない worker の記録は、詰まりの票になる（落ちて端末が消えた worker も取りこぼさない）。
   assert.ok(board(v, a)!.cockpit!.tasks[0]!.worker)
+})
+
+test('Gemini の窓口・担当が渡す ~/orca-pages の HTML は Chrome で開き、その外と .html 以外は開かない（R252）', async () => {
+  const { a, rows } = workspaces()
+  const pages = path.join(tmp('cockpit-home-'), 'orca-pages')
+  mkdirSync(path.join(pages, 'aoba'), { recursive: true })
+  writeFileSync(path.join(pages, 'aoba', 'plan.html'), '<h1>plan</h1>')
+  writeFileSync(path.join(pages, 'aoba', 'note.md'), 'x')
+  writeFileSync(path.join(a, 'page.html'), '<h1>in worktree</h1>')
+  const { s, port, post, calls } = await start(rows, a, undefined, undefined, undefined, undefined, { pagesDir: pages })
+  await listen(port, s.token).until(ready)
+  const page = realpathSync(path.join(pages, 'aoba', 'plan.html'))
+  assert.deepEqual((await post('open', { root: a, path: path.join(pages, 'aoba', 'plan.html') })).body, { opened: true, how: 'Chrome' })
+  assert.deepEqual((await post('open', { root: a, path: `file://${path.join(pages, 'aoba', 'plan.html')}` })).body, { opened: true, how: 'Chrome' })
+  assert.match((await post('open', { root: a, path: path.join(pages, 'aoba', 'note.md') })).body.reason, /\.html だけ/)
+  assert.match((await post('open', { root: a, path: `${pages}/aoba/../../x.html` })).body.reason, /\.\. を含む/)
+  // ワークスペースの中の HTML は今までどおり Orca のエディタで開く。
+  assert.deepEqual((await post('open', { root: a, path: 'page.html' })).body, { opened: true })
+  assert.deepEqual(calls.filter((x) => x[0] === 'chrome' || x[0] === 'open').map((x) => x[0] === 'chrome' ? x : x[0]), [['chrome', page], ['chrome', page], 'open'])
 })
 
 test('開けるのは本線と、その子孫（担当とその worker）の worktree の中のファイルだけ。日本語の名前と path:行 も開く', async () => {

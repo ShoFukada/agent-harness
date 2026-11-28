@@ -102,10 +102,10 @@ export function linkKind(href: string): string {
 }
 export const isWebUrl = (s: string) => /^https?:\/\//.test(s)
 /** 開いた知らせ。開く先は窓の外（Orca のエディタかブラウザ）で窓が変わらないので、押して開いたかを知らせる。label はボタンの語。 */
-export function openedMessage(label: string, href: string): string {
+export function openedMessage(label: string, href: string, how?: string): string {
   const name = label.trim().replace(/を?開く$/, '')
   const what = !name || name === 'リンク' ? linkKind(href) : name
-  return isWebUrl(href) ? `「${what}」をブラウザで開きました` : `「${what}」を Orca で開きました`
+  return isWebUrl(href) ? `「${what}」をブラウザで開きました` : `「${what}」を ${how ?? 'Orca'} で開きました`
 }
 export const linkBtn = (label: string, href: string) =>
   `<button class="lk" type="button" ${isWebUrl(href) ? `data-url="${esc(href)}"` : `data-file="${esc(href)}"`}><i>${esc(linkKind(href))}</i><span>${esc(label)}</span></button>`

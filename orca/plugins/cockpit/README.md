@@ -373,7 +373,8 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 
 - http(s) の URL: 窓は常駐プロセスが macOS の `open` で既定のブラウザに渡す（http と https 以外は断る）。パネルは Orca の `shell.openExternal` で開く
 - ファイル: ワークスペースからの相対パスと、本線の子 worktree 内にある絶対パスだけを開く。`path:行` は窓では `orca file open --line` でその行を開く
-- 一時フォルダ（`/tmp`・`/private/tmp`・`/var/folders`）のファイルを指す「見て」「報告」のカードは、`window/state.ts` の `checks.local_deliverables` に出る。窓口は artifact にして URL で渡し直す
+- 一時フォルダ（`/tmp`・`/private/tmp`・`/var/folders`）のファイルを指す「見て」「報告」のカードは、`window/state.ts` の `checks.local_deliverables` に出る。窓口は artifact にして URL で渡し直す。Gemini（agy）の窓口・担当は `~/orca-pages/<ワークスペース名>/<ファイル名>.html` に置いてそのパスで渡し直す（R252。`~/orca-pages/` は一時フォルダとして拾わない）
+- 成果物が `~/orca-pages/` の下の `.html`（絶対パス・`file://`・`~/`）なら、窓の成果物のボタンで窓のサーバーが `open -a "Google Chrome"` で開く（`window/local-page.ts`）。`~/orca-pages/` を指していても `.html` 以外・`..` を含むもの・シンボリックリンクで外を指すものは断る。ほかの手元のファイルは今までどおり Orca のエディタで開く
 
 </details>
 
