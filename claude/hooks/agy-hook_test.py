@@ -19,6 +19,8 @@ HOOK = os.path.join(HERE, "agy-hook.py")
 DATA = os.path.join(HERE, "testdata", "agy-hook")
 PLUGIN = os.path.join(HERE, "..", "..", "gemini", "plugins", "harness")
 # dev-standards の hooks.json にある draft-format-guard の matcher（Slack・Gmail に送る前の書式の検査）
+# agy は --dangerously-skip-permissions で動くので、ask を確認の画面に出せない（11/28 の試しで force_ask も通った）
+ASK_DENIED = "agy では確認の画面を出せないので止めた。"
 DRAFT_MATCHER = r"^(Write|Bash|mcp__.*[Ss]lack.*__slack_(send_message|send_message_draft|schedule_message)|mcp__.*[Gg]mail.*__create_draft)$"
 
 FAKE = r'''#!/usr/bin/env python3
@@ -164,6 +166,11 @@ class ToolNames(Base):
 class PreToolOutput(Base):
     """Claude の hook の許可の返事を agy の decision に直す。"""
 
+    def assert_ask_denied(self, out, reason):
+        self.assertEqual(out["decision"], "deny")
+        self.assertTrue(out["reason"].startswith(reason + "\n\n" + ASK_DENIED), out["reason"])
+        self.assertIn("深田さんが自分で打つ", out["reason"])
+
     def setUp(self):
         Base.setUp(self)
         self.settings({"PreToolUse": [group("a", "b", matcher="Bash")]})
@@ -182,9 +189,9 @@ class PreToolOutput(Base):
         self.assertIn("uv を使う", out["reason"])
         self.assertIn("危険なコマンド", out["reason"])
 
-    def test_deny_wins_over_ask_and_ask_is_always_asked(self):
+    def test_deny_wins_over_ask_and_ask_is_denied_because_agy_cannot_show_a_prompt(self):
         self.reply("a", {"hookSpecificOutput": {"permissionDecision": "ask", "permissionDecisionReason": "課金"}})
-        self.assertEqual(self.run_hook("PreToolUse", self.inp), {"decision": "force_ask", "reason": "課金"})
+        self.assert_ask_denied(self.run_hook("PreToolUse", self.inp), "課金")
         self.reply("b", {"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": "止める"}})
         self.assertEqual(self.run_hook("PreToolUse", self.inp), {"decision": "deny", "reason": "止める"})
 
@@ -206,7 +213,7 @@ class PreToolOutput(Base):
         self.settings({"PreToolUse": [group("guard", matcher="Write|Edit|MultiEdit"), group("guard", matcher="Bash"),
                                       group("guard", matcher="Bash")]})
         self.reply("guard", {"hookSpecificOutput": {"permissionDecision": "ask", "permissionDecisionReason": "課金"}})
-        self.assertEqual(self.run_hook("PreToolUse", self.inp), {"decision": "force_ask", "reason": "課金"})
+        self.assert_ask_denied(self.run_hook("PreToolUse", self.inp), "課金")
         self.assertEqual(len(self.calls("guard")), 1)
 
     def test_context_and_notices_from_pre_tool_reach_the_next_invocation(self):

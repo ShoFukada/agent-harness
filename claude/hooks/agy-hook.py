@@ -16,8 +16,9 @@ Claude に hook を足せば agy でも同じものが動く。agy 専用の検�
   step_index で見分け、本文の一致では見分けない（同じ文を次のターンで送ったときに落ちる）。止められたら terminate
 - PreToolUse・PostToolUse → 同じ名前。道具名と引数は TOOLS で直し、call_mcp_tool は mcp__<サーバー>__<操作> に開いてから
   matcher を当てる（Slack の送信も外側は call_mcp_tool の 1 つの名前で来るので、開かないと送る文面の書式の検査を通らない）。
-  deny と exit 2 は deny、ask は force_ask（agy の ask は保存済みの「常に許可」を使うので、課金の許可が 2 回目から聞かれない）、
-  updatedInput は agy の引数の名前に戻して overwrite。何も言わない hook だけなら何も出さない（Orca の agy 用の hook と同じ）
+  deny と exit 2 は deny。ask も deny にし、理由に ASK_DENIED を足す（Orca は agy を必ず --dangerously-skip-permissions で
+  起こし、ask も毎回聞くはずの force_ask も確認の画面を出さずに通った。11/28 の試し）。updatedInput は agy の引数の
+  名前に戻して overwrite。何も言わない hook だけなら何も出さない（Orca の agy 用の hook と同じ）
 - PreToolUse の追加の文脈と知らせ、PostToolUse の返事は、その場では agy のモデルに返せないので、控えて次の
   PreInvocation で systemMessage にして返す。道具の後には必ずモデルの呼び出しが来るので、書いた直後の検査の指摘も
   同じターンのうちに届く。前のターンのモデル向けの控えは新しい発言に持ち越さない。失敗した道具（error が空でない）には
@@ -30,8 +31,8 @@ Claude に hook を足せば agy でも同じものが動く。agy 専用の検�
   終わり方（NO_TOOL_CALL）のときだけ呼ぶ
 - 利用者向けの知らせ（systemMessage）は、モデルに見せない user_markdown にして次の PreInvocation で出す
 
-permission_mode は default を渡す。ask は毎回聞く force_ask で返すので、許可の画面が出る前提の hook（llm-call-guard）が
-そのまま動く。transcript_path には agy の会話記録を渡す（Claude の形を前提に読む hook は何も拾わない）。
+permission_mode は default を渡す。llm-call-guard は許可の画面が出ない mode では止める理由を変えるだけなので、どちらでも
+agy では止まる。transcript_path には agy の会話記録を渡す（Claude の形を前提に読む hook は何も拾わない）。
 会話ごとの控えは $AGY_HOOK_STATE（無ければ $TMPDIR/agy-hook）の <会話 id>.json。agy は hook を 1 つずつ順に呼ぶので
 ロックは持たない。動かせなかった hook（timeout・exit 0 と 2 以外）は $TMPDIR/agy-hook.log に 1 行ずつ書く。
 hooks.json の timeout は、そのイベントで最も長い Claude の hook に合わせる（PreToolUse は ja-review pre の 290 秒、
@@ -61,6 +62,8 @@ TOOLS = {
 }
 WRITE_TOOLS = ("write_file", "edit_file")
 STOP_REASONS = ("", "NO_TOOL_CALL")
+ASK_DENIED = ("agy では確認の画面を出せないので止めた。別のコマンドや道具で通そうとせず、深田さんに回数・額・コマンドを示して"
+              "許可を取り、深田さんが自分で打つ。")
 MAX_ORIGINAL = 1024 * 1024
 
 
@@ -454,7 +457,7 @@ def on_pre_tool(inp):
     if o["deny"]:
         return {"decision": "deny", "reason": "\n\n".join(o["deny"])}
     if o["ask"]:
-        return {"decision": "force_ask", "reason": "\n\n".join(o["ask"])}
+        return {"decision": "deny", "reason": "\n\n".join(o["ask"] + [ASK_DENIED])}
     overwrite = agy_overwrite(call, o["updated"]) if o["updated"] is not None else {}
     if overwrite:
         return {"decision": "allow" if o["allow"] else "ask", "overwrite": overwrite}
