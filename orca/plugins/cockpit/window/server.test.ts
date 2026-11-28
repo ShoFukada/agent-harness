@@ -1535,7 +1535,7 @@ test('窓の要対応（t176）: 件数の欄はタブの数と同じ行だけ�
   assert.equal(h0.slice(0, h0.indexOf('一緒に進めている')).match(/class="cardrow /g)?.length, b.d.total)
   // 行の出どころが全部そろっている（帳簿のカード・端末の停止・問い・Dispatch・一緒に作る仕事）。
   const rows: VRow[] = [...todoRows(b), ...b.d.reports.map((r) => ({ ...r, v: b.v }))]
-  assert.deepEqual([...new Set(rows.map((r) => rowSource(r.card.id)))].sort(), ['agent', 'ask', 'card', 'cowork', 'dispatch'])
+  assert.deepEqual([...new Set([...rows, ...b.d.heads].map((r) => rowSource(r.card.id)))].sort(), ['agent', 'ask', 'card', 'cowork', 'dispatch'])
   const pressed: string[] = []
   for (const r of rows) {
     const h = renderWindow(m, { ...newUi(), sel: keyOf(r) }, now, (x) => x)
@@ -1566,6 +1566,13 @@ test('窓の要対応（t176）: 件数の欄はタブの数と同じ行だけ�
       if (last && last.item_id === r.card.id) assert.equal((await post('op', { root: b.root, item_id: r.card.id, item_rev: r.card.rev, type: 'undo', undo_of: last.op_id })).status, 200)
     }
   }
+  // 頼むカード（d21）がある一緒に作る仕事（s2）は、行ではなく要対応の見出しのボタンで担当を開く（R259）。
+  const head = b.d.heads.find((r) => r.card.stream === 's2')!
+  const at = h0.indexOf(`data-act="focus" data-key="${keyOf(head)}"`)
+  assert.ok(at > 0 && at < h0.indexOf('一緒に進めている'), '見出しのボタンは要対応の欄')
+  const fr = await post('focus', { terminalId: head.agent?.terminalId, worktree: head.agent?.worktree })
+  assert.deepEqual([fr.status, fr.body.focused], [200, true])
+  pressed.push('cowork:focus')
   for (const k of ['card:accept', 'card:decide', 'card:talk', 'agent:focus', 'ask:focus', 'ask:dismiss', 'cowork:focus', 'dispatch:talk']) assert.ok(pressed.includes(k), `${k} を押していない: ${pressed.join(' ')}`)
 })
 

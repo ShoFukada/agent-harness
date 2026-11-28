@@ -196,6 +196,8 @@ export type Derived = {
   views: CardView[]
   /** 私の番（届いたも含む）。期限順。必須の欄が欠けたカードは入れない。 */
   queue: Row[]
+  /** 頼むカードがあるので queue に入れず、要対応のその仕事の見出しに担当の様子と開くボタンを出す「共同作業中」の行（R259）。 */
+  heads: Row[]
   /** 「担当と話す」を押して、同じ版のまま私の番に残っているカード。 */
   talking: Row[]
   /** 見てで直しを頼んだカード（件数から外す）。 */
@@ -330,7 +332,7 @@ export const lastParagraph = (text: string | undefined) =>
   (text ?? '').split(/\n\s*\n/).map((p) => p.replace(/\*\*/g, '').replace(/\s*\n\s*/g, ' ').trim()).filter(Boolean).at(-1)
 
 /**
- * 一緒に作る仕事（cowork）を、カードの有無に関わらず要対応に 1 行で出す（R128・R145）。開くボタンは担当のチャットか端末を前に出す（詰まりの行と同じ経路）。
+ * 一緒に作る仕事（cowork）を、カードの有無に関わらず 1 行作る（R128・R145）。頼むカードがある仕事の返事待ちでない行は、derive が要対応の見出しに回す（R259）。開くボタンは担当のチャットか端末を前に出す（詰まりの行と同じ経路）。
  * 深田さんの返事待ちは同じ行で示す: 担当がターンを終えて開いたまま（orca agent list の state が done）、担当の問いの詰まり（AskUserQuestion・許可の確認）、
  * または仕事の話し中のカード・協議中のカード（担当が作業に戻っていないもの）。問いの詰まりと話し中のカード（kind talk）はこの行に寄せて 2 行にしない。
  * 協議中のほかの種類のカードは承認などの返答が要るので残す。利用枠・ログイン切れ・エラーで止まった担当は、その詰まりの行を残し、返事待ちにしない。
@@ -501,7 +503,11 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const found = [...mine, ...[...fromAgents, ...questionRows(c, root, facts, now)].filter((r) => !dismissed.has(`${r.card.id}@${r.card.rev}`)), ...fromDispatch]
   const cowork = coworkRows(c, root, facts, found, rows)
   const idle = idleTasks(c, tasks, facts, opts.taskSeen, now)
-  const queue = [...found.filter((r) => !cowork.absorbed.has(r)), ...cowork.rows].sort(byUrgency)
+  const rest = found.filter((r) => !cowork.absorbed.has(r))
+  // 深田さんに頼むカードがある仕事の「共同作業中」の行は、要対応のその仕事の見出しにまとめ、一緒に進めているに同じ仕事を重ねない（R259）。
+  const asking = new Set(rest.filter(countedRow).map((r) => r.card.stream))
+  const heads = cowork.rows.filter((r) => !r.agent?.ask && asking.has(r.card.stream))
+  const queue = [...rest, ...cowork.rows.filter((r) => !heads.includes(r))].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
   for (const r of queue) counts[r.card.kind]++
   const total = queue.filter(countedRow).length
@@ -515,7 +521,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const reqGaps = requests.filter((r) => r.missing.length).map((r): Gap => ({ kind: 'request', id: r.req.id, title: r.req.title, missing: r.missing, since: r.req.at }))
 
   return {
-    views, queue, counts, total, tasks, closed, settled, incomplete, unsorted, requests, idle, leftover, stale,
+    views, queue, heads, counts, total, tasks, closed, settled, incomplete, unsorted, requests, idle, leftover, stale,
     talking: queue.filter((r) => r.talking),
     fixing: rows.filter((r) => r.status === 'fixing').sort(byUrgency),
     waiting: rows.filter((r) => r.status === 'waiting').sort((a, b) => timeOf(a.card.awaiting?.since) - timeOf(b.card.awaiting?.since)),

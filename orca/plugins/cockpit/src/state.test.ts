@@ -687,7 +687,7 @@ test('一緒に作る仕事は、カードの有無に関わらず要対応に�
   const q: QuestionFact = { id: 'q1', at: NOW - 40 * 60_000, to: 'owner', text: 'A と B のどちらですか', line: 'A と B のどちらですか', stream: 's2', byOwner: false }
   const qd = derive(term, w.log, [], '/a', { workers: [agent({ terminalId: 'term_aws', state: 'working' })], owners: [], questions: [q] }, NOW)
   assert.deepEqual(qd.queue.filter((x) => x.card.id.startsWith('#ask:')).map((x) => x.card.id), ['#ask:q1'])
-  assert.equal(row(qd)[0]!.agent?.ask, undefined)
+  assert.deepEqual([row(qd), qd.heads.map((x) => [x.card.id, x.agent?.ask])], [[], [['#cowork:s2', undefined]]], '問いの詰まりがある間は見出しに回す（R259）')
 
   // 任せる・見張るの担当はターンを終えても出さない。担当の様子を読めない場所（パネル・hook）でも出さない。
   w.cockpit.streams.find((x) => x.id === 's2')!.form = 'delegate'
@@ -696,6 +696,39 @@ test('一緒に作る仕事は、カードの有無に関わらず要対応に�
   assert.deepEqual(row(derive(w.cockpit, w.log, [], '/a', { workers: [] }, NOW)), [])
   assert.deepEqual(coworkSessions(w.cockpit), ['sess-aws'])
   assert.equal(lastParagraph('a\n\n  \n\nb\nc\n'), 'b c')
+})
+
+test('一緒に作る仕事に深田さんに頼むカードがある間は、「共同作業中」の行を要対応の見出しに回し、一緒に進めているに同じ仕事を重ねない。頼むカードが無い仕事と返事待ちの行は今までどおり行で出す（R259・t183）', () => {
+  const w = ws(0)
+  w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  // 相談（c4）は頼むカードに数えないので外し、判断の d21 だけを残す。
+  w.cockpit.cards = w.cockpit.cards.filter((x) => x.id !== 'c4')
+  const facts = (state: AgentRow['state'], last?: string): OrcaFacts => ({ workers: [], owners: [{ session: 'sess-aws', kind: 'chat', state, updatedAt: NOW - 60_000, ...(last && { last }) }] })
+  const s2 = (d: ReturnType<typeof derive>) => d.queue.filter((r) => r.card.stream === 's2').map((r) => r.card.id)
+  // 判断のカード d21 がある間は、要対応の行は d21 だけにし、担当の様子は見出しに回す。
+  const asking = derive(w.cockpit, w.log, [], '/a', facts('working'), NOW)
+  assert.deepEqual(s2(asking), ['d21'])
+  assert.deepEqual(asking.heads.map((r) => [r.card.id, r.card.title, r.agent?.chat, r.agent?.session]), [['#cowork:s2', '共同作業中（担当は作業中）', true, 'sess-aws']])
+  // 頼むカードが無ければ、一緒に進めているの行のまま。
+  const calm = derive({ ...w.cockpit, cards: w.cockpit.cards.filter((x) => x.id !== 'd21') }, w.log, [], '/a', facts('working'), NOW)
+  assert.deepEqual([s2(calm), calm.heads], [['#cowork:s2'], []])
+  // 担当が返事を待っている行（R128）は、頼むカードがあっても要対応の行のまま出す。
+  const reply = derive(w.cockpit, w.log, [], '/a', facts('done', 'どちらにしますか？'), NOW)
+  assert.deepEqual([s2(reply).sort(), reply.heads], [['#cowork:s2', 'd21'], []])
+})
+
+test('orca agent launch で立てたチャットの担当（terminal に orca_session_id:… と書いた行）は、そのチャットの session として読み、担当の様子を「状態不明」にしない（t183）', () => {
+  const w = ws(0)
+  w.cockpit.streams.find((x) => x.id === 's2')!.form = 'cowork'
+  w.cockpit.cards = w.cockpit.cards.filter((x) => x.stream !== 's2')
+  // resi-dra の o4 と同じ形の行。
+  const o4 = { id: 'o4', title: '今後の展開のお見積り（agy）', stream: 's2', agent: 'antigravity', terminal: 'orca_session_id:sess-agy', state: 'open' }
+  const c = parseCockpit(JSON.stringify({ ...w.cockpit, owners: [o4, ...w.cockpit.owners!.filter((o) => o.stream !== 's2')] }))
+  assert.deepEqual(c.owners!.find((o) => o.id === 'o4'), { id: 'o4', title: '今後の展開のお見積り（agy）', stream: 's2', agent: 'antigravity', session: 'sess-agy', state: 'open' })
+  for (const [state, word] of [['working', '作業中'], ['waiting', '入力待ち']] as const) {
+    const r = derive(c, w.log, [], '/a', { workers: [], owners: [{ session: 'sess-agy', kind: 'chat', state, updatedAt: NOW - 60_000 }] }, NOW).queue.find((x) => x.card.id === '#cowork:s2')!
+    assert.deepEqual([r.card.title, r.agent?.chat, r.agent?.session], [`共同作業中（担当は${word}）`, true, 'sess-agy'])
+  }
 })
 
 test('一緒に作る仕事の担当が自分の Run の worker を待っているあいだは、ターンを終えても返事待ちにしない。担当の問いの停止は返事待ちのまま、worker が報告したら返事待ちに戻す（t153・R128）', () => {
@@ -708,7 +741,8 @@ test('一緒に作る仕事の担当が自分の Run の worker を待ってい�
     workers, owners: [{ session: 'sess-aws', kind: 'chat', state, worktree: '/ws/aoba-aws', updatedAt: NOW - 60_000, last: text }],
     dispatches: { ctx_owner: { state: 'ready', terminal: 'structworker_aws', session: 'sess-aws' } }, ...(coordinating && { coordinating })
   })
-  const row = (d: ReturnType<typeof derive>) => d.queue.find((r) => r.card.id === '#cowork:s2')!
+  // 頼むカード（r2）がある間は見出しに回る（R259）ので、見出しも合わせて引く。
+  const row = (d: ReturnType<typeof derive>) => [...d.queue, ...d.heads].find((r) => r.card.id === '#cowork:s2')!
   const job = (d: ReturnType<typeof derive>) => d.jobs.find((j) => j.id === 's2')!
 
   const busy = derive(w.cockpit, w.log, [], '/a', facts('done', { o1: ['ctx_worker'] }), NOW)
@@ -780,7 +814,7 @@ test('hook の CLI（orcaFacts）も、作業中でない一緒に作る担当�
     orcaFacts('/ws', w.cockpit, async () => [], async () => [], async () => null, undefined, undefined, undefined, async () => [{ session: 'sess-aws', kind: 'chat' as const, state }], r).then((x) => x.facts!)
   const facts = await cli('done')
   assert.deepEqual([facts.coordinating, read], [{ o1: ['ctx_w'] }, ['run_main', 'run_owner']])
-  const title = (f: OrcaFacts) => derive(w.cockpit, w.log, [], '/a', f, NOW).queue.find((r) => r.card.id === '#cowork:s2')!.card.title
+  const title = (f: OrcaFacts) => { const d = derive(w.cockpit, w.log, [], '/a', f, NOW); return [...d.queue, ...d.heads].find((r) => r.card.id === '#cowork:s2')!.card.title }
   assert.equal(title(facts), '担当「AWS 構成案」が返事を待っている', '最後の返事を読めなければ返事待ちに倒す')
   // worker を待つ担当は最後の返事を読み、報告で終わっていれば worker 待ち、問いで終わっていれば窓と同じく返事待ちにする。
   const lasts: string[] = []

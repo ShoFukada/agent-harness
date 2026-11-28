@@ -1,7 +1,7 @@
 // Orca の worktree ps・terminal list・orchestration worker-show から、ワークスペースのメインと worker と、worker の記録の様子を決める。
 // 窓の常駐のプロセスと CLI（state.ts）が使う。
 import path from 'node:path'
-import { busyDispatch, type Cockpit } from '../src/model.ts'
+import { busyDispatch, CHAT_HANDLE, type Cockpit } from '../src/model.ts'
 import type { IdleOwner } from '../src/state.ts'
 import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from '../src/protocol.ts'
 
@@ -35,8 +35,7 @@ export type InboxMessage = {
   id?: string; type?: string; payload?: string | null; created_at?: string
   from_handle?: string | null; to_handle?: string | null; thread_id?: string | null; subject?: string | null; body?: string | null
 }
-/** consult --card が Orca のチャット画面で立てた相談の handle の頭（端末の handle は term_…）。 */
-export const CHAT_HANDLE = 'orca_session_id:'
+export { CHAT_HANDLE }
 
 /** 協議の記録（talk の op）に残ったチャットの相談の handle。 */
 export const chatHandles = (ops: { type: string; terminal?: string | null }[]) =>

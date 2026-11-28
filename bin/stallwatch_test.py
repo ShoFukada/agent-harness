@@ -418,6 +418,10 @@ cat "$f"
             json.dump({"worktrees": rows}, fh)
         self.run_watch()
         self.assertEqual([a["text"] for a in self.alerts().values()], ["「ws」の worker「by-main」（タスク t0）が止まったあと、メインが 20 分動いていない"])
+        # orca agent launch のチャットの handle を terminal に書いた担当（resi-dra の o4 の形）が立てた worker も、担当が受けるので知らせない（t183）。
+        self.ledger(["by-main", ("by-lead", "s-lead")], owners=[{"id": "o1", "terminal": "orca_session_id:s-lead", "state": "open"}])
+        self.run_watch()
+        self.assertEqual([a["text"] for a in self.alerts().values()], ["「ws」の worker「by-main」（タスク t0）が止まったあと、メインが 20 分動いていない"])
 
     def test_the_log_has_only_what_appeared_and_cleared(self):
         self.ledger(["w"])

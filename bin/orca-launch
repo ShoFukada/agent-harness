@@ -163,11 +163,24 @@ def cockpit_root(given):
     return os.path.dirname(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
 
 
+CHAT_HANDLE = "orca_session_id:"
+
+
+def as_written(o):
+    """担当の行を書く道具が受ける形にする。orca agent launch --surface chat の handle（orca_session_id:<id>）を terminal に書いた前の行は、
+    窓の読み込み（model.ts の parseCockpit）と同じく session に読み替える（書く道具はこの terminal を断るため。t183）。"""
+    t = o.get("terminal")
+    if isinstance(t, str) and t.startswith(CHAT_HANDLE) and not o.get("session"):
+        return {**{k: v for k, v in o.items() if k != "terminal"}, "session": t[len(CHAT_HANDLE):]}
+    return o
+
+
 def owner_worktree(c, stream):
     """仕事の担当の worktree の id。担当がいない・Orca に見つからなければ None。"""
     o = next((x for x in c.get("owners") or [] if x.get("stream") == stream and x.get("state") != "done"), None)
     if not o:
         return None
+    o = as_written(o)
     if o.get("session"):
         agents = (orca("agent", "list").get("result") or {}).get("agents") or []
         hit = next((x for x in agents if x.get("orcaSessionId") == o["session"]), None)
@@ -365,7 +378,7 @@ def start_lead(a):
            **where, "worker": {"run_id": r["runId"], "task_id": r["taskId"]}, "state": "open"}
     out = {"runId": r["runId"], "taskId": r["taskId"], "dispatchId": r.get("dispatchId"), "owner": row}
     if have:
-        out["replaced"] = {**have, "state": "done"}
+        out["replaced"] = {**as_written(have), "state": "done"}
     if form != s.get("form"):
         # 書く道具は仕事の行を丸ごと置き換えるので、今の行に形だけを変えたものを出す。
         out["stream"] = {**s, "form": form}

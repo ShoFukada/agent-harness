@@ -168,7 +168,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     const boards = boardsOf(feed.views, now)
     rows = new Map()
     for (const b of boards)
-      for (const k of ['queue', 'fixing', 'waiting', 'reports', 'settled'] as const) for (const r of b.d[k]) rows.set(keyOf(r), { ...r, v: b.v })
+      for (const k of ['queue', 'heads', 'fixing', 'waiting', 'reports', 'settled'] as const) for (const r of b.d[k]) rows.set(keyOf(r), { ...r, v: b.v })
     const shown = ui.filter ? boards.filter((b) => b.root === ui.filter) : boards
     order = shown.flatMap((b) => b.d.queue.map((r) => ({ ...r, v: b.v }))).sort(byUrgency).map(keyOf)
     // 操縦席はあるが読めない案件（版 1 のまま・壊れた JSON）は、黙って外さず「見ていない」に理由つきで出す。

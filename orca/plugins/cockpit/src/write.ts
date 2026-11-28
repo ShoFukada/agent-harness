@@ -1,7 +1,7 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  ASK_ID, badFields, busyDispatch, CARD_SHAPE, returnId, tidyOpsOf, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, LEGACY_TASK_KEYS, missingFields, overlay, parseCockpit, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_MARKS, TASK_SHAPE, timeOf, unmappedElements, upgradeCard, upgradeTask, WATCH_SHAPE, WORKER_SHAPE,
+  ASK_ID, badFields, CHAT_HANDLE, busyDispatch, CARD_SHAPE, returnId, tidyOpsOf, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, LEGACY_TASK_KEYS, missingFields, overlay, parseCockpit, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_MARKS, TASK_SHAPE, timeOf, unmappedElements, upgradeCard, upgradeTask, WATCH_SHAPE, WORKER_SHAPE,
   type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskMark, type TaskWorker, type UserLog, type Utterance
 } from './model.ts'
 import type { DispatchFact } from './protocol.ts'
@@ -598,6 +598,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
     if (!has(streams, o.stream)) errors.push(`担当 ${o.id}: 仕事 ${o.stream} が無い`)
     // 空の session は「チャットの担当だが session が分からない」と区別できず、窓が Dispatch から引き直す道も塞ぐ。
     if (o.session === '') errors.push(`担当 ${o.id}: session が空。分からなければ session の欄ごと書かない`)
+    // orca agent launch --surface chat が返す handle はチャットのもので、terminal（端末の term_…）ではない。読み込みは session として読むが、帳簿は正しい欄で書かせる。
+    if (typeof o.terminal === 'string' && o.terminal.startsWith(CHAT_HANDLE)) errors.push(`担当 ${o.id}: terminal の ${o.terminal} はチャットの handle。terminal を書かず、session に ${o.terminal.slice(CHAT_HANDLE.length)} を書く`)
     // チャットか端末の居場所が無い担当は、窓の「共同作業中」の行も「担当と協議」も開けない。orca-launch --lead が session を出す。
     if (o.state !== 'done' && !o.session && !o.terminal) errors.push(`担当 ${o.id}: session（チャットの担当）か terminal（端末の担当）が無い。orca-launch --lead が出した担当の行をそのまま書く`)
     if (o.worker !== undefined && !(WORKER_SHAPE(o.worker) && typeof o.worker.run_id === 'string')) errors.push(`担当 ${o.id}: worker は { run_id, task_id }（orca-launch --lead の受け取り）`)

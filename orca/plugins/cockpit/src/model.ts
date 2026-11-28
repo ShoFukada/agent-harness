@@ -506,6 +506,8 @@ export const ANSWER_VIA: AnswerVia[] = ['reply', 'dispatch', 'keys']
 export const isAnswerItem = (id: string) => (id.startsWith('#ask:') && !isAskItem(id)) || id.startsWith('#agent:') || id.startsWith(COWORK_ID)
 /** 一緒に作る仕事の行の id の頭（R145）。帳簿のカードではなく、担当のチャットの Orca の様子から作る（state.ts の coworkRows）。 */
 export const COWORK_ID = '#cowork:'
+/** Orca のチャットのエージェントの handle の頭（orca agent launch --surface chat・consult --card が返す。端末の handle は term_…）。 */
+export const CHAT_HANDLE = 'orca_session_id:'
 /** Orca から作った詰まりの行の id（帳簿に無い）。 */
 export const isSynthetic = (id: string) => id.startsWith('#agent:') || id.startsWith('#dispatch:') || id.startsWith('#ask:')
 /** 「済ませた」で隠せる詰まり。版（止まった時刻）が取れないもの（0）は、次の停止と見分けられないので隠させない。 */
@@ -808,6 +810,13 @@ export function parseCockpit(text: string, problems: string[] = []): Cockpit {
   for (const key of ['owners', 'routes', 'requests'] as const)
     if (v[key] !== undefined && (!Array.isArray(v[key]) || (v[key] as unknown[]).some((x) => !isObj(x) || typeof x.id !== 'string')))
       throw new Error(`cockpit.json の ${key} の形が不正です`)
+  // orca agent launch --surface chat が返すチャットの handle（orca_session_id:<セッション>）を terminal に書いた担当は、そのチャットの session として読む
+  // （端末の一覧に無く session も無いので、窓が様子を引けず「状態不明」と出ていた。resi-dra の o4、2026-11-28）。書く道具は新しく書く分を断る。
+  for (const o of (v.owners ?? []) as Record<string, unknown>[])
+    if (typeof o.terminal === 'string' && o.terminal.startsWith(CHAT_HANDLE) && !o.session) {
+      o.session = o.terminal.slice(CHAT_HANDLE.length)
+      delete o.terminal
+    }
   for (const r of (v.requests ?? []) as Record<string, unknown>[]) {
     const bad = Object.keys(REQUEST_SHAPE).filter((k) => r[k] !== undefined && !REQUEST_SHAPE[k]!(r[k]))
     for (const k of bad) delete r[k]

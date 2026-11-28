@@ -375,6 +375,8 @@ def ledger_workers(root, state):
             d = dispatch(task_of(o)) if task_of(o) else {}
             leads |= {o.get("session"), o.get("terminal"), d.get("assignee_orca_session_id"), d.get("assignee_handle"), d.get("assignee_pane_key")}
     leads.discard(None)
+    # orca agent launch のチャットの handle（orca_session_id:<id>）を terminal に書いた前の担当は、Dispatch の session と照らせるよう id も入れる（t183）。
+    leads |= {x[len("orca_session_id:"):] for x in leads if isinstance(x, str) and x.startswith("orca_session_id:")}
     out = {}
     for t in c.get("tasks") or []:
         if not task_of(t) or t.get("state") == "ok":

@@ -372,6 +372,9 @@ test('main: 窓口の Run・種類・端末を渡した欄だけ置き換え、�
   // 担当の session の空文字は断る（分からなければ欄ごと書かない）。
   const o = { id: 'o9', title: '担当', stream: 's1' }
   assert.match(applyChange(c, { owners: [{ ...o, session: '' }] }).errors.join(), /担当 o9: session が空/)
+  // orca agent launch --surface chat の handle を terminal に書かせず、session に書く値を示す（t183）。
+  assert.match(applyChange(c, { owners: [{ ...o, terminal: 'orca_session_id:a436' }] }).errors.join(), /担当 o9: terminal の orca_session_id:a436 はチャットの handle。terminal を書かず、session に a436 を書く/)
+  assert.match(applyChange(c, { owners: [{ ...o, terminal: 3 as never }] }).errors.join(), /担当 o9: stream・agent・session・terminal は文字列/, '文字列でない terminal でも検査の結果を返す')
   // 開いた担当は居場所（session か terminal）が要る。片付けた担当の行は居場所なしで書ける（t159）。
   assert.match(applyChange(c, { owners: [{ ...o, stream: 's3' }] }).errors.join(), /担当 o9: session（チャットの担当）か terminal/)
   assert.deepEqual(applyChange(c, { owners: [{ ...o, state: 'done' }] }).errors, [])

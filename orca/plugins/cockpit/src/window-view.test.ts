@@ -667,6 +667,19 @@ test('追加 27・29: 一緒に作る仕事は要対応に 1 行。返事待ち�
   assert.ok(asked.indexOf('data-sel="/ws/aoba##cowork:s2"') < asked.indexOf('一緒に進めている') || !asked.includes('一緒に進めている'), '返事待ちの行は要対応の欄')
 })
 
+test('一緒に作る仕事に頼むカードがある間は、要対応の仕事の見出しに担当の様子とチャットを開くボタンを出し、一緒に進めているに同じ仕事を出さない（R259・t183）', () => {
+  const m = aoba((v) => {
+    v.cockpit!.streams.find((x) => x.id === 's2')!.form = 'cowork'
+    v.owners = [{ session: 'sess-aws', kind: 'chat', state: 'working', worktree: '/ws/aoba-aws', updatedAt: NOW - 60_000 }]
+  })
+  const h = page(m)
+  assert.ok(!h.includes('data-sel="/ws/aoba##cowork:s2"'), '共同作業中の行を別に出さない')
+  const head = h.match(/<div class="gh f-cowork">[\s\S]*?<\/div>/)?.[0] ?? ''
+  assert.match(text(head), /AWS 構成案 .*共同作業中（担当は作業中）/)
+  assert.match(head, /data-act="focus" data-key="\/ws\/aoba##cowork:s2">担当のチャットを開く<\/button>/)
+  assert.ok(h.indexOf('<div class="gh f-cowork">') < h.indexOf('data-sel="/ws/aoba#d21"'), '見出しは要対応の d21 の上')
+})
+
 const talk = (v: CockpitView, id: string) =>
   v.log.ops.push({ op_id: 901, at: '2026-11-21T00:00:00.000Z', item_id: id, item_rev: v.cockpit!.cards.find((x) => x.id === id)!.rev, type: 'talk' })
 

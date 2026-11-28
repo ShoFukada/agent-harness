@@ -354,6 +354,13 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout)["stream"], {"id": "s1", "title": "操縦席の窓", "form": "cowork"})
         r = self.run_lead(os.path.join(self.tmp, "root"), "--replace", "o9")
         self.assertIn("開いた担当 o9 がいない", r.stderr)
+        # orca agent launch のチャットの handle を terminal に書いた前の担当は、session に読み替えて片付ける行を出す（書く道具が terminal の形を断るため。t183）。
+        shutil.rmtree(os.path.join(self.tmp, "root"))
+        os.remove(self.log)
+        root = self.cockpit([{"id": "o4", "title": "窓", "stream": "s1", "terminal": "orca_session_id:sess_agy", "state": "open"}], form="cowork")
+        r = self.run_lead(root, "--replace", "o4")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["replaced"], {"id": "o4", "title": "窓", "stream": "s1", "session": "sess_agy", "state": "done"})
 
     def test_main_with_a_cockpit_binds_workers_to_tasks(self):
         # 操縦席のある窓口からの --title だけの起動は断る。担当（--run）と、操縦席の無い場所からは今までどおり。

@@ -135,7 +135,7 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
 const FORM_ORDER = FORMS
 const formChip = (f: StreamForm | undefined) => (f ? `<span class="fm f-${f}">${esc(FORM_LABEL[f])}</span>` : '')
 
-function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
+function groupHead(b: Board, sid: string, xs: VRow[], closed = false, mine = false): string {
   const s = b.v.cockpit!.streams.find((x) => x.id === sid)
   const n = closed ? `対応済み ${xs.length} 件` : `${xs.length} 件`
   if (sid === ORCA) return `<div class="gh"><b>停止中のエージェント</b><span class="mut">${n}・Orca より</span></div>`
@@ -145,19 +145,26 @@ function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
   // 工程は仕事の名前の横に置き、右の列は行の期限・経過だけにする（右に工程と期限が混ざって右端がずれる。初見 2 巡目 2）。
   // 担当の名前が仕事の名前と同じなら出さない（初見 2 巡目 3）。
   const prog = phaseBar(ts, s.form, j?.state)
-  return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b>${prog ? `<span class="prog">${prog}</span>` : ''}<span class="mut">${n}</span>${j?.owner && j.owner.title !== s.title ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}</div>`
+  return `<div class="gh f-${s.form ?? 'none'}">${formChip(s.form)}<b>${esc(s.title)}</b>${prog ? `<span class="prog">${prog}</span>` : ''}<span class="mut">${n}</span>${j?.owner && j.owner.title !== s.title ? `<span class="mut">担当: ${esc(j.owner.title)}</span>` : ''}${mine ? coworkHead(b, sid) : ''}</div>`
+}
+
+/** 頼むカードがある一緒に作る仕事は、見出しに担当の様子とチャット（端末）へ移るボタンを出す（一緒に進めているに同じ仕事を重ねない。R259）。 */
+function coworkHead(b: Board, sid: string): string {
+  const r = b.d.heads.find((x) => x.card.stream === sid)
+  if (!r) return ''
+  return `<span class="mut">${esc(r.card.title)}</span><button class="btn quiet" type="button" data-act="focus" data-key="${esc(keyOf(r))}">担当の${r.agent?.chat ? 'チャット' : '端末'}を開く</button>`
 }
 
 function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
   const sec = todoSections(b)
   const reps = vrows(b, b.d.reports)
-  const groups = (gs: [string, VRow[]][]) => gs.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now, false, ui.since?.rows[keyOf(r)])).join('')}</div></section>`).join('')
+  const groups = (gs: [string, VRow[]][], mine = false) => gs.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs, false, mine)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now, false, ui.since?.rows[keyOf(r)])).join('')}</div></section>`).join('')
   const mine = flat(sec.mine)
   const together = flat(sec.together)
   const fixing = flat(sec.fixing)
   const head = (label: string, n: number) => `<h2 class="tsec">${esc(label)}<span class="mut">${n} 件</span></h2>`
   const list = mine.length
-    ? `<section class="tblock">${together.length || fixing.length || reps.length ? head('要対応', mine.length) : ''}${groups(sec.mine)}</section>`
+    ? `<section class="tblock">${together.length || fixing.length || reps.length ? head('要対応', mine.length) : ''}${groups(sec.mine, true)}</section>`
     : '<div class="calm"><b>要対応 0 件</b></div>'
   const tg = together.length ? `<section class="tblock">${head('一緒に進めている', together.length)}${groups(sec.together)}</section>` : ''
   const fixOpen = fixingOpen(sec, ui)
