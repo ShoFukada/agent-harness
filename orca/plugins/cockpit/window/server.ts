@@ -185,8 +185,9 @@ export function orcaCli(bin = 'orca'): Orca {
       ),
     runTasks: async (runId) => ((await run(['orchestration', 'task-list', '--run', runId])).tasks as RunTask[]).map(({ id, status, dispatchId }) => ({ id, status, dispatchId })),
     taskLink: async (task) => {
-      const d = (await run(['orchestration', 'dispatch-show', '--task', task])).dispatch as { id?: string; follow_up_of_dispatch_id?: string | null } | null
-      return { dispatch: d?.id ?? null, followUpOf: d?.follow_up_of_dispatch_id ?? null }
+      const d = (await run(['orchestration', 'dispatch-show', '--task', task])).dispatch as { id?: string; follow_up_of_dispatch_id?: string | null; retry_of_dispatch_id?: string | null } | null
+      // やり直し（retry_of）も続きとしてたどる。落ちた元の Dispatch を今の Dispatch と読むと、動いているやり直しを見落とす。
+      return { dispatch: d?.id ?? null, followUpOf: d?.follow_up_of_dispatch_id ?? d?.retry_of_dispatch_id ?? null }
     },
     runs: async (cursor) => {
       const r = await run(['orchestration', 'run-list', '--full', '--limit', '100', ...(cursor ? ['--cursor', cursor] : [])])

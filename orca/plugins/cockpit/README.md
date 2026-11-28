@@ -238,6 +238,7 @@ bin/cockpit-write init <root> < cockpit.json      # 操縦席を初めて作る�
   - `wait.met[].by` の発言（`u-…`）・知らせ（`n-…`）・操作（`op:…`）は記録に在るものだけ。`after` は在るタスクだけで、自分は指せない
   - 済のタスクに `wait` と新しい `next` は書けない（残りの確認は別のタスク）
   - `wait` の文が日付・期間だけ（`12月`・`12/4`・`来週`・`月末まで` など）なら断る。日付で確かめるなら `kind: date` の `on` と `what` に書く
+  - 済んだ仕事にworker・担当を残さない（R240・t168）: 新しく `ok` にするタスクのworker（変更の行と元の行の両方）、済にせずに `worker` を外す・替えるタスクと担当の元の受け取り、新しく済にするタスクの仕事の担当（変更の行と元の行の受け取り）の今のDispatchを、ロックの外でOrcaから読む（`window/write.ts` の `closeChecks`。窓と同じくRunのTaskの続き（follow_up_of と、やり直しの retry_of）をたどる）。workerのDispatchが動いている（`src/model.ts` の `busyDispatch`）なら断る。その書き込みで仕事のタスクが全部済になるなら、開いた担当と、doneでもDispatchが動いているか端末が残っている（worker_done のあと `worker-release` していない）担当を断り、`worker-release`（worker_done を返していなければ `worker-stop`）の手順を返す。終わったworkerの `worker` 欄は履歴として残したまま済にできる。検査の結果は受け取りごとに持つので、ロックの外で読んだあとに受け取りが替わっていれば「確かめていない」で断る。Orcaを読めなければ済にする変更を断る（fail closed）
   - 待つタスク（`wait` のある `open`）の `wait.who`・`wait.what`・`wait.why`・`next` を `~/.claude/hooks/defer-guard.py --text`（`COCKPIT_DEFER_GUARD` で差し替え）にかけ、都合での先送りの言い回しが当たれば断る。元から待っていた行の同じ文は見ない。言い回しの判定は defer-guard.py だけが持つ。無い・起動できない・期限切れ・0 と 1 以外で終わったときは、その文を含む変更を断る（fail closed）
 - 事実に追いつかない書き込み（R204。`facts_since` のある帳簿だけ）:
   - 状況の文: 書いたあとの帳簿で、仕事の元の事実（`streamBasis`）が控え（`status_basis`）と違う仕事は、同じ書き込みで行を渡して `status` を書き直す。前に控えがあれば、前と同じ文は断る。控えは道具が押す

@@ -125,7 +125,7 @@ a{color:var(--focus)}
 <li id="K1"><span class="id">K1</span>どのファイルも書き手は1種類です。帳簿は窓口だけが <code>cockpit-write</code> で、操作の記録は窓だけ、発言と知らせの記録はhookだけ、窓の上の帯はstallwatchだけが書きます（図1・図2）。</li>
 <li id="K2"><span class="id">K2</span>タスクの状態は誰も手で書きません。手で書くのは「済んでいない（open）」と「完了（ok）」だけで、残りは <code>state.ts</code> の <code>judgeTasks</code> が10の判定を上から順に照らして、事実から決めます（図8）。</li>
 <li id="K3"><span class="id">K3</span>どの流れも「記録に残す → 1行の知らせで起こす → 窓口が記録を読んで帳簿に書く」という同じ形です。知らせが失われても、hookが記録から名指しして拾い直します（図9〜図12）。</li>
-<li id="K4"><span class="id">K4</span><code>cockpit-write</code> が断る規則は24の束で、受付・タスクの書き込み・操作の反映・文面・返しの反映の5か所で書き込みを止めます。通らなければ何も書かずに理由を返します（図14）。</li>
+<li id="K4"><span class="id">K4</span><code>cockpit-write</code> が断る規則は25の束で、受付・タスクの書き込み・操作の反映・文面・返しの反映の5か所で書き込みを止めます。通らなければ何も書かずに理由を返します（図14）。</li>
 </ul>
 
 <h2 id="s3"><span class="id">3</span>全体像</h2>
@@ -698,7 +698,7 @@ a{color:var(--focus)}
 <title>図14書き込みの場面と、かかる規則</title>
 <rect class="bg" width="1040" height="368"/>
 <rect class="box" x="16" y="24" width="336" height="56" rx="6"/><text class="h" x="32" y="48">受付と仕分け（A4）</text><text class="s" x="32" y="68">W6・W7・W8・W14・W21</text>
-<rect class="box" x="16" y="92" width="336" height="56" rx="6"/><text class="h" x="32" y="116">タスクを書く・済にする（A5・A8）</text><text class="s" x="32" y="136">W9〜W18・W24</text>
+<rect class="box" x="16" y="92" width="336" height="56" rx="6"/><text class="h" x="32" y="116">タスクを書く・済にする（A5・A8）</text><text class="s" x="32" y="136">W9〜W18・W24・W25</text>
 <rect class="box" x="16" y="160" width="336" height="56" rx="6"/><text class="h" x="32" y="184">操作を反映する（B6）</text><text class="s" x="32" y="204">W2・W16〜W21</text>
 <rect class="box" x="16" y="228" width="336" height="56" rx="6"/><text class="h" x="32" y="252">送信前・確認の文面を書く</text><text class="s" x="32" y="272">W22</text>
 <rect class="box" x="16" y="296" width="336" height="56" rx="6"/><text class="h" x="32" y="320">相談と質問の返しを反映する（C10）</text><text class="s" x="32" y="340">W7・W23</text>
@@ -713,7 +713,7 @@ a{color:var(--focus)}
 <line class="ar" x1="641" y1="132" x2="703" y2="132" marker-end="url(#dg-tip)"/>
 <line class="ew" x1="641" y1="252" x2="703" y2="252" marker-end="url(#dg-tip)"/>
 </svg></div>
-<figcaption><span class="id">図14</span>書き込みの場面と、かかる規則。左は5章の流れのどこで書くか、中の青は書く道具、右は結果。番号は下の表のW1〜W24。</figcaption>
+<figcaption><span class="id">図14</span>書き込みの場面と、かかる規則。左は5章の流れのどこで書くか、中の青は書く道具、右は結果。番号は下の表のW1〜W25。</figcaption>
 </figure>
 <p class="answer"><code>cockpit-write</code> は全部の検査を通った変更だけを書き、1つでも通らなければ理由を並べて返し、何も書きません。</p>
 <div class="sc"><table class="wide">
@@ -743,12 +743,13 @@ a{color:var(--focus)}
 <tr id="W22"><td class="n">W22</td><td>送る文面に <code>draft.format</code> が無い・宛先と合わない・<code>draft-format-lint</code> に違反する（検査できなければ断る）</td><td>カードを書くとき</td><td>「draft.formatが無い。slack・teams・mailのどれかで書く」</td><td>R161・R162</td></tr>
 <tr id="W23"><td class="n">W23</td><td>質問の返しの印（<code>asks</code>）の形が違う。<code>from_returns</code>・<code>held_returns</code> は &lt;質問id&gt;-&lt;数&gt; だけ</td><td>C10</td><td>「質問 ask3: from_returns は ask3-&lt;数&gt; の配列」</td><td>なし</td></tr>
 <tr id="W24"><td class="n">W24</td><td>仕事の形と担当・worker が食い違う: 形の無い仕事を書く・形の無い仕事にタスクや担当を結ぶ、見張る仕事に担当を置く、1 つの仕事に開いた担当が 2 人、担当の受け取り（<code>owners[].worker</code>）をタスクの <code>worker</code> にも書く、一緒に作る仕事に済んでいないタスクがあるのに開いた担当がいない、開いた担当に <code>session</code>・<code>terminal</code> が無い</td><td>A5・担当を立てたとき</td><td>「仕事 s6: 一緒に作る仕事に済んでいないタスク（t18）があるのに、開いた担当がいない」</td><td>R51・R145（t159）</td></tr>
+<tr id="W25"><td class="n">W25</td><td>済んだ仕事に worker・担当を残す: 済にするタスクの worker の今の Dispatch がまだ動いている（worker_done を返しておらず端末も生きている）、済にせずに worker の記録を外す・替えるときに前の worker が動いている、その書き込みで仕事のタスクが全部済になるのに担当が開いたまま、done にした担当の Dispatch が動いているか端末が残っている。終わった worker の <code>worker</code> 欄は残したまま済にできる</td><td>A8</td><td>「仕事 s14: この書き込みでタスクが全部済になるが、担当 o4 が開いたまま。orca orchestration worker-release --dispatch …で片付け、同じ書き込みで担当の state を done にする」</td><td>R240（t168）</td></tr>
 </tbody>
 </table></div>
 <details><summary>細部</summary>
 <ul>
 <li>W8・W17・W18は、待ちと済を事実から決める形に移した帳簿（<code>facts_since</code> のある帳簿）だけで検査する（R204）</li>
-<li>W13とW22は外のコマンドに文を渡して検査する。ロックの外で先に検査し、コマンドが無い・起動できないときはその文を含む変更を断る</li>
+<li>W13とW22は外のコマンドに文を渡して検査する。ロックの外で先に検査し、コマンドが無い・起動できないときはその文を含む変更を断る。W25も同じくロックの外で Orca を読み（窓と同じく Run の Task の続きをたどって今の Dispatch を引く）、読めなければ済にする変更を断る</li>
 <li>必須の欄が欠けたカードは書くが、注意で名指しし、窓には出さない。30分たっても欠けたままなら、窓の要対応の一番上「帳簿の未記入」に出る</li>
 <li>書く前に検査だけするときは <code>cockpit-write --dry-run</code>。元の文書: <code>orca/plugins/cockpit/README.md</code>「書く道具（cockpit-write）」と <code>src/write.ts</code></li>
 </ul>
@@ -756,7 +757,7 @@ a{color:var(--focus)}
 
 <h2 id="s7"><span class="id">7</span>深田さんに確かめてほしいこと</h2>
 <ol class="qs">
-<li id="Q1"><span class="id">Q1</span><b>このページの粒度で足りるか</b>流れは5本（発言から済・窓の操作・窓からの質問・圧縮と再開・席と帯）、規則は24の束にした。担当の立て方やBotの流れのように、図で見たい流れがほかにあれば足す。</li>
+<li id="Q1"><span class="id">Q1</span><b>このページの粒度で足りるか</b>流れは5本（発言から済・窓の操作・窓からの質問・圧縮と再開・席と帯）、規則は25の束にした。担当の立て方やBotの流れのように、図で見たい流れがほかにあれば足す。</li>
 <li id="Q2"><span class="id">Q2</span><b>このページも見取り図と同じ時機に直してよいか</b>今の決まり（cockpit skillの <code>references/workers.md</code>、R216）は、設計が変わる取り込みのたびに見取り図だけを直す。図8・図14のように実物の順番を写した図は、state.tsや書く道具が変わるとすぐ古くなるので、同じ決まりにこのページを足すかを決めてほしい。</li>
 <li id="Q3"><span class="id">Q3</span><b>図8のJ3の優先は感覚と合っているか</b>workerが動いていても終わっていても、深田さんのカードを結んだタスクは「深田さん待ち」と出る（取り込み待ち・作業中より先）。窓でworkerの様子より深田さんの番を先に見せる、という並びで困っていないか。</li>
 </ol>

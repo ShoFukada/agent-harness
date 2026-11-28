@@ -377,7 +377,7 @@ a{color:var(--focus)}
 <tr id="w1"><td><code>bin/stallwatch</code></td><td>launchd・数分おき</td><td>Orcaそのもの・各ワークスペースの窓口・窓・定時ジョブの停止</td><td>macOSの通知と窓の上の帯（帯の書き手はこれ1つ）</td></tr>
 <tr id="w2"><td><code>bin/account-failover</code></td><td>launchd・1分おき</td><td>利用枠の上限と、古い席で動くclaude（3.5）</td><td>通知と帯（stallwatchが合流させる）</td></tr>
 <tr id="w3"><td><code>bin/orca-watch</code></td><td>常駐・1分おき</td><td>人のいないあいだに落ちたOrca。1時間に3回まで起動し直す</td><td>帯とログ</td></tr>
-<tr id="w4"><td><code>bin/worktree-sweep</code></td><td>毎晩</td><td>取り込み済みで使い終わったworktreeを消し、人が決めるものを一覧にする</td><td><code>sweep.json</code>（窓口のhookが自分の下だけ拾う）</td></tr>
+<tr id="w4"><td><code>bin/worktree-sweep</code></td><td>毎晩</td><td>取り込み済みで使い終わったworktreeを消し、人が決めるものを一覧にする。worker_doneを返さずに端末を閉じた担当・workerは、窓口の帳簿で結んだタスク・担当が済なら終わったものとして数える</td><td><code>sweep.json</code>（窓口のhookが自分の下だけ拾う）</td></tr>
 </tbody>
 </table>
 

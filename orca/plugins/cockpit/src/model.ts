@@ -1032,6 +1032,13 @@ export function shownTask(t: Task, fact: DispatchFact | null | undefined): TaskS
   return { state: 'run', why: 'working' }
 }
 
+/** worker の state のうち、終わったもの。2026-11-23 に Orca で見た state は succeeded・failed・stopped・ready の 4 つで、ほかは名前からの推測。 */
+const SETTLED = new Set(['succeeded', 'failed', 'stopped', 'abandoned', 'cancelled', 'canceled'])
+/**
+ * 終わっていない Dispatch（worker-list の行でも worker-show から作った DispatchFact でもよい）。端末が消えた（exited）ものは報告が来ないので外す。
+ */
+export const busyDispatch = (w: { state: string; liveness?: string }) => !SETTLED.has(w.state) && w.liveness !== 'exited'
+
 const has = (v: unknown): boolean =>
   Array.isArray(v) ? v.some(has) : isObj(v) ? Object.values(v).some(has) : typeof v === 'boolean' || typeof v === 'number' || !!String(v ?? '').trim()
 type Need = [key: string, label: string, ok: (c: Card) => boolean]

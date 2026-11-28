@@ -30,6 +30,9 @@ elif key == "plugin list": out("plugins.json")
 elif key == "orchestration worker-list":
     n = sum(1 for l in open(os.path.join(d, "calls")) if l.startswith("orchestration worker-list"))
     out("missing.json" if n > 1 and os.path.exists(os.path.join(d, "fail-after-first")) else "workers.json")
+elif key == "orchestration dispatch-show":
+    links = json.load(open(os.path.join(d, "links.json"))) if os.path.exists(os.path.join(d, "links.json")) else {}
+    print(json.dumps({"ok": True, "result": {"dispatch": links.get(args[args.index("--task") + 1])}}))
 elif key == "worktree rm":
     path = args[args.index("--worktree") + 1][len("path:"):]
     branch = subprocess.run(["git", "-C", path, "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
@@ -75,6 +78,7 @@ class WorktreeSweepTest(unittest.TestCase):
                 fh.write(body)
             os.chmod(os.path.join(self.bin, name), 0o755)
         self.prs = {}
+        self.links = {}  # dispatch-show --task の dispatch（続き・やり直しの元）
         self.under = os.path.join(self.tmp, "workspaces")
         self.root = os.path.join(self.tmp, "repo")
         os.makedirs(self.root)
@@ -121,6 +125,8 @@ class WorktreeSweepTest(unittest.TestCase):
                     json.dump(data, fh)
         with open(os.path.join(self.fake, "prs.json"), "w") as fh:
             json.dump(self.prs, fh)
+        with open(os.path.join(self.fake, "links.json"), "w") as fh:
+            json.dump(self.links, fh)
         env = dict(os.environ, PATH=self.bin + ":/usr/bin:/bin", ORCA_FAKE=self.fake, ORCA_CLI_COMMAND="orca",
                    WORKTREE_SWEEP_HOME=os.path.join(self.tmp, "home"))
         r = subprocess.run([sys.executable, SCRIPT, "--under", self.under] + list(args), env=env, capture_output=True, text=True)
@@ -341,6 +347,110 @@ class WorktreeSweepTest(unittest.TestCase):
         self.assertEqual(self.kind(out, old), "判断が要る")
         self.assertIn("終わった記録が無い", out)
         self.assertEqual(self.removed(), [])
+
+    def ledger(self, tasks=(), owners=()):
+        """窓口の帳簿（ルートの .orca/cockpit.json）。tasks・owners は (Orca の task_id, state) の組。"""
+        os.makedirs(os.path.join(self.root, ".orca"), exist_ok=True)
+        with open(os.path.join(self.root, ".orca", "cockpit.json"), "w") as fh:
+            json.dump({"tasks": [{"id": "t%d" % i, "state": st, "worker": {"run_id": "run_m", "task_id": tid}} for i, (tid, st) in enumerate(tasks)],
+                       "owners": [{"id": "o%d" % i, "state": st, "worker": {"run_id": "run_m", "task_id": tid}} for i, (tid, st) in enumerate(owners)]}, fh)
+
+    def test_stopped_worker_counts_as_finished(self):
+        # worker-stop で止めた worker（2026-11-28 の一覧で intloop-aidx/task-1126-lead などが「生きている」扱いで残っていた）。
+        stopped = self.worktree("stopped", finished=False)
+        self.workers.append({"state": "stopped", "liveness": "exited", "workspace": "r1::" + stopped})
+        self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [stopped])
+
+    def test_closed_without_worker_done_is_removed_once_the_ledger_settles_it(self):
+        # 担当がチャットを閉じた（worker_done なしで端末が exited）dispatch は、窓口の帳簿で結んだタスク・担当が済なら終わったものとして数える。
+        lead = self.worktree("lead", finished=False)
+        worker = self.worktree("worker", finished=False)
+        running = self.worktree("running", finished=False)
+        restarted = self.worktree("restarted", finished=False)
+        self.workers += [{"state": "ready", "liveness": "exited", "taskId": "task_lead", "dispatchId": "ctx_lead", "workspace": "r1::" + lead},
+                         {"state": "ready", "liveness": "exited", "taskId": "task_w", "workspace": "r1::" + worker},
+                         {"state": "ready", "liveness": "live", "taskId": "task_run", "workspace": "r1::" + running},
+                         {"state": "ready", "liveness": "unverifiable", "taskId": "task_re", "workspace": "r1::" + restarted}]
+        out = self.run_sweep("--apply")
+        for p in (lead, worker, running, restarted):
+            self.assertEqual(self.kind(out, p), "触らない", p)
+        self.assertIn("帳簿で結んだタスク・担当が済になっていない", out)
+        self.ledger(tasks=[("task_w", "open"), ("task_run", "ok"), ("task_re", "ok")], owners=[("task_lead", "open")])
+        self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [], "帳簿で開いているタスク・担当の worktree は消さない")
+        self.ledger(tasks=[("task_w", "ok"), ("task_run", "ok"), ("task_re", "ok")], owners=[("task_lead", "done")])
+        out = self.run_sweep("--apply")
+        self.assertEqual(sorted(self.removed()), sorted([lead, worker]))
+        self.assertEqual(self.kind(out, running), "触らない", "端末が生きている dispatch は帳簿が済でも消さない")
+        self.assertEqual(self.kind(out, restarted), "触らない", "Orca の再起動で確かめられない（unverifiable）だけの dispatch は帳簿が済でも消さない")
+
+    def test_ledger_settles_only_when_every_bound_row_is_done(self):
+        # 同じ worktree の別の dispatch に結んだタスクが開いていれば消さない。帳簿に結んだ行が無い dispatch が 1 つでもあれば消さない。
+        two = self.worktree("two", finished=False)
+        stray = self.worktree("stray", finished=False)
+        unbound = self.worktree("unbound", finished=False)
+        self.workers += [{"state": "succeeded", "liveness": "exited", "taskId": "task_a", "workspace": "r1::" + two},
+                         {"state": "ready", "liveness": "exited", "taskId": "task_b", "workspace": "r1::" + two},
+                         {"state": "succeeded", "liveness": "exited", "taskId": "task_c", "workspace": "r1::" + stray},
+                         {"state": "ready", "liveness": "exited", "taskId": "task_d", "dispatchId": "ctx_d", "workspace": "r1::" + stray},
+                         {"state": "ready", "liveness": "exited", "taskId": "task_x", "workspace": "r1::" + unbound}]
+        self.ledger(tasks=[("task_a", "ok"), ("task_b", "open"), ("task_c", "ok")])
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [])
+        for p in (two, stray, unbound):
+            self.assertEqual(self.kind(out, p), "触らない", p)
+
+    def test_follow_up_of_a_settled_owner_counts_as_settled(self):
+        # 担当に send で続きを渡すと Task と Dispatch が新しくなる。続きの元をたどった先が帳簿で済なら、続きも終わったものとして数える。
+        lead = self.worktree("lead", finished=False)
+        self.workers += [{"state": "succeeded", "liveness": "exited", "taskId": "task_l1", "dispatchId": "ctx_l1", "workspace": "r1::" + lead},
+                         {"state": "ready", "liveness": "exited", "taskId": "task_l2", "dispatchId": "ctx_l2", "workspace": "r1::" + lead},
+                         {"state": "ready", "liveness": "exited", "taskId": "task_l3", "dispatchId": "ctx_l3", "workspace": "r1::" + lead}]
+        self.links = {"task_l2": {"follow_up_of_dispatch_id": "ctx_l1"}, "task_l3": {"retry_of_dispatch_id": "ctx_l2"}}
+        self.ledger(owners=[("task_l1", "open")])
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [], "たどった先の行が開いていれば消さない")
+        self.ledger(owners=[("task_l1", "done")])
+        self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [lead])
+
+    def test_follow_up_found_in_another_worktree_must_be_settled_too(self):
+        # 続きの元が別の worktree の dispatch で、その帳簿の行が開いていれば、続きの worktree も消さない。
+        child = self.worktree("child", finished=False)
+        self.workers += [{"state": "ready", "liveness": "exited", "taskId": "task_c", "dispatchId": "ctx_c", "workspace": "r1::" + child},
+                         {"state": "ready", "liveness": "live", "taskId": "task_p", "dispatchId": "ctx_p", "workspace": "r1::/elsewhere"}]
+        self.links = {"task_c": {"follow_up_of_dispatch_id": "ctx_p"}}
+        self.ledger(owners=[("task_p", "open")])
+        self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [])
+
+    def test_long_follow_up_chain_reaches_the_first_task(self):
+        # 担当に続きを何度渡しても（ここでは 30 回）、帳簿が指す最初の Task までたどる。
+        lead = self.worktree("lead", finished=False)
+        self.workers.append({"state": "succeeded", "liveness": "exited", "taskId": "task_0", "dispatchId": "ctx_0", "workspace": "r1::" + lead})
+        for n in range(1, 31):
+            self.workers.append({"state": "ready", "liveness": "exited", "taskId": "task_%d" % n, "dispatchId": "ctx_%d" % n, "workspace": "r1::" + lead})
+            self.links["task_%d" % n] = {"follow_up_of_dispatch_id": "ctx_%d" % (n - 1)}
+        self.ledger(owners=[("task_0", "done")])
+        self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [lead])
+
+    def test_settled_ledger_does_not_remove_unfinished_work(self):
+        # 帳簿で済でも、未 commit の差分か main に無い commit があれば、今の sweep と同じく人に決めさせる。
+        dirty = self.worktree("dirty", finished=False, idle=30)
+        ahead = self.worktree("ahead", finished=False, idle=30)
+        with open(os.path.join(dirty, "a.txt"), "w") as fh:
+            fh.write("changed")
+        self.commit(ahead, "b.txt", "b")
+        self.workers += [{"state": "ready", "liveness": "exited", "taskId": "task_d", "workspace": "r1::" + dirty},
+                         {"state": "ready", "liveness": "exited", "taskId": "task_h", "workspace": "r1::" + ahead}]
+        self.ledger(tasks=[("task_d", "ok"), ("task_h", "ok")])
+        out = self.run_sweep("--apply")
+        self.assertEqual(self.removed(), [])
+        self.assertEqual(self.kind(out, dirty), "判断が要る")
+        self.assertEqual(self.kind(out, ahead), "判断が要る")
+        self.assertIn("trunk に無い commit 1 件", out)
 
     def test_lists_missing_their_arrays_count_as_unreadable(self):
         merged = self.worktree("merged")

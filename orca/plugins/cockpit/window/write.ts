@@ -5,8 +5,30 @@ import { workspaceNameCheck } from '../src/state.ts'
 import { lockCockpit, parseUtterances, readInOrca, writeAtomic } from '../src/store.ts'
 import { checkDrafts, type LintOpts } from '../src/lint.ts'
 import { checkDefer, type DeferOpts } from '../src/defer.ts'
-import { applyChange, deferToCheck, draftsToLint, migrateFacts, migrateV3, withBasis, type MigrateFacts, type MigrateV3, type WriteResult } from '../src/write.ts'
-import { orcaCli } from './server.ts'
+import { applyChange, closeTargets, deferToCheck, draftsToLint, migrateFacts, migrateV3, withBasis, type CloseCheck, type CloseTarget, type MigrateFacts, type MigrateV3, type WriteResult } from '../src/write.ts'
+import { currentDispatches, dispatchFact } from './orca-state.ts'
+import { orcaCli, type Orca } from './server.ts'
+
+export type CloseOrca = Pick<Orca, 'show' | 'runTasks' | 'taskLink'>
+
+/**
+ * 済にする・記録を外すタスクの worker と担当の今の Dispatch を、窓と同じ読み方（Run の Task の続きをたどり、worker-show で様子を読む）で引く。
+ * 今の Dispatch を引けない記録は Orca に無いものとして扱う（窓が「Orca に見つからない」と出すのと同じ）。Orca を読めなければ全部を error にする（書かない）。
+ */
+export async function closeChecks(targets: CloseTarget[], orca: CloseOrca): Promise<Record<string, CloseCheck>> {
+  if (!targets.length) return {}
+  try {
+    const asTasks = { tasks: targets.map((t) => ({ id: t.key, stream: '', phase: '', title: '', state: 'open', worker: t.worker })) } as unknown as Cockpit
+    const { current } = await currentDispatches(asTasks, { tasks: orca.runTasks, link: orca.taskLink }, new Map())
+    return Object.fromEntries(await Promise.all(targets.map(async (t): Promise<[string, CloseCheck]> => {
+      const dispatch = current[t.key] ?? t.worker.dispatch_id
+      const r = dispatch ? await orca.show(dispatch) : null
+      return [t.key, { ...(dispatch && { dispatch }), fact: r ? dispatchFact(r) : null }]
+    })))
+  } catch (e) {
+    return Object.fromEntries(targets.map((t) => [t.key, { error: (e as Error).message }]))
+  }
+}
 
 type Utterances = ReturnType<typeof parseUtterances>
 async function readLedger(root: string): Promise<{ raw: Cockpit; log: UserLog; utterances: Utterances; notices: Utterances; archive: Card[] }> {
@@ -33,18 +55,26 @@ const save = (root: string, c: Cockpit) => writeAtomic(path.join(root, '.orca', 
 
 /**
  * 変更を検査して書く。check なら書かない。書いた中身が読み込みで新しい形の誤りを出すなら書かない。
- * lintOpts・deferOpts は書式の検査・先送りの検査の CLI の差し替え（試験用）。
+ * lintOpts・deferOpts は書式の検査・先送りの検査の CLI の差し替え、orca は済にするときに読む Orca の口の差し替え（試験用）。
  */
-export async function write(root: string, change: unknown, check = false, lintOpts: LintOpts = {}, deferOpts: DeferOpts = {}): Promise<WriteResult> {
-  // 送る文面の書式の検査（dev-standards の draft-format-lint）と先送りの検査（defer-guard.py）はロックの外で済ませる。ロックは 10 秒で外れるので、中で CLI を待つと並んだ書き込みを古い中身で上書きしうる。
-  const [lint, defer] = await Promise.all([checkDrafts(draftsToLint(change), lintOpts), checkDefer(deferToCheck(change), deferOpts)])
+export async function write(root: string, change: unknown, check = false, lintOpts: LintOpts = {}, deferOpts: DeferOpts = {}, orca?: CloseOrca): Promise<WriteResult> {
+  // 送る文面の書式の検査（dev-standards の draft-format-lint）と先送りの検査（defer-guard.py）と、済にするタスクの worker・担当の Orca での様子は、ロックの外で済ませる。
+  // ロックは 10 秒で外れるので、中で CLI を待つと並んだ書き込みを古い中身で上書きしうる。済にする対象はロックの外で読んだ帳簿で決め、足りなければ書くときに断る。
+  // タスクも担当も書かない変更は帳簿を先に読まない（済にする・受け取りを外す行はそこにしか無い）。
+  const rowsOf = (k: string) => (typeof change === 'object' && change !== null && Array.isArray((change as Record<string, unknown>)[k]) ? ((change as Record<string, unknown[]>)[k]!).length : 0)
+  const ledger = rowsOf('tasks') || rowsOf('owners') ? await readInOrca(root, '.orca/cockpit.json') : undefined
+  const targets = ledger ? closeTargets(JSON.parse(ledger) as Cockpit, change) : []
+  const [lint, defer, close] = await Promise.all([
+    checkDrafts(draftsToLint(change), lintOpts), checkDefer(deferToCheck(change), deferOpts),
+    closeChecks(targets, orca ?? orcaCli(process.env.COCKPIT_ORCA ?? 'orca'))
+  ])
   // 検査だけ（--dry-run）はロックファイルも作らない（実データの .orca に何も書かずに通せるように）。
   const release = check ? async () => {} : await lockCockpit(root)
   try {
     const { raw, log, utterances, notices, archive } = await readLedger(root)
     const before: string[] = []
     parseCockpit(JSON.stringify(raw), before)
-    const r = applyChange(raw, change, utterances, log, lint, defer, { notices, archive, now: Date.now() })
+    const r = applyChange(raw, change, utterances, log, lint, defer, { notices, archive, now: Date.now(), close })
     if (!r.next) return r
     const after: string[] = []
     parseCockpit(JSON.stringify(r.next), after)

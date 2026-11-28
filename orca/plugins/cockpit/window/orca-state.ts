@@ -1,7 +1,7 @@
 // Orca の worktree ps・terminal list・orchestration worker-show から、ワークスペースのメインと worker と、worker の記録の様子を決める。
 // 窓の常駐のプロセスと CLI（state.ts）が使う。
 import path from 'node:path'
-import type { Cockpit } from '../src/model.ts'
+import { busyDispatch, type Cockpit } from '../src/model.ts'
 import type { IdleOwner } from '../src/state.ts'
 import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from '../src/protocol.ts'
 
@@ -449,10 +449,7 @@ export type RunRow = { id: string; coordinator: string | null }
 export type RunPage = { runs: RunRow[]; next?: string }
 /** orca orchestration worker-list --run --full の 1 行（使う欄だけ）。handle は worker の受け口、session はチャットの worker のセッション。 */
 export type RunWorker = { dispatchId: string; state: string; liveness?: string; handle?: string; session?: string }
-/** worker-list の state のうち、終わったもの。2026-11-23 に Orca で見た state は succeeded・failed・stopped・ready の 4 つで、ほかは名前からの推測。 */
-const SETTLED = new Set(['succeeded', 'failed', 'stopped', 'abandoned', 'cancelled', 'canceled'])
-/** 終わっていない worker。端末が消えた（exited）ものは報告が来ないので外す（server.ts の答えの宛先と同じ判定）。 */
-export const busyWorker = (w: RunWorker) => !SETTLED.has(w.state) && w.liveness !== 'exited'
+export const busyWorker = (w: RunWorker) => busyDispatch(w)
 
 /**
  * Run の coordinator は変わらず、run-list は新しい順なので、知っている Run が出たページで止める。

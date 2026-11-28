@@ -16,8 +16,9 @@ import time
 
 HOME = os.environ.get("WORKTREE_SWEEP_HOME") or os.path.expanduser("~/Library/Application Support/worktree-sweep")
 IDLE_MS = 24 * 3600_000
-# Task が終わったことを表す dispatch の state。これ以外（ready など）は担当や worker がまだその worktree を使っている。
-DISPATCH_DONE = {"succeeded", "failed", "abandoned", "cancelled", "canceled"}
+# Task が終わったことを表す dispatch の state（cockpit の model.ts の SETTLED と同じ）。
+# これ以外（ready など）は担当や worker がまだその worktree を使っているか、worker_done を返さずに端末を閉じた。
+DISPATCH_DONE = {"succeeded", "failed", "stopped", "abandoned", "cancelled", "canceled"}
 # 端末が終わったと分かる liveness。欠けた値や知らない値は、まだ生きているかもしれないものとして守る。
 # unverifiable は、Orca の再起動などで端末を確かめられなくなった終わった worker に付く（2026-11-21 の一覧で 55 件中 37 件）。
 NOT_LIVE = {"exited", "unverifiable"}
@@ -53,12 +54,36 @@ def real(path):
     return os.path.realpath(path).rstrip("/")
 
 
+class Dispatches:
+    """worktree のパスごとの dispatch の様子。パスは登録の形と実体の形の両方を入れる。
+    live: 端末が生きているか確かめられない dispatch のある worktree。state が終わっていない unverifiable も含める（Orca の再起動で確かめられないだけで、終わったとは言えない）。
+    unsettled: 端末が exited なのに worker_done も停止の記録も無い dispatch（担当がチャットを閉じた・worker が落ちた）の (taskId, dispatchId) の一覧。
+    finished: 終わった dispatch のある worktree。ids: その worktree の全部の dispatch の Task と Dispatch の id。task_of: Dispatch → Task。"""
+
+    def __init__(self):
+        self.live, self.finished, self.unsettled, self.ids, self.task_of = set(), set(), {}, {}, {}
+
+    def add(self, ws, w):
+        forms = {ws.rstrip("/"), real(ws)}
+        task, did = (x if isinstance(x, str) and x else None for x in (w.get("taskId"), w.get("dispatchId")))
+        if w.get("liveness") not in NOT_LIVE or (w.get("state") not in DISPATCH_DONE and w.get("liveness") != "exited"):
+            self.live |= forms
+        elif w.get("state") not in DISPATCH_DONE:
+            for f in forms:
+                self.unsettled.setdefault(f, set()).add((task, did))
+        else:
+            self.finished |= forms
+        if did and task:
+            self.task_of[did] = task
+        for f in forms:
+            self.ids.setdefault(f, set()).update(x for x in (task, did) if x)
+
+
 def dispatch_paths():
-    """(担当や worker の dispatch がまだ生きている worktree, worker・担当が終わった記録のある worktree) のパスの集合。
-    パスは登録の形と実体の形の両方を入れる。読めなければ None。
+    """Orca の全部の worker の dispatch を Dispatches にまとめる。読めなければ None。
     端末に紐づいた Run があると一覧がその Run に絞られるので、端末の印を外して全部の Run を読む。"""
     env = {k: v for k, v in os.environ.items() if k not in ("ORCA_TERMINAL_HANDLE", "ORCA_PANE_KEY", "ORCA_AGENT_PANE")}
-    live, finished, cursor = set(), set(), None
+    out, cursor = Dispatches(), None
     while True:
         res, err = orca("orchestration", "worker-list", "--limit", "100", *(["--cursor", cursor] if cursor else []), env=env)
         if res is None or (res.get("scope") or {}).get("source") != "all" or not isinstance(res.get("workers"), list):
@@ -67,11 +92,54 @@ def dispatch_paths():
             ws = (w.get("workspace") or "").split("::", 1)[-1] if isinstance(w, dict) else ""
             if not ws:
                 return None
-            done = w.get("state") in DISPATCH_DONE and w.get("liveness") in NOT_LIVE
-            (finished if done else live).update({ws.rstrip("/"), real(ws)})
+            out.add(ws, w)
         cursor = res.get("nextCursor")
         if not cursor:
-            return live, finished
+            return out
+
+
+def parent_dispatch(task):
+    """task の Dispatch が何の続き・やり直しか（dispatch-show の follow_up_of・retry_of）。無ければ・読めなければ None。"""
+    res, _ = orca("orchestration", "dispatch-show", "--task", task)
+    d = (res or {}).get("dispatch") or {}
+    return d.get("follow_up_of_dispatch_id") or d.get("retry_of_dispatch_id") if isinstance(d, dict) else None
+
+
+def ledger_settles(main, ids, unsettled, task_of, parent=parent_dispatch):
+    """worker_done を返さずに端末を閉じた dispatch（unsettled）の worktree を、窓口の帳簿（<main>/.orca/cockpit.json）で終わったと言えるか。
+    Orca の上では終わったと分からないが、窓口がタスクを済（ok）・担当を done にしていれば仕事は終わっている（cockpit-write は、済にするタスクの
+    worker と担当の Dispatch が動いていれば断る。R240）。次を全部満たすときだけ True:
+    - その worktree の dispatch（ids）に結んだタスク・担当が全部済
+    - unsettled の dispatch のどれも、自分か、続き・やり直しの元をたどった先の Task に結んだ行がある（担当に send で続きを渡すと Task が新しくなる）
+    帳簿が無い・読めない・結んだ行が無いときは False。"""
+    try:
+        with open(os.path.join(main, ".orca", "cockpit.json"), encoding="utf-8") as fh:
+            c = json.load(fh)
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(c, dict):
+        return False
+    done = {}
+    for key, ok in (("tasks", "ok"), ("owners", "done")):
+        for row in c.get(key) or []:
+            w = row.get("worker") if isinstance(row, dict) else None
+            for x in ((w.get("task_id"), w.get("dispatch_id")) if isinstance(w, dict) else ()):
+                if isinstance(x, str) and x:
+                    done[x] = done.get(x, True) and row.get("state") == ok
+    if not all(done[x] for x in ids if x in done):
+        return False
+    for task, did in unsettled:
+        seen = set()
+        while not ({task, did} & done.keys()):
+            seen.add(did)
+            did = parent(task) if task else None
+            task = task_of.get(did)
+            if not did or did in seen:
+                return False
+        # たどった先が別の worktree の行でも、その行が済でなければ終わっていない。
+        if not all(done[x] for x in {task, did} & done.keys()):
+            return False
+    return True
 
 
 def dev_plugin_sources():
@@ -245,9 +313,11 @@ def idle_ms(row, now):
 def classify(rows, under, dispatches, plugins, now, only=None):
     """Orca が under の下に作った worktree を (分類, 行, 理由) に分ける。only を渡すとそのパスだけを調べる。
     自動で消すのは、その worktree を使った worker・担当が終わった記録があり、取り込み済みで、固有のデータが無いものと、
-    ブランチの PR がマージ済みでそのあとに commit を積んでおらず、固有のデータが無いもの（終わった記録は問わない）だけ。"""
+    ブランチの PR がマージ済みでそのあとに commit を積んでおらず、固有のデータが無いもの（終わった記録は問わない）だけ。
+    worker_done を返さずに端末を閉じた dispatch は、窓口の帳簿で結んだタスク・担当が全部済なら終わった記録として数える。"""
+    by_id, top = {r.get("worktreeId"): r for r in rows}, under
     under = real(under) + "/"
-    live, finished = dispatches or (None, None)
+    live, finished = (dispatches.live, set(dispatches.finished)) if dispatches else (None, None)
     roots = {r.get("repoId"): r["path"] for r in rows if r.get("isMainWorktree") and r.get("path")}
     seen = {}
     for r in rows:  # 取り違えは、ルートと under の外を含む Orca の全部の行で数える
@@ -270,6 +340,13 @@ def classify(rows, under, dispatches, plugins, now, only=None):
         if live is not None and forms & live:
             out.append((KEEP, r, ["担当か worker の dispatch が生きている"]))
             continue
+        unsettled = set().union(*(dispatches.unsettled.get(f, set()) for f in forms)) if live is not None else set()
+        if unsettled:
+            ids = set().union(*(dispatches.ids.get(f, set()) for f in forms))
+            if not ledger_settles(main_of(r, by_id, top), ids, unsettled, dispatches.task_of):
+                out.append((KEEP, r, ["担当か worker の dispatch が worker_done を返さずに端末を閉じ、窓口の帳簿で結んだタスク・担当が済になっていない"]))
+                continue
+            finished |= forms
         src = [s for s in plugins or [] if any(s == f or s.startswith(f + "/") for f in forms)]
         if src:
             out.append((KEEP, r, ["開発用プラグインの読み込み元（%s）" % "、".join(src)]))

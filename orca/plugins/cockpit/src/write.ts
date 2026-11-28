@@ -1,9 +1,10 @@
 // 帳簿（cockpit.json）を書く道具の中身。窓口は Write・Edit で cockpit.json を書かず、この検査を通した変更だけを書く（R47-1）。
 // ファイルに触らない純粋な関数で、CLI（window/write.ts）が読み書きとロックを受け持つ。
 import {
-  ASK_ID, badFields, CARD_SHAPE, returnId, tidyOpsOf, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, LEGACY_TASK_KEYS, missingFields, overlay, parseCockpit, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_MARKS, TASK_SHAPE, timeOf, unmappedElements, upgradeCard, upgradeTask, WATCH_SHAPE, WORKER_SHAPE,
-  type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskMark, type UserLog, type Utterance
+  ASK_ID, badFields, busyDispatch, CARD_SHAPE, returnId, tidyOpsOf, cardHeadError, DRAFT_FORMATS, draftRoute, FORMAT_LABEL, FORMS, INTAKE_SHAPE, LEGACY_TASK_KEYS, missingFields, overlay, parseCockpit, REQUEST_SHAPE, RUN_ID, STATUS_MAX, TASK_MARKS, TASK_SHAPE, timeOf, unmappedElements, upgradeCard, upgradeTask, WATCH_SHAPE, WORKER_SHAPE,
+  type AskRecord, type Card, type Cockpit, type DraftCheck, type DraftFormat, type Intake, type Op, type Owner, type Request, type Stream, type StreamForm, type Task, type TaskMark, type TaskWorker, type UserLog, type Utterance
 } from './model.ts'
+import type { DispatchFact } from './protocol.ts'
 import type { DeferCheck, DeferItem } from './defer.ts'
 import { basisChanges, judgeTasks, openOutsideWaits, sortedForWaits, streamBasis, workspaceNameCheck } from './state.ts'
 
@@ -168,6 +169,123 @@ export function draftsToLint(change: unknown): { id: string; to: DraftFormat; te
     const d = x.draft
     return typeof d.text === 'string' && DRAFT_FORMATS.includes(d.format as DraftFormat) ? [{ id: x.id as string, to: d.format as DraftFormat, text: d.text }] : []
   })
+}
+
+/**
+ * 片付けを確かめる worker・担当の Dispatch の様子（書く道具が Orca から読む）。キーは受け取りの workerKey（受け取りを替えた書き込みが、
+ * 前の受け取りを読んだ結果を使わないため）。dispatch は今の Dispatch（Run の Task の続きをたどった先）、fact が null なら Orca に無い。error は Orca を読めなかった理由。
+ */
+export type CloseCheck = { dispatch?: string; fact: DispatchFact | null } | { error: string }
+export type CloseTarget = { key: string; worker: TaskWorker }
+export const workerKey = (w: TaskWorker) => `${w.run_id ?? w.dispatch_id ?? ''}/${w.task_id}`
+
+/** 受け取りの並びから、形の合うものを重ねずに取り出す。 */
+const workersOf = (...ws: unknown[]): TaskWorker[] =>
+  [...new Map(ws.filter((w): w is TaskWorker => WORKER_SHAPE(w)).map((w) => [workerKey(w), w])).values()]
+
+/**
+ * 変更のタスクの行（同じ id は後の行）のうち、片付けを確かめるもの。
+ * - closing: 新しく済になる（元の行が済でなく、変更の行が済）。済の行を初めて足すのは過去の記録の書き写しなので含めない。変更の行と元の行の両方の worker を見る
+ * - 外す・替える: 済にしないが、元の行の worker を消すか別の受け取りに替える（先に記録を外してから済にして、検査を抜けさせない）。元の行の worker を見る
+ */
+function closingRows(c: Cockpit, tasks: unknown): { row: Record<string, unknown>; old: Task; closing: boolean; workers: TaskWorker[] }[] {
+  const rows = Array.isArray(tasks) ? tasks.filter((x): x is Record<string, unknown> => isObj(x) && typeof x.id === 'string') : []
+  return [...new Map(rows.map((x) => [x.id as string, x])).values()].flatMap((row) => {
+    const old = c.tasks.find((t) => t.id === row.id)
+    if (!old || old.state === 'ok') return []
+    if (row.state === 'ok') return [{ row, old, closing: true, workers: workersOf(row.worker, old.worker) }]
+    const was = workersOf(old.worker)
+    return was.length && !same(row.worker, old.worker) ? [{ row, old, closing: false, workers: was }] : []
+  })
+}
+
+/** 新しく済になるタスクの仕事（行を別の仕事に移したなら、移す前の仕事も）。 */
+const closedStreams = (rows: ReturnType<typeof closingRows>) =>
+  new Set(rows.filter((x) => x.closing).flatMap(({ row, old }) => [typeof row.stream === 'string' ? row.stream : old.stream, old.stream]))
+
+/** 変更の担当の行（同じ id は後の行）のうち、元の行の受け取りを消すか別の受け取りに替えるもの（先に受け取りを外してから済にして、検査を抜けさせない）。 */
+function unboundOwners(c: Cockpit, owners: unknown): { o: Owner; workers: TaskWorker[] }[] {
+  const rows = Array.isArray(owners) ? owners.filter((x): x is Owner => isObj(x) && typeof x.id === 'string') : []
+  return [...new Map(rows.map((x) => [x.id, x])).values()].flatMap((o) => {
+    const was = c.owners?.find((x) => x.id === o.id)
+    const ws = workersOf(was?.worker)
+    return ws.length && !same(o.worker, was!.worker) ? [{ o, workers: ws }] : []
+  })
+}
+
+/** 仕事の担当（変更の行と元の行）。変更の行が受け取りを省いても、元の行の受け取りを見る。 */
+const ownersIn = (c: Cockpit, incoming: Owner[], streams: Set<string>) =>
+  upsert(c.owners ?? [], incoming).filter((o) => o.stream && streams.has(o.stream)).map((o) => ({ o, workers: workersOf(o.worker, c.owners?.find((x) => x.id === o.id)?.worker) }))
+
+/**
+ * 済にする前に Orca で様子を確かめる受け取り: closingRows の worker と、新しく済になるタスクの仕事の担当の受け取り。帳簿はロックの外で読んだものでよい
+ * （書くときに足りない・替わったものは applyChange が「確かめていない」で断る）。変更の形は検査の前なので、どんな値でも落ちない。
+ */
+export function closeTargets(c: Cockpit, change: unknown): CloseTarget[] {
+  const ch = isObj(change) ? change : {}
+  const rows = closingRows(c, ch.tasks)
+  const incoming = Array.isArray(ch.owners) ? ch.owners.filter((x): x is Owner => isObj(x) && typeof x.id === 'string') : []
+  const ws = workersOf(...rows.flatMap((x) => x.workers), ...ownersIn(c, incoming, closedStreams(rows)).flatMap((x) => x.workers), ...unboundOwners(c, ch.owners).flatMap((x) => x.workers))
+  return ws.map((worker) => ({ key: workerKey(worker), worker }))
+}
+
+const releaseHint = (d: string | undefined, w: TaskWorker | undefined) =>
+  d ? `orca orchestration worker-release --dispatch ${d}（worker_done を返していなければ worker-stop --dispatch ${d}）で片付け`
+    : w ? `受け取り ${w.task_id} の Dispatch（orca orchestration dispatch-show --task ${w.task_id} で引く）を worker-release（worker_done を返していなければ worker-stop）で片付け`
+      : '担当のチャットか端末を閉じて片付け'
+
+/**
+ * 済んだ仕事に worker と担当を残さない（R240・t168）:
+ * - 新しく済にするタスクの worker、記録を外す・替えるタスクの元の worker の Dispatch がまだ動いていれば断る（worker_done を待つか止める）
+ * - 担当の受け取りを外す・替えるなら、元の受け取りの Dispatch が動いているか端末が残っていれば断る
+ * - 新しく済にするタスクで仕事のタスクが全部済になるなら、開いた担当を断る（片付けて state を done にする）。done の担当でも、Dispatch が動いているか
+ *   端末が生きている（worker_done のあと worker-release していない）なら断る
+ * 終わった worker の記録（task の worker 欄）は履歴として残したまま済にしてよい。
+ */
+function closeErrors(c: Cockpit, next: Cockpit, ch: Change, log: UserLog, archive: Card[], now: number, checks: Record<string, CloseCheck>): string[] {
+  const rows = closingRows(c, ch.tasks)
+  const unbound = unboundOwners(c, ch.owners)
+  if (!rows.length && !unbound.length) return []
+  const errors: string[] = []
+  const look = (w: TaskWorker, what: string): { dispatch?: string; fact: DispatchFact | null } | string => {
+    const x = checks[workerKey(w)]
+    if (!x) return `${what}: Dispatch が動いているかを確かめていない（cockpit-write を通して書き直す）`
+    return 'error' in x ? `${what}: Dispatch が動いているかを確かめられない（${x.error}）` : x
+  }
+  const state = (f: DispatchFact) => [f.state, f.liveness].filter(Boolean).join('・')
+  for (const { old, closing, workers } of rows)
+    for (const w of workers) {
+      const x = look(w, `タスク ${old.id}`)
+      if (typeof x === 'string') errors.push(x)
+      else if (x.fact && busyDispatch(x.fact))
+        errors.push(`タスク ${old.id}: worker の Dispatch ${x.dispatch} がまだ動いている（${state(x.fact)}）。worker_done を待って取り込むか、止めるなら orca orchestration worker-stop --dispatch ${x.dispatch} で止めてから${closing ? '済にする（済んだ仕事に worker を残さない）' : 'worker の記録を外す・替える'}`)
+    }
+  for (const { o, workers } of unbound)
+    for (const w of workers) {
+      const x = look(w, `担当 ${o.id}`)
+      if (typeof x === 'string') errors.push(x)
+      else if (x.fact && (busyDispatch(x.fact) || x.fact.liveness === 'live'))
+        errors.push(`担当 ${o.id}「${o.title}」: 外す受け取りの Dispatch ${x.dispatch} が${busyDispatch(x.fact) ? 'まだ動いている' : '終わったが端末が残っている'}（${state(x.fact)}）。${releaseHint(x.dispatch, w)}てから受け取りを外す・替える`)
+    }
+  if (!rows.length) return errors
+  const read = asRead(next)
+  const judged = judgeTasks(read, log, overlay(read, log, archive), undefined, now)
+  const streams = [...closedStreams(rows)].filter((id) => !next.tasks.some((t) => t.stream === id && judged.get(t.id)?.state !== 'ok'))
+  for (const { o, workers } of ownersIn(c, ch.owners ?? [], new Set(streams))) {
+    const facts = workers.map((w) => look(w, `担当 ${o.id}`))
+    if (o.state !== 'done') {
+      const d = facts.map((x) => (typeof x === 'string' ? undefined : x.dispatch)).find(Boolean)
+      const title = next.streams.find((s) => s.id === o.stream)?.title ?? ''
+      errors.push(`仕事 ${o.stream}「${title}」: この書き込みでタスクが全部済になるが、担当 ${o.id}「${o.title}」が開いたまま。${releaseHint(d, workers[0])}、同じ書き込みで担当の state を done にする（済んだ仕事に担当を残さない）`)
+      continue
+    }
+    for (const x of facts) {
+      if (typeof x === 'string') errors.push(x)
+      else if (x.fact && (busyDispatch(x.fact) || x.fact.liveness === 'live'))
+        errors.push(`担当 ${o.id}「${o.title}」: Dispatch ${x.dispatch} が${busyDispatch(x.fact) ? 'まだ動いている' : '終わったが端末が残っている'}（${state(x.fact)}）。${releaseHint(x.dispatch, o.worker)}てから済にする`)
+    }
+  }
+  return errors
 }
 
 /** 待ちの理由を書く欄。先送りの検査は、開いた待ちのあるタスクのこの欄を見る（R193）。 */
@@ -396,10 +514,11 @@ function upsert<T extends { id: string }>(rows: T[], incoming: T[]): T[] {
 /**
  * 変更を検査して、書いたあとの帳簿を返す。形・参照・版・依頼の欄・仕分けの位置のどれかが通らなければ next を返さず、理由を errors に並べる。
  * 必須の欄が欠けた確認依頼は書く（窓には出ず、窓口が 30 分のうちに埋める）が、warnings で名指しする。
- * lint は draftsToLint の文面を書式の検査にかけた結果（カード id ごと）、defer は deferToCheck の文を先送りの検査にかけた結果（id.欄ごと）。
+ * lint は draftsToLint の文面を書式の検査にかけた結果（カード id ごと）、defer は deferToCheck の文を先送りの検査にかけた結果（id.欄ごと）、
+ * more.close は closeTargets の Dispatch を Orca で読んだ結果（task:<id>・owner:<id> ごと）。
  * 検査は入出力の境界（window/write.ts）が行い、ここは結果だけを見る。
  */
-export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }, lint: Record<string, DraftCheck> = {}, defer: Record<string, DeferCheck> = {}, more: { notices?: Utterance[]; archive?: Card[]; now?: number } = {}): WriteResult {
+export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[] = [], log: UserLog = { ops: [] }, lint: Record<string, DraftCheck> = {}, defer: Record<string, DeferCheck> = {}, more: { notices?: Utterance[]; archive?: Card[]; now?: number; close?: Record<string, CloseCheck> } = {}): WriteResult {
   const errors: string[] = []
   const warnings: string[] = []
   if (!isObj(change)) return { errors: ['変更は JSON のオブジェクトで渡す'], warnings }
@@ -664,6 +783,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   const doneBefore = new Set([...judgeTasks(before, log, overlay(before, log, more.archive ?? []), undefined, more.now ?? Date.now()).values()].filter((t) => t.state === 'ok').map((t) => t.task.id))
   errors.push(...waitSortErrors(before, asRead(next), utterances, more.notices ?? [], doneBefore))
   errors.push(...formErrors(c, next, ch, log, more.archive ?? [], more.now ?? Date.now()))
+  errors.push(...closeErrors(c, next, ch, log, more.archive ?? [], more.now ?? Date.now(), more.close ?? {}))
   const basis = basisErrors(c, next, ch, log, more.archive ?? [], more.now ?? Date.now())
   errors.push(...basis.errors)
   if (errors.length) return { errors, warnings }

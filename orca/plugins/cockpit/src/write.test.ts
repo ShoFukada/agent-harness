@@ -6,11 +6,12 @@ import path from 'node:path'
 import { test } from 'node:test'
 import { FAKE_LINT, FIXED_M1, OLD_M1, REAL_SENDS } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
-import { init, migrate, migrateToFacts, write } from '../window/write.ts'
+import { orcaCli } from '../window/server.ts'
+import { init, migrate, migrateToFacts, write, type CloseOrca } from '../window/write.ts'
 import type { DeferCheck } from './defer.ts'
 import { parseCockpit, STATUS_MAX, type Card, type Cockpit, type Request, type Task } from './model.ts'
 import { workspaceNameCheck } from './state.ts'
-import { applyChange, deferToCheck, draftsToLint, migrateFacts, migrateV3 } from './write.ts'
+import { applyChange, closeTargets, deferToCheck, draftsToLint, migrateFacts, migrateV3 } from './write.ts'
 
 const NOW = Date.parse('2026-11-21T10:00:00+09:00')
 /** 仕事には形が要る（t159）。見本の AWS 構成案は担当と一緒に作り、ほかは任せる。 */
@@ -728,10 +729,12 @@ test('済にしたら同じ仕事を見直す（R204・Astra 3 の重大 2）: �
   const c = factsLedger()
   const t1 = { ...structuredClone(c.tasks.find((t) => t.id === 't1')!), state: 'ok' as const, next: '' }
   const s1 = { ...structuredClone(c.streams.find((s) => s.id === 's1')!), status: '並べ替えと絞り込みは済んだ。件数表示に入る' }
-  assert.match(applyChange(c, { tasks: [t1], streams: [s1] }).errors.join('\n'), /t1「.+」が済になった。前提が変わったかを見直す: t5「一覧の件数表示」（次: t1 の並べ替えに合わせて件数を出す）/)
-  assert.deepEqual(applyChange(c, { tasks: [t1], streams: [s1], unaffected: ['t5'] }).errors, [])
+  // worker は worker_done を返して終わっている（t168 の検査を通す）。
+  const close = [[], undefined, {}, {}, { close: { 'ctx_aoba_list/task_aoba_list': { dispatch: 'ctx_aoba_list', fact: { state: 'succeeded', liveness: 'exited' } } } }] as const
+  assert.match(applyChange(c, { tasks: [t1], streams: [s1] }, ...close).errors.join('\n'), /t1「.+」が済になった。前提が変わったかを見直す: t5「一覧の件数表示」（次: t1 の並べ替えに合わせて件数を出す）/)
+  assert.deepEqual(applyChange(c, { tasks: [t1], streams: [s1], unaffected: ['t5'] }, ...close).errors, [])
   const t5 = { ...structuredClone(c.tasks.find((t) => t.id === 't5')!), next: '並べ替えの結果の件数を出す' }
-  assert.deepEqual(applyChange(c, { tasks: [t1, t5], streams: [s1] }).errors, [])
+  assert.deepEqual(applyChange(c, { tasks: [t1, t5], streams: [s1] }, ...close).errors, [])
 })
 
 test('migrate-facts（R204）: 古い欄を読み込みと同じ規則で読み替え、済のタスクの next を空にし、facts_since を書く。カードは触らず控えは押さない。--write は元を cockpit.v3.json に残す', async () => {
@@ -830,4 +833,113 @@ test('仕事の形と担当・worker（t159）: 形の無い仕事は書けず�
   // 担当を別の仕事に移すときは、移す前の一緒に作る仕事も見る（Astra 中 1）。交代は片付けと新しい担当を同じ書き込みで書けば通る。
   assert.match(applyChange(c, { owners: [{ ...o1, stream: 's3' }] }).errors.join('\n'), /仕事 s2: 一緒に作る仕事に済んでいないタスク（t2）があるのに、開いた担当がいない/)
   assert.deepEqual(applyChange(c, { owners: [{ ...o1, state: 'done' }, { ...lead, id: 'o9', stream: 's2' }] }).errors, [])
+})
+
+test('済んだ仕事に worker と担当を残さない（R240・t168）: 済にするタスクの worker の Dispatch が動いていれば断り、タスクが全部済になる仕事の開いた担当も断る。終わった worker の記録は残したまま済にできる', () => {
+  const c = aoba()
+  const t1 = c.tasks.find((t) => t.id === 't1')!
+  const o2 = c.owners!.find((o) => o.id === 'o2')!
+  const W1 = 'ctx_aoba_list/task_aoba_list'
+  const done = { ...structuredClone(t1), state: 'ok' as const, next: '' }
+  const fact = (state: string, liveness: string, dispatch = 'ctx_aoba_list') => ({ dispatch, fact: { state, liveness } })
+  const closeO2 = { owners: [{ ...o2, state: 'done' as const }] }
+  const run = (cc: Cockpit, ch: unknown, close: Record<string, unknown>) => applyChange(cc, ch, [], undefined, {}, {}, { close: close as never }).errors
+  assert.deepEqual(closeTargets(c, { tasks: [done] }), [{ key: W1, worker: t1.worker }])
+  // 変更の行から worker を消しても、元の行の worker を確かめる（記録を消して検査を抜けさせない）。
+  assert.deepEqual(closeTargets(c, { tasks: [{ ...done, worker: undefined }] }).map((x) => x.key), [W1])
+  assert.deepEqual(closeTargets(c, { tasks: [{ ...structuredClone(c.tasks.find((t) => t.id === 't4')!), title: '議事録の清書' }] }), [], '前から済のタスクは確かめない')
+  assert.deepEqual(closeTargets(c, { tasks: [{ ...structuredClone(t1), title: '一覧の並べ替え' }] }), [], '済にせず worker もそのままの書き込みは確かめない')
+
+  assert.match(run(c, { tasks: [done], ...closeO2 }, {}).join('\n'), /タスク t1: Dispatch が動いているかを確かめていない/)
+  assert.match(run(c, { tasks: [done], ...closeO2 }, { [W1]: { error: 'connect ECONNREFUSED' } }).join('\n'), /タスク t1: Dispatch が動いているかを確かめられない（connect ECONNREFUSED）/)
+  for (const [state, liveness] of [['ready', 'live'], ['dispatched', 'unverifiable']] as const)
+    assert.match(run(c, { tasks: [done], ...closeO2 }, { [W1]: fact(state, liveness) }).join('\n'),
+      new RegExp(`タスク t1: worker の Dispatch ctx_aoba_list がまだ動いている（${state}・${liveness}）。.*worker-stop --dispatch ctx_aoba_list で止めてから済にする`))
+  // 終わった（worker_done を返した・止めた・端末が消えた）worker と、Orca に無い Dispatch は残っていない。
+  for (const close of [fact('succeeded', 'live'), fact('stopped', 'exited'), fact('ready', 'exited'), { fact: null }])
+    assert.deepEqual(run(c, { tasks: [done], ...closeO2 }, { [W1]: close }), [], JSON.stringify(close))
+  const ok = { [W1]: fact('succeeded', 'unverifiable') }
+  const written = applyChange(c, { tasks: [done], ...closeO2 }, [], undefined, {}, {}, { close: ok })
+  assert.deepEqual(written.next!.tasks.find((t) => t.id === 't1')!.worker, t1.worker, '終わった worker の記録は履歴として残す')
+  // 同じ id の行が並べば後の行を見る（書くのは後の行）。
+  assert.match(run(c, { tasks: [{ ...structuredClone(t1) }, done], ...closeO2 }, { [W1]: fact('ready', 'live') }).join('\n'), /タスク t1: worker の Dispatch ctx_aoba_list がまだ動いている/)
+
+  // 受け取りを替えて済にするときは、前と後の両方を確かめる。済にする前に記録を外す・替えるときも、前の worker を確かめる。
+  const other = { run_id: 'run_b', task_id: 'task_b' }
+  assert.deepEqual(closeTargets(c, { tasks: [{ ...done, worker: other }] }).map((x) => x.key), ['run_b/task_b', W1])
+  assert.match(run(c, { tasks: [{ ...done, worker: other }], ...closeO2 }, { [W1]: fact('ready', 'live'), 'run_b/task_b': fact('succeeded', 'exited', 'ctx_b') }).join('\n'), /タスク t1: worker の Dispatch ctx_aoba_list がまだ動いている/)
+  const unbound = { ...structuredClone(t1), worker: undefined }
+  assert.deepEqual(closeTargets(c, { tasks: [unbound] }).map((x) => x.key), [W1])
+  assert.match(run(c, { tasks: [unbound] }, { [W1]: fact('ready', 'live') }).join('\n'), /タスク t1: worker の Dispatch ctx_aoba_list がまだ動いている（ready・live）。.*で止めてからworker の記録を外す・替える/)
+  assert.deepEqual(run(c, { tasks: [unbound] }, { [W1]: fact('succeeded', 'exited') }), [], '終わった worker の記録は外せる')
+
+  // 仕事のタスクが全部済になるのに担当が開いたままなら断り、片付けの手順を返す。
+  assert.match(run(c, { tasks: [done] }, ok).join('\n'), /仕事 s1「配車画面の改修」: この書き込みでタスクが全部済になるが、担当 o2「配車画面の改修」が開いたまま。担当のチャットか端末を閉じて片付け、同じ書き込みで担当の state を done にする/)
+  const lead = { ...o2, worker: { run_id: 'run_l', task_id: 'task_o2' } }
+  const led = { ...c, owners: c.owners!.map((o) => (o.id === 'o2' ? lead : o)) }
+  assert.deepEqual(closeTargets(led, { tasks: [done] }).map((x) => x.key), [W1, 'run_l/task_o2'])
+  const withLead = (state: string, liveness: string) => ({ ...ok, 'run_l/task_o2': fact(state, liveness, 'ctx_o2') })
+  assert.match(run(led, { tasks: [done] }, withLead('ready', 'exited')).join('\n'), /担当 o2「配車画面の改修」が開いたまま。orca orchestration worker-release --dispatch ctx_o2（worker_done を返していなければ worker-stop --dispatch ctx_o2）で片付け/)
+  assert.match(run(led, { tasks: [done] }, ok).join('\n'), /担当 o2「配車画面の改修」が開いたまま。受け取り task_o2 の Dispatch（orca orchestration dispatch-show --task task_o2 で引く）を worker-release/)
+  // 担当を done にしても、Dispatch が動いている・worker_done のあと端末が残っているなら断る。受け取りを省いた行でも元の受け取りを見る。
+  const closeLead = { owners: [{ ...lead, state: 'done' as const }] }
+  assert.match(run(led, { tasks: [done], ...closeLead }, withLead('ready', 'live')).join('\n'), /担当 o2「配車画面の改修」: Dispatch ctx_o2 がまだ動いている（ready・live）。orca orchestration worker-release --dispatch ctx_o2/)
+  assert.match(run(led, { tasks: [done], ...closeLead }, withLead('succeeded', 'live')).join('\n'), /担当 o2「配車画面の改修」: Dispatch ctx_o2 が終わったが端末が残っている（succeeded・live）/)
+  assert.match(run(led, { tasks: [done], owners: [{ ...o2, state: 'done' as const }] }, withLead('ready', 'live')).join('\n'), /担当 o2「配車画面の改修」: Dispatch ctx_o2 がまだ動いている/)
+  assert.match(run(led, { tasks: [done], ...closeLead }, ok).join('\n'), /担当 o2: Dispatch が動いているかを確かめていない/)
+  for (const [state, liveness] of [['ready', 'exited'], ['succeeded', 'unverifiable']])
+    assert.deepEqual(run(led, { tasks: [done], ...closeLead }, withLead(state, liveness)), [], `${state}・${liveness}`)
+
+  // 済にする前に担当の受け取りだけを外す・替える書き込みも、元の受け取りを確かめる（受け取りを外してから済にして抜けないように）。
+  const bare = { owners: [{ ...o2 }] }
+  assert.deepEqual(closeTargets(led, bare).map((x) => x.key), ['run_l/task_o2'])
+  assert.match(run(led, bare, withLead('ready', 'live')).join('\n'), /担当 o2「配車画面の改修」: 外す受け取りの Dispatch ctx_o2 がまだ動いている（ready・live）。.*てから受け取りを外す・替える/)
+  assert.match(run(led, bare, {}).join('\n'), /担当 o2: Dispatch が動いているかを確かめていない/)
+  assert.deepEqual(run(led, bare, withLead('ready', 'exited')), [], 'チャットを閉じた担当の受け取りは外せる')
+  assert.deepEqual(closeTargets(led, { owners: [{ ...lead, title: '配車画面' }] }), [], '受け取りをそのままにした担当の書き込みは確かめない')
+
+  // 仕事に済んでいないタスクが残るなら、担当は開いたままでよい。
+  const more = { ...c, tasks: [...c.tasks, { id: 't5', stream: 's1', phase: '実装', title: '件数表示', state: 'open' as const }] }
+  assert.deepEqual(run(more, { tasks: [done] }, ok), [])
+})
+
+test('cockpit-write（R240・t168）: 済にするタスクの worker の今の Dispatch を、Run の Task の続きまでたどって Orca で確かめる。Orca を読めなければ書かない', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'cockpit-close-'))
+  mkdirSync(path.join(root, '.orca'), { recursive: true })
+  const c = aobaNamed()
+  c.tasks = c.tasks.map((t) => (t.id === 't1' ? { ...t, worker: { run_id: 'run_w', task_id: 'task_w1' } } : t))
+  writeFileSync(path.join(root, '.orca', 'cockpit.json'), JSON.stringify(c))
+  const t1 = c.tasks.find((t) => t.id === 't1')!
+  const change = { tasks: [{ ...t1, state: 'ok', next: '' }], owners: [{ ...c.owners!.find((o) => o.id === 'o2')!, state: 'done' }] }
+  const shown: string[] = []
+  const fake = (stage: string, liveness: string, fail = false): CloseOrca => ({
+    runTasks: async () => {
+      if (fail) throw new Error('orca に繋がらない')
+      return [{ id: 'task_w1', status: 'completed' }, { id: 'task_w2', status: 'in_progress' }]
+    },
+    // 直しを同じ worker に送った続き（task_w2）が今の Dispatch。
+    taskLink: async (task) => (task === 'task_w1' ? { dispatch: 'ctx_1', followUpOf: null } : { dispatch: 'ctx_2', followUpOf: 'ctx_1' }),
+    show: async (d) => {
+      shown.push(d)
+      return { projection: { stage: { worker: stage }, liveness: { verdict: liveness } } }
+    }
+  })
+  assert.match((await write(root, change, true, {}, {}, fake('ready', 'live'))).errors.join('\n'), /タスク t1: worker の Dispatch ctx_2 がまだ動いている（ready・live）/)
+  assert.deepEqual(shown, ['ctx_2'])
+  assert.deepEqual((await write(root, change, true, {}, {}, fake('succeeded', 'live'))).errors, [])
+  assert.match((await write(root, change, true, {}, {}, fake('succeeded', 'live', true))).errors.join('\n'), /タスク t1: Dispatch が動いているかを確かめられない（orca に繋がらない）/)
+  // 済にするタスクの無い書き込みは Orca を読まない。
+  shown.length = 0
+  assert.deepEqual((await write(root, { applied_ops: [] }, true, {}, {}, fake('ready', 'live', true))).errors, [])
+  assert.deepEqual(shown, [])
+  rmSync(root, { recursive: true })
+})
+
+test('cockpit-write（R240・t168）: やり直し（retry_of）も続きとしてたどる。落ちた元の Dispatch を今の Dispatch と読まない', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'cockpit-retry-'))
+  const bin = path.join(dir, 'orca')
+  writeFileSync(bin, `#!/bin/sh\necho '{"ok":true,"result":{"dispatch":{"id":"ctx_b","follow_up_of_dispatch_id":null,"retry_of_dispatch_id":"ctx_a"}}}'\n`)
+  chmodSync(bin, 0o755)
+  assert.deepEqual(await orcaCli(bin).taskLink('task_b'), { dispatch: 'ctx_b', followUpOf: 'ctx_a' })
+  rmSync(dir, { recursive: true })
 })
