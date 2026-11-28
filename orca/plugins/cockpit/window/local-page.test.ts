@@ -44,6 +44,15 @@ test('~/orca-pages を指していても、.html 以外・.. を含む・シン�
   assert.match(await reason(path.join(dir, 'aoba', 'none.html')), /見つかりません/)
 })
 
+test('~/orca-pages そのものがシンボリックリンクなら、リンク先の中のファイルでも断る', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'cockpit-home-'))
+  mkdirSync(path.join(home, 'elsewhere', 'aoba'), { recursive: true })
+  writeFileSync(path.join(home, 'elsewhere', 'aoba', 'plan.html'), '<h1>outside</h1>')
+  const dir = path.join(home, 'orca-pages')
+  symlinkSync(path.join(home, 'elsewhere'), dir)
+  assert.match(((await localPage(path.join(dir, 'aoba', 'plan.html'), dir)) as { reason: string }).reason, /シンボリックリンク/)
+})
+
 test('置き場所の既定は ~/orca-pages で、~/ で書いたパスもそこを指す', async () => {
   assert.equal(PAGES_DIR, path.join(os.homedir(), 'orca-pages'))
   // 実際のホームには触らない。無いファイルなら「見つかりません」で、~/ を ~/orca-pages の下と読めている。
