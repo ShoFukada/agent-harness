@@ -6,6 +6,8 @@
 agy からは gemini/plugins/harness/hooks.json が呼ぶ。どの hook を動かすかはここに持たない。Claude の設定
 （$CLAUDE_CONFIG_DIR か ~/.claude の settings.json と、cwd の .claude/settings.json・settings.local.json）の hooks と、
 有効なプラグインの hooks.json をそのまま読み、イベントと matcher に合うものを Claude Code と同じく並行に動かす。
+hook の環境には、Claude Code と同じくユーザー側の settings.json の env を足す（プロジェクトの env は足さない）。
+プロジェクトの設定の disableAllHooks はそのプロジェクトの hook だけを外し、ユーザー側の hook は止めない。
 Claude に hook を足せば agy でも同じものが動く。agy 専用の検査は書かない（R181）。Orca が書いた hook（状態表示）は
 呼ばない。Orca は agy 用のものを ~/.gemini/config/hooks.json に別に書いている。
 
@@ -130,16 +132,33 @@ def plugin_hook_docs(root):
     return [d["hooks"] if isinstance(d.get("hooks"), dict) else d for d in docs]
 
 
+def user_settings():
+    return read_json(os.path.join(config_dir(), "settings.json"), {})
+
+
+def user_env():
+    """ユーザー側の settings.json の env。Claude Code は hook をこの環境で動かす（COCKPIT_LEDGER_GUARD など）。
+    プロジェクトの settings の env は足さない: 開いたリポジトリの設定から利用者の hook の環境を変えさせないため。"""
+    env = user_settings().get("env")
+    return {k: v for k, v in env.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(env, dict) else {}
+
+
 def configured(event, cwd):
-    """event の hook を、Claude Code が読む順（ユーザー・プロジェクト・ローカルの設定、有効なプラグイン）に並べる。"""
-    files = [os.path.join(config_dir(), "settings.json")]
+    """event の hook を、Claude Code が読む順（ユーザー・プロジェクト・ローカルの設定、有効なプラグイン）に並べる。
+
+    プロジェクトの disableAllHooks は、そのプロジェクトの設定の hook と enabledPlugins だけを外す。ユーザー側の設定と
+    プラグインの hook（帳簿の直書きや危険な操作を断る検査）は、開いたリポジトリの設定では止めさせない。
+    ユーザー側の disableAllHooks は全部を止める。"""
+    user = user_settings()
+    if user.get("disableAllHooks") is True:
+        return []
+    layers = [user]
     if cwd:
-        files += [os.path.join(cwd, ".claude", name) for name in ("settings.json", "settings.local.json")]
+        layers += [read_json(os.path.join(cwd, ".claude", name), {}) for name in ("settings.json", "settings.local.json")]
     hooks, enabled = [], {}
-    for path in files:
-        settings = read_json(path, {})
+    for settings in layers:
         if settings.get("disableAllHooks") is True:
-            return []
+            continue
         hooks += entries(settings.get("hooks"), event)
         if isinstance(settings.get("enabledPlugins"), dict):
             enabled.update(settings["enabledPlugins"])
@@ -165,8 +184,9 @@ def matches(matcher, target):
 
 # ---------- 動かす ----------
 
-def run_one(hook, data, cwd, event):
-    env = dict(os.environ, CLAUDE_PROJECT_DIR=cwd)
+def run_one(hook, data, cwd, event, extra_env):
+    env = dict(os.environ, **extra_env)
+    env["CLAUDE_PROJECT_DIR"] = cwd
     if hook["plugin"]:
         env.update(CLAUDE_PLUGIN_ROOT=hook["plugin"]["root"], CLAUDE_PLUGIN_DATA=hook["plugin"]["data"])
     # 待たない（async）hook の出力は読まないので捨てる。パイプに溜まると hook が書き込みで止まる
@@ -252,8 +272,9 @@ def run_event(event, payload, target=None):
             hooks.append(h)
     data = json.dumps(payload, ensure_ascii=False)
     cwd = payload.get("cwd") or ""
+    extra_env = user_env()
     with ThreadPoolExecutor(max_workers=max(1, len(hooks))) as pool:
-        results = list(pool.map(lambda h: run_one(h, data, cwd, event), hooks))
+        results = list(pool.map(lambda h: run_one(h, data, cwd, event, extra_env), hooks))
     return outcome(event, results)
 
 

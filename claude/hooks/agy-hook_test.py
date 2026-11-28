@@ -102,6 +102,7 @@ class Base(unittest.TestCase):
     def run_hook(self, event, inp):
         env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, AGY_HOOK_STATE=os.path.join(self.dir, "state"),
                    TMPDIR=self.dir)
+        env.pop("COCKPIT_LEDGER_GUARD", None)  # このテストを動かす Claude Code の設定の env から入ってくる
         r = subprocess.run([HOOK, event], input=json.dumps(inp), capture_output=True, text=True, env=env,
                            cwd=os.path.realpath(PLUGIN), timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -293,16 +294,66 @@ class Settings(Base):
         self.assertLess(time.monotonic() - started, 4)
         self.assertEqual([r["name"] for r in self.calls()], ["user"])
 
-    def test_project_settings_are_read_and_disable_all_hooks_is_respected(self):
-        os.makedirs(os.path.join(self.work, ".claude"))
-        with open(os.path.join(self.work, ".claude", "settings.local.json"), "w") as f:
-            f.write(json.dumps({"hooks": {"PreToolUse": [group("project")]}}).replace("FAKE ", self.fake + " "))
+    def project(self, name, hooks, **extra):
+        os.makedirs(os.path.join(self.work, ".claude"), exist_ok=True)
+        with open(os.path.join(self.work, ".claude", name), "w") as f:
+            f.write(json.dumps(dict({"hooks": hooks}, **extra)).replace("FAKE ", self.fake + " "))
+
+    def test_project_settings_are_read_and_user_disable_all_hooks_stops_everything(self):
+        self.project("settings.local.json", {"PreToolUse": [group("project")]})
         self.settings({"PreToolUse": [group("user")]})
         self.run_hook("PreToolUse", self.recorded("pre-run_command.json"))
         self.assertEqual(sorted(r["name"] for r in self.calls()), ["project", "user"])
         self.settings({"PreToolUse": [group("user")]}, disableAllHooks=True)
         self.run_hook("PreToolUse", self.recorded("pre-run_command.json"))
         self.assertEqual(len(self.calls()), 2)
+
+    def test_project_disable_all_hooks_drops_only_that_projects_hooks(self):
+        # 開いたリポジトリの設定で、ユーザー側の拒否の hook とプラグインの hook を止めさせない（Astra の指摘 1）
+        on = self.plugin("dev@market", {"PreToolUse": [group("plugin", matcher="Bash")]})
+        by_project = self.plugin("proj@market", {"PreToolUse": [group("project-plugin")]})
+        self.install({"dev@market": on, "proj@market": by_project})
+        self.settings({"PreToolUse": [group("user")]}, enabledPlugins={"dev@market": True})
+        self.project("settings.json", {"PreToolUse": [group("project")]}, disableAllHooks=True,
+                     enabledPlugins={"proj@market": True})
+        self.project("settings.local.json", {"PreToolUse": [group("local")]})
+        self.run_hook("PreToolUse", self.recorded("pre-run_command.json"))
+        self.assertEqual(sorted(r["name"] for r in self.calls()), ["local", "plugin", "user"])
+
+
+class HookEnv(Base):
+    """hook の環境には、Claude Code と同じくユーザー側の settings.json の env を足す。プロジェクトの env は足さない。"""
+
+    GUARD = os.path.join(HERE, "compaction-keep.py")
+
+    def setUp(self):
+        Base.setUp(self)
+        os.makedirs(os.path.join(self.work, ".orca"))
+        self.ledger = os.path.join(self.work, ".orca", "cockpit.json")
+        with open(self.ledger, "w", encoding="utf-8") as f:
+            json.dump({"version": 3, "intake": []}, f)  # 版 3 の帳簿（intake の欄がある）
+        self.inp = self.recorded("pre-write_file.json")
+        self.inp["toolCall"]["args"]["Path"] = self.ledger
+
+    def user(self, **extra):
+        with open(os.path.join(self.config, "settings.json"), "w") as f:
+            json.dump(dict({"hooks": {"PreToolUse": [{"matcher": "Write|Edit|MultiEdit",
+                                                       "hooks": [{"type": "command", "command": self.GUARD}]}]}},
+                           **extra), f)
+
+    def test_the_ledger_guard_is_on_through_the_user_settings_env(self):
+        # nix-darwin の claude/settings.json の env が COCKPIT_LEDGER_GUARD=1 を持つ（Astra の指摘 2）
+        self.user(env={"COCKPIT_LEDGER_GUARD": "1"})
+        out = self.run_hook("PreToolUse", self.inp)
+        self.assertEqual(out["decision"], "deny", out)
+        self.assertIn("cockpit-write", out["reason"])
+
+    def test_the_ledger_guard_stays_off_without_the_user_env_and_the_project_env_is_not_used(self):
+        self.user()
+        os.makedirs(os.path.join(self.work, ".claude"))
+        with open(os.path.join(self.work, ".claude", "settings.json"), "w") as f:
+            json.dump({"env": {"COCKPIT_LEDGER_GUARD": "1"}}, f)
+        self.assertIsNone(self.run_hook("PreToolUse", self.inp))
 
 
 class Prompts(Base):
