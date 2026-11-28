@@ -352,7 +352,7 @@ export type ConsultReturn = {
   decisions?: { text?: string; quote?: string; utterance?: string }[]; requests?: { quote?: string; utterance?: string }[]; open?: string[]
   conflict_of?: unknown
 }
-/** 返しの照合に使う、帳簿と移したカードの生の欄（画面の形の検査で外したカードも含める。compaction-keep.py の ledger_cards と同じ）。 */
+/** 返しの照合に使う、帳簿と移したカードの生の欄（画面の形の検査で外したカードも含める。consult_returns.py の ledger_cards と同じ）。 */
 export type ReturnMark = { id: unknown; from_returns?: unknown[]; held_returns?: unknown[] }
 /** カードの相談。path は相談のメモ（<root>/.orca/consult/<カード id>.md）、returnsPath は返しの記録（<カード id>.returns.jsonl）の絶対パス。 */
 export type ConsultMemo = { card: string; path: string; returnsPath: string; returns: ConsultReturn[] }
@@ -589,7 +589,7 @@ export const DAY: Shape = (v) => {
 }
 export const WATCH_SHAPE: Shape = (v) =>
   isObj(v) && Object.keys(v).every((k) => ['automation', 'targets', 'to'].includes(k)) && filled(v.automation) && Array.isArray(v.targets) && v.targets.length > 0 && v.targets.every(filled) && filled(v.to)
-/** カードの相談の返しの id（<カード id>-<連番>）。連番の数字は compaction-keep.py（python の \d）と同じく Unicode の十進数字を受ける。 */
+/** カードの相談の返しの id（<カード id>-<連番>）。連番の数字は返しを保存する consult_returns.py（python の \d）と同じく Unicode の十進数字を受ける。 */
 export const RETURN_ID = /^[A-Za-z0-9_]+-\p{Nd}+$/u
 export const returnId: Shape = (v) => str(v) && RETURN_ID.test(v as string)
 /** 画面と状態の計算が読むカードの欄の形。種類・状態・id は parseCockpit が先に断る。 */

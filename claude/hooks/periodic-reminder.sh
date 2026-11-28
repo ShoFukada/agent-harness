@@ -148,7 +148,7 @@ case "$event" in
     # 時刻を推し量って書かないよう、知らせのターンも含めて毎回今の時刻を出す（11/21 に、担当が 20:07 を 20:20、窓口が 20:05 を 20:25 と書いた。R186）
     printf '今: %s（date の出力）\n' "$(date '+%Y-%m-%d %H:%M')"
     # 担当・worker・Bot・ほかの窓口の知らせと背景の作業の完了のターンには、時刻のほかは今の順番（compaction-keep.py）だけを流す
-    # （R184・R186。知らせのたびに同じ事務が付き、次にやることが薄れた）。見分けは発言の記録と同じ判定（compaction-keep.py の is_relay）を使う
+    # （R184・R186。知らせのたびに同じ事務が付き、次にやることが薄れた）。見分けは発言の記録と同じ判定（cockpit_records.py の is_relay。compaction-keep.py relay で呼ぶ）を使う
     printf '%s' "$input" | "$(dirname "$0")/compaction-keep.py" relay && exit 0
     cwd=$(echo "$input" | jq -r '.cwd // empty'); root=$(find_cockpit_root "$cwd")
     # 操縦席のある Claude のメインには定期の念押しを流さない。深田さんの発言のターンに流すのは、今の順番（compaction-keep.py）・未処理の要対応・重要な警告だけ

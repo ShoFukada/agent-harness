@@ -80,7 +80,7 @@ function returnMarks(text: string | undefined): ReturnMark[] {
 
 /**
  * カードの相談の返しの記録の行のうち、return_id を持つもの（同じ id は先の行）。return_id の無い行は飛ばす。
- * 読み方は返しを保存する compaction-keep.py の valid_returns と同じにする（保存のときの同じ返しの照合と、ここでの未反映の判定が同じ行を見るように）。
+ * 読み方は返しを保存する consult_returns.py の valid_returns と同じにする（保存のときの同じ返しの照合と、ここでの未反映の判定が同じ行を見るように）。
  */
 export function consultReturns(text: string): ConsultReturn[] {
   const out = new Map<string, ConsultReturn>()
@@ -116,7 +116,7 @@ const ASK_KIND = { 質問: 'q', 答え: 'a', 知らせ: 'n' } as const
 
 /**
  * 質問と答えの控え（consult --ask が頭を、hook が「### 質問 HH:MM（u-12）」「### 答え HH:MM」「### 知らせ HH:MM」の節を書く）。
- * 頭の「- カード:」「- タスク:」「- 仕事:」は compaction-keep.py の ask_binding と同じ形で読む。
+ * 頭の「- カード:」「- タスク:」「- 仕事:」は consult_returns.py の ask_binding と同じ形で読む。
  */
 export function parseAskMemo(raw: string): Pick<AskThread, 'card' | 'task' | 'stream' | 'at' | 'entries'> {
   const text = raw.replace(/\r\n?/g, '\n')
@@ -136,7 +136,7 @@ export function parseAskMemo(raw: string): Pick<AskThread, 'card' | 'task' | 'st
   return { ...(bound['カード'] && { card: bound['カード'] }), ...(bound['タスク'] && { task: bound['タスク'] }), ...(bound['仕事'] && { stream: bound['仕事'] }), ...(at && { at }), entries }
 }
 
-/** 質問の返しの記録の行（compaction-keep.py の read_jsonl と同じく、壊れた行とオブジェクトでない行は飛ばす）。 */
+/** 質問の返しの記録の行（cockpit_records.py の read_jsonl と同じく、壊れた行とオブジェクトでない行は飛ばす）。 */
 export function parseAskReturns(text: string): AskReturn[] {
   const out: AskReturn[] = []
   for (const line of text.split('\n')) {
@@ -208,7 +208,7 @@ export function parseRulings(text: string): Ruling[] {
     try {
       const v = JSON.parse(line) as Record<string, unknown>
       const from = typeof v.from_return === 'string' ? { from_return: v.from_return } : {}
-      // id の無い行も、相談の返しの照合（from_return）には数える（compaction-keep.py の unreflected と同じ）。
+      // id の無い行も、相談の返しの照合（from_return）には数える（id が欠けた行でも、返しから判断を書いたことは分かる）。
       if (typeof v.id !== 'string' || !v.id) {
         if (from.from_return) out.push({ id: '', ...from })
         continue
