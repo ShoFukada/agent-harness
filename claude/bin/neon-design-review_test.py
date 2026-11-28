@@ -70,9 +70,12 @@ class Entry(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.m.main(["neon-design-review", self.shots, "--kind", "lp", "--script", "/tmp/x.py"])
 
-    def test_agy_denies_reading_the_worker_deny_read_paths(self):
-        deny = self.m.agy_settings("/x")["permissions"]["deny"]
-        self.assertIn("read_file(%s)" % os.path.realpath(os.path.expanduser("~/.aws")), deny)
+    def test_agy_names_only_the_worker_deny_read_paths_inside_the_shots(self):
+        deny = self.m.agy_settings(os.path.realpath(self.shots))["permissions"]["deny"]
+        self.assertEqual(deny, self.m.agy_launch.DENY_TOOLS, "外の ~/.aws は allow に入らないので名指ししない")
+        home_shots = os.path.realpath(os.path.expanduser("~/.aws/shots"))
+        with self.assertRaises(SystemExit):
+            self.m.agy_settings(home_shots)
 
     def test_agy_gets_sandbox_and_fixed_settings_only(self):
         shots = os.path.realpath(os.path.join(self.d, "private", "shots"))
@@ -164,7 +167,7 @@ class Entry(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         (call,) = agy_testing.calls(os.path.dirname(fake))
         settings = json.loads(call["argv"][2])
-        self.assertIn("read_file(%s)" % os.path.realpath(os.path.expanduser("~/.aws")), settings["permissions"]["deny"])
+        self.assertEqual(settings["permissions"]["deny"], self.m.agy_launch.DENY_TOOLS)
         self.assertEqual(settings["permissions"]["allow"], ["read_file(%s)" % os.path.realpath(shots)])
 
     def test_stand_in_agy_refuses_without_the_settings_the_parent_wrote(self):

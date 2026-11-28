@@ -55,8 +55,8 @@ class NeonRo(unittest.TestCase):
         self.assertEqual(perms["allow"], [f"read_file({os.path.realpath(self.repo)})"])
         for d in ["command(*)", "write_file(*)", "read_url(*)", "mcp(*)"]:
             self.assertIn(d, perms["deny"])
-        home = os.path.realpath(os.path.expanduser("~"))
-        self.assertIn(f"read_file({os.path.join(home, '.aws')})", perms["deny"])
+        # リポジトリの外の禁止パスは allow に入らないので名指ししない
+        self.assertFalse([d for d in perms["deny"] if d.startswith("read_file(")], perms["deny"])
         self.assertNotIn("--dangerously-skip-permissions", argv)
         # 本文は argv に載せず、stdin の stream-json で渡す
         self.assertFalse(any("既定を Neon" in a for a in argv))
@@ -67,6 +67,32 @@ class NeonRo(unittest.TestCase):
         self.assertFalse(os.path.exists(c["cwd"]))
         self.assertEqual(os.path.dirname(c["cwd"]), os.path.realpath(self.work))
         self.assertEqual(agy_testing.leaks(c, [os.path.realpath(self.d), self.d]), [])
+
+    def worker_settings(self, *deny):
+        path = os.path.join(self.d, "settings.worker.json")
+        with open(path, "w") as f:
+            json.dump({"sandbox": {"filesystem": {"denyRead": ["~/.aws", "~/.claude.json", *deny]}}}, f)
+        return path
+
+    def test_names_denied_paths_inside_the_repo_only(self):
+        repo = os.path.realpath(self.repo)
+        r = self.run_ro(self.repo, self.prompt, self.out,
+                        ORCA_WORKER_SETTINGS=self.worker_settings(f"{repo}/secrets.env"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        c = self.called()
+        argv = c["argv"]
+        deny = json.loads(argv[argv.index("--settings") + 1])["permissions"]["deny"]
+        self.assertEqual([d for d in deny if d.startswith("read_file(")], [f"read_file({repo}/secrets.env)"])
+        self.assertEqual(agy_testing.leaks(c, [os.path.realpath(self.d), self.d]), [])
+
+    def test_stops_before_agy_when_a_denied_path_inside_the_repo_names_claude(self):
+        repo = os.path.realpath(self.repo)
+        r = self.run_ro(self.repo, self.prompt, self.out,
+                        ORCA_WORKER_SETTINGS=self.worker_settings(f"{repo}/claude/mcp.local.json"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("名指しで渡せない", r.stderr)
+        self.assertEqual(agy_testing.calls(self.bindir), [])
+        self.assertFalse(os.path.exists(self.out))
 
     def test_failure_writes_log_and_no_answer(self):
         for mode in ("fail", "error"):

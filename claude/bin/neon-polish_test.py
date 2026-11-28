@@ -62,7 +62,8 @@ class Entry(unittest.TestCase):
         deny = json.loads(argv[2])["permissions"]["deny"]
         for rule in ("command(*)", "write_file(*)", "read_file(*)", "read_url(*)", "mcp(*)"):
             self.assertIn(rule, deny)
-        self.assertIn("read_file(%s)" % os.path.realpath(os.path.expanduser("~/.aws")), deny)
+        # read_file(*) で全部を断るので、worker の denyRead（~/.claude.json など）は名指ししない
+        self.assertEqual([d for d in deny if d.startswith("read_file(")], ["read_file(*)"])
         self.assertNotIn("allow", json.loads(argv[2])["permissions"])
         self.assertEqual(argv[argv.index("--model") + 1], "gemini-4-neon-high")
 
@@ -96,14 +97,6 @@ class Entry(unittest.TestCase):
         os.symlink(os.path.realpath(HERE), os.path.join(self.d, "linked"))
         r = self.run_entry(os.path.join(self.d, "linked", "neon-polish"))
         self.assertNotEqual(r.returncode, 0)
-        self.assertEqual(agy_testing.calls(self.bindir), [])
-
-    def test_refuses_without_worker_settings(self):
-        env = {k: v for k, v in agy_testing.polluted_env(self.bindir, NEON_LAUNCH_TMP=self.work).items()
-               if k != "ORCA_WORKER_SETTINGS"}
-        r = subprocess.run([sys.executable, ENTRY, self.write("body.md")], capture_output=True, text=True, env=env)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("ORCA_WORKER_SETTINGS", r.stderr)
         self.assertEqual(agy_testing.calls(self.bindir), [])
 
     def test_refuses_oversized_and_non_utf8_files(self):

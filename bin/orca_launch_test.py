@@ -75,7 +75,8 @@ class LaunchTest(unittest.TestCase):
             fh.write("brief")
         # 決まりの文言はリポジトリの中から読むので、入口と読む相手を一時のリポジトリの形に写して差し替える
         repo = os.path.join(self.tmp, "repo")
-        for rel in ("bin/orca-launch", "bin/stallwatch", "orca/plugins/cockpit/src/state.ts", "claude/bin/agy_launch.py"):
+        for rel in ("bin/orca-launch", "bin/stallwatch", "orca/plugins/cockpit/src/state.ts", "claude/bin/agy_launch.py",
+                    "claude/bin/sandbox_tmp.py"):
             os.makedirs(os.path.dirname(os.path.join(repo, rel)), exist_ok=True)
             shutil.copy(os.path.join(HERE, "..", rel), os.path.join(repo, rel))
         self.launch = os.path.join(repo, "bin", "orca-launch")

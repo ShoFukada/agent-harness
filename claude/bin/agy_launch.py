@@ -21,6 +21,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from sandbox_tmp import worker_denied_paths  # noqa: E402
+
 # agy 1.5.3 のバイナリが読む変数のうち、動くのに要るもの（認証は HOME の ~/.gemini と keychain、アカウントは AGY_ACCOUNT）
 KEEP = {"HOME", "USER", "LOGNAME", "SHELL", "PATH", "TMPDIR", "LANG", "LANGUAGE", "TERM", "COLORTERM", "NO_COLOR",
         "TZ", "EDITOR", "VISUAL", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
@@ -115,13 +118,42 @@ def _exe(name):
 
 DEFAULT_MODEL = "gemini-4-neon-high"
 DENY_TOOLS = ["command(*)", "write_file(*)", "read_url(*)", "mcp(*)"]
+# agy_testing.FORBIDDEN と同じ語（agy_launch_test が一致を確かめる）。名指しの禁止にこれが入るなら、渡さずに止める
+CONTEXT_WORDS = re.compile(r"claude|anthropic|サブエージェント|subagent|エージェント|opus|sonnet|fable", re.I)
 
 
-def text_only_args(deny_read=()):
+def _inside(path, root):
+    return os.path.commonpath([path, root]) == root
+
+
+def deny_read_within(roots):
+    """worker の denyRead のうち、agy に read_file を許すフォルダ（roots）の中にあるものだけを read_file の deny にする。
+    外のものは名指ししない。名指しすると ~/.claude.json のような Claude を指すパスを agy に渡す（R29）。
+    agy 1.5.3 で確かめたこと（11/28、合言葉入りの偽のファイルで）: allow の外のファイル（利用者の一時フォルダ・HOME の下）は
+    名指ししなくても読めずに終わる。allow の中でも deny で名指ししたファイルとフォルダの下は断る（deny が勝つ）。
+    権限は symlink の先のパスで判定するので、roots の中の symlink から外のファイルも読めない。
+    中のものに CONTEXT_WORDS の語があれば、名指しで漏らさず agy を起こす前に止める。roots が禁止の中にあっても止める。"""
+    roots = [os.path.realpath(r) for r in roots]
+    out = []
+    for p in worker_denied_paths():
+        for root in roots:
+            if _inside(root, p):
+                sys.exit("agy に読ませるフォルダ %s が worker の denyRead（%s）の中にある" % (root, p))
+            if _inside(p, root):
+                # root は allow と --add-dir で渡るので、名指しで新たに渡るのは root の下の部分だけ
+                if CONTEXT_WORDS.search(os.path.relpath(p, root)):
+                    sys.exit("agy に読ませるフォルダの中に、Claude を指す名前の禁止パス（%s）がある。名指しで渡せないので止める。"
+                             "そのファイルをフォルダの外に移すか、別のフォルダを渡す" % p)
+                out.append("read_file(%s)" % p)
+    return sorted(set(out))
+
+
+def text_only_args():
     """本文を stdin で渡し、本文だけを返させる呼び出し（仕上げ・書き直し）の引数。ファイルも読ませない。
     agentMode "" は Default（Auto は workspace の外のファイルを聞かずに読む）。
-    未検証: read_file(*) が全部のパスに当たるかは agy 1.5.3 の help と changelog に無いので、鍵の置き場は deny_read で名指しもする"""
-    deny = DENY_TOOLS + ["read_file(*)"] + ["read_file(%s)" % p for p in deny_read]
+    鍵の置き場は名指ししない。agy 1.5.3 で、read_file(*) だけで cwd の外の絶対パスのファイルも
+    「Matches user-configured deny rule」で断ると確かめた（11/28、合言葉入りの偽のファイルで）"""
+    deny = DENY_TOOLS + ["read_file(*)"]
     return ["--sandbox", "--settings", json.dumps({"agentMode": "", "permissions": {"deny": deny}})]
 
 

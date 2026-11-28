@@ -111,13 +111,13 @@ def strip_wrapping(response):
     return text
 
 
-def polish(prompt, model, deny_read=()):
+def polish(prompt, model):
     """仕上げた本文。失敗したときは None。"""
     line = json.dumps({"event": "user", "message": {
         "role": "user", "content": [{"type": "text", "text": prompt}]}}) + "\n"
     try:
         done = agy_launch.run(
-            ["agy", *agy_launch.text_only_args(deny_read), "--model", model,
+            ["agy", *agy_launch.text_only_args(), "--model", model,
              "--input-format", "stream-json", "--output-format", "stream-json",
              "--print-timeout", PRINT_TIMEOUT, "--disable-slash-commands"],
             input=line, timeout=KILL_AFTER, prefix="ja-polish-")
@@ -163,7 +163,7 @@ def main(argv):
     return run(text, args.file, args.diff, args.audience, args.doc_type, args.model)
 
 
-def run(text, name, show_diff=False, audience=None, doc_type=None, model=MODEL, deny_read=()):
+def run(text, name, show_diff=False, audience=None, doc_type=None, model=MODEL):
     """読み終えた本文を仕上げて stdout に出し、終了コードを返す。name はファイル名（文書の種類の判定と diff の見出し）。
     claude/bin/neon-polish もここを呼ぶ（worker の sandbox の外で、本文を自分で読んでから渡す）。"""
     if not text.strip():
@@ -178,7 +178,7 @@ def run(text, name, show_diff=False, audience=None, doc_type=None, model=MODEL, 
     prompt, problem = build_prompt(text, audience, doc_type)
     if problem:
         sys.stderr.write("規則を同梱できなかった（%s）。読めた規則だけで仕上げる\n" % problem)
-    polished = polish(prompt, model, deny_read)
+    polished = polish(prompt, model)
     if polished is None:
         sys.stderr.write("agy の呼び出しに失敗した（未実行・timeout・認証切れのいずれか）\n")
         return 1

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """agy_launch が agy に Claude Code の下の環境を渡さず、使い捨ての cwd で走らせることを保証する。本物の agy は呼ばない。"""
 
+import json
 import os
 import subprocess
 import sys
@@ -43,6 +44,48 @@ class CleanEnv(unittest.TestCase):
         d = agy_launch.user_tmp()
         self.assertTrue(os.path.isabs(d))
         self.assertIsNone(agy_launch.TELLTALE.search(d))
+
+
+class DenyReadWithin(unittest.TestCase):
+    """agy に読ませるフォルダの中の禁止パスだけを名指しし、外のもの（~/.claude.json など）は argv に出さない。"""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory(dir=tmp_root())
+        self.addCleanup(self.dir.cleanup)
+        self.root = os.path.realpath(os.path.join(self.dir.name, "repo"))
+        os.makedirs(os.path.join(self.root, "keys"))
+
+    def within(self, deny, roots=None):
+        settings = os.path.join(self.dir.name, "settings.worker.json")
+        with open(settings, "w") as f:
+            json.dump({"sandbox": {"filesystem": {"denyRead": deny}}}, f)
+        with mock.patch.dict(os.environ, {"ORCA_WORKER_SETTINGS": settings}):
+            return agy_launch.deny_read_within([self.root] if roots is None else roots)
+
+    def test_names_only_the_denied_paths_inside_the_folder(self):
+        rules = self.within(["~/.aws", "~/.claude.json", f"{self.root}/secret.txt", f"{self.root}/keys/*.pem"])
+        self.assertEqual(rules, [f"read_file({self.root}/keys)", f"read_file({self.root}/secret.txt)"])
+
+    def test_no_folder_names_nothing(self):
+        self.assertEqual(self.within(["~/.aws", f"{self.root}/secret.txt"], roots=[]), [])
+
+    def test_stops_instead_of_naming_a_path_that_points_at_claude(self):
+        for rel in ("claude/mcp.local.json", ".claude.json", "anthropic/key", "subagent.env"):
+            with self.subTest(rel=rel), self.assertRaises(SystemExit):
+                self.within([f"{self.root}/{rel}"])
+
+    def test_only_the_part_below_the_folder_is_checked(self):
+        # フォルダ自体は allow と --add-dir で agy に渡る。名指しで増えるのはフォルダの下の部分だけ
+        root = os.path.join(self.root, "keys")
+        self.assertEqual(self.within([f"{root}/x.txt"], roots=[root]), [f"read_file({root}/x.txt)"])
+
+    def test_stops_when_the_folder_is_inside_a_denied_path(self):
+        with self.assertRaises(SystemExit):
+            self.within([os.path.dirname(self.root)])
+
+    def test_context_words_match_the_leak_check(self):
+        self.assertEqual((agy_launch.CONTEXT_WORDS.pattern, agy_launch.CONTEXT_WORDS.flags),
+                         (agy_testing.FORBIDDEN.pattern, agy_testing.FORBIDDEN.flags))
 
 
 class Run(unittest.TestCase):

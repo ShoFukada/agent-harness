@@ -14,7 +14,7 @@ agy は ~/.gemini に書き、Google に通信するので、Claude の sandbox 
   受けない（環境変数 NEON_DESIGN_REVIEW_SCRIPT は settings の env からだけ入る。worker はコマンドの前に変数を
   付けられない。sandbox-exclude-guard が止める）
 - スクリプトが呼ぶ agy は、この入口が差し込んだ代役（PATH の先頭）を通り、--sandbox と、コマンド・書き込み・
-  URL の読み取り・MCP・worker の denyRead の read_file を拒否して写した画像のフォルダの read_file を許す settings に置き換わる。
+  URL の読み取り・MCP と、写した画像のフォルダの中にある worker の denyRead の read_file を拒否し、そのフォルダの read_file を許す settings に置き換わる。
   この settings は親が作業場所に書いておく（代役には worker の settings のパスの変数が届かないため）。
   スクリプトが渡す引数のほか（--dangerously-skip-permissions・--remote-agent など）は通さない。
   環境変数は agy_launch.py の許可リストで絞る
@@ -36,8 +36,6 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import agy_launch  # noqa: E402
 from sandbox_tmp import open_dir_nofollow, read_file  # noqa: E402
-# agy の read_file の既定が workspace の外を断るかが分からないので、denyRead を名指しでも拒否する
-from sandbox_tmp import worker_denied_paths as denied_paths  # noqa: E402
 
 ENTRY = os.path.realpath(__file__)
 AS_AGY = "NEON_DESIGN_REVIEW_AS_AGY"
@@ -78,10 +76,10 @@ def write_agy_settings(shots):
 
 
 def agy_settings(shots):
-    # 未検証: deny と allow のどちらが勝つか、read_file(<フォルダ>) が下のファイルに当たるかは agy 1.5.3 の help と changelog に無い
+    # read_file(<フォルダ>) は下のファイルに当たり、allow と deny が重なれば deny が勝つ（agy 1.5.3 で確かめた。deny_read_within）
     return {"agentMode": "", "permissions": {
         "allow": [f"read_file({shots})"],
-        "deny": agy_launch.DENY_TOOLS + [f"read_file({p})" for p in denied_paths()]}}
+        "deny": agy_launch.DENY_TOOLS + agy_launch.deny_read_within([shots])}}
 
 
 def agy_args(shots, argv):

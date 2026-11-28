@@ -11,7 +11,7 @@ agy は ~/.gemini に書き、Google に通信するので、Claude の sandbox 
 - 走らせるのは、この入口の隣の polish.py（../skills/ja-writing/polish.py。worker が書けない clone の中）だけで、
   引数では受けない。通す引数は --diff・--audience・--doc-type だけ（--model は polish.py の既定の Gemini）
 - agy には --sandbox と、コマンド・書き込み・ファイルと URL の読み取り・MCP を拒否する settings を渡す
-  （polish.py が agy_launch.text_only_args で付ける）。worker の denyRead も名指しで拒否する
+  （polish.py が agy_launch.text_only_args で付ける）。read_file(*) で全部のファイルを断るので、worker の denyRead は名指ししない
 仕上げた本文か diff は stdout、理由は stderr に出る。終了コードは polish.py のもの（失敗は 1、引数の誤りは 2）。
 """
 
@@ -25,7 +25,7 @@ import tempfile
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import agy_launch  # noqa: E402
-from sandbox_tmp import read_file, worker_denied_paths  # noqa: E402
+from sandbox_tmp import read_file  # noqa: E402
 
 POLISH = os.path.join(HERE, "..", "skills", "ja-writing", "polish.py")
 
@@ -50,14 +50,13 @@ def main(argv):
     p.add_argument("--audience", choices=("client", "internal"))
     p.add_argument("--doc-type", choices=polish._REVIEW.ja_yomiyasu.DOC_TYPES)
     a = p.parse_args(argv[1:])
-    deny_read = worker_denied_paths()  # 読む前に、塞ぐ一覧が取れないなら止める
     try:
         text = read_file(a.file, limit=polish.MAX_CHARS * 4).decode("utf-8")  # UTF-8 は 1 字が最大 4 バイト
     except UnicodeDecodeError:
         sys.exit(f"neon-polish: {a.file} は UTF-8 で読めない")
     except OSError as e:
         sys.exit(f"neon-polish: {a.file} が読めない（{e.strerror}）")
-    return polish.run(text, a.file, a.diff, a.audience, a.doc_type, deny_read=deny_read)
+    return polish.run(text, a.file, a.diff, a.audience, a.doc_type)
 
 
 if __name__ == "__main__":

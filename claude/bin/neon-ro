@@ -7,8 +7,9 @@
 worker から使うには settings.worker.json の excludedCommands に足すことになり、そのときは鍵を外へ送る道を見直す。
 - 呼び方は polish.py と同じ: agy_launch.py から起動し、cwd は使い捨ての空ディレクトリにして project 設定を読ませず、
   環境変数を許可リストで絞る。本文は argv ではなく stdin の stream-json で渡す
-- 権限は neon-design-review と同じ settings（--sandbox、コマンド・書き込み・URL の読み取り・MCP・worker の denyRead の read_file を拒否）。
-  read_file を許すのは <リポジトリ> だけ
+- 権限は neon-design-review と同じ settings（--sandbox、コマンド・書き込み・URL の読み取り・MCP と、<リポジトリ> の中にある
+  worker の denyRead の read_file を拒否）。read_file を許すのは <リポジトリ> だけ。<リポジトリ> の中の禁止パスの名前が
+  Claude を指すとき（nix-darwin の claude/mcp.local.json など）は、名指しで渡せないので agy を起こさずに止める
 - prompt と out は Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限り、symlink をたどらずに開く（sandbox_tmp.py）
 答えの本文は <out.md>、agy の stderr と、本文を取り出せなかったときの stdout は <out.md>.log に書く。
 """
