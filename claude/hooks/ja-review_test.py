@@ -969,6 +969,48 @@ class Stop(Hook):
         self.assertNotIn("decision", output)
         self.assertNotIn("正本", output["systemMessage"])
 
+    def test_an_unsafe_rewrite_is_not_asked_again_in_the_same_conversation(self):
+        # 11/28 の worker: 同じ README がターンの終わりのたびに unsafe_rewrite で約 4 分ずつ止めた
+        self.stub(None, "unsafe_rewrite")
+        self.assertIn("見送った", self.run_stop(session_id="s1"))
+        self.assertEqual(self.run_stop(session_id="s1"), "")
+        self.assertEqual(len(self.calls), 1)
+        self.assertFalse(review.cached(self.body))
+
+    def test_a_changed_body_is_asked_again_after_an_unsafe_rewrite(self):
+        self.stub(None, "unsafe_rewrite")
+        self.run_stop(session_id="s1")
+        self.write("a.md", self.body + "書き足した。")
+        self.assertIn("見送った", self.run_stop(session_id="s1"))
+        self.assertEqual(len(self.calls), 2)
+
+    def test_another_conversation_is_asked_again_after_an_unsafe_rewrite(self):
+        self.stub(None, "unsafe_rewrite")
+        self.run_stop(session_id="s1")
+        self.assertIn("見送った", self.run_stop(session_id="s2"))
+        self.assertEqual(len(self.calls), 2)
+
+    def test_another_path_with_the_same_body_is_asked_after_an_unsafe_rewrite(self):
+        self.stub(None, "unsafe_rewrite")
+        self.run_stop(session_id="s1")
+        copy = self.write("copy.md", self.body)
+        transcript = self.transcript(
+            [user_prompt(), tool_call("Write", {"file_path": copy, "content": self.body})], name="copy.jsonl")
+        self.assertIn("見送った", self.run_stop(session_id="s1", transcript_path=transcript))
+        self.assertEqual(len(self.calls), 2)
+
+    def test_an_unsafe_rewrite_without_a_conversation_is_asked_again(self):
+        self.stub(None, "unsafe_rewrite")
+        self.run_stop()
+        self.run_stop()
+        self.assertEqual(len(self.calls), 2)
+
+    def test_a_timeout_is_asked_again(self):
+        self.stub(None, "timeout")
+        self.run_stop(session_id="s1")
+        self.run_stop(session_id="s1")
+        self.assertEqual(len(self.calls), 2)
+
     def test_a_block_and_a_rewrite_are_reported_together(self):
         short = self.write("short.md", "正本を更新した。")
         self.transcript_path = self.transcript([
@@ -1255,6 +1297,20 @@ class StopKeepsUntouchedLines(Hook):
         expected = list(lines)
         expected[3] = "直した行は3件の本文であり、新しい。"
         self.assertEqual(self.read(path), "\n".join(expected) + "\n")
+
+    def test_an_unsafe_confined_rewrite_is_not_asked_again_in_the_same_conversation(self):
+        lines = list(self.lines)
+        lines[3] = "直した行の本文で、新しい。"
+        path = self.write("tooling.md", "\n".join(lines) + "\n")
+        transcript = self.transcript([user_prompt(), tool_call(
+            "Edit", {"file_path": path, "old_string": "x", "new_string": lines[3]})])
+        self.stub(self.every_line_rewritten)
+        self.addCleanup(setattr, review, "safe", review.safe)
+        review.safe = lambda original, rewritten: False
+        payload = {"transcript_path": transcript, "cwd": self.dir, "session_id": "s1"}
+        self.assertIn("見送った", self.run_hook("stop", payload))
+        self.assertEqual(self.run_hook("stop", payload), "")
+        self.assertEqual(len(self.calls), 1)
 
     def test_a_tracked_file_without_changes_is_not_sent(self):
         git(self.dir, "init", "-q")

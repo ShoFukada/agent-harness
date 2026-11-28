@@ -33,6 +33,10 @@ brief で始まる名前は、読み手がエージェントなので見ない�
 
 書き直せなかったときは単語表の閾値だけで判定し、Tier1 が 1 語か Tier2 が 3 語あれば語の一覧を差し戻す。
 安全確認で落ちた書き直し（unsafe_rewrite）は差し戻さず、件数とパスを systemMessage に載せる。
+stop は、見送った組（会話の session_id・パス・本文の sha256）を ja-review-cache/declined/ に 7 日だけ残し、
+同じ組ではもう書き直しに出さない。stop は最後の人のプロンプト以降の書き込みを毎回見直すので、覚えないと
+worker のようにプロンプトが最初の brief だけの会話では、ターンの終わりのたびに同じ本文で数分ずつ止まる。
+成功の sha256 と分けるのは、同じ本文でも別の会話・別のパスではモデルの答えが変わりうるため。
 原因は $TMPDIR/ja-review-failures.log に 1 行だけ追記する（時刻・モード・原因・本文の文字数）。原因は
 呼び出し側（agy_missing・timeout・nonzero_exit・too_long）と応答側（empty_response は agy が成功扱いで
 空を返したもの、unsafe_rewrite は安全確認で落としたもの、bad_output は stream-json を読めなかったもの）
@@ -45,7 +49,7 @@ brief で始まる名前は、読み手がエージェントなので見ない�
 （繰り返しの多い本文はモデルが重複をまとめて 1 行に潰すことがあり、同じ本文を二度通すと常体が
 敬体に変わることがある）。上書きは、読んだ内容が書き込み直前も変わっていないことを確かめてから、
 同じディレクトリの一時ファイルを os.replace で置き換える形で行う。1 MB 超のファイルと UTF-8 で読めない
-ファイルは対象にしない。hook 全体の締め切りは 170 秒で、残りが 20 秒を切ったファイルは処理せず理由に
+ファイルは対象にしない。hook 全体の締め切りは 280 秒で、残りが 20 秒を切ったファイルは処理せず理由に
 並べる。agy は claude/bin/agy_launch.py から起動し、使い捨ての空ディレクトリを cwd にして project の
 AGENTS.md を読ませず、環境変数を許可リストで絞る。本文は argv ではなく stdin の stream-json で渡す
 （`agy -p` は stdin を読まないので、長い本文で argv が溢れるのを避けるにはこの経路しかない）。
@@ -93,6 +97,7 @@ CLI_MODEL = "gemini-4-neon-high"
 PRINT_TIMEOUT = "4m"
 REWRITE_TIMEOUT = 260
 CACHE_DIR = "ja-review-cache"
+DECLINED_DIR = "declined"
 FAILURE_LOG = "ja-review-failures.log"
 STDERR_TAIL = 200
 CACHE_TTL = 7 * 24 * 60 * 60
@@ -585,15 +590,38 @@ def cache_path(text):
     return os.path.join(tempfile.gettempdir(), CACHE_DIR, digest)
 
 
+def declined_path(session, path, text):
+    key = "\0".join((session, path, text or ""))
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return os.path.join(tempfile.gettempdir(), CACHE_DIR, DECLINED_DIR, digest)
+
+
 def cached(text):
+    return fresh(cache_path(text))
+
+
+def remember(text):
+    mark(cache_path(text))
+
+
+def declined(session, path, text):
+    """この会話で、このパスのこの本文の書き直しを安全確認で見送ったか。会話が分からなければ覚えない。"""
+    return bool(session) and fresh(declined_path(session, path, text))
+
+
+def decline(session, path, text):
+    if session:
+        mark(declined_path(session, path, text))
+
+
+def fresh(path):
     try:
-        return time.time() - os.path.getmtime(cache_path(text)) < CACHE_TTL
+        return time.time() - os.path.getmtime(path) < CACHE_TTL
     except OSError:
         return False
 
 
-def remember(text):
-    path = cache_path(text)
+def mark(path):
     directory = os.path.dirname(path)
     try:
         os.makedirs(directory, 0o700, exist_ok=True)
@@ -1064,6 +1092,7 @@ def hook_stop(payload):
     unsafe = []
     skipped = []
     cwd = payload.get("cwd") or ""
+    session = payload.get("session_id") or ""
     given = given_writes(payload, cwd)
     for path, writes in turn_writes(payload.get("transcript_path"), cwd) if given is None else given:
         if not path.lower().endswith(TEXT_EXTENSIONS) or is_instruction_file(path):
@@ -1080,7 +1109,7 @@ def hook_stop(payload):
             if over_threshold(result):
                 parts.append(vocab_notice(path, result))
             continue
-        if cached(text):
+        if cached(text) or declined(session, path, text):
             continue
         if time_left(deadline) < MIN_SLICE:
             skipped.append(path)
@@ -1089,6 +1118,7 @@ def hook_stop(payload):
                               doc_type=ja_yomiyasu.detect_doc_type(text, path))
         if body is None:
             if cause == "unsafe_rewrite":
+                decline(session, path, text)
                 unsafe.append(path)
             elif over_threshold(result):
                 parts.append(vocab_notice(path, result))
@@ -1100,6 +1130,7 @@ def hook_stop(payload):
                 body = ""
             elif not safe(text, normalize(body)):
                 log_failure("stop", "unsafe_rewrite confined", text)
+                decline(session, path, text)
                 unsafe.append(path)
                 continue
         if not body:
