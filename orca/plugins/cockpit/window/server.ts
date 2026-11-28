@@ -530,7 +530,8 @@ export function createServer(opts: Options) {
   }
 
   async function windowView(): Promise<WindowView> {
-    const live = ps.flatMap((r) => r.agents).filter((a) => a.hasLivePty === true || (a.hasLivePty !== false && a.state !== 'done')).length
+    // ターンを終えたエージェントは、端末が開いたままでも動いているに数えない（済んだ worker が残るたびに数が増え、動いているものが読めなくなった。t176）。
+    const live = ps.flatMap((r) => r.agents).filter((a) => a.hasLivePty !== false && a.state !== 'done').length
     const boards = await Promise.all([...wss.values()].filter((ws) => ws.files.cockpit || ws.files.errors.length).map((ws) => cockpitView(ws.root, true)))
     // Orca にある本線のうち、操縦席の無いもの（見ていない案件）。worker の worktree と、操縦席の窓のある本線は除く。
     const unseen = ps.filter((r) => !r.parentWorktreeId && !hasCockpit(r.path)).map((r) => ({ name: r.displayName?.trim() || path.basename(r.path), path: r.path }))

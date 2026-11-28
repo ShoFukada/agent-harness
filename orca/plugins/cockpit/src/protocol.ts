@@ -193,7 +193,7 @@ export type WindowView = {
   boards: CockpitView[]
   /** Orca にあって操縦席の無い案件（見ていない案件）。 */
   unseen: { name: string; path: string; why?: string }[]
-  /** プロセスが生きているエージェントの総数。 */
+  /** プロセスが生きていて、ターンを終えていない（作業中・許可待ち・返事待ち）エージェントの総数。 */
   live: number
   /** Orca に繋がらないなど、窓全体の 1 行の知らせ。 */
   errors: string[]

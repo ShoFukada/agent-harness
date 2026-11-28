@@ -8,13 +8,14 @@ import { writeSample } from '../fixtures/demo.ts'
 import { FAKE_LINT, OLD_M1 } from '../fixtures/drafts.ts'
 import { sample } from '../fixtures/sample.ts'
 import { draftLinter } from '../src/lint.ts'
-import { boardsOf, keyOf, newUi, type Board } from '../src/view.ts'
-import { renderWindow, todoGroups } from '../src/window-view.ts'
+import { boardsOf, keyOf, newUi, ROW_ACTS, rowSource, talkVia, type Board, type VRow } from '../src/view.ts'
+import { renderWindow, todoRows, todoSections } from '../src/window-view.ts'
 import type { AutomationRun, OwnerLive, WindowView } from '../src/protocol.ts'
 import { SIGNAL } from '../src/store.ts'
 import { askCli, askMessage, askNotice, askTitle, automationFact, createServer, orcaCli, parseTailnetHosts, stopReason, tabsOf, type AskCmd, type Consult, type Options, type Orca, type PluginRow, type PsAgent, type PsRow } from './server.ts'
 import type { WorkerShow } from './orca-state.ts'
 import type { Op } from '../src/model.ts'
+import { countedRow } from '../src/state.ts'
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p))
 
@@ -147,7 +148,7 @@ function workspaces() {
     { worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [agent('t:main')] },
     { worktreeId: 'r::b', path: b, parentWorktreeId: null, agents: [] },
     { worktreeId: 'r::c', path: c, parentWorktreeId: null, agents: [agent('t:c')] },
-    { worktreeId: 'r::c-w1', path: workspace('c-w1'), parentWorktreeId: 'r::c', agents: [agent('t:c1', { hasLivePty: false })] },
+    { worktreeId: 'r::c-w1', path: workspace('c-w1'), parentWorktreeId: 'r::c', agents: [agent('t:c1', { hasLivePty: false }), agent('t:c2', { state: 'done' })] },
     { worktreeId: 'r::a-w1', path: child, parentWorktreeId: 'r::a', agents: [agent('t:w1', { state: 'blocked', conversationName: 'w1' })] },
     { worktreeId: 'r::bare', path: bare, parentWorktreeId: null, displayName: '操縦席の無い案件', agents: [] }
   ]
@@ -262,6 +263,7 @@ test('全案件の操縦席を送る。操縦席の無い本線は「見てい�
   assert.deepEqual(v.unseen, [{ name: '操縦席の無い案件', path: bare }])
   assert.equal(v.focused, a)
   assert.deepEqual(board(v, a)!.workers.map((w) => [w.terminalId, w.stop]), [['term_w1', 'blocked']])
+  // 端末の落ちたものと、端末が開いたままでもターンを終えたもの（t:c2）は動いているに数えない。
   assert.equal(v.live, 3)
 })
 
@@ -1461,6 +1463,91 @@ test('4000 字を超える別の答えは切り詰めずに断り、ちょうど
   assert.equal(log.ops[0].text.length, 4000)
 })
 
+test('窓の要対応（t176）: 件数の欄はタブの数と同じ行だけ（5 種類と、担当が返事を待っている一緒に作る仕事）。描いた操作を全部押しても「見つかりません」（409）や形の違い（400）にならず、行の出どころの表（ROW_ACTS）の外の操作を出さない。済んだタスクと終わった worker は残っている worker に数え、停止の行にしない', async () => {
+  const base = tmp('cockpit-acts-')
+  const now = Date.now()
+  const { roots, orca } = writeSample(base, now)
+  // 行の出どころを全部そろえる: 一緒に作る仕事（s2）、Orca に無い Dispatch のタスク（t9）、直しを頼んだカード（r5）、動いていないタスク（t9 の前の 3 時間）。
+  const file = path.join(roots.aoba!, '.orca', 'cockpit.json')
+  const c = JSON.parse(readFileSync(file, 'utf8'))
+  c.streams.find((x: { id: string }) => x.id === 's2').form = 'cowork'
+  c.tasks.push({ id: 't9', stream: 's1', phase: '作成', title: '帳票の出力', state: 'run', worker: { task_id: 'task_gone', dispatch_id: 'ctx_gone' } })
+  c.tasks.push({ id: 't8', stream: 's1', phase: '作成', title: '一覧の直し', state: 'run', worker: { task_id: 'task_done', dispatch_id: 'ctx_done' } })
+  writeFileSync(file, JSON.stringify(c, null, 2))
+  const logFile = path.join(roots.aoba!, '.orca', 'cockpit.user.json')
+  const log = JSON.parse(readFileSync(logFile, 'utf8'))
+  log.ops.push({ op_id: 8000, at: new Date(now - 60_000).toISOString(), item_id: 'r5', item_rev: 1, type: 'talk', text: '幅を直して' })
+  writeFileSync(logFile, JSON.stringify(log, null, 2))
+  // 残っている worker: Dispatch が終わって取り込み待ちのタスク（t8）の worker が中断で止まったまま、どのタスクにも結ばれずにターンを終えた worker。
+  // 済んだタスクの Dispatch は窓が読まない（Orca への問い合わせを増やさない）ので、済んだタスクの worker は結ばれずに終わった worker として数える。
+  const ps0 = orca.ps
+  orca.ps = async () => [...(await ps0()),
+    { worktreeId: 'wt-aoba-done', path: path.join(base, 'aoba-done'), parentWorktreeId: 'wt-aoba', displayName: '一覧の直し', agents: [{ paneKey: 'p:aoba-done', state: 'done', agentType: 'claude', stateStartedAt: now - 3_600_000, hasLivePty: true, interrupted: true }] },
+    { worktreeId: 'wt-aoba-old', path: path.join(base, 'aoba-old'), parentWorktreeId: 'wt-aoba', displayName: '作業｜前の調べもの', agents: [{ paneKey: 'p:aoba-old', state: 'done', agentType: 'claude', stateStartedAt: now - 7_200_000, hasLivePty: true }] }]
+  const terms0 = orca.terminals
+  orca.terminals = async () => [...(await terms0()), { handle: 'term_aoba_done', tabId: 'p', leafId: 'aoba-done' }, { handle: 'term_aoba_old', tabId: 'p', leafId: 'aoba-old' }]
+  const show0 = orca.show
+  orca.show = async (d) => (d === 'ctx_done' ? { dispatch: { completedAt: new Date(now - 3_600_000).toISOString() }, projection: { stage: { worker: 'succeeded' }, liveness: { verdict: 'live' } }, terminal: { handle: 'term_aoba_done' }, observation: { agentWait: null } } : show0(d))
+  const dir = tmp('cockpit-dir-')
+  writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: roots.aoba, at: new Date().toISOString() }))
+  const s = createServer({ port: 0, dir, orca, consult: async () => 'term_consult' })
+  servers.push(s)
+  const port = await s.listen()
+  const origin = `http://127.0.0.1:${port}`
+  const post = async (name: string, body: unknown) => {
+    const r = await fetch(`${origin}/api/${name}`, { method: 'POST', headers: { 'content-type': 'application/json', origin, 'x-cockpit-token': s.token }, body: JSON.stringify(body) })
+    return { status: r.status, body: await r.json() }
+  }
+  const v = await listen(port, s.token).until((x) => !!board(x, roots.aoba!)?.questions?.length && !!board(x, roots.aoba!)?.owners?.length && !!board(x, roots.aoba!)?.workers.some((w) => w.task === 't8'))
+  const m = { boards: boardsOf(v.boards, now), focused: roots.aoba, unseen: [], errors: [] }
+  const b = m.boards.find((x) => x.root === roots.aoba)!
+  // 残っている worker は 2 つ。取り込み待ちのタスクの worker の中断は停止の行にしない。
+  assert.deepEqual(b.d.leftover.map((a) => a.worktree).sort(), [path.join(base, 'aoba-done'), path.join(base, 'aoba-old')])
+  assert.ok(!b.d.queue.some((r) => r.agent?.worktree === path.join(base, 'aoba-done')))
+  // 件数の欄はタブの数と同じ行数で、件数に数える 5 種類だけ。
+  const sec = todoSections(b)
+  const mine = sec.mine.flatMap(([, xs]) => xs)
+  assert.equal(mine.length, b.d.total)
+  assert.ok(mine.every(countedRow))
+  const h0 = renderWindow(m, newUi(), now, (x) => x)
+  assert.match(h0, new RegExp(`data-tab="todo" aria-selected="true">要対応<span class="n">${b.d.total}</span>`))
+  assert.equal(h0.slice(0, h0.indexOf('一緒に進めている')).match(/class="cardrow /g)?.length, b.d.total)
+  // 行の出どころが全部そろっている（帳簿のカード・端末の停止・問い・Dispatch・一緒に作る仕事）。
+  const rows: VRow[] = [...todoRows(b), ...b.d.reports.map((r) => ({ ...r, v: b.v }))]
+  assert.deepEqual([...new Set(rows.map((r) => rowSource(r.card.id)))].sort(), ['agent', 'ask', 'card', 'cowork', 'dispatch'])
+  const pressed: string[] = []
+  for (const r of rows) {
+    const h = renderWindow(m, { ...newUi(), sel: keyOf(r) }, now, (x) => x)
+    const acts = h.slice(h.lastIndexOf('<div class="dbtn">'))
+    for (const btn of acts.match(/<button [^>]*data-act="[^"]+"[^>]*>/g) ?? []) {
+      const act = /data-act="([^"]+)"/.exec(btn)![1]!
+      const where = `${r.card.id} の ${act}`
+      assert.ok(ROW_ACTS[rowSource(r.card.id)].includes(act), `${where} は表の外の操作`)
+      const op = (type: string, extra: object = {}) => post('op', { root: b.root, item_id: r.card.id, item_rev: r.card.rev, type, ...extra })
+      let res: { status: number; body: Record<string, unknown> } | undefined
+      if (['accept', 'sent', 'skip', 'delegate', 'ack', 'dismiss'].includes(act)) res = await op(act)
+      else if (act === 'decide') res = await op('decide', r.card.options?.length ? { option_id: r.card.options[0]!.id } : { option_id: 'other', text: '別の答え' })
+      else if (act === 'other') res = r.card.kind === 'stuck' ? await op('decide', { option_id: 'other', text: '別の答え' }) : await op('talk', { text: '直してほしい' })
+      else if (act === 'revert') res = await op('revert', { target: 0 })
+      else if (act === 'focus') res = await post('focus', { terminalId: r.agent?.terminalId, worktree: r.agent?.worktree })
+      else if (act === 'talk') {
+        const via = talkVia(r)
+        res = via === 'focus' ? await post('focus', { terminalId: r.agent?.terminalId, worktree: r.agent?.worktree })
+          : via === 'stream' ? await post('talk', { root: b.root, stream: r.card.stream }) : await post('talk', { root: b.root, item_id: r.card.id, item_rev: r.card.rev })
+      } else if (act === 'answer') res = await post('answer', { root: b.root, item_id: r.card.id, rev: r.card.rev, text: '答え' })
+      if (!res) continue
+      pressed.push(`${rowSource(r.card.id)}:${act}`)
+      assert.ok(res.status === 200, `${where}: ${res.status} ${JSON.stringify(res.body)}`)
+      if (act === 'focus' || (act === 'talk' && talkVia(r) === 'focus')) assert.equal(res.body.focused, true, `${where} が何も前に出さない`)
+      if (act === 'talk' && talkVia(r) !== 'focus') assert.equal(res.body.opened, true, `${where} が開けない: ${JSON.stringify(res.body)}`)
+      // 書いた操作は取り消して、同じカードの次のボタンを今の版で押せるようにする。
+      const last = (res.body.view as { log?: { ops: Op[] } } | undefined)?.log?.ops.at(-1)
+      if (last && last.item_id === r.card.id) assert.equal((await post('op', { root: b.root, item_id: r.card.id, item_rev: r.card.rev, type: 'undo', undo_of: last.op_id })).status, 200)
+    }
+  }
+  for (const k of ['card:accept', 'card:decide', 'card:talk', 'agent:focus', 'ask:focus', 'ask:dismiss', 'cowork:focus', 'dispatch:talk']) assert.ok(pressed.includes(k), `${k} を押していない: ${pressed.join(' ')}`)
+})
+
 test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestion と許可の確認は画面から、orchestration の question は inbox から（偽の Orca は fixtures/demo.ts）', async () => {
   const base = tmp('cockpit-asks-')
   const now = Date.now()
@@ -1472,7 +1559,7 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   const port = await s.listen()
   const v = await listen(port, s.token).until((x) => !!board(x, roots.aoba!)?.questions?.length)
   const m = { boards: boardsOf(v.boards, now), focused: roots.aoba, unseen: [], errors: [] }
-  const lines = (b: Board) => todoGroups(b).flatMap(([, xs]) => xs).filter((r) => r.agent?.ask).map((r) => [r.card.title, r.agent!.ask!.from])
+  const lines = (b: Board) => todoRows(b).filter((r) => r.agent?.ask).map((r) => [r.card.title, r.agent!.ask!.from])
   const aoba = m.boards.find((b) => b.root === roots.aoba)!
   // 1 行目は問いそのもの、2 行目は誰が誰に聞いているか。
   assert.deepEqual(lines(aoba), [
@@ -1481,7 +1568,7 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
     ['構成図は PowerPoint と draw.io のどちらで描きますか（田中さんが直すのは PowerPoint）', 'worker（AWS 構成案）が担当に聞いたが、まだ答えが無い']
   ])
   // 押すと宛先を前に出す: 地図の worker は自分の端末、窓口宛ては窓口の端末、担当宛ては担当のチャットのある worktree。
-  const row = (t: string) => todoGroups(aoba).flatMap(([, xs]) => xs).find((r) => r.card.title.includes(t))!
+  const row = (t: string) => todoRows(aoba).find((r) => r.card.title.includes(t))!
   assert.deepEqual([row('キャッシュ').agent?.terminalId, row('既定の並び').agent?.terminalId, row('構成図').agent?.worktree], ['term_aoba_w2', 'term_aoba_main', path.join(base, 'aoba-aws')])
   // 詳細: 題に収まった問いは本文を重ねず、選択肢は番号を付けずにどこで選ぶかを添える。
   const h = renderWindow(m, { ...newUi(), sel: keyOf(row('既定の並び')) }, now, (x) => x)
@@ -1501,7 +1588,7 @@ test('止まった問いを要対応に 1 行で出す: 端末の AskUserQuestio
   assert.doesNotMatch(hc, /選択肢（端末で選ぶ）/)
   const harness = m.boards.find((b) => b.root === roots.harness)!
   assert.deepEqual(lines(harness), [['feature/log-summary を origin に push する', 'worker（集計の分け方を直す）が端末で許可を待っている']])
-  const hp = renderWindow({ ...m, focused: roots.harness }, { ...newUi(), filter: roots.harness, sel: keyOf(todoGroups(harness).flatMap(([, xs]) => xs).find((r) => r.agent?.ask)!) }, now, (x) => x)
+  const hp = renderWindow({ ...m, focused: roots.harness }, { ...newUi(), filter: roots.harness, sel: keyOf(todoRows(harness).find((r) => r.agent?.ask)!) }, now, (x) => x)
   assert.match(hp, /許可を求めていること<\/span><div><div class="quote code">Bash command\nPush feature\/log-summary to origin\ngit push origin feature\/log-summary<\/div>/)
   assert.match(hp, /<div class="acts"><button class="btn pri" type="button" data-act="answer"[^>]*data-choice="1"[^>]*>Yes<\/button><button class="btn" [^>]*data-choice="2"[^>]*>Yes, and don&#39;t ask again for git push commands in \/w\/harness<\/button><button class="btn" [^>]*data-choice="3"[^>]*>No<\/button><button class="btn" type="button" data-act="focus"/)
   assert.equal(hp.match(/class="btn pri"/g)?.length, 1, '塗りの主ボタンは今回だけの許可の 1 つ')
@@ -1525,7 +1612,7 @@ test('停止の行に窓から答える（R222・R223）: 端末の問いは画�
   }
   const v = await listen(port, s.token).until((x) => !!board(x, roots.aoba!)?.questions?.length)
   const aoba = boardsOf(v.boards, now).find((b) => b.root === roots.aoba)!
-  const row = (t: string) => todoGroups(aoba).flatMap(([, xs]) => xs).find((r) => r.card.title.includes(t))!
+  const row = (t: string) => todoRows(aoba).find((r) => r.card.title.includes(t))!
   const map = row('キャッシュ')
   const ops = () => (JSON.parse(readFileSync(path.join(roots.aoba!, '.orca', 'cockpit.user.json'), 'utf8')) as { ops: Op[] }).ops.filter((o) => o.type === 'answer')
   const stale = await post('answer', { root: roots.aoba, item_id: map.card.id, rev: map.card.rev, choice: 2, sig: 'old' })

@@ -1,9 +1,9 @@
 // 窓を前に見たときからの変化（追加 24・U13）。窓が前に出たときに、描いている案件の要対応の行とタスクの控えをブラウザに持ち、
 // 次に前に出たとき、その控えより後に出た行・変わった行に「新規」「更新」の印を付け、上の帯に「HH:MM 以降 済 n・新しい要対応 n」を出す。
 // 控えは帳簿にも常駐のプロセスにも書かない。見たかどうかは人と端末ごとに違う（Mac と電話で別に見る）ので、ブラウザごとに持つ。
-import { COUNTED, taskSig, timeOf } from './model.ts'
+import { taskSig, timeOf } from './model.ts'
 import { keyOf, type Board } from './view.ts'
-import type { Row, TaskView } from './state.ts'
+import { countedRow, type Row, type TaskView } from './state.ts'
 
 /**
  * 1 案件の控え。at は窓が前に出た時刻。rows は要対応のタブの行（鍵 → [版, タブの要対応に数えたか, 題]）、
@@ -15,10 +15,10 @@ export const MARK_LABEL: Record<Mark, string> = { new: '新規', upd: '更新' }
 /** 控えとの違い。rows・tasks は印、done は済んだもの（カードとタスク）、fresh は新しい要対応、updated は変わった要対応の行の数。 */
 export type Since = { root: string; at: number; rows: Record<string, Mark>; tasks: Record<string, Mark>; done: number; fresh: number; updated: number }
 
-/** 要対応のタブの行（届いたは全体に出すので外す。直し待ちは入れる）。window-view.ts の todoGroups と同じ集め方。 */
+/** 要対応のタブの行（届いたは全体に出すので外す。直し待ちは入れる）。window-view.ts の todoRows と同じ集め方。 */
 const todoRows = (b: Board) => [...b.d.queue.filter((r) => r.card.kind !== 'inbox'), ...b.d.fixing]
 /** タブの要対応の数に入る行（window-view.ts の renderWindow の total と同じ）。 */
-const counted = (r: Row): 0 | 1 => (r.status === 'mine' && COUNTED.includes(r.card.kind) ? 1 : 0)
+const counted = (r: Row): 0 | 1 => (r.status === 'mine' && countedRow(r) ? 1 : 0)
 /** タスクの行と詳細に出る中身。taskSig（放置の検出の印）に、題・目的・状況の文を足す。 */
 const taskMark = (t: TaskView) =>
   `${t.task.state === 'ok' ? 1 : 0}${JSON.stringify([taskSig(t.task), t.task.title, t.task.goal ?? '', t.task.status ?? ''])}`

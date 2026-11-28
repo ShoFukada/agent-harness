@@ -6,8 +6,8 @@ import { sanitize } from './sanitize.ts'
 import { FRESH_WAIT_MS, seenTracker } from './since.ts'
 import { byUrgency } from './state.ts'
 import { CSS } from './style.ts'
-import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, focusMessage, openedMessage, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
-import { boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, type Tab } from './window-view.ts'
+import { boardsOf, chosenOption, keyOf, newUi, preface, render, SENT_LABEL, focusMessage, talkVia, openedMessage, talkMessage, tighten, type Model, type Theme, type Ui, type VRow } from './view.ts'
+import { boardOf, doneFold, doneOrder, renderWindow, taskOrder, todoOrder, todoRows, type Tab } from './window-view.ts'
 import { askOpened, askOrder, askPending, askRows, askStarted, parseAskKey } from './window-asks.ts'
 import { pendingSame, tidyDraftFor } from './window-tidy.ts'
 
@@ -184,10 +184,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       // 答えが控えに届いた質問は、待つ表示をやめる（送った時点より答えの節が増えた）。送った案件の控えで見る。
       for (const [k, w] of Object.entries(ui.askWait))
         if (w.ask && !w.error && (feed.views.find((v) => v.root === w.root)?.asks ?? []).some((a) => a.id === w.ask && a.answers > w.answers)) delete ui.askWait[k]
-      order = ui.tab === 'done' ? doneOrder(b) : ui.tab === 'whole' ? taskOrder(b) : ui.tab === 'asks' ? askOrder(b, ui) : todoOrder(b)
+      order = ui.tab === 'done' ? doneOrder(b) : ui.tab === 'whole' ? taskOrder(b) : ui.tab === 'asks' ? askOrder(b, ui) : todoOrder(b, ui)
       // 要対応は先頭を選んで右に詳細を常に開く。対応済みも先頭を選ぶ。
+      // 選んだままにするのは要対応のタブの全部の行（畳んだ直しを頼んだ欄も）と報告。選び直すときは表示の先頭か報告の先頭で、畳んだ欄の行を選ばない（Astra）。
       const reports = b ? b.d.reports.map((r) => keyOf(r)) : []
-      if ((ui.tab ?? 'todo') === 'todo' && !(ui.sel && (order.includes(ui.sel) || reports.includes(ui.sel)))) ui.sel = order[0] ?? reports[0]
+      const kept = b ? todoRows(b).map((r) => keyOf(r)) : []
+      if ((ui.tab ?? 'todo') === 'todo' && !(ui.sel && (kept.includes(ui.sel) || reports.includes(ui.sel)))) ui.sel = order[0] ?? reports[0]
       // 対応済みはタスクの詳細から開いた期間外のカードも選んだまま出す（今の案件のものだけ）。
       if (ui.tab === 'done' && !(ui.doneSel && (order.includes(ui.doneSel) || b?.d.settled.some((r) => keyOf(r) === ui.doneSel)))) ui.doneSel = order[0]
       if (ui.tab === 'whole') {
@@ -269,7 +271,12 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
       copied = false
     }
     try {
-      const res: TalkResult = r.agent ? focusResult(await t.focusAgent(r.agent.terminalId, r.agent.worktree), r.owner.title) : await t.talk(r.root, r.card.id, r.card.rev)
+      // 帳簿に無い行を /api/talk のカードとして送らない（「カードが見つかりません」になる）。
+      const via = talkVia(r)
+      const res: TalkResult | undefined = via === 'focus' ? focusResult(await t.focusAgent(r.agent!.terminalId, r.agent!.worktree), r.owner.title)
+        : via === 'card' ? await t.talk(r.root, r.card.id, r.card.rev)
+        : via === 'stream' && t.talkStream ? await t.talkStream(r.root, r.card.stream!) : undefined
+      if (!res) return toast('この行には協議の相手がいません。全体のタブでタスクを開いてください')
       toast(talkMessage(res, copied))
     } catch (e) {
       fail(e)
@@ -595,7 +602,7 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
     ui.tidyOp = k === 'open' ? Number(el.dataset.op) || undefined : undefined
     if (k !== 'open') {
       ;(ui.tidyKind ??= {})[root] = k
-      drafts[root] = tidyDraftFor(k, drafts[root] ?? '')
+      drafts[root] = el.dataset.tidytext ?? tidyDraftFor(k, drafts[root] ?? '')
     }
     draw()
     if (k === 'open') return void app.querySelector(`[data-tidyitem="${ui.tidyOp}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -733,6 +740,8 @@ export function mount(t: Transport, opts: { panel?: boolean; window?: boolean } 
   app.addEventListener('toggle', (e) => {
     const d = e.target as HTMLDetailsElement
     if (d.dataset?.fold) ui.open[d.dataset.fold] = d.open
+    // 直しを頼んだ欄の開閉は j・k の順を変えるので描き直す。
+    if (d.dataset?.fold === 'todo-fixing') draw()
   }, true)
   app.addEventListener('input', (e) => {
     const el = e.target as HTMLTextAreaElement

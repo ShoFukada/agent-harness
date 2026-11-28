@@ -45,7 +45,54 @@ export function tidyHead(b: Board, ui: Ui, now: number): string {
       <span class="tt"><span class="tl"><span class="ti">${esc(kindName(r.op))}</span></span><span class="crumb verb">${esc(oneLine(r.op.text))}</span></span>
       <span class="du">${esc(waited(r.op, now))}</span></button>`
   return `<section class="fsec tidy" aria-label="整理・棚卸し"><div class="tdh"><h3>整理・棚卸し</h3><div class="tdk">${TIDY_KINDS.map((k) => btn(k, TIDY_LABEL[k])).join('')}${btn(FREE, FREE_LABEL)}</div></div>
-    ${rows.length ? `<div class="rows">${rows.map(row).join('')}</div>` : ''}</section>`
+    ${foundHtml(b)}${rows.length ? `<div class="rows">${rows.map(row).join('')}</div>` : ''}</section>`
+}
+
+export type Found = { kind: TidyKind; label: string; items: string[]; text: string }
+export const elapsed = (h: number) => (h >= 48 ? `${Math.floor(h / 24)} 日` : `${h} 時間`)
+export function foundOf(b: Board): Found[] {
+  const tasks = b.d.tasks
+  const title = (id: string) => tasks.get(id)?.task.title ?? id
+  const why = (a: Board['d']['leftover'][number]) => {
+    const t = a.task ? tasks.get(a.task) : undefined
+    return t ? (t.task.state === 'ok' || t.why === 'ok' ? `${t.task.id} は済んだ` : `${t.task.id} は終わって取り込み待ち`) : 'どのタスクにも結ばれずに終わった'
+  }
+  const name = (a: Board['d']['leftover'][number]) => a.title ?? a.job ?? 'worker'
+  // 行には題と経った時間だけを出す。送る文には時間を入れない（毎時変わると、同じ指示が反映待ちかの見分けがずれる）。
+  // 送る文は TEXT_MAX に収める（超えると保存で断られて 1 通も届かない。Astra）。収まらない分は件数にし、全件は窓口が checks で読む。
+  const list = (head: string, xs: string[], tail: string, base: string, where: string) => {
+    const room = TEXT_MAX - base.length - head.length - tail.length - 80
+    const lines: string[] = []
+    for (const x of xs) {
+      if ([...lines, `- ${x}`].join('\n').length > room) break
+      lines.push(`- ${x}`)
+    }
+    const rest = xs.length - lines.length
+    return `${head}\n${lines.join('\n')}${rest ? `\n- ほか ${rest} 件（${where}）` : ''}\n${tail}`
+  }
+  const idle = b.d.idle
+  const left = b.d.leftover
+  return [
+    ...(idle.length ? [{ kind: 'cockpit' as const, label: `動いていないタスク ${idle.length} 件`,
+      items: idle.map((x) => `${title(x.task)}（${x.check ? `確認日 ${x.check}` : elapsed(x.hours)}）`),
+      text: `${TIDY_TEXT.cockpit}\n\n${list('窓が見つけた動いていないタスク:', idle.map((x) => `${x.task}「${title(x.task)}」${x.check ? `（確認日 ${x.check}）` : ''}`), '続けるか止めるかを決めて帳簿を直し、深田さんの判断が要るものだけカードにする。', TIDY_TEXT.cockpit, '全件は window/state.ts の checks.idle_tasks')}` }] : []),
+    ...(left.length ? [{ kind: 'workers' as const, label: `残っている worker ${left.length} 件`, items: left.map(name),
+      text: `${TIDY_TEXT.workers}\n\n${list('窓が見つけた残っている worker:', left.map((a) => `${name(a)}（${why(a)}）`), '取り込みが済んだものから閉じる。', TIDY_TEXT.workers, '全件は Orca の子の worktree のエージェントから、済んでいない担当を除いて引く')}` }] : [])
+  ]
+}
+
+function foundHtml(b: Board): string {
+  const xs = foundOf(b)
+  if (!xs.length) return ''
+  const line = (f: Found) => {
+    const same = pendingSame(b, f.kind, f.text)
+    // 1 件 1 行で 3 件まで出し、残りは件数にする（つないだ 1 段落は狭い幅で切れて読めない。design-review）。
+    const shown = f.items.slice(0, 3).map((x) => `<span>${esc(x)}</span>`).join('') + (f.items.length > 3 ? `<span>ほか ${f.items.length - 3} 件</span>` : '')
+    return `<li><span class="fl"><b>${esc(f.label)}</b><span class="crumb">${shown}</span></span>${same
+      ? '<span class="mut">反映待ち</span>'
+      : `<button class="btn" type="button" data-tidy="${f.kind}" data-tidytext="${esc(f.text)}">窓口に片付けを頼む</button>`}</li>`
+  }
+  return `<ul class="tfound" role="list" aria-label="窓口が片付けるもの">${xs.map(line).join('')}</ul>`
 }
 
 const oneLine = (s: string | undefined) => (s ?? '').replace(/\s+/g, ' ').trim()

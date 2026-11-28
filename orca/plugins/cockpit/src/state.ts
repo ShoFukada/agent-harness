@@ -1,7 +1,7 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, RETURN_ID, isSynthetic, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, openTidyOps, UNDO_GRACE_MS, unmappedElements, metCount, waitMet, worstState,
+  COUNTED, COWORK_ID, KIND_LABEL, RETURN_ID, isSynthetic, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, openTidyOps, UNDO_GRACE_MS, unmappedElements, metCount, waitMet, worstState,
   type AskMark, type AskThread, type Card, type CardEffect, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type ShownWhy, type Stream, type StreamForm, type Task, type TaskSeen, type TaskShown, type TaskState, type UserLog, type Utterance, type Wait, type WaitKind
 } from './model.ts'
 import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
@@ -127,8 +127,6 @@ export type Row = CardView & {
   owner: OwnerRef
   stream?: Stream
   agent?: AgentRow
-  /** 線を越えて動いていないタスクの行（追加 35）の手がかり。 */
-  idle?: IdleTask
 }
 
 /**
@@ -209,7 +207,6 @@ export type Derived = {
   /** 片付いたもの全部（表示の 14 日を過ぎたものも）。タスクの詳細から開く。 */
   settled: Row[]
   counts: Counts
-  /** 件数に数える 5 種類の合計。 */
   total: number
   tasks: Map<string, TaskView>
   jobs: JobView[]
@@ -222,10 +219,13 @@ export type Derived = {
   gaps: Gap[]
   /** 線を越えて動いていないタスク（R170）。 */
   idle: IdleTask[]
+  leftover: AgentRow[]
   /** 状況の文（status）が、書いたときの元の事実（status_basis）と食い違う仕事（R204）。窓は文の代わりに statusFallback を出す。 */
   stale: Map<string, StaleStatus>
 }
 export type StaleStatus = { basis: string[]; was?: string[] }
+
+export const countedRow = (r: Pick<Row, 'card' | 'agent'>) => COUNTED.includes(r.card.kind) || (r.card.id.startsWith(COWORK_ID) && !!r.agent?.ask)
 
 const RANK: Record<CardKind, number> = { stuck: 0, permit: 1, decide: 2, send: 3, review: 4, consult: 5, inbox: 6, talk: 7, report: 8 }
 const dueKey = (r: Row) => (r.card.kind === 'stuck' ? -Infinity : r.card.due ? dueAt(r.card.due) || Infinity : Infinity)
@@ -268,8 +268,8 @@ export function stopUnblock(stop: StopReason, a: Pick<AgentRow, 'chat' | 'reset'
 }
 
 /** Orca で止まっている worker を、詰まりの行にする。メインが同じタスクの詰まりを書いていれば、そちらを出す。版（rev）は止まった時刻。 */
-function stuckRows(c: Cockpit, root: string, facts: OrcaFacts | undefined, written: Set<string>): Row[] {
-  return (facts?.workers ?? [])
+function stuckRows(c: Cockpit, root: string, workers: AgentRow[], written: Set<string>): Row[] {
+  return workers
     .filter((a) => {
       if (!a.stop) return false
       // メインが書いた詰まりと同じ仕事（タスクか、担当の端末で引く）なら、そちらを出す。
@@ -494,21 +494,17 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   }
   const mine = rows.filter((r) => r.status === 'mine' && r.card.kind !== 'report' && complete(r))
   const dismissed = dismissedStuck(log)
+  const leftover = leftoverWorkers(c, root, tasks, facts)
   // 同じ停止を端末の行と Dispatch の行で二重に出さない判定は、「済ませた」を当てる前の行で行う（済ませた端末の行の代わりに Dispatch の行が出ないように）。
-  const fromAgents = stuckRows(c, root, facts, written)
+  const fromAgents = stuckRows(c, root, (facts?.workers ?? []).filter((a) => !leftover.includes(a)), written)
   const fromDispatch = dispatchStuck(c, root, tasks, written, new Set(fromAgents.flatMap((r) => r.card.tasks ?? [])), dismissed)
   const found = [...mine, ...[...fromAgents, ...questionRows(c, root, facts, now)].filter((r) => !dismissed.has(`${r.card.id}@${r.card.rev}`)), ...fromDispatch]
   const cowork = coworkRows(c, root, facts, found, rows)
   const idle = idleTasks(c, tasks, facts, opts.taskSeen, now)
-  const idleRows = idle.map((x): Row => {
-    const t = tasks.get(x.task)!.task
-    const card: Card = { id: `${IDLE_ID}${t.id}`, rev: Date.parse(x.since), kind: 'talk', state: 'open', stream: t.stream, tasks: [t.id], since: x.since, title: x.check ? `「${t.title}」の確認日が来た` : `「${t.title}」が${x.hours}時間動いていない`, next: t.next }
-    return { card, status: 'mine', pending: false, root, ws: c.workspace.name, owner: ownerOf(c, { stream: t.stream }, facts), stream: c.streams.find((s) => s.id === t.stream), idle: x }
-  })
-  const queue = [...found.filter((r) => !cowork.absorbed.has(r)), ...cowork.rows, ...idleRows].sort(byUrgency)
+  const queue = [...found.filter((r) => !cowork.absorbed.has(r)), ...cowork.rows].sort(byUrgency)
   const counts = Object.fromEntries(Object.keys(RANK).map((k) => [k, 0])) as Counts
   for (const r of queue) counts[r.card.kind]++
-  const total = COUNTED.reduce((n, k) => n + counts[k], 0)
+  const total = queue.filter(countedRow).length
   const recent = (r: Row) => !r.when || now - Date.parse(r.when) < CLOSED_DAYS * DAY
   // when は操作の時刻（UTC の Z）と窓口が書いた時刻（+09:00）が混ざるので、文字列ではなく時刻で比べる。
   const settled = rows.filter((r) => r.status === 'closed').sort((a, b) => timeOf(b.when) - timeOf(a.when))
@@ -519,7 +515,7 @@ export function derive(c: Cockpit, log: UserLog, archive: Card[], root: string, 
   const reqGaps = requests.filter((r) => r.missing.length).map((r): Gap => ({ kind: 'request', id: r.req.id, title: r.req.title, missing: r.missing, since: r.req.at }))
 
   return {
-    views, queue, counts, total, tasks, closed, settled, incomplete, unsorted, requests, idle, stale,
+    views, queue, counts, total, tasks, closed, settled, incomplete, unsorted, requests, idle, leftover, stale,
     talking: queue.filter((r) => r.talking),
     fixing: rows.filter((r) => r.status === 'fixing').sort(byUrgency),
     waiting: rows.filter((r) => r.status === 'waiting').sort((a, b) => timeOf(a.card.awaiting?.since) - timeOf(b.card.awaiting?.since)),
@@ -668,6 +664,22 @@ export function idleTasks(c: Cockpit, tasks: Map<string, TaskView>, facts: OrcaF
       return [{ task: task.id, since: new Date(start).toISOString(), hours: Math.floor((now - start) / 3_600_000), line: 0, from, worker: `${worker}・${who}`, check: day }]
     if (!line || outside || now - at < line * 3_600_000) return []
     return [{ task: task.id, since: new Date(at).toISOString(), hours: Math.floor((now - at) / 3_600_000), line, from, worker: `${worker}・${who}` }]
+  })
+}
+
+/** タスクに結ばれず止まったものは残っている worker に数えず、詰まりの行に残す（利用枠などは深田さんが直す）。 */
+export function leftoverWorkers(c: Cockpit, root: string, tasks: Map<string, TaskView>, facts: OrcaFacts | undefined): AgentRow[] {
+  const owners = (c.owners ?? []).filter((o) => o.state !== 'done').flatMap((o) => {
+    const ref = ownerOf(c, { owner: o.id, stream: o.stream }, facts)
+    return [o.session, o.terminal, ref.session, ref.terminal].filter((x): x is string => !!x)
+  })
+  return (facts?.workers ?? []).filter((a) => {
+    if (!a.worktree || a.worktree === root) return false
+    if ((a.session && owners.includes(a.session)) || (a.terminalId && owners.includes(a.terminalId))) return false
+    const t = a.task ? tasks.get(a.task) : undefined
+    // 確認のカードが開いていると judgeTasks はカード待ちを先に返すので、Dispatch が終わったかは事実で見る（Astra）。
+    if (t) return t.task.state === 'ok' || t.why === 'ok' || t.why === 'intake' || !!facts?.dispatches?.[currentDispatch(t.task, facts) ?? '']?.settledAt
+    return a.state === 'done' && !a.stop
   })
 }
 
@@ -903,7 +915,8 @@ function jobViews(c: Cockpit, tasks: Map<string, TaskView>, queue: Row[], rows: 
 
 export function countsText(n: Counts, total: number): string {
   if (!total) return '私の番はありません'
-  const parts = COUNTED.filter((k) => n[k]).map((k) => `${KIND_LABEL[k]} ${n[k]}`)
+  const reply = total - COUNTED.reduce((s, k) => s + n[k], 0)
+  const parts = [...COUNTED.filter((k) => n[k]).map((k) => `${KIND_LABEL[k]} ${n[k]}`), ...(reply > 0 ? [`返事 ${reply}`] : [])]
   return `私の番 ${total} 件（${parts.join('・')}）`
 }
 
@@ -1194,7 +1207,7 @@ export function report(c: Cockpit, log: UserLog, archive: Card[], facts: OrcaFac
   const tasks = [...d.tasks.values()]
   const running = tasks.filter((t) => t.why === 'working')
   const names = (xs: string[]) => (xs.length ? `（${xs.join(' / ')}）` : '')
-  const mine = d.queue.filter((r) => COUNTED.includes(r.card.kind))
+  const mine = d.queue.filter(countedRow)
   const next = mine[0]
   const intake = tasks.filter((t) => t.why === 'intake' && now - (t.settledAt ?? 0) >= INTAKE_GRACE_MS)
   const pushDelegated = delegatedScopes(opts.rulings ?? []).has('push')

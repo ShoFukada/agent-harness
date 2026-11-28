@@ -1,9 +1,9 @@
 // 表示の状態から HTML を作る（DOM に触らない）。窓とパネルが同じ関数を使う。
-import { actionVerb, CONTEXT_FIELDS, COUNTED, COWORK_ID, IDLE_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
+import { actionVerb, CONTEXT_FIELDS, COUNTED, COWORK_ID, dismissable, DRAFT_FORMATS, draftFormat, FORMAT_LABEL, KIND_LABEL, OTHER, permitEffect, permitTarget, TEXT_MAX, UNDO_GRACE_MS, type Card, type CardKind, type Repo } from './model.ts'
 import type { CockpitView, FocusResult, OwnerLive, RulingHit, TalkResult } from './protocol.ts'
 import type { Since } from './since.ts'
 import {
-  BUCKET_LABEL, bucketOf, byUrgency, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
+  BUCKET_LABEL, bucketOf, byUrgency, countedRow, derive, dueAt, fmtDate, hhmm, isHot, isOver, localDay, nearDate, routeProblem, upcomingMilestones,
   type Bucket, type Derived, type Gap, type JobView, type OrcaFacts, type OwnerRef, type Row
 } from './state.ts'
 
@@ -435,6 +435,23 @@ export function lintHtml(r: VRow): string {
 /** 送る前の「送った」のボタンの名前（コピーのあとの知らせもこれを案内する）。 */
 export const SENT_LABEL = '送信済みにする'
 
+export type RowSource = 'card' | 'agent' | 'ask' | 'dispatch' | 'cowork'
+export const rowSource = (id: string): RowSource =>
+  id.startsWith(COWORK_ID) ? 'cowork' : id.startsWith('#agent:') ? 'agent' : id.startsWith('#ask:') ? 'ask' : id.startsWith('#dispatch:') ? 'dispatch' : 'card'
+/**
+ * dismiss は /api/op（帳簿に無い行で受けるのは済ませただけ）。
+ * talk は帳簿のカードなら /api/talk のカード、dispatch の行は /api/talk の仕事（stream。パネルには仕事の協議の口が無いので窓だけ）。
+ */
+export const ROW_ACTS: Record<RowSource, readonly string[]> = {
+  card: ['accept', 'decide', 'other', 'sent', 'skip', 'delegate', 'ack', 'revert', 'talk', 'copy', 'copyas', 'copycmd', 'url', 'undo'],
+  agent: ['focus', 'answer', 'dismiss', 'undo'],
+  ask: ['focus', 'answer', 'dismiss', 'undo'],
+  cowork: ['focus', 'answer'],
+  dispatch: ['talk', 'dismiss', 'undo']
+}
+export const talkVia = (r: Pick<Row, 'card' | 'agent'>): 'focus' | 'card' | 'stream' | undefined =>
+  r.agent ? 'focus' : rowSource(r.card.id) === 'card' ? 'card' : rowSource(r.card.id) === 'dispatch' && r.card.stream ? 'stream' : undefined
+
 /** 種類ごとの返答のボタン。押すと data-act の操作になる（controller.ts）。 */
 export function actsHtml(r: Row, ui: Ui, win = false): string {
   const c = r.card
@@ -456,8 +473,9 @@ export function actsHtml(r: Row, ui: Ui, win = false): string {
   const dismiss = dismissable(c) ? [b('dismiss', '対応済みにする', '', 'title="同じ停止のあいだは隠す。次に止まったときはまた出る"')] : []
   // orchestration の question の行は、聞かれた側（窓口か担当）を開く。
   const whose = c.id.startsWith('#ask:') || c.id.startsWith(COWORK_ID) ? (r.owner.how === 'main' ? '窓口の' : '担当の') : ''
+  const via = talkVia(r)
   if (r.agent) btns = [b('focus', `${whose}${r.agent.chat ? 'チャット' : '端末'}を開く`, 'pri'), ...dismiss]
-  else if (c.id.startsWith(IDLE_ID)) btns = [talk(r.owner.how === 'main' ? '窓口と話す' : '担当と話す'), ...(win ? [`<button class="btn" type="button" data-tab="whole" data-task="${esc(c.tasks?.[0] ?? '')}">タスクの詳細を開く</button>`] : [])]
+  else if (rowSource(c.id) !== 'card') btns = [...(via === 'stream' && win ? [talk(r.owner.how === 'main' ? '窓口と話す' : '担当と話す')] : []), ...dismiss]
   else switch (c.kind) {
     case 'inbox': btns = [talk(), b('skip', '返信不要'), ...(c.from?.href ? [b('url', '元の連絡を開く', 'quiet', `data-url="${esc(c.from.href)}"`)] : [])]; break
     case 'send': btns = otherOpen ? fix : [b('copy', c.draft?.href ? 'コピーしてスレッドを開く' : '本文をコピー', 'pri'), b('sent', SENT_LABEL), ...fix, b('skip', '送信しない', 'quiet'), ...(c.options?.length ? [decideBtn] : [])]; break
@@ -546,7 +564,7 @@ function queueHtml(rows: VRow[], m: Model, ui: Ui, now: number, svg: (raw: strin
 function casesHtml(m: Model, ui: Ui, now: number): string {
   const total = m.boards.reduce((n, b) => n + b.d.total, 0)
   const row = (b: Board) => {
-    const counted = b.d.queue.filter((r) => COUNTED.includes(r.card.kind))
+    const counted = b.d.queue.filter(countedRow)
     const over = counted.filter((r) => bucketOf(r.card.due, now, r.card.kind) === 'over').length
     const today = counted.filter((r) => bucketOf(r.card.due, now, r.card.kind) === 'today').length
     const sub = sp([
@@ -608,7 +626,7 @@ export function render(m: Model, ui: Ui, now: number, svg: (raw: string) => stri
   const all = <K extends 'queue' | 'talking' | 'fixing' | 'waiting' | 'reports' | 'closed'>(k: K) => shown.flatMap((b) => b.d[k].map((r) => ({ ...r, v: b.v })))
   const queue = all('queue').sort(byUrgency)
   const counts = Object.fromEntries(COUNTED.map((k) => [k, shown.reduce((n, b) => n + b.d.counts[k], 0)])) as Record<CardKind, number>
-  const total = COUNTED.reduce((n, k) => n + counts[k], 0)
+  const total = shown.reduce((n, b) => n + b.d.total, 0)
   const unseen = unseenList(m, now)
   const late = all('waiting').filter((r) => r.card.awaiting?.remind_at && Date.parse(r.card.awaiting.remind_at) < now).length
   const sideCount = { talking: all('fixing').length, waiting: all('waiting').length, late }

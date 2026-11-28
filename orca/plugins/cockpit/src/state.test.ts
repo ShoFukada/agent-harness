@@ -905,7 +905,8 @@ test('確認日（R142・R171・R204）: date の待ちは、その日が来た�
   const facts = { workers: [], terminals: [] as string[] }
   const d = derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen(start - 3_600_000) })
   assert.deepEqual(d.idle.map((x) => [x.task, x.check, x.since]), [['k1', today, new Date(start).toISOString()]])
-  assert.equal(d.queue.find((r) => r.card.id === '#idle:k1')!.card.title, '「通知を確かめる」の確認日が来た')
+  // 確認日の来たタスクは窓口が片付けるもので、私の番の行にしない（t176。窓は全体のタスクの行の確認日の印で出す）。
+  assert.ok(!d.queue.some((r) => r.card.tasks?.includes('k1')))
   // 日付が来ても済にはしない（日付は証拠ではない。Astra 2 の 5）。日付の前は待ち。
   assert.deepEqual([d.tasks.get('k1')!.state, d.tasks.get('k1')!.label], ['run', '確かめる日が来た: ログインが切れたときの通知が出たか'])
   assert.deepEqual([d.tasks.get('k2')!.state, d.tasks.get('k2')!.hold?.kind], ['wait', 'date'])
@@ -975,10 +976,9 @@ test('放置の検出（R170）: worker も担当も動いていない作業中�
   assert.deepEqual(idle({ k1: 300, k2: 1440 }, (await cli(async () => live)) as typeof facts), ['k2'])
   w.cockpit.owners = []
   const d = derive(w.cockpit, w.log, [], '/a', facts, NOW, { taskSeen: seen({ k1: 150 }) })
-  const row = d.queue.find((r) => r.card.id === '#idle:k1')!
-  assert.equal(row.card.title, '「一覧を作る」が2時間動いていない')
-  assert.equal(row.idle!.from, '帳簿の更新')
-  assert.equal(d.total, derive(w.cockpit, w.log, [], '/a', facts, NOW).total, '件数（5 種類）には数えない')
+  // 動いていないタスクは私の番の行にせず（t176）、idle にだけ持つ（窓は全体のタスクの行と整理の欄、窓口には hook が流す）。
+  assert.deepEqual(d.idle.map((x) => [x.task, x.hours, x.from]), [['k1', 2, '帳簿の更新']])
+  assert.ok(!d.queue.some((r) => r.card.tasks?.includes('k1')))
   // 窓が覚えた印と中身が違う（まだ覚えていない変化）なら、今動いたとみなす。
   const changed = seen({ k1: 300 })
   w.cockpit.tasks[0]!.next = '並べ替えを足す'
@@ -1113,4 +1113,24 @@ test('許可の確認の題は、何をするかが初見で分かる文にす�
   assert.equal(permitTitle({ text: 'Bash: git push origin :old' }), 'git push origin :old を実行する')
   // 改行のあとは別のコマンドなので、1 つの push として読まない（Codex 2 回目 3）。
   assert.equal(permitTitle({ text: 'git push origin\nmain', body: ['Bash command', 'git push origin\nmain'] }), 'git push origin ほか 1 行を実行する')
+})
+
+test('残っている worker（t176）: 済んでいない担当と本線のエージェントは数えず、Dispatch の終わった worker（確認のカードが開いていても）と、どのタスクにも結ばれずにターンを終えた worker を数える。数えた worker の停止は詰まりの行にしない', () => {
+  const w = ws(0)
+  const s = w.cockpit.streams[0]!.id
+  w.cockpit.owners = [{ id: 'o1', title: '担当', stream: s, session: 'sess-owner' }]
+  w.cockpit.tasks = [{ id: 'k1', stream: s, phase: '作成', title: '一覧を作る', state: 'run', worker: { task_id: 'task_k1', dispatch_id: 'ctx_k1' } }]
+  w.cockpit.cards.push({ id: 'v9', rev: 1, kind: 'review', state: 'open', title: '一覧を確かめる', stream: s, tasks: ['k1'], href: 'https://example.com/v9', look_for: ['並び'], request: '一覧を作って' } as Card)
+  const agent = (over: Partial<AgentRow>): AgentRow => ({ terminalId: null, title: 'w', agent: 'claude', state: 'done', since: NOW - 3_600_000, worktree: '/a-child', ...over })
+  const workers = [
+    agent({ title: '担当のチャット', session: 'sess-owner', chat: true }),
+    agent({ title: '窓口の相談のタブ', worktree: '/a', terminalId: 'term_consult' }),
+    agent({ title: '一覧の worker', terminalId: 'term_k1', task: 'k1', stop: 'interrupted' }),
+    agent({ title: '前の調べもの', terminalId: 'term_old' }),
+    agent({ title: '作業中の worker', terminalId: 'term_busy', state: 'working' })
+  ]
+  const facts: OrcaFacts = { workers, terminals: ['term_k1', 'term_old', 'term_busy', 'term_consult'], dispatches: { ctx_k1: { state: 'succeeded', terminal: 'term_k1', settledAt: NOW - 3_600_000 } } }
+  const d = derive(w.cockpit, w.log, [], '/a', facts, NOW)
+  assert.deepEqual(d.leftover.map((a) => a.title), ['一覧の worker', '前の調べもの'])
+  assert.ok(!d.queue.some((r) => r.agent?.terminalId === 'term_k1'), '残っている worker の中断は詰まりの行にしない')
 })

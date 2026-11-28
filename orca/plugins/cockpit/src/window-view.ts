@@ -1,5 +1,5 @@
-import { actionVerb, COUNTED, COWORK_ID, IDLE_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
-import { REPLY_LABEL, STOP_LABEL, byUrgency, fmtDate, nearDate, statusFallback, tokyoDay, routeProblem, upcomingMilestones, type JobState, type JobView, type Row, type TaskView } from './state.ts'
+import { actionVerb, COWORK_ID, STAGES, stageOf, FORMS, FORM_LABEL, KIND_LABEL, doneText, isSynthetic, permitEffect, permitTarget, sentOps, timeOf, type Card, type ConsultMemo, type OpType, type Sent, type StreamForm, type TaskState } from './model.ts'
+import { REPLY_LABEL, STOP_LABEL, byUrgency, countedRow, fmtDate, nearDate, statusFallback, tokyoDay, routeProblem, upcomingMilestones, type IdleTask, type JobState, type JobView, type Row, type TaskView } from './state.ts'
 import {
   actsHtml, ago, backgroundParts, dueHtml, esc, fld, isSoft, keyOf, linkBtn, manualHtml, mono, note, optionsHtml, otherHtml, OWNER_STATE, ownerHtml, lintHtml, rich, choresHtml, sampleHtml, sp, stripHtml, toastsHtml, rowId,
   type Board, type Model, type Theme, type Ui, type VRow
@@ -8,7 +8,7 @@ import { markdown } from './markdown.ts'
 import { answeredCount, askBoxHtml, viewAsks } from './window-asks.ts'
 import { answerHtml, answerWay, withAnswerActs } from './window-answer.ts'
 import { fold, tag } from './window-parts.ts'
-import { tidyDetail, tidyHead } from './window-tidy.ts'
+import { elapsed, tidyDetail, tidyHead } from './window-tidy.ts'
 import { MARK_LABEL, type Mark, type Since } from './since.ts'
 import type { AutomationFact } from './protocol.ts'
 
@@ -26,7 +26,7 @@ export const boardOf = (m: Model, pick?: string): Board | undefined =>
 function casesSide(m: Model, b: Board, orcaBtns: string): string {
   const byName = [...m.boards].sort((x, y) => x.v.cockpit!.workspace.name.localeCompare(y.v.cockpit!.workspace.name, 'ja'))
   const row = (x: Board) => {
-    const n = COUNTED.reduce((s, k) => s + x.d.counts[k], 0)
+    const n = x.d.total
     return `<button class="wcase" type="button" data-filter="${esc(x.root)}" aria-current="${x.root === b.root}"><span class="nm">${esc(x.v.cockpit!.workspace.name)}</span>${n ? `<span class="n">私の番 ${n}</span>` : ''}${m.focused === x.root ? '<span class="here">Orca で表示中</span>' : ''}</button>`
   }
   return `<nav class="wcases" id="wcases" aria-label="案件">${byName.map(row).join('')}<div class="wcorca">${orcaBtns}</div></nav>`
@@ -34,9 +34,16 @@ function casesSide(m: Model, b: Board, orcaBtns: string): string {
 
 const vrows = (b: Board, rows: Row[]): VRow[] => rows.map((r) => ({ ...r, v: b.v }))
 
-/** 要対応の行（届いたは全体の「見張る」に出す）と、直しを頼んだ・直し待ちの行。仕事ごとにまとめ、仕事は期限の近い順。 */
-export function todoGroups(b: Board): [string, VRow[]][] {
-  const rows = vrows(b, [...b.d.queue.filter((r) => r.card.kind !== 'inbox'), ...b.d.fixing]).sort(byUrgency)
+export type TodoSections = { mine: [string, VRow[]][]; together: [string, VRow[]][]; fixing: [string, VRow[]][] }
+export function todoSections(b: Board): TodoSections {
+  const rows = vrows(b, b.d.queue.filter((r) => r.card.kind !== 'inbox')).sort(byUrgency)
+  return {
+    mine: byStream(rows.filter(countedRow)),
+    together: byStream(rows.filter((r) => !countedRow(r))),
+    fixing: byStream(vrows(b, b.d.fixing).sort(byUrgency))
+  }
+}
+function byStream(rows: VRow[]): [string, VRow[]][] {
   const m = new Map<string, VRow[]>()
   // Orca から作った詰まり（仕事に結べないエージェントの停止）は、一番急ぐので仕事の外の先頭にまとめる。
   const key = (r: VRow) => r.card.stream ?? (isSynthetic(r.card.id) ? ORCA : '')
@@ -45,8 +52,17 @@ export function todoGroups(b: Board): [string, VRow[]][] {
   return [...m.entries()].sort((a, b2) => rank(a[0]) - rank(b2[0]) || byUrgency(a[1][0]!, b2[1][0]!))
 }
 const ORCA = '#orca'
-/** j・k と「次へ」で進む順（画面の上から）。 */
-export const todoOrder = (b: Board | undefined): string[] => (b ? todoGroups(b).flatMap(([, xs]) => xs.map(keyOf)) : [])
+const flat = (gs: [string, VRow[]][]) => gs.flatMap(([, xs]) => xs)
+export const todoRows = (b: Board): VRow[] => {
+  const s = todoSections(b)
+  return [...flat(s.mine), ...flat(s.together), ...flat(s.fixing)]
+}
+export const todoOrder = (b: Board | undefined, ui?: Pick<Ui, 'open' | 'sel'>): string[] => {
+  if (!b) return []
+  const s = todoSections(b)
+  return [...flat(s.mine), ...flat(s.together), ...(ui && fixingOpen(s, ui) ? flat(s.fixing) : [])].map(keyOf)
+}
+const fixingOpen = (s: TodoSections, ui: Pick<Ui, 'open' | 'sel'>) => ui.open['todo-fixing'] ?? flat(s.fixing).some((r) => keyOf(r) === ui.sel)
 
 function closedGroups(b: Board): [string, VRow[]][] {
   const m = new Map<string, VRow[]>()
@@ -58,8 +74,7 @@ export const doneFold = (c: Card) => `done:${c.stream || '-'}`
 export const doneOrder = (b: Board | undefined): string[] => (b ? closedGroups(b).flatMap(([, xs]) => xs.map(keyOf)) : [])
 
 /** 種類は語だけで示す（記号を並べない。R101）。要対応の行は深田さんがすることの語（R115）、対応済みの行は種類の名前。 */
-const kindName = ({ card: c, idle }: { card: Card; idle?: { check?: string } }) =>
-  c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : c.id.startsWith(IDLE_ID) ? (idle?.check ? '確認日' : '放置') : KIND_LABEL[c.kind]
+const kindName = ({ card: c }: { card: Card }) => (c.manual ? '手作業' : c.id.startsWith(COWORK_ID) ? '共同作業' : KIND_LABEL[c.kind])
 const leadWord = (r: Row, closed: boolean) => (closed || r.status !== 'mine' ? kindName(r) : actionVerb(r.card, r.agent?.ask?.kind))
 /** 前に見たときから出た・変わった行の印（追加 24）。 */
 const markTag = (m: Mark | undefined) => (m ? tag(MARK_LABEL[m], 'new') : '')
@@ -68,8 +83,6 @@ const markTag = (m: Mark | undefined) => (m ? tag(MARK_LABEL[m], 'new') : '')
 function tags(r: Row): string[] {
   return [
     r.talking && tag('協議中', 'talk'),
-    // 返事待ちは全体の仕事とタスクの状態と同じ語・同じ色にする（Neon）。
-    replyWait([r]) && tag(REPLY_LABEL, 'miss'),
     r.status === 'fixing' && (r.pending ? tag('修正依頼済み（受領待ち）', 'wait') : tag('修正待ち', 'wait'))
   ].filter((x): x is string => !!x)
 }
@@ -110,9 +123,9 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
     ? `${outcome(r.how) ? `<span class="how" title="${esc(r.how ?? '')}">${esc(outcome(r.how))}</span>` : ''}<span class="mut">${esc(nearDate(r.when, now))}${c.resolved_at_inferred ? '（推定）' : ''}</span>${c.closed_without_review ? tag('確認なしで閉じた', 'miss') : r.pending ? tag('受け取り待ち', 'wait') : ''}`
     : dueHtml(c.due, now)
   // 右の列は期限だけにする（1 つの列に 1 種類の値。ui.md）。止まった問いの聞いてからの時間は 2 行目に回し、番号は詳細の下に置く（R67）。
-  // 止まった問いの 2 行目は、誰が誰に聞いているか（タスク名は「誰が」に入っている）。動いていないタスクは、題にタスク名があるので止まっている手がかり。
   const asked = r.agent?.ask?.from && c.since && !closed ? `・${ago(c.since, now)}前から` : ''
-  const sub = (r.agent?.ask?.from ? `${r.agent.ask.from}${asked}` : undefined) ?? (r.idle?.check ? [`確認日 ${fmtDate(r.idle.check)}`, t?.task.wait?.what && `確かめること ${t.task.wait.what}`].filter(Boolean).join('・') : r.idle?.worker) ?? t?.task.title
+  const from = r.agent?.ask?.from && !c.title.endsWith('が返事を待っている') ? r.agent.ask.from : ''
+  const sub = (r.agent?.ask?.from ? `${from}${asked}`.replace(/^・/, '') : undefined) ?? t?.task.title
   return `<button type="button" class="cardrow k-${c.kind}${closed ? ' cl' : ''}${replyWait([r]) ? ' reply' : ''}" data-${closed ? 'dsel' : 'sel'}="${esc(keyOf(r))}" aria-current="${cur === keyOf(r)}">
     <span class="kd">${leadWord(r, closed)}</span>
     <span class="tt"><span class="tl"><span class="ti">${esc(c.title)}</span></span>${subLinesHtml([markTag(mark), ...tags(r)], recOf(r), sub)}</span>
@@ -122,13 +135,9 @@ function cardRow(b: Board, r: VRow, cur: string | undefined, now: number, closed
 const FORM_ORDER = FORMS
 const formChip = (f: StreamForm | undefined) => (f ? `<span class="fm f-${f}">${esc(FORM_LABEL[f])}</span>` : '')
 
-/** 仕事の見出し。件数はタブの要対応と同じ数え方（相談・報告は別に書く）にし、進み具合は右にそろえる。 */
 function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
   const s = b.v.cockpit!.streams.find((x) => x.id === sid)
-  // 修正待ち（fixing）はタブの要対応に数えないので、見出しでも要対応に入れない。
-  const counted = xs.filter((r) => r.status === 'mine' && COUNTED.includes(r.card.kind)).length
-  const consult = xs.filter((r) => r.status === 'mine' && r.card.kind === 'consult').length
-  const n = closed ? `対応済み ${xs.length} 件` : [counted && `要対応 ${counted} 件`, consult && `相談 ${consult} 件`, xs.length - counted - consult && `修正待ち ${xs.length - counted - consult} 件`].filter(Boolean).join('・')
+  const n = closed ? `対応済み ${xs.length} 件` : `${xs.length} 件`
   if (sid === ORCA) return `<div class="gh"><b>停止中のエージェント</b><span class="mut">${n}・Orca より</span></div>`
   if (!s) return `<div class="gh"><b>仕事の割り当てなし</b><span class="mut">${n}</span></div>`
   const ts = tasksOf(b, sid)
@@ -140,17 +149,25 @@ function groupHead(b: Board, sid: string, xs: VRow[], closed = false): string {
 }
 
 function viewTodo(b: Board, ui: Ui, now: number, svg: Svg): string {
-  const groups = todoGroups(b)
+  const sec = todoSections(b)
   const reps = vrows(b, b.d.reports)
-  const list = groups.length
-    ? groups.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now, false, ui.since?.rows[keyOf(r)])).join('')}</div></section>`).join('')
+  const groups = (gs: [string, VRow[]][]) => gs.map(([sid, xs]) => `<section class="sgrp">${groupHead(b, sid, xs)}<div class="rows">${xs.map((r) => cardRow(b, r, ui.sel, now, false, ui.since?.rows[keyOf(r)])).join('')}</div></section>`).join('')
+  const mine = flat(sec.mine)
+  const together = flat(sec.together)
+  const fixing = flat(sec.fixing)
+  const head = (label: string, n: number) => `<h2 class="tsec">${esc(label)}<span class="mut">${n} 件</span></h2>`
+  const list = mine.length
+    ? `<section class="tblock">${together.length || fixing.length || reps.length ? head('要対応', mine.length) : ''}${groups(sec.mine)}</section>`
     : '<div class="calm"><b>要対応 0 件</b></div>'
-  const rd = reps.length ? `<section class="sgrp readonly"><div class="subh">報告（参照のみ）${reps.length} 件</div><div class="rows">${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>` : ''
-  const order = todoOrder(b)
-  const all = [...groups.flatMap(([, xs]) => xs), ...reps]
+  const tg = together.length ? `<section class="tblock">${head('一緒に進めている', together.length)}${groups(sec.together)}</section>` : ''
+  const fixOpen = fixingOpen(sec, ui)
+  const fx = fixing.length ? `<details class="tfold" data-fold="todo-fixing"${fixOpen ? ' open' : ''}><summary>${head('直しを頼んだもの', fixing.length)}</summary><div class="tblock">${groups(sec.fixing)}</div></details>` : ''
+  const rd = reps.length ? `<section class="tblock readonly">${head('報告（参照のみ）', reps.length)}<div class="rows">${reps.map((r) => cardRow(b, r, ui.sel, now)).join('')}</div></section>` : ''
+  const order = todoOrder(b, ui)
+  const all = [...mine, ...together, ...fixing, ...reps]
   const cur = all.find((r) => keyOf(r) === ui.sel)
   const next = cur ? order[order.indexOf(keyOf(cur)) + 1] : undefined
-  return `<div class="wpane" aria-label="要対応">${list}${rd}</div><aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, next) : ''}</aside>`
+  return `<div class="wpane" aria-label="要対応">${list}${tg}${fx}${rd}</div><aside class="wside" aria-label="詳細">${cur ? detail(b, cur, ui, now, svg, next) : ''}</aside>`
 }
 
 /** 種類ごとの「最初に見える部分」。決めるのに要るものだけを出し、残りは「詳しく」に畳む。 */
@@ -232,20 +249,6 @@ function firstOfKind(r: VRow, ui: Ui, svg: Svg, list: (xs: string[] | undefined,
     case 'inbox':
       return [fld('届いた連絡', esc([c.from?.who, c.from?.via, c.from?.at && fmtDate(c.from.at)].filter(Boolean).join('　'))), fld('聞かれていること', esc(c.asked)), fld('振り分け', esc(c.routed))].join('')
     case 'talk':
-      if (r.idle) {
-        const st = r.v?.cockpit?.tasks.find((t) => t.id === r.idle!.task)?.state
-        return [
-          r.idle.check
-            ? fld('確認日', esc(`${fmtDate(r.idle.check)}。この日になってもタスクが進んでいないので出しています`))
-            : fld('最後の動き', esc(`${fmtDate(r.idle.since)}（${r.idle.from}）。${st ? `${TSTATE[st]}のまま` : ''}${r.idle.line}時間を超えたので出しています`)),
-          fld('worker・担当', esc(r.idle.worker)),
-          r.idle.check ? fld('確かめること', esc(r.v?.cockpit?.tasks.find((t) => t.id === r.idle!.task)?.wait?.what)) : '',
-          fld('次にやること', esc(c.next)),
-          fld('対応のしかた', esc(r.idle.check
-            ? `「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で、確認日に確かめること（返事が来たか・進めてよいか）を伝えます。タスクが動けば（確認日を先に延ばすことも含む）、この行は消えます。`
-            : `「${r.owner.how === 'main' ? '窓口' : '担当'}と話す」で止まっている理由を聞き、続けるか止めるかを伝えます。タスクが動けば、この行は消えます。`))
-        ].join('')
-      }
       if (c.id.startsWith(COWORK_ID) && r.agent?.ask)
         return [answerHtml(r, ui), c.last ? fld('直前の発言', `<div class="quote">${esc(c.last.text)}</div>`) : '', c.since ? fld('聞いた日時', esc(`${fmtDate(c.since)}（${ago(c.since, now)}前）`)) : ''].join('')
       return [c.last ? fld('最後のやり取り', `<div class="quote">${esc(c.last.text)}</div>`) : '', fld('次', esc(c.next))].join('')
@@ -330,7 +333,7 @@ function detail(b: Board, r: VRow, ui: Ui, now: number, svg: Svg, next?: string,
 
 /** 詳細に置く質問の欄の結び先。帳簿のカードはカード、一緒に作る仕事の行は仕事、Orca から作った行は結んだタスク。 */
 const askOn = (c: Card): { kind: 'card' | 'task' | 'stream'; id: string } | undefined =>
-  !c.id.startsWith('#') ? { kind: 'card', id: c.id } : c.id.startsWith(COWORK_ID) && c.stream ? { kind: 'stream', id: c.stream } : c.tasks?.[0] && !c.id.startsWith(IDLE_ID) ? { kind: 'task', id: c.tasks[0] } : undefined
+  !c.id.startsWith('#') ? { kind: 'card', id: c.id } : c.id.startsWith(COWORK_ID) && c.stream ? { kind: 'stream', id: c.stream } : c.tasks?.[0] ? { kind: 'task', id: c.tasks[0] } : undefined
 
 /** 出した指示のうち、カードを閉じない操作（協議の開始・修正の依頼・戻す依頼）。 */
 const OPEN_ONLY: OpType[] = ['talk', 'revert']
@@ -407,7 +410,10 @@ function checkOnHtml(t: TaskView, now: number): string {
   return tokyoDay(now) >= day ? `<b class="chk">確認日 ${esc(fmtDate(day))}</b>` : `<span class="chk">確認日 ${esc(fmtDate(day))}</span>`
 }
 
-function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined, now: number, mark?: Mark): string {
+const idleHtml = (x: IdleTask | undefined) => (x && !x.check ? `<span class="chk">${elapsed(x.hours)}動いていない</span>` : '')
+const idleOf = (b: Board, t: TaskView) => b.d.idle.find((x) => x.task === t.task.id)
+
+function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined, now: number, mark?: Mark, idle?: IdleTask): string {
   const st = stateOf(t, todo.get(t.task.id) ?? [])
   const reply = st !== 'ok' && replyWait(todo.get(t.task.id) ?? [])
   const chips = (todo.get(t.task.id) ?? []).map((r) => `<button type="button" class="chip kc k-${r.card.kind}" data-jump="${esc(keyOf(r))}" title="要対応で開く: ${esc(r.card.title)}">${kindName(r)}を開く</button>`).join('')
@@ -416,7 +422,7 @@ function taskRow(t: TaskView, todo: Map<string, VRow[]>, cur: string | undefined
   const subHtml = sub && note(sub)
   // 協議のボタンはタスクの詳細（右）にだけ置く（行ごとに同じボタンを並べない。初見 1）。
   return `<div class="task"><button type="button" class="tsel" data-task="${esc(t.task.id)}" aria-current="${cur === t.task.id}"><span class="tst s-${reply ? 'stop' : st}">${reply ? REPLY_LABEL : TSTATE[st]}</span>
-    <span class="tn"><span>${esc(t.task.title)}${markTag(mark)}${checkOnHtml(t, now)}</span>${t.task.goal?.trim() ? `<span class="nx gl" title="${esc(t.task.goal.trim())}">${esc(t.task.goal.trim())}</span>` : ''}${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
+    <span class="tn"><span>${esc(t.task.title)}${markTag(mark)}${checkOnHtml(t, now)}${idleHtml(idle)}</span>${t.task.goal?.trim() ? `<span class="nx gl" title="${esc(t.task.goal.trim())}">${esc(t.task.goal.trim())}</span>` : ''}${sub ? `<span class="nx">${mono(subHtml)}</span>` : ''}</span></button>
     <span class="wk">${chips}</span></div>`
 }
 
@@ -435,7 +441,7 @@ function streamFacts(b: Board, j: JobView, todo: Map<string, VRow[]>): { status:
   const [late, due] = [idle.filter((x) => !x.check).length, idle.filter((x) => x.check).length]
   // タスクが全部済んだ仕事は、右を「全工程 完了」にし、要対応などの状態は状況の行に出す（右の欄に工程と状態の文が混ざっていた。初見）。
   const allDone = ts.length > 0 && ts.every((t) => t.state === 'ok')
-  const live = [working && `worker ${working} 件作業中`, halted && `worker ${halted} 件停止`, late && `放置のタスク ${late} 件`, due && `確認日の来たタスク ${due} 件`, allDone && j.state !== 'done' && 'タスクはすべて完了'].filter(Boolean).join('・')
+  const live = [working && `worker ${working} 件作業中`, halted && `worker ${halted} 件停止`, late && `動いていないタスク ${late} 件`, due && `確認日の来たタスク ${due} 件`, allDone && j.state !== 'done' && 'タスクはすべて完了'].filter(Boolean).join('・')
   // 状況は状態の語（窓が決める）のあとに、窓口が書いた状況の文（status、R188）を並べる。next（作業の手順）は出さない。
   // 元の事実が変わって古くなった文は出さず、事実から決めた短い文に差し替える（R204）。
   const stale = b.d.stale.get(j.id)
@@ -453,7 +459,7 @@ function streamBox(b: Board, j: JobView, ui: Ui, todo: Map<string, VRow[]>, now:
   const open = ui.open[`s:${j.id}`] ?? (ts.some((t) => t.task.id === ui.task) || ui.stream === j.id)
   const groups = stageGroups(ts)
   const inner = open
-    ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task, now, ui.since?.tasks[t.task.id])).join('')}`).join('')
+    ? groups.map(([ph, xs]) => `<div class="phase">${esc(ph)}${stageOf(ph) ? '' : tag('工程の外', 'wait')}</div>${xs.map((t) => taskRow(t, todo, ui.task, now, ui.since?.tasks[t.task.id], idleOf(b, t))).join('')}`).join('')
       + (done ? `<div class="donebox">完了タスク ${done} 件</div>` : '')
     : ''
   const { status, owners, allDone } = streamFacts(b, j, todo)
@@ -478,7 +484,7 @@ function sentHtml(xs: Sent[], jump?: (c: Card) => string | undefined): string {
 const CARD_STATE = { mine: '要対応', fixing: '修正待ち', waiting: '顧客待ち', closed: '対応済み' } as const
 
 /** 窓の一覧で開けるカードの鍵。済んだカードは表示の 14 日を過ぎても対応済みのタブで開く（settled は期間外も持つ）。 */
-const listedKeys = (b: Board) => new Set([...todoOrder(b), ...b.d.reports.map(keyOf), ...b.d.settled.map(keyOf)])
+const listedKeys = (b: Board) => new Set([...todoRows(b).map(keyOf), ...b.d.reports.map(keyOf), ...b.d.settled.map(keyOf)])
 
 /** 全体の右: 押したタスクの詳細（info-needs 4.2 の順）。開いたカードは要対応か対応済みの一覧にあれば押してそのカードへ移る。 */
 function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
@@ -489,7 +495,7 @@ function taskDetail(b: Board, t: TaskView, ui: Ui, nowMs: number): string {
   const a = b.v.workers.find((w) => w.task === task.id)
   const owner = b.d.jobs.find((j) => j.id === task.stream)?.owner
   const listed = listedKeys(b)
-  const cards = [...b.d.views.map((v) => ({ ...v, root: b.root })), ...b.d.queue.filter((r) => isSynthetic(r.card.id) || r.card.id.startsWith(IDLE_ID))].filter((v) => v.card.tasks?.includes(task.id))
+  const cards = [...b.d.views.map((v) => ({ ...v, root: b.root })), ...b.d.queue.filter((r) => isSynthetic(r.card.id))].filter((v) => v.card.tasks?.includes(task.id))
   // 頼んでいることは済んでいないカードだけ（済んだものは「出した指示」で返答を読める）。
   const asking = cards.filter((v) => v.status !== 'closed')
   const cardLine = (v: (typeof cards)[number]) => {
@@ -662,7 +668,7 @@ function watchDetail(r: WatchRow, now: number): string {
 function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
   const c = b.v.cockpit!
   const todo = new Map<string, VRow[]>()
-  for (const [, xs] of todoGroups(b)) for (const r of xs) for (const t of r.card.tasks ?? []) todo.set(t, [...(todo.get(t) ?? []), r])
+  for (const r of todoRows(b)) for (const t of r.card.tasks ?? []) todo.set(t, [...(todo.get(t) ?? []), r])
   const form = (j: JobView) => formOf(b, j.id)
   const live = b.d.jobs.filter((j) => j.state !== 'done')
   const done = b.d.jobs.filter((j) => j.state === 'done')
@@ -689,7 +695,7 @@ function viewWhole(b: Board, ui: Ui, now: number, svg: Svg): string {
     // 仕事の一覧を先に、見張る（経路と届いた連絡）は最後に置く。空の置き場所は出さない。
     + FORM_ORDER.filter((f) => f !== 'watch' && filled(f)).map((f) => sec(f)).join('')
     + (noForm.length ? `<section class="fsec"><h3><span>進行中の仕事</span><span class="mut">${noForm.length} 件</span></h3>${noForm.map((j) => streamBox(b, j, ui, todo, now)).join('')}</section>` : '')
-    + (loose.length ? `<section class="fsec"><h3><span>仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(t, todo, ui.task, now, ui.since?.tasks[t.task.id])).join('')}</div></div></section>` : '')
+    + (loose.length ? `<section class="fsec"><h3><span>仕事に結ばれていないタスク</span><span class="mut">${loose.length} 件</span></h3><div class="st"><div class="inner">${loose.map((t) => taskRow(t, todo, ui.task, now, ui.since?.tasks[t.task.id], idleOf(b, t))).join('')}</div></div></section>` : '')
     + (filled('watch') ? sec('watch', watchExtra) : '')
     + noTaskRequests(b, ui)
     + (done.length ? `<button type="button" class="wmore" data-toggle="done" aria-expanded="${!!ui.open.done}">${ui.open.done ? '完了した仕事を閉じる' : `完了した仕事 ${done.length} 件を表示`}</button>${ui.open.done ? done.map((j) => streamBox(b, j, ui, todo, now)).join('') : ''}` : '')
@@ -760,7 +766,7 @@ export function renderWindow(m: Model, ui: Ui, now: number, svg: Svg): string {
   const tabBtn = (k: Tab, label: string, n?: number, quiet = false) =>
     `<button type="button" role="tab" data-tab="${k}" aria-selected="${tab === k}">${label}${n === undefined ? '' : `<span class="n${n && !quiet ? '' : ' z'}">${n}</span>`}</button>`
   const stuck = b.d.counts.stuck
-  const total = COUNTED.reduce((n, k) => n + b.d.counts[k], 0)
+  const total = b.d.total
   const body = tab === 'todo' ? viewTodo(b, ui, now, svg) : tab === 'whole' ? viewWhole(b, ui, now, svg) : tab === 'asks' ? viewAsks(b, ui, now) : viewDone(b, ui, now, svg)
   const answered = answeredCount(b, ui)
   const open = ui.sideOpen !== false

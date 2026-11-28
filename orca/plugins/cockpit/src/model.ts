@@ -27,7 +27,6 @@ export function actionVerb(c: Pick<Card, 'kind' | 'manual'> & { id?: string }, a
   if (c.kind === 'stuck') return ask === 'question' ? '答える' : ask === 'permit' ? '許可' : '再開'
   // 一緒に作る仕事の問いも、窓の右の欄から担当に返事を送れる（d209 で「チャットで答える」から戻した）。
   if (c.id?.startsWith(COWORK_ID)) return ask === 'question' ? '答える' : '確認'
-  if (c.id?.startsWith(IDLE_ID)) return '確認'
   if (c.kind === 'permit' && c.manual) return '対応'
   return ACTION_VERB[c.kind]
 }
@@ -507,8 +506,6 @@ export const ANSWER_VIA: AnswerVia[] = ['reply', 'dispatch', 'keys']
 export const isAnswerItem = (id: string) => (id.startsWith('#ask:') && !isAskItem(id)) || id.startsWith('#agent:') || id.startsWith(COWORK_ID)
 /** 一緒に作る仕事の行の id の頭（R145）。帳簿のカードではなく、担当のチャットの Orca の様子から作る（state.ts の coworkRows）。 */
 export const COWORK_ID = '#cowork:'
-/** 線を越えて動いていないタスクの行の id の頭（追加 35）。 */
-export const IDLE_ID = '#idle:'
 /** Orca から作った詰まりの行の id（帳簿に無い）。 */
 export const isSynthetic = (id: string) => id.startsWith('#agent:') || id.startsWith('#dispatch:') || id.startsWith('#ask:')
 /** 「済ませた」で隠せる詰まり。版（止まった時刻）が取れないもの（0）は、次の停止と見分けられないので隠させない。 */

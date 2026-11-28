@@ -369,6 +369,14 @@ body { margin:0; }
 .ck.win .gh > b { font-size:var(--fs-l); line-height:1.5; }
 .ck.win .gh .mut { font-size:var(--fs-xs); }
 .ck.win .subh { font-size:var(--fs-xs); color:var(--ink3); font-weight:600; }
+.ck.win .tblock { display:grid; gap:16px; }
+.ck.win .tsec { margin:0; font-size:var(--fs-xl); line-height:1.4; display:flex; gap:8px; align-items:baseline; }
+.ck.win .tsec .mut { font-size:var(--fs-m); font-weight:400; }
+.ck.win details.tfold[open] > summary { margin-bottom:16px; }
+.ck.win details.tfold > summary { cursor:pointer; list-style:none; }
+.ck.win details.tfold > summary::-webkit-details-marker { display:none; }
+.ck.win details.tfold > summary .tsec::before { content:"＋"; color:var(--ink3); font-weight:400; }
+.ck.win details.tfold[open] > summary .tsec::before { content:"－"; }
 /*
  * 一覧は行を細い線で区切ったリスト（枠・影・角丸の箱にしない。R111）。見出しの下に濃い線、行の間に薄い線。
  * 選んでいる行は、薄い地の色と左の細い線で示す（枠で囲まない）。
@@ -543,6 +551,11 @@ body { margin:0; }
 .ck.win .tidy .tdk { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
 .ck.win .tidy .rows { border-bottom:0; }
 /* 書いた文は 2 行まで見せる（自由な指示は 1 行目が種類の名前だけで、中身が分からないため）。 */
+.ck.win .tfound { list-style:none; margin:12px 0 0; padding:0; display:grid; border-top:1px solid var(--rule); }
+.ck.win .tfound > li { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:8px 4px; border-bottom:1px solid var(--rule2); }
+.ck.win .tfound .fl { display:grid; gap:4px; min-width:0; }
+.ck.win .tfound .crumb { font-size:var(--fs-xs); color:var(--ink2); display:grid; overflow-wrap:anywhere; }
+.ck.win .tfound .btn { flex:none; }
 .ck.win .tidy .cardrow .crumb { white-space:normal; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow-wrap:anywhere; }
 /* 種類の 4 つは 2 列にそろえる（右の欄の幅では 1 行に収まらず、最後の 1 つだけが折れるため）。 */
 .ck.win .tidyin .afil { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:4px; }
