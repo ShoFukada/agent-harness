@@ -47,7 +47,7 @@ export type Files = {
   /** cockpit.json と cockpit.archive.json の生のカードの返しの印（形の崩れたカードも数える）。 */
   marks: ReturnMark[]
   asks: AskThread[]
-  /** cockpit.json と cockpit.archive.json の生の asks[]（compaction-keep.py の ledger_asks と同じ順）。 */
+  /** cockpit.json と cockpit.archive.json の生の asks[]（この順）。 */
   askMarks: AskMark[]
 }
 
@@ -64,7 +64,7 @@ function rawList(text: string | undefined, key: 'cards' | 'asks'): unknown {
   return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>)[key] : undefined
 }
 
-/** ファイルの生の asks[] のうち、id が文字列の行（compaction-keep.py の ledger_asks と同じ）。 */
+/** ファイルの生の asks[] のうち、id が文字列の行。 */
 function askMarks(text: string | undefined): AskMark[] {
   const xs = rawList(text, 'asks')
   return (Array.isArray(xs) ? xs : []).filter((x): x is AskMark => typeof x === 'object' && x !== null && !Array.isArray(x) && typeof (x as AskMark).id === 'string')
@@ -80,7 +80,7 @@ function returnMarks(text: string | undefined): ReturnMark[] {
 
 /**
  * カードの相談の返しの記録の行のうち、return_id を持つもの（同じ id は先の行）。return_id の無い行は飛ばす。
- * 読み方は compaction-keep.py の valid_returns と同じにする（checks.unreflected_returns を python と食い違わせないため）。
+ * 読み方は返しを保存する compaction-keep.py の valid_returns と同じにする（保存のときの同じ返しの照合と、ここでの未反映の判定が同じ行を見るように）。
  */
 export function consultReturns(text: string): ConsultReturn[] {
   const out = new Map<string, ConsultReturn>()
@@ -90,7 +90,7 @@ export function consultReturns(text: string): ConsultReturn[] {
 }
 
 /**
- * .orca/consult/ の <カード id>.md（相談のメモ）か <カード id>.returns.jsonl（返しの記録）のあるカードを、id の順に読む（compaction-keep.py の consult_cards と同じ）。
+ * .orca/consult/ の <カード id>.md（相談のメモ）か <カード id>.returns.jsonl（返しの記録）のあるカードを、id の順に読む。
  * 返しは記録だけから読む。切り替え前のメモの返しは compaction-keep.py が読むたびに記録へ足すので、窓はメモを読まない。置き場所が無ければ空。
  */
 async function readConsults(root: string): Promise<ConsultMemo[]> {
@@ -150,7 +150,7 @@ export function parseAskReturns(text: string): AskReturn[] {
   return out
 }
 
-/** .orca/consult/ の ask-<id>.md と ask-<id>.returns.jsonl を、質問 id の数の順に読む（compaction-keep.py の ask_ids と同じ）。 */
+/** .orca/consult/ の ask-<id>.md と ask-<id>.returns.jsonl を、質問 id の数の順に読む。 */
 export async function readAsks(root: string): Promise<AskThread[]> {
   const dir = path.join(root, '.orca', 'consult')
   let names: string[]

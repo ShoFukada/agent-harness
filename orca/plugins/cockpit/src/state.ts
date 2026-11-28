@@ -1,7 +1,7 @@
 // カードの状態・私の番の並び・件数・案件の今（仕事ごとの状態）を決める 1 か所。窓・パネル・hook とメインが読む CLI（window/state.ts）はここを通す。
 // 手書きの値を事実の代わりに出すと、画面とメインの認識が事実と食い違ったため（2026-11-16）。
 import {
-  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, isSynthetic, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, openTidyOps, UNDO_GRACE_MS, unmappedElements, metCount, waitMet, worstState,
+  COUNTED, COWORK_ID, IDLE_ID, KIND_LABEL, RETURN_ID, isSynthetic, taskSig, unanswered, missingFields, stageOf, overlay, shownTask, timeOf, unappliedOps, openTidyOps, UNDO_GRACE_MS, unmappedElements, metCount, waitMet, worstState,
   type AskMark, type AskThread, type Card, type CardEffect, type CardKind, type CardView, type Cockpit, type ConsultMemo, type Milestone, type ReturnMark, type Owner, type Request, type Ruling, type ShownWhy, type Stream, type StreamForm, type Task, type TaskSeen, type TaskShown, type TaskState, type UserLog, type Utterance, type Wait, type WaitKind
 } from './model.ts'
 import type { AgentRow, Ask, DispatchFact, OwnerLive, QuestionFact, StopReason } from './protocol.ts'
@@ -1007,17 +1007,18 @@ export type StateReport = {
   card: string
 }
 
-/** conflict_of は、切り替え前のメモで同じ番号の別の返しとぶつかったため compaction-keep.py が新しい番号を付けた返しの元の番号（反映し終えるまで missing に「番号の衝突」）。 */
+/** conflict_of は、切り替え前のメモで同じ番号の別の返しとぶつかったため compaction-keep.py が取り込むときに新しい番号を付けた返しの元の番号（反映し終えるまで missing に「番号の衝突」）。 */
 export type Unreflected = { id: string; card: unknown; missing: ('判断の記録' | '帳簿' | '保留' | '番号の衝突')[]; memo: string | null; returns: string | null; conflict_of?: string }
 /**
- * 窓からの質問の返しの未反映（compaction-keep.py の unreflected_asks と同じ形）。id のある行は返し、id が null の行は返しの無い「これで決める」。
+ * 窓からの質問の返しの未反映。id のある行は返し、id が null の行は返しの無い「これで決める」。
  * missing は 判断の記録・帳簿（asks[].from_returns）・保留（asks[].held_returns）・担当への通知（asks[].notify[] の message_id の無い行）・返し。
  */
 export type AskUnreflected = { id: string | null; ask: string; op?: unknown; missing: string[]; memo: string; returns?: string | null; tasks?: unknown[] }
 
 /**
  * カードの相談の返しの記録にあって、判断の記録の from_return か帳簿のカード（片付けて移したものも）の from_returns のどちらかに無い返しと、
- * カードの held_returns に残る返し。compaction-keep.py の unreflected と同じ判定・同じ並び（window/state.test.ts で突き合わせる）。
+ * カードの held_returns に残る返し。返しの未反映の判定はここだけに置く。compaction-keep.py（unreflected と、開始・圧縮のあとの組み直し）も
+ * window/state.ts の出力の checks.unreflected_returns を読む。
  */
 export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos: ConsultMemo[], asks?: AskSide): (Unreflected | AskUnreflected)[] {
   const inRulings = new Set<unknown>(rulings.map((r) => r.from_return))
@@ -1029,7 +1030,7 @@ export function unreflectedReturns(cards: ReturnMark[], rulings: Ruling[], memos
     for (const v of m.returns) {
       const missing: Unreflected['missing'] = [...(inRulings.has(v.return_id) ? [] : ['判断の記録' as const]), ...(inLedger.has(v.return_id) ? [] : ['帳簿' as const]), ...(held.has(v.return_id) ? ['保留' as const] : [])]
       const clash = typeof v.conflict_of === 'string' && v.conflict_of ? v.conflict_of : undefined
-      if (missing.length) out.push({ id: v.return_id, card: pyFalsy(v.card) ? m.card : v.card, missing: clash ? [...missing, '番号の衝突'] : missing, memo: m.path, returns: m.returnsPath, ...(clash && { conflict_of: clash }) })
+      if (missing.length) out.push({ id: v.return_id, card: typeof v.card === 'string' && v.card ? v.card : m.card, missing: clash ? [...missing, '番号の衝突'] : missing, memo: m.path, returns: m.returnsPath, ...(clash && { conflict_of: clash }) })
     }
   // 返しの記録に無い返しでも、保留にしたものは相談が返し直すまで名指しする。
   const named = new Set(out.map((x) => x.id))
@@ -1046,12 +1047,15 @@ export function settledAsks(s: AskSide, rulings: Ruling[]): string[] {
   return s.threads.filter((a) => !open.has(a.id) && a.entries.some((e) => e.kind === 'q') && !unanswered(a.entries)).map((a) => a.id)
 }
 
-/** 質問の返しの照合に要るもの。root は控えと返しの記録のパスを作るのに使う（python と同じ絶対パス）。 */
+/** 質問の返しの照合に要るもの。root は控えと返しの記録の絶対パスを作るのに使う。 */
 export type AskSide = { root: string; threads: AskThread[]; marks: AskMark[]; log: UserLog; applied: number[] }
 
 const strArr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 
-/** compaction-keep.py の unreflected_asks と同じ判定・同じ並び（src/state.test.ts で突き合わせる）。 */
+/**
+ * 質問の返しのうち、窓口が反映し終えていないもの: 返しの記録にあって判断の記録か帳簿（asks[].from_returns）に無い返し・保留（asks[].held_returns）・
+ * 担当への通知（asks[].notify[] の message_id の無い行）と、返しの無い「この答えを窓口に返す」（ask_decide の op。取り消し・applied_ops のものは除く）。
+ */
 export function unreflectedAsks(s: AskSide, inRulings: Set<unknown>): AskUnreflected[] {
   const memo = (id: string) => `${s.root}/.orca/consult/ask-${id}.md`
   const asks = new Map<string, AskMark>()
@@ -1064,8 +1068,8 @@ export function unreflectedAsks(s: AskSide, inRulings: Set<unknown>): AskUnrefle
   for (const t of s.threads)
     for (const v of t.returns) {
       const rid = v.return_id
-      if (!(typeof rid === 'string' && RETURN_ID_PY.test(rid))) continue
-      if (v.op !== undefined && v.op !== null) bound.add(`${t.id}\n${pyStr(v.op)}`)
+      if (!(typeof rid === 'string' && RETURN_ID.test(rid))) continue
+      if (v.op !== undefined && v.op !== null) bound.add(`${t.id}\n${opKey(v.op)}`)
       const missing = [...(inRulings.has(rid) ? [] : ['判断の記録']), ...(reflected.has(rid) ? [] : ['帳簿'])]
       const x = found.get(rid) ?? { id: rid, ask: t.id, missing: [], memo: memo(t.id), returns: t.returnsPath }
       x.missing = missing
@@ -1079,28 +1083,26 @@ export function unreflectedAsks(s: AskSide, inRulings: Set<unknown>): AskUnrefle
   // 窓口が担当・worker に伝え損ねた返し（帳簿の notify[] の message_id の有無で見る）。
   for (const a of asks.values())
     for (const n of strArr(a.notify) as Record<string, unknown>[]) {
-      if (!(typeof n === 'object' && n !== null && !Array.isArray(n) && typeof n.return_id === 'string' && pyFalsy(n.message_id))) continue
+      if (!(typeof n === 'object' && n !== null && !Array.isArray(n) && typeof n.return_id === 'string' && !n.message_id)) continue
       const x = found.get(n.return_id) ?? { id: n.return_id, ask: a.id, missing: [], memo: memo(a.id), returns: null }
       if (!x.missing.includes('担当への通知')) x.missing.push('担当への通知')
       ;(x.tasks ??= []).push(n.task ?? null)
       found.set(n.return_id, x)
     }
   const out = [...found.values()].filter((x) => x.missing.length)
-  const applied = new Set(s.applied.map(pyStr))
-  const undone = new Set(s.log.ops.filter((o) => o?.type === 'undo').map((o) => pyStr(o.undo_of ?? null)))
+  const applied = new Set(s.applied.map(opKey))
+  const undone = new Set(s.log.ops.filter((o) => o?.type === 'undo').map((o) => opKey(o.undo_of)))
   for (const o of s.log.ops) {
     if (!(o && o.type === 'ask_decide' && String(o.item_id ?? '').startsWith('#ask:'))) continue
-    const op = pyStr(o.op_id ?? null)
+    const op = opKey(o.op_id)
     const id = o.item_id.slice('#ask:'.length)
     if (!bound.has(`${id}\n${op}`) && !applied.has(op) && !undone.has(op)) out.push({ id: null, ask: id, op: o.op_id ?? null, missing: ['返し'], memo: memo(id) })
   }
   return out
 }
 
-/** python の re.fullmatch(r"[A-Za-z0-9_]+-\d+") と同じ（\d は Unicode の数字）。 */
-const RETURN_ID_PY = /^[A-Za-z0-9_]+-\p{Nd}+$/u
-/** python の str()（None → "None"、真偽 → "True"/"False"）。op の照合で python と同じ文字列にそろえる。 */
-const pyStr = (v: unknown) => (v === null || v === undefined ? 'None' : v === true ? 'True' : v === false ? 'False' : String(v))
+/** op の id を比べる鍵。返しの記録・操作のログ・applied_ops は同じ op を数でも文字列でも書くので、文字列にそろえる。 */
+const opKey = (v: unknown) => String(v ?? '')
 
 /** 引かない種類（撤回そのものと、残す判断の無いカードの記録）。 */
 const NO_LOOKUP = new Set(['revoke', 'none'])
@@ -1148,10 +1150,6 @@ export function matchRulings(rows: Ruling[], q: string, max = 3): Ruling[] {
     .map((x) => x.r)
 }
 const ruleNum = (id: string) => Number(/\d+/.exec(id)?.[0] ?? 0)
-
-/** python の `x or 既定値` の偽（None・False・0・空の文字列・空の配列と辞書）。 */
-const pyFalsy = (v: unknown) =>
-  v == null || v === false || v === 0 || v === '' || (Array.isArray(v) ? !v.length : typeof v === 'object' && !Object.keys(v as object).length)
 
 /** カードが片付いた（帳簿から消えたものも）のに、Orca に残っている相談のタブ。端末の一覧を読めていなければ言い切らない。 */
 export function staleConsults(views: CardView[], log: UserLog, terminals: string[] | undefined): { id: string; terminal: string }[] {

@@ -31,7 +31,8 @@ hook（標準入力に Claude Code の hook の JSON）:
                                                      保存し、窓口の Run に送る（return_id と送信の結果を 1 行ずつ出す）
   compaction-keep.py ask-context root 質問 [--since R<n> [--return <return_id>]]  窓からの質問の文脈（--since は増えた判断だけ）
   compaction-keep.py unreflected [root] [--json]     カードの相談と質問の返しの記録にあって、判断の記録か帳簿に入っていない返し・
-                                                     返しの無い「この答えを窓口に返す」・担当に伝えていない返し
+                                                     返しの無い「この答えを窓口に返す」・担当に伝えていない返し（判定は state.ts の
+                                                     checks.unreflected_returns。先に切り替え前のメモの返しを記録へ取り込む）
 
 操縦席のあるワークスペースのメインだけに効く（periodic-reminder.sh の find_cockpit_root と同じ判定。相談スレッドでは動かない）。
 メインの UserPromptSubmit は、Orca の今の Run が帳簿の main.run_id と同じときに、会話 id と席を main-session.json に書く（設計 11.6 の 4）。
@@ -871,28 +872,25 @@ def consult_cards(root):
     return sorted({m.group(1) for n in names for m in [CONSULT_FILE.fullmatch(n)] if m})
 
 
-def unreflected_returns(root):
-    """カードの相談の返しの記録にあって、判断の記録の from_return か帳簿のカードの from_returns のどちらかに無い返し（設計 10.7 の 1）と、
-    窓口が版違い・増えた判断で保留にした返し（カードの held_returns。相談が返し直すまで残す）。
-    形は state.ts の checks.unreflected_returns と同じ { id, card, missing[], memo, returns, conflict_of? }。missing は 判断の記録・帳簿・保留と、
-    反映し終えていない間の番号の衝突（切り替え前のメモで同じ番号の別の返しがあった。conflict_of に元の番号）。"""
-    in_rulings = {r.get("from_return") for r in rulings(root)}
-    in_ledger = {x for card in ledger_cards(root) if isinstance(card.get("from_returns"), list) for x in card["from_returns"]}
-    # 片付いた・移したカードの保留も数える（窓口が片付けるときに held_returns を空にするまで残す）
-    held = {x: card.get("id") for card in ledger_cards(root) if isinstance(card.get("held_returns"), list) for x in card["held_returns"]}
-    out = []
+def import_memo_returns(root):
+    """切り替え前のメモの返しのうち記録に無いものを、記録へ足す（card_returns）。state.ts は返しの記録だけを読むので、返しの未反映を読む前に通す。"""
     for card_id in consult_cards(root):
-        for v in valid_returns(card_returns(root, card_id)):
-            missing = [label for label, have in (("判断の記録", in_rulings), ("帳簿", in_ledger)) if v["return_id"] not in have]
-            missing += ["保留"] if v["return_id"] in held else []
-            if missing:
-                missing += ["番号の衝突"] if v.get(CONFLICT) else []
-                out.append({"id": v["return_id"], "card": v.get("card") or card_id, "missing": missing,
-                            "memo": consult_memo_path(root, card_id), "returns": card_returns_path(root, card_id),
-                            **({CONFLICT: v[CONFLICT]} if v.get(CONFLICT) else {})})
-    named = {x["id"] for x in out}
-    out += [{"id": x, "card": c, "missing": ["保留"], "memo": None, "returns": None} for x, c in sorted(held.items()) if x not in named]
-    return out + unreflected_asks(root, in_rulings)
+        card_returns(root, card_id)
+
+
+def returns_report(root, files=False):
+    """返しの未反映を読むための state.ts の出力（読めなければ None）。先に切り替え前のメモの返しを記録へ取り込む。
+    取り込めなければ OSError を上げる（メモの返しを数え落とした結果を出さない）。"""
+    import_memo_returns(root)
+    return state_report(root, files)
+
+
+def unreflected_returns(report):
+    """state.ts の checks.unreflected_returns（設計 10.7 の 1・11 章）。判定は state.ts の unreflectedReturns の 1 か所に置き、ここでは写さない。
+    形は { id, card, missing[], memo, returns, conflict_of? } と、質問の分の { id, ask, missing[], memo, returns, tasks? }・{ id: null, ask, op, missing: ['返し'], memo }。
+    state.ts を読めなければ None。"""
+    got = ((report or {}).get("checks") or {}).get("unreflected_returns")
+    return got if isinstance(got, list) else None
 
 
 def same_return(rows, ret, reply=None):
@@ -941,8 +939,14 @@ def save_return(root, owner, ret, is_ask, **extra):
     return row, True
 
 
-def unreflected_lines(root):
-    left = unreflected_returns(root)
+def unreflected_lines(root, report):
+    """report は returns_report の出力。"""
+    left = unreflected_returns(report)
+    if left is None:
+        # Orca の問い合わせが時間切れでも、返しはファイルだけで決まるので Orca を読まずに読み直す（空き枠は不明のまま）
+        left = unreflected_returns(state_report(root, files=True))
+    if left is None:
+        return ["", "## 反映していないカードの相談と質問の返し: state.ts を読めず不明（%s unreflected %s で確かめる）" % (KEEPER, root)]
     if not left:
         return []
 
@@ -953,7 +957,7 @@ def unreflected_lines(root):
         if x.get("op") is not None:
             return "- 質問 %s の「この答えを窓口に返す」（op %s）に結ばれた返しが無い。質問のタブに返しを頼み直すか、答えの控え %s から窓口が反映して op を applied_ops に足す" % (
                 x["ask"], x["op"], x["memo"])
-        tasks = "（%s）" % "・".join(x["tasks"]) if x.get("tasks") else ""
+        tasks = "（%s）" % "・".join(str(t) for t in x["tasks"] if t) if any(x.get("tasks") or []) else ""
         return "- %s（質問 %s。無いもの: %s%s。返しの記録: %s）" % (x["id"], x["ask"], "・".join(x["missing"]), tasks, x.get("returns") or "無い")
     return ["", "## 反映していないカードの相談と質問の返し（返しの記録にあって、判断の記録か帳簿に入っていないか、保留のまま・担当への通知が済んでいない。"
                 "cockpit skill の「カードの相談」「窓から質問する」の手順で反映する。保留は差し戻しの知らせを送り直し、新しい返しを待つ）"] + [line(x) for x in left]
@@ -1252,62 +1256,6 @@ def on_ask_session_start(root, ask_id, inp):
         "【質問】圧縮のあと。役割は claude/roles/ask.md のまま。前の質問と答えは控え %s にある。今の文脈:" % ask_memo_path(root, ask_id), "", text])}})
 
 
-def ledger_asks(root):
-    out = []
-    for c in (cockpit(root), read_json(os.path.join(root, ".orca", "cockpit.archive.json"), {})):
-        out += [x for x in c.get("asks") or [] if isinstance(x, dict) and isinstance(x.get("id"), str)]
-    return out
-
-
-def ask_ids(root):
-    try:
-        names = os.listdir(os.path.join(root, ".orca", "consult"))
-    except OSError:
-        return []
-    return sorted({m.group(1) for n in names for m in [re.fullmatch(r"ask-(ask\d+)\.(?:md|returns\.jsonl)", n)] if m}, key=lambda s: int(s[3:]))
-
-
-def unreflected_asks(root, in_rulings):
-    """質問の返しのうち、窓口が反映し終えていないもの（11.3・11.6 の 2・3・5）。形は state.ts の checks.unreflected_returns と同じで、ask を持つ:
-      { id: return_id, ask, missing[], memo, returns, tasks? }  missing は 判断の記録・帳簿（asks[].from_returns）・保留（asks[].held_returns）・担当への通知
-      { id: null, ask, op, missing: ['返し'], memo }            「この答えを窓口に返す」（ask_decide の op）に結ばれた返しが無く、op も applied_ops に無い"""
-    asks = {a["id"]: a for a in ledger_asks(root)}
-    reflected = {x for a in asks.values() for x in a.get("from_returns") or [] if isinstance(x, str)}
-    held = {x: a["id"] for a in asks.values() for x in a.get("held_returns") or [] if isinstance(x, str)}
-    found, bound = {}, set()
-    for ask_id in ask_ids(root):
-        path = ask_returns_path(root, ask_id)
-        for v in read_jsonl(path):
-            rid = v.get("return_id")
-            if not (isinstance(rid, str) and RETURN_ID.fullmatch(rid)):
-                continue
-            if v.get("op") is not None:
-                bound.add((ask_id, str(v["op"])))
-            missing = [label for label, have in (("判断の記録", in_rulings), ("帳簿", reflected)) if rid not in have]
-            found.setdefault(rid, {"id": rid, "ask": ask_id, "missing": [], "memo": ask_memo_path(root, ask_id), "returns": path})["missing"] = missing
-    for rid, ask_id in held.items():
-        found.setdefault(rid, {"id": rid, "ask": ask_id, "missing": [], "memo": ask_memo_path(root, ask_id), "returns": None})["missing"].append("保留")
-    # 窓口が担当・worker に伝え損ねた返し。Run が替わっても新しい窓口が拾えるよう、帳簿の notify[] の message_id の有無で見る
-    for a in asks.values():
-        for n in a.get("notify") or []:
-            if isinstance(n, dict) and isinstance(n.get("return_id"), str) and not n.get("message_id"):
-                x = found.setdefault(n["return_id"], {"id": n["return_id"], "ask": a["id"], "missing": [], "memo": ask_memo_path(root, a["id"]), "returns": None})
-                if "担当への通知" not in x["missing"]:
-                    x["missing"].append("担当への通知")
-                x.setdefault("tasks", []).append(n.get("task"))
-    out = [x for x in found.values() if x["missing"]]
-    log = read_json(os.path.join(root, ".orca", "cockpit.user.json"), {}).get("ops") or []
-    applied = {str(o) for o in cockpit(root).get("applied_ops") or []}
-    undone = {str(o.get("undo_of")) for o in log if isinstance(o, dict) and o.get("type") == "undo"}
-    for o in log:
-        if not (isinstance(o, dict) and o.get("type") == "ask_decide" and str(o.get("item_id") or "").startswith("#ask:")):
-            continue
-        op, ask_id = str(o.get("op_id")), o["item_id"][len("#ask:"):]
-        if (ask_id, op) not in bound and op not in applied and op not in undone:
-            out.append({"id": None, "ask": ask_id, "op": o.get("op_id"), "missing": ["返し"], "memo": ask_memo_path(root, ask_id)})
-    return out
-
-
 def record_main_session(root, inp):
     """窓口の会話 id・会話のファイル・席を main-session.json に 1 組で置き換える（consult --ask が写す元。11.1・11.6 の 4・7）。
     同じ worktree で動く別の会話を窓口と取り違えないよう、Orca の今の Run が帳簿の main.run_id と同じときだけ書く。
@@ -1328,11 +1276,10 @@ def record_main_session(root, inp):
 
 # ---------- ④ 組み直し ----------
 
-def slot_lines(root):
-    """空いた枠と待ちのタスク。作業中と未着手は state.ts の判定で数える（手書きの run は worker_done のあとも残り、枠を占めたままに見える）。"""
+def slot_lines(root, report):
+    """空いた枠と待ちのタスク。作業中と未着手は state.ts の判定（report。読めなければ None）で数える（手書きの run は worker_done のあとも残り、枠を占めたままに見える）。"""
     c = cockpit(root)
     rows = {t.get("id"): t for t in (c.get("tasks") or []) if isinstance(t, dict)} if isinstance(c, dict) else {}
-    report = state_report(root)
     shown = report.get("tasks") if isinstance(report, dict) else None
     if not isinstance(shown, list):
         head = "## 空き枠と待ちのタスク（上限 %d。state.ts を読めず、作業中の数と空きは不明。node %s <root> で確かめる）" % (WORKER_LIMIT, cockpit_state_path())
@@ -1403,11 +1350,13 @@ def start_context(head, args):
                                "%s rulings %s constraint" % (KEEPER, root), 1))
         except (OSError, ValueError) as e:
             blocks.append(("\n【記録】有効な制約を読み出せなかった（%s）。%s rulings %s constraint で出せる" % (e, KEEPER, root), None, 0))
-        blocks.append(("\n".join(slot_lines(root)), "%s slots %s" % (KEEPER, root), 1))
+        # 空き枠と返しの未反映は、state.ts の 1 回の出力から読む（state.ts は Orca を読むので 1 回に数秒かかる）
         try:
-            left = unreflected_lines(root)
+            report = returns_report(root)
+            left = unreflected_lines(root, report)
         except OSError as e:
-            left = ["", "【記録】反映していない返しを読み出せなかった（%s）。%s unreflected %s で出せる" % (e, KEEPER, root)]
+            report, left = state_report(root), ["", "【記録】反映していない返しを読み出せなかった（%s）。%s unreflected %s で出せる" % (e, KEEPER, root)]
+        blocks.append(("\n".join(slot_lines(root, report)), "%s slots %s" % (KEEPER, root), 1))
         if left:
             blocks.append(("\n".join(left), "%s unreflected %s" % (KEEPER, root), 1))
     return fit(blocks)
@@ -1424,8 +1373,9 @@ def reassembly(root, heading):
     opens = open_lines(cockpit(root))
     blocks.append(("\n".join(["", "## 開いている操縦席のカードと済んでいないタスク（状態は state.ts の出力で読む）"] + (opens or ["- なし"])),
                    "node %s %s の出力" % (cockpit_state_path(), root), 1))
-    blocks.append(("\n".join(slot_lines(root)), "%s slots %s" % (KEEPER, root), 1))
-    left = unreflected_lines(root)
+    report = returns_report(root)
+    blocks.append(("\n".join(slot_lines(root, report)), "%s slots %s" % (KEEPER, root), 1))
+    left = unreflected_lines(root, report)
     if left:
         blocks.append(("\n".join(left), "%s unreflected %s" % (KEEPER, root), 1))
     act = active_rulings(rulings(root))
@@ -1997,10 +1947,10 @@ def cockpit_state_path():
     return os.environ.get("COCKPIT_STATE") or os.path.expanduser("~/.config/agent-harness/orca/plugins/cockpit/window/state.ts")
 
 
-def state_report(root):
-    """state.ts の判定（窓と同じ）。読めなければ None。"""
+def state_report(root, files=False):
+    """state.ts の判定（窓と同じ）。読めなければ None。files は Orca を読まずにファイルだけで決まる検査を読むとき（state.ts の --files）。"""
     try:
-        done = subprocess.run(["node", cockpit_state_path(), root], capture_output=True, text=True, timeout=10)
+        done = subprocess.run(["node", cockpit_state_path(), root, *(["--files"] if files else [])], capture_output=True, text=True, timeout=10)
         v = json.loads(done.stdout)
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
@@ -2275,13 +2225,16 @@ def tool(argv):
         return
     if cmd == "unreflected":
         try:
-            left = unreflected_returns(root)
+            report = returns_report(root, files=True)
         except OSError as e:
             sys.exit("compaction-keep: 返しの記録を読めない: %s" % e)
+        left = unreflected_returns(report)
+        if left is None:
+            sys.exit("compaction-keep: state.ts を読めない（理由は node %s %s --files の出力にある）" % (cockpit_state_path(), root))
         if "--json" in argv:
             print(json.dumps(left, ensure_ascii=False))
         else:
-            print("\n".join(unreflected_lines(root)).strip())
+            print("\n".join(unreflected_lines(root, report)).strip())
         return
     if cmd == "rulings":
         kind = rest[1] if len(rest) > 1 else None
@@ -2290,7 +2243,7 @@ def tool(argv):
                 print(ruling_line(r))
         return
     if cmd == "slots":
-        print("\n".join(slot_lines(root)).strip())
+        print("\n".join(slot_lines(root, state_report(root))).strip())
         return
     try:
         data = json.loads(sys.stdin.read())

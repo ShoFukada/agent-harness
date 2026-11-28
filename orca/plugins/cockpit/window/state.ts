@@ -1,10 +1,10 @@
 // 操縦席の判定済みの状態を JSON で出す入口。hook（periodic-reminder.sh）とメインが、窓と同じ判定（src/state.ts）で状態を読む。
-// 使い方: node <このファイル> <ワークスペースの root>
+// 使い方: node <このファイル> <ワークスペースの root> [--files]（--files は Orca を読まない）
 import path from 'node:path'
 import type { Cockpit } from '../src/model.ts'
 import type { OwnerLive } from '../src/protocol.ts'
 import { coworkIdle, report, type OrcaFacts, type StateReport } from '../src/state.ts'
-import { emptyFiles, loadFiles } from '../src/store.ts'
+import { emptyFiles, loadFiles, type Files } from '../src/store.ts'
 import { CHAT_HANDLE, chatHandles, coordinating, currentDispatches, readRuns, failuresOf, liveChats, orcaAgents, orcaDispatches, pluginProblem, type Chain, type Failure, type PluginRow, type PsRow, type RunPage, type RunWorker, type WorkerShow } from './orca-state.ts'
 import { orcaCli, TERMINAL_LIMIT } from './server.ts'
 
@@ -55,16 +55,29 @@ export async function stateOf(root: string, orca = orcaCli(process.env.COCKPIT_O
   // 見張る仕事の automation が Orca にあるか（checks.watch_unknown）。読めなければ確かめない。
   if (facts && orca.automations && files.cockpit.streams.some((x) => x.form === 'watch' && x.watch))
     facts.automations = await orca.automations().then((xs) => xs.map(({ id, name }) => ({ id, name })), () => undefined)
-  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), { utterances: files.utterances, notices: files.notices, firstSeen: files.firstSeen, taskSeen: files.taskSeen, rulings: files.rulings, consults: files.consults, marks: files.marks, asks: files.asks, askMarks: files.askMarks, root })
+  return report(files.cockpit, files.log, files.archive, facts, state, now, plugins && pluginProblem(plugins), fileOpts(files, root))
 }
 
+/**
+ * Orca を読まず、.orca のファイルだけで判定する（orca は 'skipped'）。Orca の問い合わせは実際の案件で 3 秒ほどかかるので、
+ * ファイルだけで決まる検査（checks.unreflected_returns）を読む道具（compaction-keep.py unreflected）はこちらを使う。Orca の事実に依る欄は当てにしない。
+ */
+export async function filesStateOf(root: string, now = Date.now()): Promise<StateReport> {
+  const files = await loadFiles(root, emptyFiles())
+  if (!files.cockpit) throw new Error(files.errors[0] ?? `${root}/.orca/cockpit.json がありません`)
+  return report(files.cockpit, files.log, files.archive, undefined, 'skipped', now, undefined, fileOpts(files, root))
+}
+
+const fileOpts = (files: Files, root: string) => ({ utterances: files.utterances, notices: files.notices, firstSeen: files.firstSeen, taskSeen: files.taskSeen, rulings: files.rulings, consults: files.consults, marks: files.marks, asks: files.asks, askMarks: files.askMarks, root })
+
 if (import.meta.main) {
-  const [root] = process.argv.slice(2)
+  const args = process.argv.slice(2)
+  const root = args.find((a) => a !== '--files')
   if (!root) {
-    console.error('使い方: node state.ts <ワークスペースの root>')
+    console.error('使い方: node state.ts <ワークスペースの root> [--files]')
     process.exit(2)
   }
-  stateOf(path.resolve(root)).then(
+  ;(args.includes('--files') ? filesStateOf : stateOf)(path.resolve(root)).then(
     (r) => console.log(JSON.stringify(r, null, 1)),
     (e: Error) => {
       console.error(e.message)

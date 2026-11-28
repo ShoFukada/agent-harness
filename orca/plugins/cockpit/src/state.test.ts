@@ -390,7 +390,7 @@ function consultRoot(): string {
   put('.orca/consult/d21.md', '# 相談｜案件A｜d21\n## 決めたこと\n```json\n{"return_id": "d21-8", "card": "d21"}\n```\n')
   put('.orca/consult/d21.returns.jsonl', rows({ return_id: 'd21-1', card: 'd21', rev: 1, decisions: [{ text: '入口は 1 つにする' }] }, { return_id: 'd21-2', card: 'd21', rev: 1 },
     { return_id: 'd21-2', card: 'x' }, '{ 書きかけ', { card: 'd21' }, ['配列'], { return_id: 'd21-3', card: 'd21', rev: 1 }))
-  // 改行が CRLF の記録・card が空の配列の行・全角数字の連番も python と同じに読む（Codex 重大 4・軽微）。
+  // 改行が CRLF の記録・card が空の配列の行・全角数字の連番も読む（Codex 重大 4・軽微）。
   put('.orca/consult/d22.returns.jsonl', rows({ return_id: 'd22-1', rev: 2 }, { return_id: 'd22-２', card: [] }).replace(/\n/g, '\r\n'))
   put('.orca/consult/c4.md', '# 返しはまだ無い\n')
   return root
@@ -412,10 +412,11 @@ test('相談の返し: 返しの記録にあって判断の記録か帳簿に無
   assert.deepEqual(f.consults.map((m) => [m.card, m.returns.length]), [['c4', 0], ['d21', 3], ['d22', 2]])
 })
 
-// 同じリポジトリの hook（compaction-keep.py unreflected）と同じ結果になること
+// 同じリポジトリの hook（compaction-keep.py unreflected）は、この state.ts の判定をそのまま出す（判定を python に写さない）。
 const KEEP = new URL('../../../../claude/hooks/compaction-keep.py', import.meta.url).pathname
-const pyUnreflected = (root: string) => JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '' } }))
-test('相談の返し: compaction-keep.py unreflected <root> --json と同じ結果', async () => {
+const STATE = new URL('../window/state.ts', import.meta.url).pathname
+const pyUnreflected = (root: string) => JSON.parse(execFileSync('python3', [KEEP, 'unreflected', root, '--json'], { encoding: 'utf8', env: { ...process.env, CONSULT_THREAD: '', COCKPIT_STATE: STATE } }))
+test('相談の返し: compaction-keep.py unreflected <root> --json は state.ts の判定と同じ結果', async () => {
   const root = consultRoot()
   const f = await loadFiles(root, emptyFiles())
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults), pyUnreflected(root))
@@ -483,11 +484,11 @@ test('質問の返し: 帳簿・判断の記録・保留・担当への通知の
   assert.equal(a1.answers, 1)
 })
 
-test('質問の返し: compaction-keep.py unreflected <root> --json と同じ結果', async () => {
+test('質問の返し: compaction-keep.py unreflected <root> --json は state.ts の判定と同じ結果', async () => {
   const root = askRoot()
   const f = await loadFiles(root, emptyFiles())
   const py = pyUnreflected(root)
-  assert.ok(py.some((x: { ask?: string }) => x.ask), 'python が質問の分を出す版であること')
+  assert.ok(py.some((x: { ask?: string }) => x.ask), 'compaction-keep.py が質問の分も出すこと')
   assert.deepEqual(unreflectedReturns(f.marks, f.rulings, f.consults, { root, threads: f.asks, marks: f.askMarks, log: f.log, applied: f.cockpit!.applied_ops ?? [] }), py)
 })
 

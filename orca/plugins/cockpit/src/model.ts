@@ -366,7 +366,7 @@ export type AskRecord = {
   from_returns?: string[]; held_returns?: string[]
   notify?: { return_id: string; task?: string; message_id?: string }[]
 }
-/** 返しの照合に使う、帳簿と移したものの生の asks[]（compaction-keep.py の ledger_asks と同じく、id が文字列の行だけ）。 */
+/** 返しの照合に使う、帳簿と移したものの生の asks[]（id が文字列の行だけ）。 */
 export type AskMark = { id: string; from_returns?: unknown; held_returns?: unknown; notify?: unknown }
 export type AskReturn = { return_id: string; op?: unknown; decisions?: { text?: string; utterance?: string }[]; requests?: { utterance?: string }[] }
 /** 質問と答えの控え（ask-<id>.md）の節。q: 深田さんの質問、a: 答え、n: 窓・窓口からの知らせ。time は HH:MM。 */

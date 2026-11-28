@@ -13,6 +13,8 @@ import tempfile
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compaction-keep.py")
+# 返しの未反映は state.ts が決める（compaction-keep.py は写さない）。返しのテストはこのリポジトリの state.ts を呼ぶ
+STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "orca", "plugins", "cockpit", "window", "state.ts")
 SESSION = "s-main"
 
 
@@ -1308,6 +1310,9 @@ class ConsultBase(Base):
         self.rule(kind="decision", text="仕事の判断", dec="s7")                          # R5 仕事を dec で挙げる
         self.rule(kind="decision", text="依頼のタスクの判断", affects=["t2"])            # R6 依頼のタスクに影響
 
+    def env(self, **extra):
+        return super().env(**{"COCKPIT_STATE": STATE, "COCKPIT_ORCA": "/usr/bin/false", **extra})
+
     def consult_env(self, **extra):
         return self.env(CONSULT_THREAD="1", CONSULT_CARD="%s#d21" % self.root, **extra)
 
@@ -1496,6 +1501,31 @@ class ConsultCard(ConsultBase):
         self.write_cockpit()
         self.assertEqual(self.unreflected(), {})
         self.assertNotIn("反映していない", json.loads(self.hook("SessionStart", source="compact"))["hookSpecificOutput"]["additionalContext"])
+
+    def test_when_state_ts_cannot_be_read_the_returns_are_said_to_be_unknown_not_none(self):
+        self.write_memo({"return_id": "d21-1", "card": "d21", "rev": 1, "rulings_seen": "R6",
+                         "decisions": [{"text": "凡例は 6 つ", "quote": "6 つでいい", "utterance": "u-3"}]})
+        broken = self.env(COCKPIT_STATE=os.path.join(self.root, "no-state.js"))
+        done = subprocess.run([HOOK, "unreflected", self.root, "--json"], text=True, capture_output=True, env=broken)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("state.ts を読めない", done.stderr)
+        # 読めなくても、切り替え前のメモの返しは記録へ取り込んである（state.ts が読めるようになれば出る）
+        self.assertEqual([json.loads(l)["return_id"] for l in read(os.path.join(self.root, ".orca", "consult", "d21.returns.jsonl")).splitlines()], ["d21-1"])
+        text = json.loads(self.hook("SessionStart", env=broken, source="compact"))["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("反映していないカードの相談と質問の返し: state.ts を読めず不明", text)
+        self.assertEqual(self.unreflected(), {"d21-1": ["判断の記録", "帳簿"]})
+
+    def test_when_orca_makes_state_ts_fail_the_returns_are_still_named_from_the_files(self):
+        self.write_memo({"return_id": "d21-1", "card": "d21", "rev": 1, "rulings_seen": "R6",
+                         "decisions": [{"text": "凡例は 6 つ", "quote": "6 つでいい", "utterance": "u-3"}]})
+        # Orca を読む呼び出し（--files の無いもの）だけが時間切れなどで失敗する state.ts
+        slow = os.path.join(self.root, "orca-fails.mjs")
+        with open(slow, "w") as fh:
+            fh.write("import { execFileSync } from 'node:child_process'\nif (!process.argv.includes('--files')) process.exit(1)\n"
+                     "process.stdout.write(execFileSync('node', [%s, ...process.argv.slice(2)]))\n" % json.dumps(STATE))
+        text = json.loads(self.hook("SessionStart", env=self.env(COCKPIT_STATE=slow), source="compact"))["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("state.ts を読めず、作業中の数と空きは不明", text)
+        self.assertIn("- d21-1（カード d21。無いもの: 判断の記録・帳簿。", text)
 
     def test_a_card_moved_to_the_archive_still_counts_as_reflected(self):
         self.write_memo({"return_id": "d21-2", "card": "d21"})
@@ -1886,6 +1916,9 @@ class AskFromWindow(Base):
         for ask, bind in (("ask1", ""), ("ask2", "- カード: d21\n"), ("ask3", "- 仕事: s7\n")):
             with open(os.path.join(self.memo_dir, "ask-%s.md" % ask), "w", encoding="utf-8") as fh:
                 fh.write("# 質問｜テスト｜%s\n%s- 写した窓口の会話: s-main\n\n" % (ask, bind))
+
+    def env(self, **extra):
+        return super().env(**{"COCKPIT_STATE": STATE, "COCKPIT_ORCA": "/usr/bin/false", **extra})
 
     def ask_env(self, ask="ask1", **extra):
         return self.env(CONSULT_THREAD="1", CONSULT_ASK="%s#%s" % (self.root, ask), FAKE_RUN="run_main", **extra)
