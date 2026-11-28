@@ -37,10 +37,11 @@ class ClientLeakTest(unittest.TestCase):
         found = client_leak.problems(CLIENT_HTML % "No.12 は貴社のご回答待ちです。No.14 は先方の確認待ち、No.15 はお返事待ちです。")
         self.assertEqual(found, ["進行の状態の語（お返事待ち・ご回答待ち・確認待ち）"])
         self.assertTrue(client_leak.problems(CLIENT_MD % "- 連絡待ち: 2件", markdown=True))
+        self.assertTrue(client_leak.problems(CLIENT_HTML % "No.12 は「貴社のご回答待ち」です。"))
 
     def test_waiting_closings_and_screen_status_are_not_flagged(self):
         ok = ("ご確認をお待ちしております。ご回答をお待ちしています。お返事お待ちしております。"
-              "申請は承認待ちの状態になります。状態が「回答待ち」の行を選びます。")
+              "申請は承認待ちの状態になります。状態が「回答待ち」の行を選びます。画面の「AI確認待ち」の欄に出ます。")
         self.assertEqual(client_leak.problems(CLIENT_HTML % ok), [])
 
     def test_maker_explanation(self):
@@ -56,12 +57,17 @@ class ClientLeakTest(unittest.TestCase):
 
     def test_deck_data_audience(self):
         # medurance-web-docs の deck は .deck の data-audience で顧客向けを示す
-        deck = '<div class="deck" data-audience="%s"><section><p>貴社のご回答待ちです。</p></section></div>'
+        deck = '<div class="deck" data-headings="label" data-audience="%s"><section><p>貴社のご回答待ちです。</p></section></div>'
         self.assertTrue(client_leak.problems(deck % "ドクターズ株式会社さま向け"))
         self.assertTrue(client_leak.problems(deck % "社外共有用"))
         self.assertEqual(client_leak.problems(deck % "internal"), [])
         self.assertEqual(client_leak.problems(deck % "社内・協力会社向けの見本（架空の案件）"), [])
         self.assertEqual(client_leak.problems("<pre>&lt;div data-audience=&quot;x&quot;&gt;</pre><code>data-audience='A社さま向け'</code><p>確認待ち</p>"), [])
+        self.assertEqual(client_leak.problems('<p data-audience="A社さま向け">属性の見本です。</p><p>確認待ち</p>'), [])
+        self.assertEqual(client_leak.problems('<p>data-audience="A社さま向け" と書きます。確認待ち</p>'), [])
+
+    def test_html_code_inside_markdown_is_ignored(self):
+        self.assertEqual(client_leak.problems(CLIENT_MD % "<code>確認待ち</code>\n\n<pre>\n## 今回の対応\n</pre>", markdown=True), [])
 
     def test_notice_names_rule(self):
         self.assertIn("要ることだけ", client_leak.notice("a.html", ["手元のパス（/Users/a）"]))

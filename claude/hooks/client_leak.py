@@ -15,7 +15,7 @@ ATTR_RE = re.compile(r"""([\w-]+)\s*=\s*["']([^"']*)["']""")
 CLIENT_COMMENT_RE = re.compile(r"<!--\s*audience:\s*client\s*-->", re.I)
 # medurance-web-docs の deck は誰向けかを .deck の data-audience に書く（社内は "internal"、顧客は "◯◯株式会社さま向け"）。
 # meta の印を重ねて付ける決まりは無いので、こちらで両方を読む
-DATA_AUDIENCE_RE = re.compile(r"""\bdata-audience\s*=\s*["']([^"']*)["']""", re.I)
+DATA_AUDIENCE_TAG_RE = re.compile(r"<[a-z][^>]*\bdata-audience\s*=[^>]*>", re.I)
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.S)
 FRONTMATTER_CLIENT_RE = re.compile(r"(?m)^audience:[ \t]*[\"']?client[\"']?[ \t]*\r?$")
 HTML_CODE_RE = re.compile(r"<(script|style|pre|code)\b.*?</\1>", re.S | re.I)
@@ -27,13 +27,15 @@ LINK_RE = re.compile(r"""\b(?:href|src)\s*=\s*["']([^"']*)["']""", re.I)
 HTML_HEADING_RE = re.compile(r"<h[1-6]\b[^>]*>(.*?)</h[1-6]\s*>", re.S | re.I)
 MD_HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t]+(.+?)[ \t#]*$")
 # 製品名として顧客の文書に出る語（見積もりの「ご担当者様がお使いになる Claude Code」）と一般語（窓口・担当）は入れない。
-# 待ちの語は結びの「ご確認をお待ちしております」に当たらない形にし、「」で括った画面の状態名を除く。
+# 待ちの語は結びの「ご確認をお待ちしております」に当たらない形にし、「」で括った画面の状態名（「AI確認待ち」）を除く。
 # 「承認待ち」は申請の画面の状態として操作マニュアルに出るので入れない
+WAIT = r"(?:ご|お)?(?:回答|確認|返事|返答|連絡)待ち"
+STATUS_LABEL_RE = re.compile(r"「[A-Za-z0-9ァ-ヺー・ ]{0,12}%s」" % WAIT)
 LEAKS = [
     ("手元のパス", re.compile(r"/Users/[\w.-]+|/private/tmp/|/tmp/claude|/var/folders/|~/\.(?:claude|config)")),
     ("作業用の置き場", re.compile(r"scratchpad|worktree", re.I)),
     ("エージェントの仕組みの語", re.compile(r"(?a:\b(?:subagent|agy)\b)|サブエージェント|操縦席", re.I)),
-    ("進行の状態の語", re.compile(r"(?:ご|お)?(?:回答|確認|返事|返答|連絡)待ち(?!」)")),
+    ("進行の状態の語", re.compile(WAIT)),
     ("作り手の説明", re.compile(r"生成の記録|修正版と同じ")),
 ]
 # 本文の中の「今回の対応により解消しました」は障害報告で正当に書くので、見出しに立てたときだけ拾う
@@ -45,11 +47,12 @@ MAX_HITS = 3
 
 def deck_audience(html):
     """deck の data-audience を client / internal に読み替える（ja-review の語調の判定もこれを使う）。無ければ None。"""
-    m = DATA_AUDIENCE_RE.search(html)
-    if not m or not m.group(1).strip():
-        return None
-    value = m.group(1).strip()
-    return "internal" if value == "internal" or value.startswith("社内") else "client"
+    for tag in DATA_AUDIENCE_TAG_RE.findall(html):
+        attrs = {k.lower(): v for k, v in ATTR_RE.findall(tag)}
+        value = attrs.get("data-audience", "").strip()
+        if "deck" in attrs.get("class", "").split() and value:
+            return "internal" if value == "internal" or value.startswith("社内") else "client"
+    return None
 
 
 def is_client(text, markdown):
@@ -65,7 +68,8 @@ def is_client(text, markdown):
 
 
 def _markdown_body(text):
-    return INLINE_CODE_RE.sub("", FENCE_RE.sub("", FRONTMATTER_RE.sub("", text, count=1)))
+    body = FENCE_RE.sub("", FRONTMATTER_RE.sub("", text, count=1))
+    return INLINE_CODE_RE.sub("", HTML_CODE_RE.sub("", body))
 
 
 def _html_body(text):
@@ -74,11 +78,11 @@ def _html_body(text):
 
 def prose(text, markdown):
     if markdown:
-        return _markdown_body(text)
+        return STATUS_LABEL_RE.sub("", _markdown_body(text))
     html = _html_body(text)
     # リンク先は画面に出ないが顧客に渡るファイルに残るので、href・src の値も本文と一緒に見る
     links = " ".join(LINK_RE.findall(html))
-    return TAG_RE.sub(" ", html) + " " + links
+    return STATUS_LABEL_RE.sub("", TAG_RE.sub(" ", html)) + " " + links
 
 
 def headings(text, markdown):
