@@ -8,18 +8,20 @@ import { stripTypeScriptTypes } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ASK_ID, askItem, askWords, COWORK_ID, escapeAskSections, isAnswerItem, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type Op, type OpType } from '../src/model.ts'
+import { ASK_ID, askItem, COWORK_ID, escapeAskSections, isAnswerItem, requestCards, OP_TYPES, overlay, textError, unanswered, type AskThread, type Card, type Cockpit, type ConsultMemo, type OpType } from '../src/model.ts'
 import { clipDraft, isDraftFormat } from '../src/clip.ts'
 import { draftLinter } from '../src/lint.ts'
-import type { AnswerResult, Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, NotifyResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
-import { agentCardId, coworkIdle, coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances, settledAsks, unreflectedAsks } from '../src/state.ts'
+import type { AnswerResult, Ask, AskDecideResult, AskResult, AutomationFact, AutomationRun, ClipResult, CockpitView, DispatchFact, FocusResult, OpenResult, OpInput, OwnerLive, QuestionFact, RulingHit, TalkResult, WindowView } from '../src/protocol.ts'
+import { agentCardId, coworkIdle, coworkSessions, matchRulings, ownerName, ownerOf, returnedUtterances } from '../src/state.ts'
 import {
-  carryLast, coordinating, currentDispatches, descendants, failuresOf, readRuns, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT, toolAsk,
-  type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsAgent, type PsRow, type RunPage, type RunTask, type RunWorker, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
+  carryLast, coordinating, currentDispatches, descendants, failuresOf, readRuns, openQuestions, orcaAgents, orcaDispatches, PLUGIN_KEY, pluginProblem, questionFacts, screenAsk, SHORT,
+  type Failure, type InboxMessage, type OpenQuestion, type PluginRow, type PsRow, type RunPage, type RunTask, type RunWorker, type TaskLink, type WorkerShow, CHAT_HANDLE, chatHandles, liveChats } from './orca-state.ts'
 export { jobOf, stopReason, type PluginRow, type PsAgent, type PsRow } from './orca-state.ts'
 import { deliverAnswer, type AnswerPlan } from './answer.ts'
-import { mailboxOf, sendFromMailbox, type MailOrca } from './mail.ts'
-import { addAskSent, appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, notifyMain, readAskSent, readAskTabs, readNotified, recordFirstSeen, recordTaskSeen, signalPlan, splitLine, writeAskTab, writeNotified, type Files, type SendRun } from '../src/store.ts'
+import { mailboxOf, type MailOrca } from './mail.ts'
+import { askTabs, type AskWs } from './ask-tabs.ts'
+import { signals, type SignalWs } from './notify.ts'
+import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, readAskSent, readNotified, recordFirstSeen, recordTaskSeen, splitLine, writeAskTab, type Files } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
 const SERVED = new Set(['window/page.ts', 'src/controller.ts', 'src/model.ts', 'src/morph.ts', 'src/sanitize.ts', 'src/state.ts', 'src/style.ts', 'src/view.ts', 'src/window-view.ts', 'src/window-asks.ts', 'src/window-answer.ts', 'src/window-tidy.ts', 'src/window-parts.ts', 'src/markdown.ts', 'src/since.ts'])
@@ -29,25 +31,10 @@ const SHOWN_DECISIONS = 3
 const ASK_ENTRIES = 6
 const ASK_TEXT = 6000
 const ASK_FIRST = 200
-/** 「これで決める」のあとに質問のタブへ送る知らせ（compaction-keep.py が深田さんの発言として記録しない書式）。 */
-export const askNotice = (op: number) => `【相談の知らせ】返しを書いて（op ${op}）`
-/**
- * 質問のタブに届ける 1 回分の入力。案を選んだ・書いて返したときは、深田さんの言葉を先に、改行して知らせを後に置く（nix-darwin の claude/roles/ask.md）。
- * compaction-keep.py は先頭が知らせの入力を発言として残さないので、逆の順にすると言葉が発言の記録に残らず、写しが utterance を引けない。
- * 2 回に分けて送ると、写しが働いている間に届いた 2 回目が別の入力になるので、1 回にまとめる。末尾の知らせの行は hook が発言から外す。
- */
-export const askMessage = (o: Pick<Op, 'op_id' | 'choice' | 'text'>) => {
-  const words = askWords(o)
-  return words ? `${escapeAskSections(words)}\n${askNotice(o.op_id)}` : askNotice(o.op_id)
-}
-/** 質問のタブの名前（consult --ask の ask_title と同じ）。 */
-export const askTitle = (workspace: string, id: string) => `質問｜${workspace.replace(/｜/g, ' ')}｜${id}`
 /** 窓に送る片付いたカードの日数。古いものは cockpit.archive.json に移っている。 */
 const CLOSED_DAYS = 14
 /** ページが表示されている間に Orca の状態を確かめる間隔。プロセスが落ちた worker は Orca から知らせが来ないため。 */
 const POLL_MS = 60_000
-/** 答えの済んだ質問のタブを閉じるまでの、最後の質問か答えからの時間（R180）。 */
-const ASK_IDLE_MS = 60 * 60_000
 const REFRESH_GAP_MS = 5_000
 
 export type TerminalRow = { handle: string; tabId: string; leafId: string }
@@ -279,18 +266,8 @@ export function tabsOf(list: unknown, root: string): AskTabRow[] {
     .map((t) => ({ title: t.title as string, handles: [t.handle as string], loose: true as const }))
 }
 
-type Ws = {
-  root: string
-  files: Files
-  watcher?: FSWatcher
-  timer?: ReturnType<typeof setTimeout>
-  signal?: CockpitView['signal']
-  signalTimer?: ReturnType<typeof setTimeout>
-  /** 送っている最中の合図（notify を案件ごとに 1 つずつにする）。 */
-  sending?: Promise<unknown>
-  /** 質問のタブを閉じるかを確かめた、控えの最後の書き込みの時刻（質問 id → mtime）。同じ時点では探し直さない（R180）。 */
-  askChecked?: Map<string, number>
-}
+/** 案件ごとの見張り（watcher・timer）と、合図（notify.ts）・質問のタブ（ask-tabs.ts）が案件に持つ様子。 */
+type Ws = SignalWs & AskWs & { watcher?: FSWatcher; timer?: ReturnType<typeof setTimeout> }
 
 type Focus = { path?: string; agents_at?: number }
 class HttpError extends Error {
@@ -427,6 +404,8 @@ export function createServer(opts: Options) {
   let refreshing: Promise<void> | undefined
   let lastRefresh = 0
   const jsCache = new Map<string, { mtime: number; code: string }>()
+  const sig = signals({ orca, dir: opts.dir, broadcast })
+  const asks = askTabs<Ws>({ orca, dir: opts.dir, workspaces: () => wss.values(), inQueue, reload, broadcast, stopped: () => stopped })
 
   const hasCockpit = (root: string) => !!wss.get(root)?.files.cockpit || existsSync(path.join(root, '.orca', 'cockpit.json'))
   const rowOf = (root: string) => ps.find((r) => r.path === root)
@@ -516,19 +495,6 @@ export function createServer(opts: Options) {
     return { ...c, cards: c.cards.filter(keep), tasks: c.tasks.map(({ done: _d, sources: _s, ...t }) => t) }
   }
 
-  /** 取り消しの猶予が過ぎた操作があれば、窓口の Run に合図を送る（Orca が窓口の手が空いたときに届ける。R191）。 */
-  async function autoSignal(ws: Ws): Promise<void> {
-    clearTimeout(ws.signalTimer)
-    const c = ws.files.cockpit
-    if (!c) return void (ws.signal = undefined)
-    const plan = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), Date.now())
-    if (plan.nextAt !== undefined)
-      ws.signalTimer = setTimeout(() => void autoSignal(ws).then(broadcast, (e) => console.error(e)), plan.nextAt - Date.now() + 50)
-    if (!plan.due.length) return void (ws.signal = undefined)
-    const r = await notify(ws, Date.now())
-    ws.signal = r.sent ? undefined : { state: 'failed', reason: r.reason }
-  }
-
   async function windowView(): Promise<WindowView> {
     // ターンを終えたエージェントは、端末が開いたままでも動いているに数えない（済んだ worker が残るたびに数が増え、動いているものが読めなくなった。t176）。
     const live = ps.flatMap((r) => r.agents).filter((a) => a.hasLivePty !== false && a.state !== 'done').length
@@ -559,7 +525,7 @@ export function createServer(opts: Options) {
     try {
       ws.watcher = watch(path.join(ws.root, '.orca'), { recursive: true }, () => {
         clearTimeout(ws.timer)
-        ws.timer = setTimeout(() => void reload(ws).then(() => autoSignal(ws)).then(broadcast, (e) => console.error(e)), 80)
+        ws.timer = setTimeout(() => void reload(ws).then(() => sig.auto(ws)).then(broadcast, (e) => console.error(e)), 80)
       })
       ws.watcher.on('error', () => {
         ws.watcher?.close()
@@ -587,7 +553,7 @@ export function createServer(opts: Options) {
       watchWs(ws)
       await reload(ws)
       // 見張り始めた案件にも、猶予の過ぎた未送の操作があれば合図を送る（起動し直したときに取りこぼさない）。
-      void autoSignal(ws).then(broadcast, (e) => console.error(e))
+      sig.soon(ws)
     }))
   }
 
@@ -737,7 +703,7 @@ export function createServer(opts: Options) {
     if (agents) {
       refreshSoon()
       // メインが作業中で合図を待たせていたら、入力待ちになったかを確かめて送る。
-      for (const ws of wss.values()) if (ws.signal) void autoSignal(ws).then(broadcast, (e) => console.error(e))
+      for (const ws of wss.values()) if (ws.signal) sig.soon(ws)
     }
   }
 
@@ -795,91 +761,6 @@ export function createServer(opts: Options) {
     return ws
   }
 
-  const sendRun = (root: string): SendRun | undefined => {
-    if (!orca.notifyRun || !orca.mailbox) return undefined
-    const box = orca as MailOrca
-    return async (runId, subject, body) => (await sendFromMailbox(box, opts.dir, root, runId, subject, body), { sent: true })
-  }
-
-  /**
-   * now は送る時機を決める時刻。押して送り直すときは Infinity（猶予中の操作も送る）。
-   * 自動と押した送り直しが重なっても同じ操作を 2 度送らないよう、案件ごとに 1 つずつ送り、送る直前に送った位置を読み直す。
-   */
-  function notify(ws: Ws, now = Infinity): Promise<NotifyResult> {
-    const run = async (): Promise<NotifyResult> => {
-      const c = ws.files.cockpit
-      if (!c) return { sent: false, reason: 'cockpit.json に main がありません' }
-      const { due } = signalPlan(c, ws.files.log, await readNotified(opts.dir, ws.root), now)
-      if (!due.length) return { sent: true }
-      // run_id の無い帳簿は notifyMain が理由を返す（窓の上の帯に出し、押した操作が黙って届かないままにしない）。
-      const r = await notifyMain(c, due, sendRun(ws.root) ?? (async () => ({ sent: false, reason: 'Orca に送る口がありません' })))
-      if (r.lastOp !== undefined) await writeNotified(opts.dir, ws.root, r.lastOp)
-      return r.sent ? { sent: true } : { sent: false, reason: r.reason }
-    }
-    const p = (ws.sending ?? Promise.resolve()).then(run, run)
-    ws.sending = p.catch(() => {})
-    return p
-  }
-
-  /**
-   * 答えの済んだ質問のタブを閉じる（R180）。条件は state.ts の settledAsks と、控えの最後の書き込み（質問か答え）から 1 時間たったこと。
-   * 閉じるのは、その案件の worktree の「質問｜…｜<質問 id>」の題のタブにある、窓が consult --ask で立てたと記録した端末だけ。控えと返しの記録は消さない。
-   * 窓から聞く・続けて聞く処理と同じ案件の順番（asking）に並べ、閉じる直前に控え・返し・op を読み直して条件を見直す（その間に聞かれた・返されたものを閉じない）。
-   * 窓のブラウザが開いていなくても、常駐のプロセスが POLL_MS ごとに見る。
-   */
-  async function sweepAsks(now = Date.now()): Promise<void> {
-    if (!orca.tabs || !orca.closeTerminal) return
-    const idle = async (ws: Ws): Promise<{ id: string; at: number }[]> => {
-      const c = ws.files.cockpit
-      if (!c) return []
-      const out: { id: string; at: number }[] = []
-      for (const id of settledAsks({ root: ws.root, threads: ws.files.asks, marks: ws.files.askMarks, log: ws.files.log, applied: c.applied_ops ?? [] }, ws.files.rulings)) {
-        const at = (await fsp.stat(ws.files.asks.find((x) => x.id === id)!.path).catch(() => undefined))?.mtimeMs
-        if (at !== undefined && now - at >= ASK_IDLE_MS && ws.askChecked?.get(id) !== at) out.push({ id, at })
-      }
-      return out
-    }
-    for (const ws of wss.values()) {
-      if (!(await idle(ws)).length) continue
-      await inQueue(ws.root, async () => {
-        await reload(ws)
-        const due = await idle(ws)
-        if (!due.length || !ws.files.cockpit) return
-        const tabs = await orca.tabs!(ws.root)
-        const mine = (await readAskTabs(opts.dir))[ws.root] ?? {}
-        for (const { id, at } of due) {
-          const hit = tabs.filter((t) => t.title === askTitle(ws.files.cockpit!.workspace.name, id))
-          const done = () => (ws.askChecked ??= new Map()).set(id, at)
-          // タブが無い（もう閉じた）なら、控えが変わるまで探し直さない。題はあるが端末が繋がっていないときは、次の回にもう一度見る。
-          // 端末の題から読んだとき（画面がまだその worktree を開いていない）は、題が書き換わっただけかもしれないので、次の回にもう一度見る。
-          // 一覧が空のとき（開き直した直後で端末の一覧もまだ空）も、次の回にもう一度見る（Codex 6）。
-          if (!hit.length) {
-            if (tabs.length && !tabs.some((t) => t.loose)) done()
-            continue
-          }
-          const handles = hit.flatMap((t) => t.handles)
-          if (!handles.length) continue
-          if (!mine[id]) {
-            done()
-            console.error(`質問のタブを閉じない（${id}）: 窓が立てた端末の記録が無い（${handles.join('、')}）`)
-            continue
-          }
-          // 窓が立てた端末が見えない（同じ題のほかのタブだけが繋がっている）ときは、次の回にもう一度見る。
-          if (!handles.includes(mine[id])) continue
-          if (stopped) return
-          try {
-            await orca.closeTerminal!(mine[id])
-            done()
-            await writeAskTab(opts.dir, ws.root, id, null).catch((e: Error) => console.error(`asktabs.json: ${e.message}`))
-            console.error(`質問のタブを閉じた: ${ws.root} ${id}`)
-          } catch (e) {
-            console.error(`質問のタブを閉じられない（${id}）: ${(e as Error).message}`)
-          }
-        }
-      }).catch((e: Error) => console.error(`質問のタブ: ${e.message}`))
-    }
-  }
-
   /** 窓のブラウザが開いていない間も、質問のタブを閉じるために案件の一覧を Orca から読んで見張る（開いている間は読み直しの見張りが読む）。 */
   let ticking: Promise<void> | undefined
   function sweepTick(now = Date.now()): Promise<void> {
@@ -891,72 +772,9 @@ export function createServer(opts: Options) {
         await sync()
       }
       if (stopped) return
-      await resendAsks().catch((e: Error) => console.error(`質問のタブへの送り直し: ${e.message}`))
-      if (!stopped) await sweepAsks(now)
+      await asks.resend().catch((e: Error) => console.error(`質問のタブへの送り直し: ${e.message}`))
+      if (!stopped) await asks.sweep(now)
     })().finally(() => (ticking = undefined)))
-  }
-
-  /** 質問のタブの端末（題「質問｜<案件名>｜<質問 id>」の完全一致で探す。tabs を渡せば Orca に聞き直さない）。閉じていれば理由。 */
-  async function askTab(ws: Ws, id: string, tabs?: AskTabRow[]): Promise<{ handle: string } | { reason: string }> {
-    const closed = { reason: '写しの会話は閉じています。続けて聞くと、窓口の今の会話から写し直します' }
-    if (!orca.tabs || !ws.files.cockpit) return closed
-    const title = askTitle(ws.files.cockpit.workspace.name, id)
-    const handle = (tabs ?? (await orca.tabs(ws.root))).find((t) => t.title === title && t.handles.length)?.handles[0]
-    return handle ? { handle } : closed
-  }
-
-  /** 「返しを書いて（op n）」と深田さんの言葉を質問のタブに送り、届けた op を窓の置き場所に覚える。案件の順番（inQueue）の中で呼ぶ。 */
-  async function deliverAsk(ws: Ws, id: string, op: Op, tabs?: AskTabRow[]): Promise<{ sent: true } | { sent: false; reason: string }> {
-    const tab = await askTab(ws, id, tabs).catch((e: Error) => ({ reason: `タブを探せませんでした: ${e.message}` }))
-    if ('reason' in tab) return { sent: false, reason: tab.reason }
-    try {
-      await orca.send(tab.handle, askMessage(op))
-    } catch (e) {
-      return { sent: false, reason: `写しの会話に送れませんでした: ${(e as Error).message}` }
-    }
-    // 覚えられなければ次の見回りでもう一度送る（知らせが 2 回届くだけで、返しは op ごとに 1 つ）。
-    await addAskSent(opts.dir, ws.root, op.op_id).catch((e: Error) => console.error(`asksent.json: ${e.message}`))
-    return { sent: true }
-  }
-
-  /**
-   * 返しの無い「窓口に返す」のうち、まだ質問のタブに届けていない op（state.ts の unreflected_returns の「返し」の行。取り消し・窓口が反映済みは入らない）。
-   * 返した答えが今も最後の答えのものだけ。会話が先に進んだあとに「案 A で。」を届けると、相手が新しい答えの案と取り違えるので送らず、窓口が控えから拾う（Codex 1）。
-   */
-  function undelivered(ws: Ws, sent: readonly number[]): { id: string; op: Op }[] {
-    const c = ws.files.cockpit
-    if (!c) return []
-    return unreflectedAsks({ root: ws.root, threads: ws.files.asks, marks: ws.files.askMarks, log: ws.files.log, applied: c.applied_ops ?? [] }, new Set()).flatMap((x) => {
-      const op = x.id === null && typeof x.op === 'number' && !sent.includes(x.op) ? ws.files.log.ops.find((o) => o.op_id === x.op) : undefined
-      const now = ws.files.asks.find((a) => a.id === x.ask)?.decide
-      return op && now && now.n === op.answer?.n && now.at === op.answer.at ? [{ id: x.ask, op }] : []
-    })
-  }
-
-  /**
-   * 届けられなかった「返しを書いて」を送り直す（Orca を開き直した直後でタブが見つからなかった、送るのに失敗した）。常駐のプロセスが POLL_MS ごとに呼ぶ。
-   * 窓から聞く・窓口に返す・タブを閉じる処理と同じ案件の順番に並べ、順番が来たら控え・返し・操作と届けた記録を読み直す。
-   */
-  async function resendAsks(): Promise<void> {
-    if (!orca.tabs) return
-    const sentOf = async (root: string) => (await readAskSent(opts.dir))[root] ?? []
-    for (const ws of wss.values()) {
-      if (!undelivered(ws, await sentOf(ws.root)).length) continue
-      await inQueue(ws.root, async () => {
-        await reload(ws)
-        const due = undelivered(ws, await sentOf(ws.root))
-        if (!due.length) return
-        const tabs = await orca.tabs!(ws.root)
-        let any = false
-        for (const { id, op } of due) {
-          if (stopped) return
-          if (!(await deliverAsk(ws, id, op, tabs)).sent) continue
-          any = true
-          console.error(`返しを書いての知らせを送り直した: ${ws.root} ${id} op ${op.op_id}`)
-        }
-        if (any) broadcast()
-      }).catch((e: Error) => console.error(`質問のタブへの送り直し: ${e.message}`))
-    }
   }
 
   const liveTerminal = (t: string | null | undefined): t is string => !!t && (t.startsWith(CHAT_HANDLE) ? chats.has(t) : [...terms.values()].includes(t))
@@ -1051,7 +869,7 @@ export function createServer(opts: Options) {
     // 同じ協議の記録が既にあれば追記は省かれる。省かれた呼び出しは合図を送らない。
     if (!added) return
     broadcast()
-    void autoSignal(ws).then(broadcast, (e) => console.error(e))
+    sig.soon(ws)
   }
 
   const api: Record<string, (b: Record<string, unknown>) => Promise<unknown>> = {
@@ -1069,7 +887,7 @@ export function createServer(opts: Options) {
       const log = await appendOp(ws.root, ws.files.cockpit, input)
       ws.files = { ...ws.files, log }
       broadcast()
-      await autoSignal(ws)
+      await sig.auto(ws)
       // 応答のログはこの追記の直後のものにする（末尾がこの操作。待つあいだに別の画面が追記しても、画面が取り消す番号を取り違えない）。
       return { view: { ...(await cockpitView(ws.root, true)), log } }
     },
@@ -1152,16 +970,16 @@ export function createServer(opts: Options) {
           // 届けられない（タブが閉じた）ときは、続きで consult にタブを立て直させる。続きが控えに入ると、その op は会話が先に進んだものとして送り直さない。
           if (cont) {
             await reload(ws)
-            const due = undelivered(ws, (await readAskSent(opts.dir))[ws.root] ?? []).filter((x) => x.id === cont)
+            const due = asks.undelivered(ws, await asks.sentOf(ws.root)).filter((x) => x.id === cont)
             let delivered = false
-            for (const { op } of due) delivered = (await deliverAsk(ws, cont, op)).sent || delivered
+            for (const { op } of due) delivered = (await asks.deliver(ws, cont, op)).sent || delivered
             if (delivered) {
               broadcast()
               return { opened: false, ask: cont, reason: '先に窓口に返した言葉を写しの会話に届けました。その答えが届いてから続けて聞いてください' }
             }
           }
           // 題のタブが無いときだけ consult が端末を立てる。立てた端末だけを窓のものとして覚える（開いているタブに送った分は覚え直さない）。
-          const before = cont ? await askTab(ws, cont).catch(() => undefined) : { reason: '' }
+          const before = cont ? await asks.find(ws, cont).catch(() => undefined) : { reason: '' }
           const handle = await opts.ask!(ws.root, id, { card, task, stream, question })
           if (before && 'reason' in before) await writeAskTab(opts.dir, ws.root, id, handle).catch((e: Error) => console.error(`asktabs.json: ${e.message}`))
         } catch (e) {
@@ -1206,7 +1024,7 @@ export function createServer(opts: Options) {
         const log = await appendOp(ws.root, c, { root: ws.root, item_id: id, item_rev: b.rev, type: 'answer', text: r.text, via: plan.via, to: r.to, ...(r.key !== undefined && { key: r.key }) })
         ws.files = { ...ws.files, log }
         broadcast()
-        void autoSignal(ws).then(broadcast, (e) => console.error(e))
+        sig.soon(ws)
         return { sent: true, how: plan.how, op: log.ops.at(-1)?.op_id, ...(r.note && { note: r.note }) }
       } catch (e) {
         return { sent: true, how: plan.how, note: `${r.note ? `${r.note}。` : ''}答えは届けましたが、操作の記録に残せませんでした: ${(e as Error).message}` }
@@ -1242,7 +1060,7 @@ export function createServer(opts: Options) {
         }
         ws.files = { ...ws.files, log }
         broadcast()
-        const r = await deliverAsk(ws, id, added)
+        const r = await asks.deliver(ws, id, added)
         if (r.sent) broadcast()
         return { op: added.op_id, ...r }
       })
@@ -1252,14 +1070,14 @@ export function createServer(opts: Options) {
       const ws = knownWs(b.root)
       const id = str(b.ask)
       if (!id || !ws.files.asks.some((x) => x.id === id)) throw new HttpError(409, '質問が見つかりません。再読み込みしてからもう一度押してください')
-      const tab = await askTab(ws, id)
+      const tab = await asks.find(ws, id)
       if ('reason' in tab) return { opened: false, reason: tab.reason }
       await orca.switchTerminal(tab.handle)
       return { opened: true }
     },
     async notify(b) {
       const ws = knownWs(b.root)
-      const r = await notify(ws)
+      const r = await sig.notify(ws)
       ws.signal = r.sent ? undefined : { state: 'failed', reason: r.reason }
       broadcast()
       return r
@@ -1396,7 +1214,6 @@ export function createServer(opts: Options) {
       focusWatcher.on('error', (e) => console.error(`focus.json を見張れません: ${e.message}`))
       await readFocus()
       await readAlerts()
-      for (const ws of wss.values()) void autoSignal(ws).catch((e) => console.error(e))
       await new Promise<void>((resolve) => server.listen(opts.port, opts.host ?? '127.0.0.1', resolve))
       port = (server.address() as { port: number }).port
       askSweep = setInterval(() => void sweepTick().catch((e) => console.error(`質問のタブ: ${(e as Error).message}`)), POLL_MS)

@@ -193,7 +193,7 @@ REV_LINE = re.compile(r"^rev: (\d+)$", re.M)
 # 質問の起動の指示の末尾に consult --ask が付ける、窓で打たれた深田さんの最初の質問の見出し
 ASK_QUESTION_HEAD = "--- 深田さんの質問（窓から） ---\n"
 # 窓の「A で返す」「書いたことを窓口に返す」は、深田さんの言葉のあとに改行して「返しを書いて」の知らせを付け、1 回の入力で送る
-# （agent-harness の orca/plugins/cockpit/window/server.ts の askMessage）。言葉は発言として残し、末尾の知らせの行は発言に入れない
+# （agent-harness の orca/plugins/cockpit/window/ask-tabs.ts の askMessage）。言葉は発言として残し、末尾の知らせの行は発言に入れない
 ASK_REPLY_TAIL = re.compile(r"\n+【相談の知らせ】返しを書いて（op (\d+)）\s*\Z")
 
 
@@ -206,7 +206,7 @@ def ask_reply_words(root, ask_id, prompt):
     words = prompt[:m.start()].strip()
     for o in read_json(os.path.join(root, ".orca", "cockpit.user.json"), {}).get("ops") or []:
         if isinstance(o, dict) and o.get("type") == "ask_decide" and o.get("item_id") == "#ask:" + ask_id and str(o.get("op_id")) == m.group(1):
-            # server.ts の askWords と同じ（案を選んだら「案 A で。」、書いたらその文）
+            # src/model.ts の askWords と同じ（案を選んだら「案 A で。」、書いたらその文）
             want = ("案 %s で。" % o["choice"]) if isinstance(o.get("choice"), str) and o["choice"] else (o.get("text") or "").strip() if isinstance(o.get("text"), str) else ""
             return words if want and words == want else None
     return None

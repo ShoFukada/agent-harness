@@ -64,7 +64,7 @@ function opPhase(b: Board, a: AskThread, o: Op): OpPhase {
   if (applied) return 'done'
   if (!b.v.askSent) return 'unknown'
   if (b.v.askSent.includes(o.op_id)) return 'sent'
-  // 会話が先に進んだ op は窓が送り直さない（server.ts の undelivered）。
+  // 会話が先に進んだ op は窓が送り直さない（window/ask-tabs.ts の undelivered）。
   return a.decide?.n !== o.answer?.n || a.decide?.at !== o.answer?.at ? 'moved' : 'due'
 }
 const PHASE_TAG: Record<OpPhase, [string, string]> = {
