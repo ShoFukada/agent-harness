@@ -58,7 +58,7 @@ function fakeOrca(rows: PsRow[], plugins: PluginRow[] = [{ pluginKey: 'local.coc
       return shows[dispatch] ?? null
     },
     send: async (t, text) => void calls.push(['send', t, text]),
-    notifyRun: async (from, id, subject, body) => void calls.push(['run', from, id, subject, body]),
+    notifyRun: async (from, id, subject, body) => (calls.push(['run', from, id, subject, body]), []),
     mailbox: async (root) => {
       boxes.push(`term_box${boxes.length + 1}`)
       calls.push(['mailbox', root])
@@ -80,7 +80,7 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.close()
 })
 
-async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; notifyRun?: Orca['notifyRun']; mailbox?: Orca['mailbox']; mailboxFile?: string; tailnetHosts?: string[]; lint?: Options['lint']; runs?: Orca['runs']; runWorkers?: Orca['runWorkers']; pagesDir?: string } = {}) {
+async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], owners?: OwnerLive[], shows?: Record<string, WorkerShow>, showDelay?: number, more: { consult?: Consult; terms?: string[]; ask?: AskCmd; tabs?: Orca['tabs']; chatOpen?: Orca['chatOpen']; chatLast?: Orca['chatLast']; notifyRun?: Orca['notifyRun']; mailbox?: Orca['mailbox']; mailboxFile?: string; tailnetHosts?: string[]; lint?: Options['lint']; runs?: Orca['runs']; runWorkers?: Orca['runWorkers']; pagesDir?: string; runInbox?: Orca['runInbox'] } = {}) {
   const dir = tmp('cockpit-dir-')
   const setFocus = (p: string, extra: Record<string, unknown> = {}) =>
     writeFileSync(path.join(dir, 'focus.json'), JSON.stringify({ path: p, at: new Date().toISOString(), ...extra }))
@@ -93,6 +93,7 @@ async function start(rows: PsRow[], focusPath?: string, plugins?: PluginRow[], o
   if (more.mailbox) fake.orca.mailbox = more.mailbox
   if (more.runs) fake.orca.runs = more.runs
   if (more.runWorkers) fake.orca.runWorkers = more.runWorkers
+  if (more.runInbox) fake.orca.runInbox = more.runInbox
   if (more.mailboxFile) writeFileSync(path.join(dir, 'mailbox.json'), more.mailboxFile)
   const s = createServer({ port: 0, dir, orca: fake.orca, consult: more.consult, ask: more.ask, tailnetHosts: more.tailnetHosts, lint: more.lint, pagesDir: more.pagesDir, openPage: async (file) => void fake.calls.push(['chrome', file]) })
   servers.push(s)
@@ -1706,4 +1707,20 @@ test('見張る仕事の前回の結果: 読んだ実行が今の lastRunAt の�
   assert.equal(automationFact('b1', { ...row, lastRunAt: undefined }, undefined).lastUnread, undefined)
   assert.deepEqual(automationFact('b1', row, { at: 200, run: null }), { id: 'b1', name: '見回り', rrule: '0 9 * * *', timezone: undefined, enabled: true, nextRunAt: undefined, last: undefined })
   assert.deepEqual(automationFact('gone', undefined, undefined), { id: 'gone' })
+})
+
+test('窓口の Run 宛てで 10 分より前から届いていない知らせがあれば、案件の名前を付けて帯に出す（t178）', async () => {
+  const a = workspace('a', { '.orca/cockpit.json': cockpit('案件A', { main: { agent: 'claude', terminal: '', run_id: 'run_m' } }) })
+  const b = workspace('b', { '.orca/cockpit.json': cockpit('案件B', { main: { agent: 'claude', terminal: '', run_id: 'run_b' } }) })
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
+  const mail: Record<string, unknown[]> = {
+    run_m: [{ read: 0, delivered_at: null, created_at: ago(5) }, { read: 0, delivered_at: null, created_at: ago(3 * 60 + 5) }, { read: 1, delivered_at: ago(400), created_at: ago(400) }],
+    // 新しい未配達だけ（窓口が作業中で区切りを待っている）なら出さない
+    run_b: [{ read: 0, delivered_at: null, created_at: ago(2) }]
+  }
+  const { s, port } = await start([{ worktreeId: 'r::a', path: a, parentWorktreeId: null, agents: [] }, { worktreeId: 'r::b', path: b, parentWorktreeId: null, agents: [] }], a, undefined, undefined, undefined, undefined, {
+    runInbox: async (run) => mail[run] as never
+  })
+  const v = await listen(port, s.token).until((w) => w.errors.some((e) => e.includes('届いていない')))
+  assert.deepEqual(v.errors.filter((e) => e.includes('届いていない')), ['案件A: 窓口に届いていない知らせ 2 件（最古 3時間前）。窓口のチャットに話しかけると引き継ぐ'])
 })

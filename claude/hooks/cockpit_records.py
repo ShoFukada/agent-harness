@@ -415,14 +415,23 @@ def orca_bin():
     return os.environ.get("COMPACTION_KEEP_ORCA", "orca")
 
 
+def orca_call(args, timeout=5):
+    """orca の --json を呼び、(result, None) か (None, 失敗の理由) を返す。result が辞書でなければ空の辞書にする。"""
+    try:
+        done = subprocess.run([orca_bin(), *args, "--json"], capture_output=True, text=True, timeout=timeout)
+        v = json.loads(done.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        return None, str(e) or type(e).__name__
+    if isinstance(v, dict) and v.get("ok"):
+        return (v["result"] if isinstance(v.get("result"), dict) else {}), None
+    err = v.get("error") if isinstance(v, dict) else None
+    why = err if isinstance(err, str) else (err.get("message") or err.get("code")) if isinstance(err, dict) else done.stderr
+    return None, norm(why)[:300] or "orca が失敗した"
+
+
 def orca_result(args):
     """orca の --json の result。失敗・時間切れ・読めない出力は空（組み直しを止めない）。"""
-    try:
-        done = subprocess.run([orca_bin(), *args, "--json"], capture_output=True, text=True, timeout=5)
-        v = json.loads(done.stdout)
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return {}
-    return v["result"] if isinstance(v, dict) and v.get("ok") and isinstance(v.get("result"), dict) else {}
+    return orca_call(args)[0] or {}
 
 
 def out(obj):

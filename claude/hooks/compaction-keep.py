@@ -32,14 +32,16 @@ hook（標準入力に Claude Code の hook の JSON）:
                                                      保存し、窓口の Run に送る（return_id と送信の結果を 1 行ずつ出す）
   compaction-keep.py ask-context root 質問 [--since R<n> [--return <return_id>]]  窓からの質問の文脈（--since は増えた判断だけ）
   compaction-keep.py switch [root] [--agent antigravity]  窓口を替える。新しい窓口の会話の中で 1 回打つ（Run の引き継ぎ・窓口の種類と
-                                                     会話 id の記録・再開の確かめ・受信箱の読み直し。main_switch.py。Claude は --agent を付けない）
+                                                     会話 id の記録・再開の確かめ・受信箱の読み直し。main_switch.py。Claude は --agent を付けない。
+                                                     種類を替えないなら、深田さんが新しい会話に話しかけたときに hook が同じことをする）
   compaction-keep.py unreflected [root] [--json]     カードの相談と質問の返しの記録にあって、判断の記録か帳簿に入っていない返し・
                                                      返しの無い「この答えを窓口に返す」・担当に伝えていない返し（判定は state.ts の
                                                      checks.unreflected_returns。先に切り替え前のメモの返しを記録へ取り込む）
 
 操縦席のあるワークスペースのメインだけに効く（periodic-reminder.sh の find_cockpit_root と同じ判定。相談スレッドでは動かない）。
 メインの UserPromptSubmit は、Orca の今の Run が帳簿の main.run_id と同じときに、会話 id と席を main-session.json に書く（設計 11.6 の 4）。
-窓口の種類（claude・antigravity）を変えるのは switch だけで、hook は記録にある種類を保つ（main_switch.py）。
+深田さんの発言のターンで、その会話が Run を持たなければ switch と同じ手順で main.run_id を引き継ぐ（窓口は最後に話しかけた本線の会話。
+main_switch.py の bind_main。t178）。記録の窓口の種類は、switch か引き継ぎのときだけ替わる。
 例外はカードの相談（claude/bin/consult --card が CONSULT_CARD=<root>#<カード id> を付けて立てる。Orca のチャットで立てたものは
 環境変数の代わりに .orca/consult/chats.json の登録で見分ける。chat_card）で、UserPromptSubmit だけが
 発言を root の発言の記録に card 付きで足し、前のターンのあとに増えた関係する判断とカードの rev の変化を流す（設計 10.3・10.7）。
@@ -78,7 +80,7 @@ from consult_returns import (  # noqa: E402
     unreflected_lines, unreflected_returns
 )
 from main_switch import (  # noqa: E402
-    AGENTS, claim_switch, launch_args, main_agent, record_main_session, retired, switch, switch_command, switch_hint
+    AGENTS, bind_main, claim_switch, launch_args, main_agent, retired, switch, switch_hint
 )
 
 
@@ -86,6 +88,8 @@ RECENT_UTTERANCES = 10
 # 同時に動かす worker の上限（窓口が 11/21 に決めた。席を切り替えても全部の席が利用枠に当たるようなら下げる）。数はここだけに置き、skill は slots の出力を指す
 WORKER_LIMIT = 4
 HANDOFF_FRESH_SEC = 1800
+# 引き継ぎ（launch_chat）が新しい窓口に渡す最初の発言の頭。中の時刻は keep.json の handoff.at で、その引き継ぎの 1 回だけ効く
+HANDOFF_PROMPT = re.compile(r"【引き継ぎ ([^】\s]+)】")
 # 作業メモの目安は CLAUDE.md の 1〜2k トークン。日本語は 1 字 3 バイト・1 字 1 トークン前後なので、2k トークンでおよそ 6〜8KB
 MEMO_LIMIT = 8 * 1024
 # 反映待ちの整理・棚卸しの指示で Stop を差し戻す間隔。subagent を待つあいだに知らせのターンが続いても、同じ指示で毎ターン止めない（t163）
@@ -275,6 +279,11 @@ def notice_lines(msgs, run):
         return []
     return ["", "## 深田さんの最後の発言より後に届いた Orca の知らせ %d 件（古い順。要約に入っていないことがある。本文は orca orchestration inbox --terminal run:%s --full にある）" % (len(msgs), run)] + [
         "- %s %s（%s）: %s" % (m.get("created_at", ""), m.get("from_handle", ""), m.get("type", ""), norm(m.get("subject"))) for m in msgs]
+
+
+def takeover_text(root, lead, full):
+    """窓口を引き継いだ会話に出す文（switch と hook の引き継ぎで同じ）。lead は fit の塊。full なら組み直しの記録も付ける。"""
+    return fit(lead + (reassembly(root, "窓口を替えたあとの組み直し") if full else []) + [(resume_request(root), None, 0)])
 
 
 def resume_request(root):
@@ -479,11 +488,11 @@ def first_of_day(prior):
     return datetime.datetime.fromtimestamp(t, now().tzinfo).date() < now().date()
 
 
-def launch_chat(root, prompt, agent):
+def launch_chat(root, prompt, agent, attempt):
     """帳簿に書いた種類の新しい窓口を起こし、深田さんの発言を最初のメッセージとして渡す（--prompt が無いと空のチャットのまま答えない）。
-    新しい窓口は、最初に窓口を替える道具で Run を引き継ぐ（起こしただけでは窓口の Run の知らせが届かない）。"""
-    first = ("（前のチャットから引き継いだ深田さんの発言。最初に `%s` を打って窓口を引き継ぎ、組み直しの記録を読み、"
-             "再開の確かめを通してから答える）\n\n" % switch_command(agent)) + prompt
+    起こしただけでは窓口の Run の知らせが届かない。新しい窓口の hook が、頭の【引き継ぎ <attempt>】の付いた最初のターンを深田さんの
+    発言のターンとして扱い、Run を引き継ぐ（bind_main）。発言は前の窓口が記録したので記録し直さない。"""
+    first = "【引き継ぎ %s】（前のチャットから引き継いだ深田さんの発言。組み直しの記録を読み、再開の確かめを通してから答える）\n\n" % attempt + prompt
     try:
         done = subprocess.run([orca_bin()] + launch_args(agent, root, first), capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -555,27 +564,41 @@ def on_prompt(root, inp):
             if RELAY_HEAD.match(prompt.strip()):
                 append_notice(root, {"at": iso(), "session": session, "prompt": prompt.strip()})
             save_keep(root, keep)
+            bind_main(root, inp, False, takeover_text)
             # 知らせが続く離席中も順番を見失わないよう、ID と理由だけを流す（R186。件数・念押し・checks は流さない）
             lines = order_lines(root, relay=True)
             if lines:
                 print("\n".join(lines))
             return
-        reason = handoff_reason(root, keep)
-        prev = keep.get("handoff")
-        # 起動に失敗して launching のまま残っても、期限を過ぎれば次の日にもう一度試せる
-        go = bool(reason) and first_of_day(prior) and not fresh_handoff(prev)
-        attempt = iso()
-        if go:
-            # 起動より先に保存する。新しいチャットの SessionStart と最初の発言は起動の途中で走ることがある
-            agent = main_agent(root)
-            keep["handoff"] = {"state": "launching", "at": attempt, "reason": reason, "from_session": session, "prompt": prompt, "agent": agent}
-        # 発言も起動より先に記録する。新しいチャットに渡した同じ発言が「その日の最初」と数えられないように
-        append_utterance(root, {"at": attempt, "session": session, "prompt": prompt, **({"handoff": True} if go else {})})
+        mark = HANDOFF_PROMPT.match(prompt)
+        h = keep.get("handoff") or {}
+        # 前の窓口が記録して渡した発言（launch_chat）。記録し直さず（仕分けが 2 回になる）、引き継ぎも起こさない
+        forwarded = bool(mark) and h.get("at") == mark.group(1) and not h.get("forwarded_to")
+        go = False
+        # 起こしている間に深田さんが別の会話に話しかけ、その会話が引き継ぎを受けていれば、渡した発言では Run を取り返さない
+        speaking = not forwarded or h.get("to_session") in (None, session)
+        if forwarded:
+            keep["handoff"] = {**h, "forwarded_to": session}
+        else:
+            reason = handoff_reason(root, keep)
+            prev = keep.get("handoff")
+            # 起動に失敗して launching のまま残っても、期限を過ぎれば次の日にもう一度試せる
+            # 退いた会話の発言では起こさない。その発言で bind_main がその会話を窓口に戻し（R253）、次の日からはほかの窓口と同じに判定する
+            go = bool(reason) and first_of_day(prior) and not fresh_handoff(prev) and not retired(root, session)
+            attempt = iso()
+            if go:
+                # 起動より先に保存する。新しいチャットの SessionStart と最初の発言は起動の途中で走ることがある
+                agent = main_agent(root)
+                keep["handoff"] = {"state": "launching", "at": attempt, "reason": reason, "from_session": session, "prompt": prompt, "agent": agent}
+            # 発言も起動より先に記録する。新しいチャットに渡した同じ発言が「その日の最初」と数えられないように
+            append_utterance(root, {"at": attempt, "session": session, "prompt": prompt, **({"handoff": True} if go else {})})
         save_keep(root, keep)
+        # 発言の記録から Run の引き継ぎまでを同じロックの中で済ませる（ほぼ同時に話しかけた 2 つの会話で、先の発言が後の発言の引き継ぎを取り返さないように）
+        taken = [] if go else bind_main(root, inp, speaking, takeover_text)
     if not go:
-        print("\n".join(order_lines(root)))
+        print("\n".join(order_lines(root) + taken))
         return
-    ok, detail = launch_chat(root, prompt, agent)
+    ok, detail = launch_chat(root, prompt, agent, attempt)
     with locked(root):
         keep = load_keep(root)
         h = keep.get("handoff") or {}
@@ -606,7 +629,9 @@ def on_prompt(root, inp):
                        "Orca の端末のタブから新しい窓口を開いてください。" if agent == "antigravity" else "Orca のチャットの一覧から新しいチャットを開いてください。")})
     else:
         print("【引き継ぎ】%s ため新しいチャットへの引き継ぎを試みたが失敗した（%s）。このチャットのまま続いている。記録の元は .orca/cockpit/（state.md・rulings.jsonl・utterances.jsonl）" % (reason, detail))
-        print("\n".join(order_lines(root)))
+        with locked(root):
+            taken = bind_main(root, inp, True, takeover_text)
+        print("\n".join(order_lines(root) + taken))
 
 
 def on_bare_prompt(root, inp):
@@ -677,8 +702,8 @@ def on_session_start(root, inp):
             keep["verify"] = {"pending": True, "since": iso(), "session": session, "failures": 0, "required_paths": []}
             save_keep(root, keep)
             text = fit(reassembly(root, "前のチャットからの引き継ぎ（%s）" % h.get("reason", "")) + [
-                ("\n## 最初のメッセージ\n最初のメッセージは、前のチャットで受けた深田さんのこの日の最初の発言（原文）。まず `%s` を打って窓口の Run を引き継ぎ"
-                 "（打つまで担当・worker の知らせはこの会話に届かない）、答えるのは再開の確かめを通ったあと。" % switch_command(h.get("agent") or "claude", root), None, 0),
+                ("\n## 最初のメッセージ\n最初のメッセージは、前のチャットで受けた深田さんのこの日の最初の発言（原文）。そのターンで hook が窓口の Run を引き継ぎ"
+                 "、答えるのは再開の確かめを通ったあと。", None, 0),
                 (resume_request(root), None, 0)])
             out({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}})
             return
@@ -735,7 +760,7 @@ def on_pretool(root, inp):
     if retired(root, inp.get("session_id")) and WORKER_SEND.search(command):
         out({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                     "permissionDecisionReason": "この会話は窓口を退いた（compaction-keep.py switch で別の会話が窓口になった）。worker・担当への指示は今の窓口から出す。"
-                                                                "この会話を窓口に戻すなら、先に switch を打ち直す"}})
+                                                                "深田さんがこの会話に話しかけると、hook が窓口の Run を引き継いでこの会話を窓口に戻す"}})
         return
     v = load_keep(root).get("verify") or {}
     if not (v.get("pending") and v.get("session") == inp.get("session_id")):
@@ -979,10 +1004,7 @@ def hook():
     if root and fn:
         try:
             if fn is on_prompt:
-                fn(root, inp)  # 引き継ぎで新しいチャットを起こす間はロックを外すので、自分で取る
-                # 照合から置き換えまでを 1 つずつにする（Run が替わる前の窓口の hook が遅れて、新しい窓口の記録を戻さないように）
-                with locked(root):
-                    record_main_session(root, inp)
+                fn(root, inp)  # 引き継ぎで新しいチャットを起こす間はロックを外すので、自分で取る（Run の照合と引き継ぎもその中）
             else:
                 with locked(root):
                     fn(root, inp)
@@ -1101,7 +1123,7 @@ def tool(argv):
                 print(ruling_line(r))
         return
     if cmd == "switch":
-        text, err = switch(root, agent, lambda r: fit(reassembly(r, "窓口を替えたあとの組み直し") + [(resume_request(r), None, 0)]))
+        text, err = switch(root, agent, takeover_text)
         if text:
             print(text)
         if err:

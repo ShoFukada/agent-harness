@@ -33,20 +33,19 @@ export async function mailboxOf(orca: MailOrca, dir: string, root: string): Prom
   }
 }
 
-/** 郵便受けから runId に送る。 */
-export async function sendFromMailbox(orca: MailOrca, dir: string, root: string, runId: string, subject: string, body: string): Promise<string> {
+/** 郵便受けから runId に送る。warnings は Orca の注意書き（受け取りが遅れるなど）。 */
+export async function sendFromMailbox(orca: MailOrca, dir: string, root: string, runId: string, subject: string, body: string): Promise<{ from: string; warnings: string[] }> {
   const from = await mailboxOf(orca, dir, root)
-  await orca.notifyRun(from, runId, subject, body)
-  return from
+  return { from, warnings: (await orca.notifyRun(from, runId, subject, body)) ?? [] }
 }
 
 /** root の帳簿の窓口（main.run_id）に送る。run_id が無ければ投げる。 */
-export async function mail(orca: MailOrca, dir: string, root: string, subject: string, body: string): Promise<{ run: string; from: string }> {
+export async function mail(orca: MailOrca, dir: string, root: string, subject: string, body: string): Promise<{ run: string; from: string; warnings: string[] }> {
   const text = await readInOrca(root, '.orca/cockpit.json')
   if (text === undefined) throw new Error(`${root}/.orca/cockpit.json がない`)
   const run = (JSON.parse(text) as { main?: { run_id?: unknown } }).main?.run_id
   if (!RUN_ID(run)) throw new Error(`${root}/.orca/cockpit.json の main に run_id が無い（窓口の Run に送れない）`)
-  return { run, from: await sendFromMailbox(orca, dir, root, run, subject, body) }
+  return { run, ...(await sendFromMailbox(orca, dir, root, run, subject, body)) }
 }
 
 if (import.meta.main) {

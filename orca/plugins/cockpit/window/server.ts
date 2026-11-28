@@ -22,6 +22,7 @@ import { localPage, openInChrome } from './local-page.ts'
 import { mailboxOf, type MailOrca } from './mail.ts'
 import { askTabs, type AskWs } from './ask-tabs.ts'
 import { signals, type SignalWs } from './notify.ts'
+import { readStuckBand, RUN_INBOX_LIMIT, type RunMail } from './undelivered.ts'
 import { appendOp, appendOpOnce, emptyFiles, lastAskDecide, loadFiles, readAsks, reserveAskId, readAskSent, readNotified, recordFirstSeen, recordTaskSeen, splitLine, writeAskTab, type Files } from '../src/store.ts'
 
 const PLUGIN = fileURLToPath(new URL('..', import.meta.url))
@@ -90,8 +91,10 @@ export type Orca = {
   reply?(from: string, id: string, body: string): Promise<void>
   /** orchestration の知らせを宛先（run:…・dispatch:…）に送る。Orca の注意書き（受け取りが遅れるなど）を返す。 */
   sendTo?(from: string, to: string, subject: string, body: string): Promise<string[]>
-  /** 窓口の Run に orchestration の知らせを送る（orchestration send --from <郵便受け> --to run:<id>）。 */
-  notifyRun?(from: string, runId: string, subject: string, body: string): Promise<void>
+  /** 窓口の Run に orchestration の知らせを送る（orchestration send --from <郵便受け> --to run:<id>）。Orca の注意書きを返す。 */
+  notifyRun?(from: string, runId: string, subject: string, body: string): Promise<string[]>
+  /** Run の受け口（run:<id>）宛ての新しい知らせ（orchestration inbox --terminal --full。既読にしない）。 */
+  runInbox?(run: string): Promise<RunMail[]>
   /** 窓の郵便受け（AI を動かさない端末）をその worktree に作り、handle を返す。 */
   mailbox?(root: string): Promise<string>
   activate(root: string): Promise<void>
@@ -221,7 +224,13 @@ export function orcaCli(bin = 'orca'): Orca {
     reply: async (from, id, body) => void (await run(['orchestration', 'reply', '--id', id, '--from', from, '--body-file', '-'], body)),
     sendTo: async (from, to, subject, body) =>
       ((await run(['orchestration', 'send', '--from', from, '--to', to, '--type', 'status', '--subject', subject, '--body-file', '-'], body)).warnings as string[] | undefined) ?? [],
-    notifyRun: async (from, runId, subject, body) => void (await run(['orchestration', 'send', '--from', from, '--to', `run:${runId}`, '--type', 'status', '--subject', subject, '--body-file', '-'], body)),
+    notifyRun: async (from, runId, subject, body) =>
+      ((await run(['orchestration', 'send', '--from', from, '--to', `run:${runId}`, '--type', 'status', '--subject', subject, '--body-file', '-'], body)).warnings as string[] | undefined) ?? [],
+    runInbox: async (id) => {
+      const m = (await run(['orchestration', 'inbox', '--terminal', `run:${id}`, '--full', '--limit', String(RUN_INBOX_LIMIT)])).messages
+      if (!Array.isArray(m)) throw new Error('inbox の結果に messages が無い')
+      return m as RunMail[]
+    },
     mailbox: async (root) => {
       const r = await run(['terminal', 'create', '--worktree', `path:${root}`, '--title', MAILBOX_TITLE, '--command', 'tail -f /dev/null'])
       const handle = (r.terminal as { handle?: string } | undefined)?.handle
@@ -393,6 +402,8 @@ export function createServer(opts: Options) {
   let coordinatingBy = new Map<string, Record<string, string[]>>()
   /** stallwatch が書く alerts.json の、Orca の監督の外で止まったもの。 */
   let alerts: string[] = []
+  /** ワークスペースの root → 窓口に届いていない知らせの帯（undelivered.ts）。読み直しのたびに、その回に確かめられたものだけで置き換える。 */
+  let stuckBy = new Map<string, string>()
   let focus: Focus = {}
   const clients = new Set<http.ServerResponse>()
   let poll: ReturnType<typeof setInterval> | undefined
@@ -503,7 +514,7 @@ export function createServer(opts: Options) {
     const boards = await Promise.all([...wss.values()].filter((ws) => ws.files.cockpit || ws.files.errors.length).map((ws) => cockpitView(ws.root, true)))
     // Orca にある本線のうち、操縦席の無いもの（見ていない案件）。worker の worktree と、操縦席の窓のある本線は除く。
     const unseen = ps.filter((r) => !r.parentWorktreeId && !hasCockpit(r.path)).map((r) => ({ name: r.displayName?.trim() || path.basename(r.path), path: r.path }))
-    return { focused: followRoot(), boards, unseen, live, errors: [orcaError, pluginNote, ...alerts].filter((e): e is string => !!e) }
+    return { focused: followRoot(), boards, unseen, live, errors: [orcaError, pluginNote, ...alerts, ...[...wss.keys()].map((r) => stuckBy.get(r))].filter((e): e is string => !!e) }
   }
 
   function broadcast(): void {
@@ -640,6 +651,7 @@ export function createServer(opts: Options) {
       const showOnce = (d: string) => shown.get(d) ?? (shown.set(d, orca.show(d)), shown.get(d)!)
       const termAt = new Map(ps.flatMap((r) => r.agents.map((a) => [terms.get(a.paneKey) ?? '', r.path] as const)).filter(([h]) => h))
       const ended = new Set<string>()
+      const stuck = new Map<string, string>()
       if (!orcaError)
         for (const ws of wss.values()) {
           const c = ws.files.cockpit
@@ -652,7 +664,11 @@ export function createServer(opts: Options) {
           } catch (e) {
             console.error(`orchestration: ${(e as Error).message}`)
           }
+          // 読めなければ readStuckBand が理由をログに出し、帯は出さない。
+          const band = orca.runInbox && (await readStuckBand({ runInbox: orca.runInbox }, ws.root, c, Date.now(), ws.warnings))
+          if (band) stuck.set(ws.root, band)
         }
+      stuckBy = stuck
       if (ended.size) questions = questions.filter((q) => !ended.has(q.id))
       if (!orcaError) await readCoordinating()
       if (!orcaError && !ownersStale) owners = await withLast(owners)

@@ -6,9 +6,9 @@ import type { Orca } from './server.ts'
 
 /**
  * 合図が見る案件の様子。signal は窓の上の帯に出す送れなかった理由、signalTimer は次に猶予が過ぎる時刻の見張り、
- * sending は送っている最中の合図（notify を案件ごとに 1 つずつにする）。
+ * sending は送っている最中の合図（notify を案件ごとに 1 つずつにする）、warnings は最後に送れた合図への Orca の注意書き（届かない知らせの帯の補足）。
  */
-export type SignalWs = { root: string; files: Files; signal?: CockpitView['signal']; signalTimer?: ReturnType<typeof setTimeout>; sending?: Promise<unknown> }
+export type SignalWs = { root: string; files: Files; signal?: CockpitView['signal']; signalTimer?: ReturnType<typeof setTimeout>; sending?: Promise<unknown>; warnings?: string[] }
 export type SignalDeps = {
   orca: Orca
   /** 窓の置き場所（notified.json・mailbox.json）。 */
@@ -22,7 +22,7 @@ export function signals(d: SignalDeps) {
   const sendRun = (root: string): SendRun | undefined => {
     if (!orca.notifyRun || !orca.mailbox) return undefined
     const box = orca as MailOrca
-    return async (runId, subject, body) => (await sendFromMailbox(box, dir, root, runId, subject, body), { sent: true })
+    return async (runId, subject, body) => ({ sent: true, warnings: (await sendFromMailbox(box, dir, root, runId, subject, body)).warnings })
   }
 
   /**
@@ -38,6 +38,10 @@ export function signals(d: SignalDeps) {
       // run_id の無い帳簿は notifyMain が理由を返す（窓の上の帯に出し、押した操作が黙って届かないままにしない）。
       const r = await notifyMain(c, due, sendRun(ws.root) ?? (async () => ({ sent: false, reason: 'Orca に送る口がありません' })))
       if (r.lastOp !== undefined) await writeNotified(dir, ws.root, r.lastOp)
+      if (r.sent) {
+        ws.warnings = r.warnings ?? []
+        if (ws.warnings.length) console.error(`窓口への合図に Orca の注意（${ws.root}）: ${ws.warnings.join(' / ')}`)
+      }
       return r.sent ? { sent: true } : { sent: false, reason: r.reason }
     }
     const p = (ws.sending ?? Promise.resolve()).then(run, run)

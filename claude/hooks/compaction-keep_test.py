@@ -721,7 +721,7 @@ class Handoff(Base):
         self.press_repeat(2)
         out = json.loads(self.say("2026-11-21T09:00:00+09:00", "今日の最初の発言"))
         self.assertEqual(out["decision"], "block")
-        self.assertRegex(self.launched(), r"--prompt\n（前のチャットから引き継いだ[^\n]*）\n\n今日の最初の発言\n--json")
+        self.assertRegex(self.launched(), r"--prompt\n【引き継ぎ 2026-11-21T09:00:00\+09:00】（前のチャットから引き継いだ[^\n]*）\n\n今日の最初の発言\n--json")
         with open(got) as fh:
             ctx = json.load(fh)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("前のチャットからの引き継ぎ", ctx)
@@ -1255,6 +1255,183 @@ class MainSession(Base):
         self.write_cockpit()
         self.hook("UserPromptSubmit", env=self.env(FAKE_RUN="run_main"), prompt="hi", transcript_path="/t/a.jsonl")
         self.assertFalse(os.path.exists(os.path.join(self.root, ".orca", "cockpit", "main-session.json")))
+
+
+# 窓口の Run を引き継ぐ試験の偽の orca。Run の結び付きは $FAKE_BOUND のファイル（空なら Run を持たない）。run-use は $FAKE_USE_FAIL があれば断り、
+# 無ければ結び直す。check は $FAKE_INBOX のファイルを 1 回だけ返す（既読にする）
+TAKEOVER_ORCA = r"""#!/bin/sh
+echo "$@" >> '%s'
+case "$*" in
+ *run-current*) r=$(cat "$FAKE_BOUND" 2>/dev/null); if [ -n "$r" ]; then echo "{\"ok\":true,\"result\":{\"runId\":\"$r\"}}"; else echo '{"ok":true,"result":{"runId":null}}'; fi;;
+ *run-use*) if [ -n "$FAKE_USE_FAIL" ]; then echo '{"ok":false,"error":{"code":"forbidden","message":"A worker cannot bind its ancestor Run"}}'; exit 1; fi; printf %%s "$4" > "$FAKE_BOUND"; echo '{"ok":true,"result":{}}';;
+ *check*) if [ -f "$FAKE_INBOX" ]; then cat "$FAKE_INBOX"; rm "$FAKE_INBOX"; else echo '{"ok":true,"result":{"messages":[]}}'; fi;;
+ *) echo '{"ok":true,"result":{}}';;
+esac
+"""
+
+
+class RunTakeover(Base):
+    """窓口は深田さんが最後に話しかけた本線の会話。Run を持たない会話の発言のターンで、switch と同じ手順で帳簿の Run を引き継ぐ（t178）。"""
+
+    def setUp(self):
+        super().setUp()
+        self.cockpit.update(main={"agent": "claude", "run_id": "run_main"})
+        self.write_cockpit()
+        with open(self.fake_orca, "w") as fh:
+            fh.write(TAKEOVER_ORCA % self.orca_log)
+        self.inbox_file = os.path.join(self.root, "inbox.json")
+        self.bound_file = os.path.join(self.root, "bound")
+        self.bind("")
+        self.session_file = os.path.join(self.root, ".orca", "cockpit", "main-session.json")
+        self.refused_file = os.path.join(self.root, ".orca", "cockpit", "run-takeover.json")
+        # 前の窓口（人が閉じた会話）の記録
+        with open(self.session_file, "w") as fh:
+            json.dump({"run_id": "run_main", "agent": "claude", "session_id": "s-closed", "transcript_path": "/t/closed.jsonl", "cwd": self.root}, fh)
+
+    def bind(self, run):
+        with open(self.bound_file, "w") as fh:
+            fh.write(run)
+
+    def inbox(self, messages):
+        with open(self.inbox_file, "w") as fh:
+            json.dump({"ok": True, "result": {"messages": messages}}, fh, ensure_ascii=False)
+
+    def say(self, prompt="続けて", session=SESSION, **env):
+        return self.hook("UserPromptSubmit", env=self.env(FAKE_INBOX=self.inbox_file, FAKE_BOUND=self.bound_file, CLAUDECODE="1", **env),
+                         prompt=prompt, session_id=session, transcript_path="/t/%s.jsonl" % session)
+
+    def calls(self):
+        return read(self.orca_log) if os.path.exists(self.orca_log) else ""
+
+    def session(self):
+        return json.loads(read(self.session_file))
+
+    def test_a_chat_without_a_run_takes_over_the_ledgers_run_like_the_switch(self):
+        self.inbox([{"id": "msg_1", "from": "term_w", "type": "worker_done", "subject": "t9 を直した", "body": "commit abc"},
+                    {"id": "msg_2", "from": "term_box", "type": "status", "subject": "【操縦席】未反映の操作があります"}])
+        out = self.say("op 97 を反映して")
+        self.assertIn("orchestration run-use --id run_main", self.calls())
+        self.assertIn("この会話が帳簿の窓口の Run（run_main）を引き継いだ（前の窓口: claude s-closed）", out)
+        # 届いていなかった知らせは受信箱から読んで流す（既読にする）
+        self.assertIn("- msg_1 term_w（worker_done）: t9 を直した", out)
+        self.assertIn("【操縦席】未反映の操作があります", out)
+        self.assertFalse(os.path.exists(self.inbox_file))
+        # switch と同じ記録: 窓口の会話・退いた会話・再開の確かめ・組み直し
+        got = self.session()
+        self.assertEqual((got["session_id"], got["agent"], got["retired"]), (SESSION, "claude", ["s-closed"]))
+        self.assertTrue(self.keep()["verify"]["pending"])
+        self.assertEqual(self.keep()["verify"]["session"], SESSION)
+        self.assertIn("窓口を替えたあとの組み直し", out)
+        self.assertIn("compaction-keep.py resume", out)
+        self.assertEqual(self.jsonl("compactions.jsonl")[-1]["type"], "switch")
+        # 引き継いだあとは、同じ会話のままなら Orca に聞き直さない
+        n = self.calls().count("run-current")
+        self.assertNotIn("引き継", self.say("次"))
+        self.assertEqual(self.calls().count("run-current"), n)
+
+    def test_a_chat_with_its_own_run_is_not_switched_and_says_so(self):
+        self.bind("run_owner")
+        out = self.say("担当として続けて")
+        self.assertNotIn("run-use", self.calls())
+        self.assertIn("自分の Run（run_owner）を持つので、帳簿の窓口の Run（run_main）を引き継がない", out)
+        self.assertEqual(len([l for l in out.splitlines() if l.startswith("【窓口】")]), 1)
+        self.assertEqual(self.session()["session_id"], "s-closed")
+        got = json.loads(read(self.refused_file))
+        self.assertEqual((got["own_run"], got["ledger_run"], got["session_id"]), ("run_owner", "run_main", SESSION))
+        # 窓口の Run を持つ会話に話しかけたら、窓の帯の印を消す
+        self.bind("run_main")
+        self.say("窓口で続けて", session="s-main2")
+        self.assertFalse(os.path.exists(self.refused_file))
+        self.assertEqual(self.session()["session_id"], "s-main2")
+
+    def test_orca_notices_do_not_take_over(self):
+        self.hook("UserPromptSubmit", env=self.env(FAKE_BOUND=self.bound_file), prompt="──── From: term_w (claude) (worker_done) ────\nSubject: 済んだ\n本文")
+        self.assertIn("run-current", self.calls())
+        self.assertNotIn("run-use", self.calls())
+        self.assertEqual(self.session()["session_id"], "s-closed")
+
+    def test_a_refused_run_use_is_reported_and_nothing_is_recorded(self):
+        out = self.say("続けて", FAKE_USE_FAIL="1")
+        self.assertIn("Run run_main を引き継げなかった（run-use: A worker cannot bind its ancestor Run", out)
+        self.assertEqual(self.session()["session_id"], "s-closed")
+        self.assertNotIn("verify", self.keep())
+
+    def test_an_unreadable_run_current_changes_nothing(self):
+        with open(self.fake_orca, "w") as fh:
+            fh.write("#!/bin/sh\necho \"$@\" >> '%s'\nexit 1\n" % self.orca_log)
+        self.assertNotIn("【窓口】", self.say())
+        self.assertNotIn("run-use", self.calls())
+
+    def test_a_retired_chat_takes_the_run_back_when_spoken_to(self):
+        # 前の窓口に戻って話しかければ、また引き継ぐ（R253）。知らせのターンでは引き継がない
+        self.say("引き継いで")
+        self.bind("")
+        self.hook("UserPromptSubmit", env=self.env(FAKE_BOUND=self.bound_file), session_id="s-closed",
+                  prompt="──── From: term_w (claude) (worker_done) ────\nSubject: 済んだ\n本文")
+        self.assertEqual(self.calls().count("run-use"), 1)
+        self.assertEqual(self.session()["session_id"], SESSION)
+        out = self.say("前の会話で", session="s-closed")
+        self.assertIn("この会話が帳簿の窓口の Run（run_main）を引き継いだ（前の窓口: claude %s）" % SESSION, out)
+        self.assertEqual(self.calls().count("run-use"), 2)
+        got = self.session()
+        self.assertEqual((got["session_id"], got["retired"]), ("s-closed", [SESSION]))
+
+    def test_a_takeover_keeps_the_pending_check_after_a_compaction(self):
+        # 圧縮のあとの確かめが途中の会話が引き継いでも、求めるパスと失敗の数を消さない
+        keep = os.path.join(self.root, ".orca", "cockpit", "keep.json")
+        v = {"pending": True, "session": SESSION, "since": self.now, "failures": 1, "required_paths": ["/a/b.py"]}
+        with open(keep, "w") as fh:
+            json.dump({"verify": v}, fh)
+        self.assertIn("を引き継いだ", self.say())
+        self.assertEqual(self.keep()["verify"], v)
+
+    def test_a_late_run_current_after_a_good_run_use_still_records_the_takeover(self):
+        # run-use が成功を返したら、直後の run-current が読めなくても記録まで進む（届け先と記録を別々の会話にしない）
+        with open(self.fake_orca) as fh:
+            script = fh.read()
+        with open(self.fake_orca, "w") as fh:
+            fh.write(script.replace(' *run-current*)', ' *run-current*) [ -f "$FAKE_BOUND.used" ] && exit 1;').replace(' *run-use*)', ' *run-use*) touch "$FAKE_BOUND.used";'))
+        self.assertIn("を引き継いだ", self.say())
+        self.assertEqual(self.session()["session_id"], SESSION)
+
+    def test_a_forwarded_prompt_does_not_take_back_a_handoff_another_chat_took(self):
+        # 起こしている間に別の会話が引き継いでいたら、渡した発言では Run を取り返さない
+        self.now = "2026-11-21T09:00:00+09:00"
+        keep = os.path.join(self.root, ".orca", "cockpit", "keep.json")
+        with open(keep, "w") as fh:
+            json.dump({"handoff": {"state": "taken", "at": self.now, "from_session": "s-old", "to_session": "s-other"}}, fh)
+        out = self.say("【引き継ぎ %s】（…）\n\n今日の最初の発言" % self.now, session="s-new")
+        self.assertNotIn("run-use", self.calls())
+        self.assertNotIn("【窓口】", out)
+
+    def test_a_retired_chat_spoken_to_takes_over_instead_of_launching_a_handoff(self):
+        self.say("引き継いで")
+        self.bind("")
+        ops = [{"op_id": i + 1, "at": "2026-11-21T23:00:00+09:00", "item_id": "", "item_rev": 0, "type": "repeat"} for i in range(2)]
+        with open(os.path.join(self.root, ".orca", "cockpit.user.json"), "w") as fh:
+            json.dump({"ops": ops}, fh)
+        self.now = "2026-11-22T09:00:00+09:00"
+        self.assertIn("この会話が帳簿の窓口の Run（run_main）を引き継いだ", self.say("前の会話で", session="s-closed"))
+        self.assertNotIn("agent launch", self.calls())
+
+    def test_the_forwarded_first_prompt_takes_over_once_without_recording_it_again(self):
+        self.now = "2026-11-21T09:00:00+09:00"
+        keep = os.path.join(self.root, ".orca", "cockpit", "keep.json")
+        # 新しい窓口の SessionStart が引き継ぎを受け、組み直しの記録と再開の確かめをもう渡した
+        with open(keep, "w") as fh:
+            json.dump({"handoff": {"state": "taken", "at": self.now, "from_session": "s-old", "to_session": "s-new"},
+                       "verify": {"pending": True, "session": "s-new", "since": self.now}}, fh)
+        first = "【引き継ぎ %s】（前のチャットから引き継いだ深田さんの発言。…）\n\n今日の最初の発言" % self.now
+        out = self.say(first, session="s-new")
+        self.assertIn("orchestration run-use --id run_main", self.calls())
+        self.assertIn("を引き継いだ", out)
+        self.assertNotIn("窓口を替えたあとの組み直し", out)  # 組み直しは SessionStart で渡した
+        self.assertIn("compaction-keep.py resume", out)
+        self.assertEqual(self.jsonl("utterances.jsonl"), [])  # 前のチャットが記録済み
+        self.assertEqual(self.keep()["handoff"]["forwarded_to"], "s-new")
+        # 同じ印をもう一度送っても、ただの発言として記録する
+        self.say(first, session="s-new")
+        self.assertEqual(len(self.jsonl("utterances.jsonl")), 1)
 
 
 if __name__ == "__main__":

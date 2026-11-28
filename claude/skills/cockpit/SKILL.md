@@ -34,7 +34,7 @@ metadata:
 - 深田が主に使うのは左のディスプレイの窓（`cockpit-window`）。タブは「要対応」（深田さんが応じるカードを仕事ごとにまとめ、右に詳細を常に開く。下に件数に入らない「報告（参照のみ）」がある）・「全体」（仕事 → 工程 → タスク → worker の入れ子と、まだ済んでいない依頼）・「対応済み」の 3 つ。パネル（Orca の右のサイドバー）は前面の案件 1 つを同じ部品で出す
 
 # ファイルと形の要点
-- すべてワークスペースの root の `.orca/` に置く（グローバルの gitignore で外してあるので、顧客のリポジトリにも置いてよい）。`cockpit.json`・`cockpit.archive.json`・`cockpit/figures/`・`cockpit/rulings.jsonl` はメインだけが書く。`cockpit.user.json` は画面だけ、`cockpit/utterances.jsonl`・`compactions.jsonl`・`keep.json`・`handoff.json`・`main-session.json` は hook と決まったコマンドだけが書く。`consult/<カード id>.md`（相談のメモ）はカードの相談だけが書き、`consult/ask-<質問 id>.md`（質問と答えの控え）と `ask-<質問 id>.returns.jsonl`（質問の返しの記録）は consult --ask と hook だけが書く。一覧は references/schema.md の「ファイル」
+- すべてワークスペースの root の `.orca/` に置く（グローバルの gitignore で外してあるので、顧客のリポジトリにも置いてよい）。`cockpit.json`・`cockpit.archive.json`・`cockpit/figures/`・`cockpit/rulings.jsonl` はメインだけが書く。`cockpit.user.json` は画面だけ、`cockpit/utterances.jsonl`・`compactions.jsonl`・`keep.json`・`handoff.json`・`main-session.json`・`run-takeover.json` は hook と決まったコマンドだけが書く。`consult/<カード id>.md`（相談のメモ）はカードの相談だけが書き、`consult/ask-<質問 id>.md`（質問と答えの控え）と `ask-<質問 id>.returns.jsonl`（質問の返しの記録）は consult --ask と hook だけが書く。一覧は references/schema.md の「ファイル」
 - `cockpit.json` は書く道具 `cockpit-write` だけで書く（使い方は references/schema.md の「書く道具」）。型・参照・`rev`・仕分けを検査し、通らなければ書かずに理由を返す。Write・Edit で書くと hook が断る
 - 時刻（カードの `at`・`due`、依頼の `at`、作業メモの時刻）は、`date '+%Y-%m-%dT%H:%M:%S%z'` で今の時刻を取ってから書く。推し量って書かない（推し量った時刻は実際から何時間もずれることがある）
 - 必須の欄・工程・カードの種類とその値は references/schema.md の「cockpit.json の形」「カード」「必須の欄」に書いてあり、書く道具が入口で検査する。`workspace.name` の形は worktree-flow skill の references/sidebar.md の案件の行。ここには値を写さない

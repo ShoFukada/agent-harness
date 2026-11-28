@@ -529,13 +529,15 @@ export function runSignalBody(cockpit: Cockpit, ops: Op[]): string {
 export async function notifyMain(cockpit: Cockpit | undefined, ops: Op[], sendRun: SendRun): Promise<NotifyResult & { lastOp?: number }> {
   const run = cockpit?.main?.run_id
   if (!cockpit || !run) return { sent: false, reason: 'cockpit.json の main に run_id がありません' }
+  let warnings: string[] | undefined
   try {
     const r = await sendRun(run, SIGNAL, runSignalBody(cockpit, ops))
     if (!r.sent) return r
+    warnings = r.warnings
   } catch (e) {
     return { sent: false, reason: (e as Error).message }
   }
-  return { sent: true, lastOp: ops.reduce((n, o) => Math.max(n, o.op_id), 0) || undefined }
+  return { sent: true, lastOp: ops.reduce((n, o) => Math.max(n, o.op_id), 0) || undefined, ...(warnings?.length && { warnings }) }
 }
 
 let tmpSeq = 0

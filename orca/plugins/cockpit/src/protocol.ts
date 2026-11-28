@@ -163,7 +163,8 @@ export type RulingHit = { id: string; at?: string; kind?: string; text: string; 
 /** 「これで決める」の結果。op は書いた op_id、sent は質問のタブに「返しを書いて」を送れたか。 */
 /** again: 同じ答えをもう記録していた（記録も知らせも足していない）。 */
 export type AskDecideResult = { op: number; sent: boolean; reason?: string; again?: true }
-export type NotifyResult = { sent: boolean; reason?: string }
+/** warnings は送れたときの Orca の注意書き（受け取りが遅れるなど）。 */
+export type NotifyResult = { sent: boolean; reason?: string; warnings?: string[] }
 /**
  * 停止の行に窓から答える（/api/answer）。item_id は行の id、rev は行の版（聞いた時刻の ms）。端末の問いは、選んだ番号（choice）か書いた文（text）と、
  * 見ていた画面の印（sig）を送る。orchestration の問い（#ask:msg_…）と担当の返事待ち（#cowork:…）は text だけ。

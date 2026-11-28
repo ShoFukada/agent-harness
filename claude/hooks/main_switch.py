@@ -1,9 +1,10 @@
 """窓口（ワークスペースのメイン）を Claude と Gemini（agy）で乗り換えるための記録と道具（判断の記録 R245）。
 
 compaction-keep.py が hook と道具の口から呼ぶ。中身は 3 つ:
-  record_main_session  発言のたびに、窓口の会話を main-session.json に書く（consult --ask が写す元）
-  claim_switch         PreToolUse(Bash) で `compaction-keep.py switch` を見たら、打った会話の id を keep.json に控える
-  switch               窓口を替える道具の本体（新しい窓口の会話の中で 1 回打つ）
+  bind_main     発言のたびに、窓口の会話を main-session.json に書く（consult --ask が写す元）。Run を持たない本線の会話に
+                深田さんが話しかけたら、switch と同じ手順（take_over）で帳簿の Run を引き継ぐ（t178）
+  claim_switch  PreToolUse(Bash) で `compaction-keep.py switch` を見たら、打った会話の id を keep.json に控える
+  switch        窓口を替える道具の本体（新しい窓口の会話の中で打つ。種類を Claude と Gemini で替えるときと、hook の引き継ぎが効かないとき）
 
 窓口を替える道具は、次をまとめて行う（cockpit skill の references/resume.md「窓口を替える」）:
   0. 窓口の端末を決める（main_terminal。決まらなければ何も書かずに止める）
@@ -24,7 +25,7 @@ import re
 import subprocess
 import time
 
-from cockpit_records import KEEPER, append_jsonl, cockpit, iso, load_keep, locked, orca_bin, orca_result, path_of, read_json, save_keep, write_json
+from cockpit_records import KEEPER, append_jsonl, cockpit, iso, load_keep, locked, orca_call, orca_result, path_of, read_json, save_keep, write_json
 
 # Orca の agent launch の --agent の名前。帳簿の main.agent と main-session.json の agent もこの名前で書く（write.ts の MAIN_AGENTS）
 AGENTS = ("claude", "antigravity")
@@ -37,6 +38,8 @@ RETIRED_MAX = 10
 SWITCH_CMD = re.compile(r"compaction-keep(?:\.py)?[\"']?\s+switch(?:\s|$)")
 INBOX_BATCHES = 20
 BODY_WIDTH = 600
+# run-use・check・terminal list は Orca が混んでいると 5 秒を超えることがある
+ORCA_SLOW_SEC = 30
 
 
 def switch_command(agent, root=None):
@@ -57,27 +60,74 @@ def launch_args(agent, root, prompt):
     return args + ["--prompt", prompt, "--json"]
 
 
-def record_main_session(root, inp):
-    """窓口の会話 id・会話のファイル・席を main-session.json に置き換える（consult --ask が写す元。11.1・11.6 の 4・7）。
-    同じ worktree で動く別の会話を窓口と取り違えないよう、Orca の今の Run が帳簿の main.run_id と同じときだけ書く。
-    窓口の種類は hook からは分からないので、記録にある種類を保つ（種類を変えるのは switch だけ）。switch で退いた会話は書かない。
-    呼ぶ側が locked(root) を取る（帳簿と保存値はロックの中で読む）。"""
+def bind_main(root, inp, user_turn, compose):
+    """窓口を「深田さんが最後に話しかけた本線の会話」にそろえる。返すのはその会話に流す行。呼ぶ側が locked(root) を取る。
+
+    Orca の Run の受け取り手は Run を作った（run-use した）会話のままで、人がその会話を閉じると、同じ worktree に新しい会話を
+    立てても知らせは届かない（2026-11-25 に fitf の窓口の Run 宛ての 58 通が 3 日残った）。そこで:
+    - Orca の今の Run が帳簿の main.run_id の会話は、窓口の会話 id・会話のファイル・席を main-session.json に置き換える
+      （consult --ask が写す元。11.1・11.6 の 4・7）。種類は記録にあるものを保つ
+    - 深田さんの発言のターン（user_turn）で Run を持たない会話は、switch と同じ手順（take_over）で帳簿の Run を引き継ぐ。
+      Orca は run-use の直後に、それまで誰にも届いていなかった知らせをこの会話に届け直す（2026-11-28 の試験で確かめた）
+    - 自分の Run を持つ会話（別の Run を作った窓口・担当）は切り替えず、1 行で知らせ、窓の帯が読む run-takeover.json に残す
+    - switch・引き継ぎで退いた会話も、深田さんが話しかければ同じく引き継いで窓口に戻る（R253「前の窓口のチャットに戻って話しかければ、
+      また引き継ぐ」）。知らせのターンでは書き換えない（閉じ忘れた前の窓口が、知らせのたびに記録を取り返さないように）
+    main-session.json がこの会話と Run のままなら Orca に聞き直さない（毎回の発言を遅らせない）。
+    compose(root, lead, full) は引き継いだ会話に出す文を作る（switch と同じ。full なら組み直しの記録も付ける）。"""
     run = (cockpit(root).get("main") or {}).get("run_id")
-    if not run:
-        return
-    path = path_of(root, "main-session.json")
-    old = read_json(path, {})
     session = inp.get("session_id") or ""
-    if not session or session in (old.get("retired") or []):
-        return
+    if not run or not session:
+        return []
+    path, refused = path_of(root, "main-session.json"), path_of(root, "run-takeover.json")
+    old = read_json(path, {})
+    # hook は Claude Code の中か、agy-hook.py から呼ばれる（switch の種類の見分け方と同じ）
+    here = "claude" if os.environ.get("CLAUDECODE") == "1" else "antigravity"
+    if not user_turn and session in (old.get("retired") or []):
+        return []
     agent = old.get("agent") if old.get("agent") in AGENTS else "claude"
     row = {"run_id": run, "agent": agent, "session_id": session, "transcript_path": inp.get("transcript_path") or "",
            "config_dir": (os.environ.get("CLAUDE_CONFIG_DIR") or "") if agent == "claude" else "", "cwd": inp.get("cwd") or root}
     if all(old.get(k) == v for k, v in row.items()):
-        return
-    if orca_result(["orchestration", "run-current"]).get("runId") != run:
-        return
-    write_json(path, {**old, **row, "at": iso()})
+        if user_turn and os.path.exists(refused):
+            os.remove(refused)
+        return []
+    cur, _ = orca_call(["orchestration", "run-current"])
+    if cur is None or "runId" not in cur:
+        return []
+    mine = cur.get("runId")
+    if mine == run:
+        write_json(path, {**old, **row, "at": iso(), "retired": [x for x in old.get("retired") or [] if x != session]})
+        if user_turn and os.path.exists(refused):
+            os.remove(refused)
+        return []
+    if not user_turn:
+        return []
+    if mine:
+        write_json(refused, {"at": iso(), "session_id": session, "own_run": mine, "ledger_run": run})
+        return ["【窓口】この会話は自分の Run（%s）を持つので、帳簿の窓口の Run（%s）を引き継がない。窓口への知らせはこの会話に届かない"
+                "（窓口として話すなら、Run を持たない本線の会話で話しかける）" % (mine, run)]
+    agent = here
+    terminal, why = main_terminal(root, agent)
+    if terminal is None:
+        return ["【窓口】帳簿の窓口の Run（%s）を引き継げなかった（%s）。窓口への知らせはこの会話に届かない" % (run, why)]
+    keep = load_keep(root)
+    # 引き継ぎで起きた会話と圧縮のあとの会話は、組み直しの記録をもう受け取っている
+    v = keep.get("verify") or {}
+    told = bool(v.get("pending")) and v.get("session") == session
+    old, why = take_over(root, keep, agent, session, inp.get("transcript_path") or "", terminal)
+    if old is None:
+        return ["【窓口】%s。窓口への知らせはこの会話に届かない" % why.rstrip("。")]
+    if os.path.exists(refused):
+        os.remove(refused)
+    msgs, err = read_inbox()
+    head = ("【窓口】この会話が帳簿の窓口の Run（%s）を引き継いだ（前の窓口: %s %s）。窓・worker・担当から窓口への知らせは、これからこの会話に届く"
+            % (run, old.get("agent") or "-", old.get("session_id") or "-"))
+    lines = [compose(root, [(head, None, 0), (inbox_lines(msgs, err, run), "orca orchestration inbox --terminal run:%s --full" % run, 2)], not told)]
+    if why:
+        lines.append("【窓口】" + why)
+    if err:
+        lines.append("【窓口】受信箱を読み切れなかった（%s）。orca orchestration check で続きを読む" % err)
+    return lines
 
 
 def switch_hint(root, session):
@@ -85,9 +135,9 @@ def switch_hint(root, session):
     ms = read_json(path_of(root, "main-session.json"), {})
     if not session or not ms.get("session_id") or session == ms["session_id"] or session in (ms.get("retired") or []):
         return None
-    return ("【窓口】この会話は窓口として記録されていない（記録の窓口は %s の会話 %s）。この会話を窓口として続けるなら、最初に `%s` を打つ"
-            "（Gemini なら --agent antigravity を付ける。cockpit skill の references/resume.md「窓口を替える」）。打つまで担当・worker の知らせはこの会話に届かない"
-            % (ms.get("agent") or "claude", ms["session_id"], switch_command("claude", root)))
+    return ("【窓口】この会話は窓口として記録されていない（記録の窓口は %s の会話 %s）。深田さんがこの会話に話しかけると、hook が窓口の Run を引き継ぐ"
+            "（この会話が自分の Run を持たないとき。cockpit skill の references/resume.md「窓口を替える」）。それまで担当・worker の知らせはこの会話に届かない"
+            % (ms.get("agent") or "claude", ms["session_id"]))
 
 
 def retired(root, session):
@@ -106,19 +156,6 @@ def claim_switch(root, inp, command):
     keep["switch_claims"] = claims
     save_keep(root, keep)
     return True
-
-
-def orca_call(args):
-    """orca の --json を呼び、(result, エラーの文) を返す。"""
-    try:
-        done = subprocess.run([orca_bin(), *args, "--json"], capture_output=True, text=True, timeout=30)
-        v = json.loads(done.stdout)
-    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
-        return None, str(e)
-    if isinstance(v, dict) and v.get("ok"):
-        return (v.get("result") if isinstance(v.get("result"), dict) else {}), None
-    err = v.get("error") if isinstance(v, dict) else v
-    return None, json.dumps(err, ensure_ascii=False)[:300] if not isinstance(err, str) else err[:300]
 
 
 def cockpit_write_path():
@@ -152,7 +189,7 @@ def main_terminal(root, agent):
     if agent == "claude":
         return "", None
     retry = "自分の端末の handle を `ORCA_TERMINAL_HANDLE=term_… %s` の形で前に付けて打ち直す" % switch_command(agent, root)
-    got, err = orca_call(["terminal", "list", "--worktree", "path:" + root, "--limit", "500"])
+    got, err = orca_call(["terminal", "list", "--worktree", "path:" + root, "--limit", "500"], ORCA_SLOW_SEC)
     if err:
         return None, "窓口の端末を引けなかった（orca terminal list: %s）。何も書き換えていない。%s" % (err, retry)
     here = os.path.realpath(root)
@@ -168,7 +205,7 @@ def read_inbox():
     """受信箱の未読を全部読む（既読にする）。(知らせの一覧, 読み切れなかった理由)。"""
     msgs = []
     for _ in range(INBOX_BATCHES):
-        got, err = orca_call(["orchestration", "check"])
+        got, err = orca_call(["orchestration", "check"], ORCA_SLOW_SEC)
         if err:
             return msgs, err
         batch = [m for m in (got or {}).get("messages") or [] if isinstance(m, dict)]
@@ -181,9 +218,10 @@ def read_inbox():
 def inbox_lines(msgs, err, run):
     head = "## 受信箱（orca orchestration check で読み、既読にした %d 件。全文は orca orchestration inbox --terminal run:%s --full）" % (len(msgs), run)
     rows = []
+    # check の 1 通は {id, type, from, subject, body}（inbox の from_handle・created_at は無い。Orca 1.4.280 で確かめた）
     for m in msgs:
         body = re.sub(r"\s+", " ", str(m.get("body") or "")).strip()
-        rows.append("- %s %s（%s）: %s%s" % (m.get("created_at", ""), m.get("from_handle", ""), m.get("type", ""),
+        rows.append("- %s %s（%s）: %s%s" % (m.get("id", ""), m.get("from", ""), m.get("type", ""),
                                             str(m.get("subject") or "").strip(),
                                             "\n  " + (body if len(body) <= BODY_WIDTH else body[:BODY_WIDTH - 1] + "…") if body else ""))
     if err:
@@ -191,8 +229,60 @@ def inbox_lines(msgs, err, run):
     return "\n".join(["", head] + (rows or ["- 未読は無い"]))
 
 
-def switch(root, agent, reassemble):
-    """窓口を替える道具の本体。reassemble(root) は組み直しの文（compaction-keep.py の組み直しと再開の確かめの形）を返す。
+def take_over(root, keep, agent, session, transcript, terminal):
+    """帳簿の main.run_id の Run を引き継ぎ、窓口の会話の記録・再開の確かめ・帳簿の main をそろえる（switch と hook の引き継ぎの共通の段）。
+    (前の main-session.json, None) を返す。Run を引き継げなければ (None, 理由)、引き継いだが帳簿の main だけ書けなければ (前の記録, 理由)。
+    呼ぶ側が locked(root) を取り、keep はその中で読んだもの。"""
+    main = cockpit(root).get("main") or {}
+    run = main.get("run_id")
+    if not run:
+        return None, "帳簿に main.run_id が無い。先に cockpit skill の references/setup.md「最初に作るとき」で帳簿を作る"
+    # 1. Run を引き継ぐ。run-use が成功を返せば結び付きは済んでいる（直後の run-current が遅れて失敗しても、記録を書かずに止めると
+    #    Orca の届け先と記録が別々の会話を指したままになる）。失敗・時間切れのときだけ、実際に結び付いたかを run-current で見る
+    _, err = orca_call(["orchestration", "run-use", "--id", run], ORCA_SLOW_SEC)
+    if err:
+        bound = orca_result(["orchestration", "run-current"]).get("runId")
+        if bound != run:
+            return None, "Run %s を引き継げなかった（run-use: %s・run-current: %s）。記録は書き換えていない" % (run, err, bound)
+    # 2. 窓口の会話の記録と再開の確かめ（帳簿を書けなくても、worker への指示はここから止まる）
+    path = path_of(root, "main-session.json")
+    old = read_json(path, {})
+    retired = [x for x in old.get("retired") or [] if x != session]
+    if old.get("session_id") and old["session_id"] != session:
+        retired.append(old["session_id"])
+    write_json(path, {"run_id": run, "agent": agent, "session_id": session, "transcript_path": transcript,
+                      "config_dir": (os.environ.get("CLAUDE_CONFIG_DIR") or "") if agent == "claude" else "",
+                      "cwd": root, "terminal": terminal, "at": iso(), "retired": retired[-RETIRED_MAX:]})
+    keep.pop("switch_claims", None)
+    # 同じ会話の確かめが途中なら（圧縮のあと）、求めるパスと失敗の数を保つ
+    v = keep.get("verify") or {}
+    if not (v.get("pending") and v.get("session") == session):
+        keep["verify"] = {"pending": True, "since": iso(), "session": session, "failures": 0, "required_paths": []}
+    # 記憶が崩れた前の窓口の引き継ぎの予約は、新しい窓口に替えたことで済んだ。起動の途中の引き継ぎもこの窓口が受けたことにする
+    # （遅れて起きた窓口の SessionStart が、再開の確かめの相手をこの窓口から取り替えないように）
+    keep.pop("handoff_due", None)
+    keep["handoff_at"] = iso()
+    h = keep.get("handoff") or {}
+    if h.get("state") in ("launching", "launched"):
+        keep["handoff"] = {**h, "state": "taken", "to_session": session}
+    save_keep(root, keep)
+    append_jsonl(path_of(root, "compactions.jsonl"), {"type": "switch", "at": iso(), "session": session, "agent": agent, "run": run,
+                                                      "from_session": old.get("session_id"), "from_agent": old.get("agent")})
+    # 3. 帳簿の種類と端末（窓が窓口の端末を開く先）。変わったときだけ書く。cockpit-write は帳簿の別のロックを取る
+    if main.get("agent") != agent or (main.get("terminal") or "") != terminal:
+        try:
+            done = subprocess.run([cockpit_write_path(), root], input=json.dumps({"main": {"agent": agent, "terminal": terminal}}),
+                                  capture_output=True, text=True, timeout=60)
+            fail = None if done.returncode == 0 else ((done.stderr or done.stdout).strip()[:300] or "exit %d" % done.returncode)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            fail = str(e)
+        if fail is not None:
+            return old, "帳簿の main を書けなかった（%s）。Run・窓口の会話の記録・再開の確かめは済んだ。switch を打ち直せば続きから進む" % fail
+    return old, None
+
+
+def switch(root, agent, compose):
+    """窓口を替える道具の本体。compose(root, lead, full) は出す文（compaction-keep.py の組み直しと再開の確かめの形）を作る。
     (出す文, 失敗の理由) を返す。替えられなければ出す文は None。受信箱を読み切れなかったときは両方を返す。"""
     if agent == "antigravity" and os.environ.get("CLAUDECODE") == "1":
         return None, "Claude Code の中で動いている。Claude の窓口なら --agent を付けずに打つ"
@@ -208,50 +298,13 @@ def switch(root, agent, reassemble):
         session, got = who_am_i(agent, keep)
         if not session:
             return None, got
-        transcript = got
-        main = cockpit(root).get("main") or {}
-        run = main.get("run_id")
-        if not run:
-            return None, "帳簿に main.run_id が無い。先に cockpit skill の references/setup.md「最初に作るとき」で帳簿を作る"
-        # 1. Run を引き継ぐ
-        _, err = orca_call(["orchestration", "run-use", "--id", run])
-        bound = orca_result(["orchestration", "run-current"]).get("runId")
-        if bound != run:
-            return None, "Run %s を引き継げなかった（run-use: %s・run-current: %s）。記録は書き換えていない" % (run, err or "成功", bound)
-        # 2. 窓口の会話の記録と再開の確かめ（帳簿を書けなくても、worker への指示はここから止まる）
-        path = path_of(root, "main-session.json")
-        old = read_json(path, {})
-        retired = [x for x in old.get("retired") or [] if x != session]
-        if old.get("session_id") and old["session_id"] != session:
-            retired.append(old["session_id"])
-        write_json(path, {"run_id": run, "agent": agent, "session_id": session, "transcript_path": transcript,
-                          "config_dir": (os.environ.get("CLAUDE_CONFIG_DIR") or "") if agent == "claude" else "",
-                          "cwd": root, "terminal": terminal, "at": iso(), "retired": retired[-RETIRED_MAX:]})
-        keep.pop("switch_claims", None)
-        keep["verify"] = {"pending": True, "since": iso(), "session": session, "failures": 0, "required_paths": []}
-        # 記憶が崩れた前の窓口の引き継ぎの予約は、新しい窓口に替えたことで済んだ。起動の途中の引き継ぎもこの窓口が受けたことにする
-        # （遅れて起きた窓口の SessionStart が、再開の確かめの相手をこの窓口から取り替えないように）
-        keep.pop("handoff_due", None)
-        keep["handoff_at"] = iso()
-        h = keep.get("handoff") or {}
-        if h.get("state") in ("launching", "launched"):
-            keep["handoff"] = {**h, "state": "taken", "to_session": session}
-        save_keep(root, keep)
-        append_jsonl(path_of(root, "compactions.jsonl"), {"type": "switch", "at": iso(), "session": session, "agent": agent, "run": run,
-                                                          "from_session": old.get("session_id"), "from_agent": old.get("agent")})
-        # 3. 帳簿の種類と端末（窓が窓口の端末を開く先）。変わったときだけ書く。cockpit-write は帳簿の別のロックを取る
-        if main.get("agent") != agent or (main.get("terminal") or "") != terminal:
-            try:
-                done = subprocess.run([cockpit_write_path(), root], input=json.dumps({"main": {"agent": agent, "terminal": terminal}}),
-                                      capture_output=True, text=True, timeout=60)
-                fail = None if done.returncode == 0 else ((done.stderr or done.stdout).strip()[:300] or "exit %d" % done.returncode)
-            except (OSError, subprocess.TimeoutExpired) as e:
-                fail = str(e)
-            if fail is not None:
-                return None, "帳簿の main を書けなかった（%s）。Run・窓口の会話の記録・再開の確かめは済んだ。打ち直せば続きから進む" % fail
+        old, err = take_over(root, keep, agent, session, got, terminal)
+        if err:
+            return None, err  # 帳簿だけ書けなかったときも、打ち直せば続きから進む
     # 4. 受信箱を読み直し、組み直しと再開の確かめの形を出す
+    run = (cockpit(root).get("main") or {}).get("run_id")
     msgs, err = read_inbox()
     head = "窓口を替えた: %s の会話 %s が Run %s を引き継いだ（前の窓口: %s %s）。" % (
         agent, session, run, old.get("agent") or "-", old.get("session_id") or "-")
-    text = "\n".join([head, inbox_lines(msgs, err, run), reassemble(root)])
+    text = compose(root, [(head, None, 0), (inbox_lines(msgs, err, run), "orca orchestration inbox --terminal run:%s --full" % run, 2)], True)
     return text, ("受信箱を読み切れなかった（%s）。orca orchestration check で続きを読む" % err if err else None)

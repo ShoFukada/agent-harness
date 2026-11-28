@@ -81,8 +81,8 @@ class Switch(Base):
     def take_over_with_gemini(self):
         with open(self.inbox_file, "w") as fh:
             json.dump({"ok": True, "result": {"messages": [
-                {"from_handle": "term_lead", "type": "worker_done", "subject": "W2 を取り込んだ", "body": "commit abc の差分を main に入れた",
-                 "created_at": "2026-11-21T00:50:00Z"}]}}, fh, ensure_ascii=False)
+                {"id": "msg_1", "from": "term_lead", "type": "worker_done", "subject": "W2 を取り込んだ", "body": "commit abc の差分を main に入れた"}]}},
+                fh, ensure_ascii=False)
         self.assertEqual(self.pretool(SWITCH_AGY, "g-1", env=self.agy_env()), "")
         done = self.switch(self.agy_env(), "--agent", "antigravity")
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -93,7 +93,7 @@ class Switch(Base):
         # Run を引き継ぎ、受信箱を空になるまで読む
         self.assertIn("orchestration run-use --id run_main --json", self.calls())
         self.assertEqual(self.calls().count("orchestration check --json"), 2)
-        self.assertIn("term_lead（worker_done）: W2 を取り込んだ", text)
+        self.assertIn("- msg_1 term_lead（worker_done）: W2 を取り込んだ", text)
         self.assertIn("commit abc の差分を main に入れた", text)
         # M1: 窓口の種類と agy の会話 id を書き、前の窓口の会話は退かせる。agy に Claude の席は無い
         got = self.session()
@@ -169,11 +169,12 @@ class Switch(Base):
         self.assertEqual(ok.returncode, 0, ok.stdout)
         self.assertEqual(self.pretool(send, "g-1", env=self.agy_env()), "")
 
-    def test_the_old_main_cannot_take_the_record_back_and_the_new_one_keeps_its_kind(self):
+    def test_a_notice_to_the_old_main_does_not_take_the_record_back_and_the_new_one_keeps_its_kind(self):
         self.take_over_with_gemini()
         before = self.session()
-        # 閉じ忘れた前の窓口の発言は、Run が同じでも記録を戻さない
-        self.hook("UserPromptSubmit", env=self.claude_env(CLAUDE_CONFIG_DIR="/seatA"), prompt="前の窓口で", session_id="c-old", transcript_path="/c/old.jsonl")
+        # 閉じ忘れた前の窓口への知らせのターンは、Run が同じでも記録を戻さない（深田さんが話しかけたときだけ戻る。R253）
+        self.hook("UserPromptSubmit", env=self.claude_env(CLAUDE_CONFIG_DIR="/seatA"), prompt="──── From: term_w (claude) (worker_done) ────\nSubject: 済んだ\n本文",
+                  session_id="c-old", transcript_path="/c/old.jsonl")
         self.assertEqual(self.session(), before)
         # 新しい窓口の発言は、種類を保ったまま会話のファイルを書き直す（Claude の席は書かない）
         self.hook("UserPromptSubmit", env=self.agy_env(CLAUDE_CONFIG_DIR="/seatA"), prompt="続けて", session_id="g-1", transcript_path="/agy/brain/g-1/t2.jsonl")
@@ -259,11 +260,11 @@ class Switch(Base):
         self.assertEqual(self.keep()["verify"]["session"], "g-1")
         self.assertEqual(self.keep()["handoff"]["to_session"], "g-1")
 
-    def test_a_conversation_opened_by_hand_is_told_to_switch(self):
-        # M2: 手で開いた新しい窓口の開始に、窓口を替える道具を案内する。記録の窓口と退いた会話には出さない
+    def test_a_conversation_opened_by_hand_is_told_it_takes_over_when_spoken_to(self):
+        # M2: 手で開いた新しい窓口の開始に、話しかければ引き継ぐことを案内する。記録の窓口と退いた会話には出さない
         ctx = json.loads(self.hook("SessionStart", source="startup", session_id="g-1"))["hookSpecificOutput"]["additionalContext"]
         self.assertIn("記録の窓口は claude の会話 c-old", ctx)
-        self.assertIn("compaction-keep.py switch %s" % self.root, ctx)
+        self.assertIn("この会話に話しかけると、hook が窓口の Run を引き継ぐ", ctx)
         self.assertEqual(self.hook("SessionStart", source="startup", session_id="c-old"), "")
         self.take_over_with_gemini()
         self.assertEqual(self.hook("SessionStart", source="startup", session_id="c-old"), "")
@@ -277,7 +278,7 @@ class Switch(Base):
         with open(self.fake_orca, "w") as fh:
             fh.write(script)
         with open(self.inbox_file, "w") as fh:
-            json.dump({"ok": True, "result": {"messages": [{"from_handle": "term_lead", "type": "status", "subject": "読めた知らせ"}]}}, fh, ensure_ascii=False)
+            json.dump({"ok": True, "result": {"messages": [{"id": "msg_2", "from": "term_lead", "type": "status", "subject": "読めた知らせ"}]}}, fh, ensure_ascii=False)
         self.pretool(SWITCH_AGY, "g-1", env=self.agy_env())
         done = self.switch(self.agy_env(), "--agent", "antigravity")
         self.assertEqual(done.returncode, 1)
@@ -315,7 +316,7 @@ class Switch(Base):
 
 
 class HandoffToGemini(Base):
-    """M3: 自動の引き継ぎは、帳簿に書いた窓口の種類で新しい窓口を起こす。新しい窓口には窓口を替える道具を打たせる。"""
+    """M3: 自動の引き継ぎは、帳簿に書いた窓口の種類で新しい窓口を起こす。新しい窓口の最初のターンで hook が Run を引き継ぐ（t178）。"""
 
     def test_a_gemini_main_is_handed_off_to_a_new_gemini_terminal(self):
         self.cockpit.update(main={"agent": "antigravity", "terminal": "term_gem", "run_id": "run_main"})
@@ -331,9 +332,10 @@ class HandoffToGemini(Base):
         self.assertIn("端末のタブ", out["reason"])
         args = read(self.orca_log)
         self.assertIn("agent launch --agent antigravity --worktree path:%s --surface terminal --model gemini-4-neon-high --prompt" % self.root, args)
-        self.assertIn("compaction-keep.py switch --agent antigravity", args)
+        self.assertIn("--prompt 【引き継ぎ 2026-11-21T09:00:00+09:00】", args)
         ctx = json.loads(self.hook("SessionStart", source="startup", session_id="g-2"))["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("compaction-keep.py switch %s --agent antigravity" % self.root, ctx)
+        self.assertIn("そのターンで hook が窓口の Run を引き継ぎ", ctx)
+        self.assertNotIn("switch", ctx)
 
     def test_a_ledger_without_the_kind_hands_off_to_a_claude_chat(self):
         self.now = "2026-11-20T17:00:00+09:00"
@@ -347,7 +349,7 @@ class HandoffToGemini(Base):
         self.assertIn("agent launch --agent claude --worktree path:%s --surface chat --prompt" % self.root, args)
         self.assertNotIn("--model", args)
         ctx = json.loads(self.hook("SessionStart", source="startup", session_id="s-new"))["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("compaction-keep.py switch %s`" % self.root, ctx)
+        self.assertIn("そのターンで hook が窓口の Run を引き継ぎ", ctx)
 
 
 if __name__ == "__main__":

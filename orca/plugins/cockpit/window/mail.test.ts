@@ -23,7 +23,7 @@ function fake(live: string[] = []) {
       calls.push(['mailbox', root])
       return live.at(-1)!
     },
-    notifyRun: async (from, run, subject, body) => void calls.push(['run', from, run, subject, body])
+    notifyRun: async (from, run, subject, body) => (calls.push(['run', from, run, subject, body]), [])
   }
   return { orca, calls }
 }
@@ -45,7 +45,7 @@ test('cockpit-mail: root の帳簿の main.run_id に郵便受けから送り、
   const dir = tmp('cockpit-mail-dir-')
   const { orca, calls } = fake()
   const root = ledger({ agent: 'claude', terminal: '', run_id: 'run_main' })
-  assert.deepEqual(await mail(orca, dir, root, '件名', '本文\n2 行目'), { run: 'run_main', from: 'term_box1' })
+  assert.deepEqual(await mail(orca, dir, root, '件名', '本文\n2 行目'), { run: 'run_main', from: 'term_box1', warnings: [] })
   assert.deepEqual(calls.at(-1), ['run', 'term_box1', 'run_main', '件名', '本文\n2 行目'])
   await assert.rejects(mail(orca, dir, ledger({ agent: 'claude', terminal: 'term_main' }), '件名', '本文'), /main に run_id が無い/)
   assert.equal(calls.filter((c) => c[0] === 'run').length, 1)
@@ -69,7 +69,7 @@ esac
     const child = execFile(cli, [root, '--subject', '【操縦席】試し'], { env: { ...process.env, COCKPIT_ORCA: bin, COCKPIT_DIR: path.join(dir, 'app') } }, (err, stdout, stderr) => (err ? reject(new Error(stderr)) : resolve(stdout)))
     child.stdin?.end('"本文"\n--to run:x')
   })
-  assert.deepEqual(JSON.parse(out), { sent: true, run: 'run_main', from: 'term_new' })
+  assert.deepEqual(JSON.parse(out), { sent: true, run: 'run_main', from: 'term_new', warnings: [] })
   assert.deepEqual(readFileSync(path.join(dir, 'args'), 'utf8').trimEnd().split('\n'), ['orchestration', 'send', '--from', 'term_new', '--to', 'run:run_main', '--type', 'status', '--subject', '【操縦席】試し', '--body-file', '-', '--json'])
   assert.equal(readFileSync(path.join(dir, 'stdin'), 'utf8'), '"本文"\n--to run:x')
 })
