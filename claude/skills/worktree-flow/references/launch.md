@@ -28,8 +28,8 @@ worktree-flow skill の SKILL.md から分けた細部。`orca-launch` が確認
   orca-launch --lead <仕事の id> --name <slug>-lead --spec-file <brief> --agent antigravity
   ```
   - 道具が、窓口の子の worktree（new-child）に担当を立て、表示名とチャットの題を「<形>｜<仕事の題>」にする（頭は仕事の形から。references/sidebar.md の仕事の行）。形を手で打たない。形の無い仕事・見張る仕事には立てない。担当の立て直し（`--replace`）と、形を変えながら立てる（`--form`）ときの書き方は cockpit skill の references/workers.md
-  - `--agent` の既定は `claude`（Orca のチャット、モデル `claude-opus-5-5`）。`--agent antigravity` は `orca orchestration worker-start --agent antigravity --model gemini-4-neon-high` で立てる。Orca は agy をチャットで開けないので、担当は Orca の端末のタブに立ち、深田はそのタブで話す。`--model` に Gemini 以外を渡すと断る（agy では Gemini のモデルだけを使う。R108）
-  - 道具が出した担当の行（`owner`。Claude なら `session`、Gemini なら端末の `terminal` と、受け取りの `worker` を持つ）を、立てた直後に 1 回の書き込みでそのまま操縦席の `owners[]` に書く。タスクの `worker` には書かない（書く欄は cockpit skill の references/workers.md）
+  - `--agent` の既定は `claude`（Orca のチャット、モデル `claude-opus-5-5`）。`--agent antigravity` は `orca orchestration worker-start --agent antigravity --model gemini-4-neon-high` で立てる。担当は Orca のチャットか端末のタブに立ち（どちらかは Orca が決める）、深田はそこで話す。`--model` に Gemini 以外を渡すと断る（agy では Gemini のモデルだけを使う。R108）
+  - 道具が出した担当の行（`owner`。チャットなら `session`、端末なら `terminal` と、受け取りの `worker` を持つ）を、立てた直後に 1 回の書き込みでそのまま操縦席の `owners[]` に書く。タスクの `worker` には書かない（書く欄は cockpit skill の references/workers.md）
   - チャットの題をあとで変えるときは `orca chat rename --session <id> --name "<題>"`。id は `orca worktree ps --json` の、そのチャットの `agents[].orcaSessionId`
 - 担当は窓口の子の worktree（担当の居場所。commit はしない）に立つ。窓口と同じ worktree に立てると、操縦席を見つけた窓口用の hook（periodic-reminder・compaction-keep）が担当をメインと見なし、操縦席の更新を求め、圧縮のあとに担当の送信を止めてしまう。Orca の worker-start には環境変数を渡す手段が無いので、居場所で分ける（操縦席は git に入れないため、子の worktree には無い）
 - Gemini の担当は、Orca が `agy --dangerously-skip-permissions` で起動する（確認の画面は出ない）。危険な操作は agy の hook（agent-harness の claude/hooks/agy-hook.py が Claude と同じ hook を呼ぶ）だけが止める。別系統の目として Claude に相談・レビューを頼むときは `claude-ro` を使う（下の「Gemini から Claude に相談する」）

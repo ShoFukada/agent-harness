@@ -159,6 +159,34 @@ class Switch(Base):
                 self.assertEqual(self.session(), before)
                 self.assertNotIn("verify", self.keep())
 
+    def test_a_gemini_chat_main_writes_no_terminal(self):
+        # Orca のチャットの agy には ORCA_TERMINAL_HANDLE が無く ORCA_STRUCTURED_SESSION=1 が付く。端末を引かず空で書く（t188）
+        self.cockpit["main"]["terminal"] = "term_old"
+        self.write_cockpit()
+        self.terminals(self.gemini_rows())
+        env = self.agy_env(ORCA_STRUCTURED_SESSION="1")
+        env.pop("ORCA_TERMINAL_HANDLE")
+        self.pretool(SWITCH_AGY, "g-1", env=env)
+        done = self.switch(env, "--agent", "antigravity")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn("terminal list", self.calls())
+        self.assertIn("orchestration run-use --id run_main --json", self.calls())
+        self.assertEqual(self.ledger()["main"], {"agent": "antigravity", "terminal": "", "run_id": "run_main"})
+        self.assertEqual(self.session()["terminal"], "")
+
+    def test_a_gemini_chat_spoken_to_takes_over_the_run(self):
+        # 窓口の Run を持たない agy のチャットに深田さんが話しかけると、hook がそのターンで Run を引き継ぐ（fitf の 11/28 の失敗の再現）
+        with open(self.bound, "w") as fh:
+            fh.write("")
+        env = self.agy_env(ORCA_STRUCTURED_SESSION="1")
+        env.pop("ORCA_TERMINAL_HANDLE")
+        out = self.hook("UserPromptSubmit", env=env, prompt="窓口として続けて", session_id="g-1", transcript_path="/agy/brain/g-1/t.jsonl")
+        self.assertIn("この会話が帳簿の窓口の Run（run_main）を引き継いだ", out)
+        self.assertNotIn("引き継げなかった", out)
+        self.assertNotIn("terminal list", self.calls())
+        self.assertEqual(self.ledger()["main"], {"agent": "antigravity", "terminal": "", "run_id": "run_main"})
+        self.assertEqual((self.session()["agent"], self.session()["session_id"]), ("antigravity", "g-1"))
+
     def test_the_new_main_cannot_send_to_workers_until_the_resume_passes(self):
         self.take_over_with_gemini()
         send = "orca orchestration send --to dispatch:ctx_a --subject 続き --body-file b.md"
@@ -318,7 +346,7 @@ class Switch(Base):
 class HandoffToGemini(Base):
     """M3: 自動の引き継ぎは、帳簿に書いた窓口の種類で新しい窓口を起こす。新しい窓口の最初のターンで hook が Run を引き継ぐ（t178）。"""
 
-    def test_a_gemini_main_is_handed_off_to_a_new_gemini_terminal(self):
+    def test_a_gemini_main_is_handed_off_to_a_new_gemini_chat(self):
         self.cockpit.update(main={"agent": "antigravity", "terminal": "term_gem", "run_id": "run_main"})
         self.write_cockpit()
         self.now = "2026-11-20T17:00:00+09:00"
@@ -329,9 +357,10 @@ class HandoffToGemini(Base):
         self.now = "2026-11-21T09:00:00+09:00"
         out = json.loads(self.hook("UserPromptSubmit", prompt="今日の最初の発言", session_id="g-1"))
         self.assertEqual(out["decision"], "block")
-        self.assertIn("端末のタブ", out["reason"])
+        self.assertIn("新しいGemini のチャットに引き継ぎました", out["reason"])
+        self.assertIn("チャットの一覧", out["reason"])
         args = read(self.orca_log)
-        self.assertIn("agent launch --agent antigravity --worktree path:%s --surface terminal --model gemini-4-neon-high --prompt" % self.root, args)
+        self.assertIn("agent launch --agent antigravity --worktree path:%s --surface chat --model gemini-4-neon-high --prompt" % self.root, args)
         self.assertIn("--prompt 【引き継ぎ 2026-11-21T09:00:00+09:00】", args)
         ctx = json.loads(self.hook("SessionStart", source="startup", session_id="g-2"))["hookSpecificOutput"]["additionalContext"]
         self.assertIn("そのターンで hook が窓口の Run を引き継ぎ", ctx)

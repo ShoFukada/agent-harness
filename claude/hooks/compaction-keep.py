@@ -625,8 +625,8 @@ def on_prompt(root, inp):
         write_json(path_of(root, "handoff.json"), {"at": attempt, "reason": reason})
         out({"decision": "block",
              "reason": "このチャットの記憶が崩れてきたため（%s）、同じワークスペースの新しい%sに引き継ぎました。"
-                       "いまの発言は新しい窓口に渡してあります。%s" % (reason, "Gemini の窓口" if agent == "antigravity" else "チャット",
-                       "Orca の端末のタブから新しい窓口を開いてください。" if agent == "antigravity" else "Orca のチャットの一覧から新しいチャットを開いてください。")})
+                       "いまの発言は新しい窓口に渡してあります。Orca のチャットの一覧から新しいチャットを開いてください。"
+                       % (reason, "Gemini のチャット" if agent == "antigravity" else "チャット")})
     else:
         print("【引き継ぎ】%s ため新しいチャットへの引き継ぎを試みたが失敗した（%s）。このチャットのまま続いている。記録の元は .orca/cockpit/（state.md・rulings.jsonl・utterances.jsonl）" % (reason, detail))
         with locked(root):

@@ -29,7 +29,7 @@ from cockpit_records import KEEPER, append_jsonl, cockpit, iso, load_keep, locke
 
 # Orca の agent launch の --agent の名前。帳簿の main.agent と main-session.json の agent もこの名前で書く（write.ts の MAIN_AGENTS）
 AGENTS = ("claude", "antigravity")
-# agy では Gemini のモデルだけを使う（R108）。Orca は agy をチャットで開けないので端末で起こす（設計 F1）
+# agy では Gemini のモデルだけを使う（R108）
 AGY_MODEL = "gemini-4-neon-high"
 # 道具を打ってから PreToolUse の控えを使えるまでの猶予。許可の画面で待つ分を含める
 CLAIM_SEC = 600
@@ -54,9 +54,9 @@ def main_agent(root):
 
 
 def launch_args(agent, root, prompt):
-    """引き継ぎで新しい窓口を起こす orca の引数（M3）。agy はチャットで開けないので端末で、Gemini のモデルを付けて起こす。"""
-    args = ["agent", "launch", "--agent", agent, "--worktree", "path:" + root]
-    args += ["--surface", "terminal", "--model", AGY_MODEL] if agent == "antigravity" else ["--surface", "chat"]
+    """引き継ぎで新しい窓口を起こす orca の引数（M3）。agy も Orca のチャットで起こせる（Orca 1.4.280 で確かめた。t188）。"""
+    args = ["agent", "launch", "--agent", agent, "--worktree", "path:" + root, "--surface", "chat"]
+    args += ["--model", AGY_MODEL] if agent == "antigravity" else []
     return args + ["--prompt", prompt, "--json"]
 
 
@@ -181,12 +181,14 @@ def who_am_i(agent, keep):
 
 def main_terminal(root, agent):
     """(帳簿の main.terminal に書く端末の handle, 決まらなかった理由)。環境変数 ORCA_TERMINAL_HANDLE を先に使う。
-    agy の run_command にはこの値が渡らないので、同じ worktree で生きている agy の端末が 1 つだけならその handle を使う
-    （setup.md の「最初に作るとき」と同じ引き方）。0 か複数なら handle を決めずに止める（空で上書きすると窓が窓口の端末を開けなくなる）。
-    Claude で値が無いのはチャットの窓口で、端末が無いので空にする（同じ worktree の Claude の端末はカードの相談なので引かない）。"""
+    Orca のチャットの窓口は端末が無いので空にする。Claude で値が無いのはチャットで（同じ worktree の Claude の端末はカードの相談
+    なので引かない）、agy のチャットは Orca が ORCA_STRUCTURED_SESSION=1 を渡す（Orca 1.4.280 で確かめた。t188）。
+    端末の agy の run_command には ORCA_TERMINAL_HANDLE が渡らないので、同じ worktree で生きている agy の端末が 1 つだけならその
+    handle を使う（setup.md の「最初に作るとき」と同じ引き方）。0 か複数なら handle を決めずに止める（空で上書きすると窓が窓口の
+    端末を開けなくなる）。"""
     if os.environ.get("ORCA_TERMINAL_HANDLE"):
         return os.environ["ORCA_TERMINAL_HANDLE"], None
-    if agent == "claude":
+    if agent == "claude" or os.environ.get("ORCA_STRUCTURED_SESSION") == "1":
         return "", None
     retry = "自分の端末の handle を `ORCA_TERMINAL_HANDLE=term_… %s` の形で前に付けて打ち直す" % switch_command(agent, root)
     got, err = orca_call(["terminal", "list", "--worktree", "path:" + root, "--limit", "500"], ORCA_SLOW_SEC)

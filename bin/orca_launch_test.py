@@ -443,7 +443,7 @@ class LaunchTest(unittest.TestCase):
                                                          "worker": {"run_id": "run_1", "task_id": "task_1"}, "state": "open"})
 
     def test_gemini_lead_starts_in_a_terminal_and_writes_the_terminal(self):
-        # Orca は agy をチャットで開けず端末で開く。担当の行には session ではなく端末の handle を書く。
+        # Orca が agy を端末で開いたときは、担当の行に session ではなく端末の handle を書く。
         root = self.cockpit([], form="cowork")
         show = {"terminalResource": {"endpointIncarnation": "repo::/lead", "terminalHandle": "term_g"}}
         r = subprocess.run([sys.executable, self.launch, "--lead", "s1", "--name", "win-lead", "--cockpit-root", root, "--spec-file", self.spec,

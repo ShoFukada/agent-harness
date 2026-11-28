@@ -22,8 +22,8 @@ closed: false と理由を出して 0 で終える。stop_unknown のうち The 
 
 --lead は仕事（streams[]）の担当を立てる（t159）。表示名とチャットの題を「<形の頭>｜<仕事の題>」にし（頭は state.ts の NAME_HEAD を仕事の form で引く）、
 窓口の子の worktree（new-child）に立て、帳簿の owners[] にそのまま書ける担当の行（session か terminal と、受け取り worker）を出す。
-担当は既定で Claude（Orca のチャット）。--agent antigravity は Gemini（agy）で立てる。Orca は agy をチャットで開けず端末で開くので、
-行には session ではなく端末の handle（terminal）を書く。agy では Gemini のモデルだけを使う（R108。判定は claude/bin/agy_launch.py の pin_gemini）。
+担当は既定で Claude（Orca のチャット）。--agent antigravity は Gemini（agy）で立てる。チャットか端末かは Orca が決めるので、
+行にはチャットなら session、端末なら端末の handle（terminal）を書く（endpoint_of）。agy では Gemini のモデルだけを使う（R108。判定は claude/bin/agy_launch.py の pin_gemini）。
 形の無い仕事・見張る仕事・開いた担当がいる仕事には立てない。担当の形を手で打つと、帳簿の形と食い違う（2026-11-25 の整理のあと、
 任せる仕事に「一緒に｜」の担当がいた）。
 --cockpit-task は、タスクの仕事に形が無い・見張る仕事なら断る。一緒に作る仕事は担当が --run を付けて立てるときだけ通し、窓口が直接立てるのは断る
@@ -448,7 +448,7 @@ def main():
     ap.add_argument("--spec-file", help="brief のファイル（--stop のほかは要る）")
     ap.add_argument("--task-title")
     ap.add_argument("--agent", choices=("claude", "codex", "antigravity"), default="claude",
-                    help="antigravity（Gemini の agy）は --lead だけ。担当は Orca の端末に立つ")
+                    help="antigravity（Gemini の agy）は --lead だけ。担当は Orca のチャットか端末に立つ")
     ap.add_argument("--model", help="既定は worker が opus、担当が %s（antigravity は %s。Gemini 以外は断る）"
                     % (LEAD_MODEL, agy_launch.DEFAULT_MODEL))
     ap.add_argument("--settings", help="既定は $ORCA_WORKER_SETTINGS")

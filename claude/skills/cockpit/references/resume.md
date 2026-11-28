@@ -30,12 +30,12 @@ cwd に `.orca/cockpit.json` があれば、ほかの作業の前に次をやる
 窓口は「深田が最後に話しかけた本線の会話」でもある（t178）。Orca の Run の受け取り手は Run を引き継いだ会話のままで、人がその会話を閉じると、同じワークスペースに新しい会話を開いても知らせは届かない。そこで、自分の Run を持たない本線の会話に深田が話しかけると、hook がその発言のターンで次の道具と同じ手順を済ませ、結果をその会話に流す（Orca は引き継いだ直後に、それまで届いていなかった知らせも届け直す）。種類を替えないなら道具を打たなくてよい。自分の Run を持つ会話（担当など）は引き継がず 1 行で知らせる。道具や引き継ぎで退いた会話も、深田が話しかければまた引き継ぐ（R253）。Orca の知らせのターンでは引き継がない。
 
 1. 前の窓口: 作業メモ（`.orca/cockpit/state.md`）を今の状態に書き直してから閉じる。閉じずに残った前の窓口に知らせが届いても、記録は新しい窓口のまま変わらず、前の窓口からの worker・担当への指示は hook が止める。深田が前の窓口に話しかけると、その会話が窓口に戻る
-2. 深田: Orca で同じワークスペースに新しい窓口を開く。Gemini は端末のタブで開く（Orca は agy をチャットで開けない）。開始の hook が、記録の窓口と違う会話に、話しかければ引き継ぐことを案内する
+2. 深田: Orca で同じワークスペースに新しい窓口を開く。Claude も Gemini も Orca のチャットで開ける（Gemini は端末のタブで開いてもよい）。開始の hook が、記録の窓口と違う会話に、話しかければ引き継ぐことを案内する
 3. 新しい窓口: 深田の最初の発言のターンで hook が引き継ぐ。引き継げなかったと出たときと、種類を替えたのに記録の種類が古いままのときは、会話の中で次を打つ。Claude は `--agent` を付けない。Gemini は agy の run_command から打つ
    ```bash
    ~/.claude/hooks/compaction-keep.py switch <ワークスペースの root> --agent antigravity
    ```
-   - 先に窓口の端末を決める。`ORCA_TERMINAL_HANDLE` が無ければ（agy の run_command）、references/setup.md の `terminal` と同じく `orca terminal list` で同じ worktree の Gemini の端末を引く。0 か複数なら何も書き換えずに止まるので、自分の端末の handle を `ORCA_TERMINAL_HANDLE=term_… ` と前に付けて打ち直す。Claude のチャットは端末が無いので空にする
+   - 先に窓口の端末を決める。Orca のチャットの窓口（Claude のチャットと、`ORCA_STRUCTURED_SESSION=1` が付く Gemini のチャット）は端末が無いので空にする。端末の Gemini で `ORCA_TERMINAL_HANDLE` が無ければ（agy の run_command）、references/setup.md の `terminal` と同じく `orca terminal list` で同じ worktree の Gemini の端末を引く。0 か複数なら何も書き換えずに止まるので、自分の端末の handle を `ORCA_TERMINAL_HANDLE=term_… ` と前に付けて打ち直す
    - 帳簿の `main.run_id` が指す Run を `orca orchestration run-use` で引き継ぐ。担当・worker からの知らせは同じ Run に届く
    - 窓口の種類と会話 id を `.orca/cockpit/main-session.json` に書く（窓からの質問が写す元）。帳簿の `main.agent`・`main.terminal` も書き換える
    - 受信箱を `orca orchestration check` で読み直し、届いていた知らせを出す
@@ -43,5 +43,5 @@ cwd に `.orca/cockpit.json` があれば、ほかの作業の前に次をやる
    - 失敗すると理由を出して止まる。直してから打ち直す（打ち直しても同じ値を書き直すだけ）
 4. 新しい窓口: 再開の確かめ（「セッションの開始・圧縮のあと」の 1）を `compaction-keep.py resume` で通す。通るまで worker・担当への新しい指示は hook が止める。出た知らせは処理したかを確かめる
 
-自動の引き継ぎ（「セッションの開始・圧縮のあと」の 1 の「2 回続けて合わない」とき）も、帳簿の `main.agent` と同じ種類の窓口を起こす（Gemini なら端末のタブで、Gemini のモデルで）。起こされた窓口では、最初のメッセージ（頭に【引き継ぎ <時刻>】が付く）のターンで hook が同じ手順を済ませる。
+自動の引き継ぎ（「セッションの開始・圧縮のあと」の 1 の「2 回続けて合わない」とき）も、帳簿の `main.agent` と同じ種類の窓口を起こす（どちらも Orca のチャットで。Gemini なら Gemini のモデルで）。起こされた窓口では、最初のメッセージ（頭に【引き継ぎ <時刻>】が付く）のターンで hook が同じ手順を済ませる。
 
