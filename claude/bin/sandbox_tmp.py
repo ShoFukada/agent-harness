@@ -28,7 +28,9 @@ def worker_denied_paths():
 
 
 def tmp_root():
-    return os.path.realpath(f"/tmp/claude-{os.getuid()}")
+    # 最後の段は解決しない。/tmp/claude-<uid> そのものが symlink だと、境界が指す先（一時領域の外）に移ってしまう。
+    # 解決しなければ、symlink の先のパスはこの境界の外になり、open_dir_nofollow が断る
+    return os.path.join(os.path.realpath("/tmp"), f"claude-{os.getuid()}")
 
 
 def _prog():

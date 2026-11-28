@@ -4,10 +4,13 @@
   claude-ro <リポジトリ> <prompt.md> <out.md>
 
 - サブスクリプションの `claude -p` で動かす。環境変数は許可リストで選び、API キー（ANTHROPIC_*）・Bedrock・Vertex の変数と
-  sandbox の proxy を渡さない（従量課金の API に流れないように）。席は Orca で今選ばれている Claude の席（orca-launch と同じ）
+  sandbox の proxy を渡さない（従量課金の API に流れないように）。席は Orca で今選ばれている Claude の席（orca-launch と同じ）。
+  席が Console（API キー）でログインしていると環境変数が無くても従量課金になるので、同じ環境の `claude auth status` で
+  claude.ai のログインだと確かめてから呼ぶ
 - 読むだけ: --restricted（ユーザー・プロジェクトの settings・hook・plugin を読まず、ファイルの道具を作業ディレクトリに閉じる）と
   --tools Read,Grep,Glob で、書く・コマンドを実行する・Web を見る道具を持たせない。MCP も載せない（--strict-mcp-config）。
-  聞かれたら断る（--permission-mode dontAsk・--permission-prompts none）。読めるのは <リポジトリ> だけで、worker の denyRead も塞ぐ
+  聞かれたら断る（--permission-mode dontAsk・--permission-prompts none）。読めるのは <リポジトリ> だけで、worker の denyRead も塞ぐ。
+  ホームとその上は <リポジトリ> に渡せない（隣のリポジトリや鍵の置き場まで読める範囲になる）
 - cwd は使い捨ての空ディレクトリにして、CLAUDE.md や project の設定を拾わせない。会話は残さない（--no-session-persistence）
 - prompt と out は Claude の sandbox の一時領域（/tmp/claude-<uid>）の中に限り、symlink をたどらずに開く（sandbox_tmp.py）
 答えの本文は <out.md>、claude の stderr と、本文を取り出せなかったときの stdout は <out.md>.log に書く。
@@ -65,6 +68,20 @@ def claude_args(repo):
             "--add-dir", repo, "--settings", json.dumps(settings(repo)), "--output-format", "json"]
 
 
+def subscription_login(exe, cwd, env):
+    """同じ席・同じ環境で、claude.ai（サブスクリプション）のログインかを確かめる。違えば理由、良ければ None。"""
+    try:
+        r = subprocess.run(["claude", "auth", "status", "--json"], executable=exe, cwd=cwd, env=env, timeout=60,
+                           text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        d = json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return "claude auth status を読めない"
+    got = {k: d.get(k) for k in ("loggedIn", "authMethod", "apiProvider")} if isinstance(d, dict) else {}
+    if got != {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"}:
+        return "claude.ai のログインではない（%s）" % json.dumps(got, ensure_ascii=False)
+    return None
+
+
 def answer_of(stdout):
     """--output-format json の結果から本文を取り出す。失敗の結果（is_error）なら None。"""
     try:
@@ -83,6 +100,9 @@ def main(argv):
     if not os.path.isdir(repo):
         sys.exit(f"claude-ro: {repo} はディレクトリではない")
     repo = os.path.realpath(repo)
+    home = os.path.realpath(os.path.expanduser("~"))
+    if os.path.commonpath([repo, home]) == repo:
+        sys.exit(f"claude-ro: {repo} はホームかその上なので渡せない。リポジトリを渡す")
     body = read_prompt(prompt).decode("utf-8")
     if not body.strip():
         sys.exit(f"claude-ro: {prompt} が空")
@@ -94,6 +114,9 @@ def main(argv):
     env = clean_env(seat_home())
     try:
         with tempfile.TemporaryDirectory(prefix="claude-ro-") as cwd:
+            why = subscription_login(exe, cwd, env)
+            if why:
+                sys.exit(f"claude-ro: 席が{why}ので、従量課金にならないよう呼ばない。Orca の Claude の席を claude.ai でログインしたものにする")
             r = subprocess.run(args, executable=exe, input=body, cwd=cwd, env=env, timeout=KILL_AFTER,
                                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         code, stdout, stderr = r.returncode, r.stdout, r.stderr

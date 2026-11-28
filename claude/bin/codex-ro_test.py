@@ -73,6 +73,13 @@ class Paths(unittest.TestCase):
         with open(link) as f:
             self.assertEqual(f.read(), "new")
 
+    def test_root_is_not_moved_by_a_symlink_at_its_own_name(self):
+        # /tmp/claude-<uid> が symlink でも境界はその場所のまま（解決すると、指す先の外の場所が境界になる）
+        from unittest import mock
+        real = lambda p: "/private/tmp" if p == "/tmp" else "/Users/someone/.ssh"  # noqa: E731
+        with mock.patch.object(self.m.os.path, "realpath", side_effect=real):
+            self.assertEqual(self.m.tmp_root(), "/private/tmp/claude-%d" % os.getuid())
+
     def test_denied_paths_cover_settings_deny_read(self):
         denied = self.m.denied_paths()
         home = os.path.realpath(os.path.expanduser("~"))

@@ -23,6 +23,12 @@ FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import json, os, sys, time
 here = os.path.dirname(os.path.realpath(__file__))
 mode = open(os.path.join(here, "mode")).read().strip()
+if sys.argv[1:3] == ["auth", "status"]:
+    try:
+        print(open(os.path.join(here, "auth")).read())
+    except OSError:
+        print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty", "subscriptionType": "team"}))
+    sys.exit(0)
 stdin = sys.stdin.read()
 with open(os.path.join(here, "calls.jsonl"), "a", encoding="utf-8") as f:
     f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "env": dict(os.environ), "stdin": stdin}, ensure_ascii=False) + "\n")
@@ -121,6 +127,25 @@ class ClaudeRo(unittest.TestCase):
         # cwd は使い捨ての空ディレクトリで、終わったら消す
         self.assertNotIn(c["cwd"], (repo, os.path.realpath(self.d)))
         self.assertFalse(os.path.exists(c["cwd"]))
+
+    def test_refuses_a_seat_not_logged_in_with_claude_ai(self):
+        # Console（API キー）のログインや Bedrock の席では、環境変数が無くても従量課金になる
+        for auth in ({"loggedIn": True, "authMethod": "console", "apiProvider": "firstParty"},
+                     {"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "bedrock"},
+                     {"loggedIn": False, "authMethod": "none", "apiProvider": "firstParty"}, "壊れた出力"):
+            with open(os.path.join(self.bindir, "auth"), "w") as f:
+                f.write(auth if isinstance(auth, str) else json.dumps(auth))
+            r = self.run_ro(self.repo, self.prompt, self.out)
+            self.assertNotEqual(r.returncode, 0, auth)
+            self.assertIn("従量課金にならないよう呼ばない", r.stderr)
+            self.assertEqual(self.calls(), [], "claude -p を呼ばない")
+
+    def test_refuses_home_or_above_as_the_repo(self):
+        for d in (os.path.expanduser("~"), os.path.dirname(os.path.expanduser("~")), "/"):
+            r = self.run_ro(d, self.prompt, self.out)
+            self.assertNotEqual(r.returncode, 0, d)
+            self.assertIn("ホームかその上", r.stderr)
+        self.assertEqual(self.calls(), [])
 
     def test_falls_back_to_the_callers_seat_without_orca(self):
         r = self.run_ro(self.repo, self.prompt, self.out, ORCA_CLI_COMMAND=os.path.join(self.d, "no-orca"))
