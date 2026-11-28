@@ -10,9 +10,15 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
   orca-launch --lead <仕事の id> --name <slug> --spec-file <brief> [--agent claude|antigravity] [--cockpit-root <root>]
   orca-launch --stop <dispatch_id>
 
---stop は orca-launch で立てた worker を止めて端末を閉じる。orca-launch は端末を自分で作って worker-start --terminal で渡すので、
-Orca はその端末を外のものと見て、worker-stop は端末を閉じずに stop_unknown（The worker terminal is external）を返す。
-そのときだけ、その Dispatch の端末を terminal close で閉じる。
+--stop は orca-launch で立てた worker を止めて端末を閉じる。worker_done を送ったあとの worker にも使う。orca-launch は端末を自分で作って
+worker-start --terminal で渡すので、Orca はその端末を外のもの（worker-show の terminalResource.ownershipState が external）と見て、
+worker-stop でも worker_done のあとの自動の片付け（worker-release）でも閉じない。worker-stop は、動いている worker には
+stop_unknown（The worker terminal is external）を、報告を済ませた worker には alreadySettled・processAction none を返す。
+どちらでも、外の端末ならその Dispatch の端末を terminal close で閉じる（端末がもう無い terminal_handle_stale は閉じたものとして扱う）。
+worker-stop が processAction closed_agent_terminal を返したら Orca が閉じたので閉じない。外の端末でないもの（orchestration dispatch で
+渡した端末・Orca が持つ端末）と、同じ Run で同じ端末に済んでいない別の Dispatch があるもの（続きの Dispatch が同じ端末に来る）も閉じず、
+closed: false と理由を出して 0 で終える。stop_unknown のうち The recorded worker process is exited などは、Orca が端末を生きていないと
+見た返事で、止めたと言えないので 1 で終える。
 
 --lead は仕事（streams[]）の担当を立てる（t159）。表示名とチャットの題を「<形の頭>｜<仕事の題>」にし（頭は state.ts の NAME_HEAD を仕事の form で引く）、
 窓口の子の worktree（new-child）に立て、帳簿の owners[] にそのまま書ける担当の行（session か terminal と、受け取り worker）を出す。
@@ -389,22 +395,42 @@ def start_lead(a):
     sys.exit(0)
 
 
+SETTLED = ("succeeded", "failed", "stopped", "abandoned")
+
+
 def stop_worker(dispatch):
-    """worker-stop で止め、外の端末として残されたら、その Dispatch の端末を閉じる。"""
+    """worker-stop で止め、Orca が端末を閉じなかったら、その Dispatch の外の端末を閉じる。"""
     r = orca("orchestration", "worker-stop", "--dispatch", dispatch)
     said = json.dumps(r, ensure_ascii=False)
+    result = r.get("result") or {"dispatchId": dispatch}
     if r.get("ok") and "stop_unknown" not in said:
-        print(json.dumps(r.get("result") or {}, ensure_ascii=False))
-        sys.exit(0)
-    if "stop_unknown" not in said or "terminal is external" not in said:
+        if result.get("processAction") == "closed_agent_terminal":
+            # worker-stop のヘルプ: Orca が閉じたので terminal close を重ねない
+            print(json.dumps(result, ensure_ascii=False))
+            sys.exit(0)
+    elif "stop_unknown" not in said or "terminal is external" not in said:
+        # 「The recorded worker process is exited」などは、Orca が端末を生きていないと見た返事。閉じる相手が無く、止めたとも言えないので失敗にする
         sys.exit("orca-launch: worker-stop が %s を止められなかった" % dispatch)
     shown = orca("orchestration", "worker-show", "--dispatch", dispatch, "--full").get("result") or {}
-    handle = (shown.get("terminal") or {}).get("handle") or (shown.get("worker") or {}).get("agentTerminalHandle")
+    res = shown.get("terminalResource") or {}
+    if res.get("ownershipState") != "external":
+        # Orca が持つ端末は Orca が片付け、orchestration dispatch で渡した端末は人やほかのエージェントのもの
+        print(json.dumps({**result, "closed": False, "reason": "terminal_not_external"}, ensure_ascii=False))
+        sys.exit(0)
+    handle = res.get("terminalHandle") or (shown.get("terminal") or {}).get("handle") or (shown.get("worker") or {}).get("agentTerminalHandle")
     if not handle:
         sys.exit("orca-launch: %s の端末が分からないので閉じていない（orca orchestration worker-show --dispatch %s --full で確かめる）" % (dispatch, dispatch))
-    if not orca("terminal", "close", "--terminal", handle).get("ok"):
+    # 報告を済ませた worker の端末には、続きの Dispatch が同じ端末で来る（2026-11-28 の term_885487e5 は ctx_d8a2a07d4f10 のあと ctx_bf42b7ec6f92 を受けた）
+    run = (shown.get("dispatch") or {}).get("runId")
+    workers = (orca("orchestration", "worker-list", *(["--run", run] if run else []), "--limit", "100").get("result") or {}).get("workers") or []
+    busy = [w["dispatchId"] for w in workers if w.get("terminal") == handle and w.get("dispatchId") != dispatch and w.get("state") not in SETTLED]
+    if busy:
+        print(json.dumps({**result, "terminal": handle, "closed": False, "reason": "terminal_in_use", "usedBy": busy}, ensure_ascii=False))
+        sys.exit(0)
+    closed = orca("terminal", "close", "--terminal", handle)
+    if not closed.get("ok") and (closed.get("error") or {}).get("code") != "terminal_handle_stale":
         sys.exit("orca-launch: %s の端末 %s を閉じられなかった" % (dispatch, handle))
-    print(json.dumps({"dispatchId": dispatch, "terminal": handle, "closed": True}, ensure_ascii=False))
+    print(json.dumps({**result, "terminal": handle, "closed": True, **({} if closed.get("ok") else {"alreadyGone": True})}, ensure_ascii=False))
     sys.exit(0)
 
 

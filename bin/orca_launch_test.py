@@ -42,7 +42,7 @@ elif args[:2] == ["account", "list"] and os.environ.get("FAKE_ACCOUNTS"):
     later = os.environ.get("FAKE_ACCOUNTS_LATER")
     out(json.loads(later if later and seen > 1 else os.environ["FAKE_ACCOUNTS"]))
 elif args[:2] == ["terminal", "close"]:
-    out({})
+    print(os.environ.get("FAKE_CLOSE") or '{"ok": true, "result": {}}')
 elif args[:2] == ["orchestration", "worker-start"]:
     spec = args[args.index("--spec-file") + 1]
     with open(os.environ["FAKE_LOG"] + ".spec", "w") as fh:
@@ -53,6 +53,8 @@ elif args[:2] == ["orchestration", "worker-show"]:
 elif args[:2] == ["orchestration", "worker-stop"]:
     print(os.environ["FAKE_STOP"])
     sys.exit(0 if '"ok": true' in os.environ["FAKE_STOP"] and "stop_unknown" not in os.environ["FAKE_STOP"] else 1)
+elif args[:2] == ["orchestration", "worker-list"]:
+    out({"workers": json.loads(os.environ.get("FAKE_WORKERS") or "[]")})
 elif args[:2] == ["agent", "list"]:
     out({"agents": [{"orcaSessionId": "sess_lead", "worktreeId": "repo::/lead"}]})
 elif args[:2] == ["terminal", "list"]:
@@ -114,9 +116,15 @@ class LaunchTest(unittest.TestCase):
         self.assertEqual(setw[setw.index("--workspace-status") + 1], "in-progress")
         self.assertEqual(json.loads(r.stdout)["dispatchId"], "ctx_1")
 
-    def stop(self, said):
+    SHOWN = {"dispatch": {"runId": "run_9"}, "terminal": {"handle": "term_w"},
+             "terminalResource": {"ownershipState": "external", "terminalHandle": "term_w"}}
+
+    def stop(self, said, shown=SHOWN, **env):
         return subprocess.run([sys.executable, self.launch, "--stop", "ctx_9"], capture_output=True, text=True,
-                              env={**self.env, "FAKE_STOP": json.dumps(said)}, cwd=self.tmp)
+                              env={**self.env, "FAKE_STOP": json.dumps(said), "FAKE_SHOW": json.dumps(shown), **env}, cwd=self.tmp)
+
+    def closes(self):
+        return [c for c in self.calls() if c[:2] == ["terminal", "close"]]
 
     def test_stop_closes_the_terminal_orca_left_as_external(self):
         # 2026-11-28: orca-launch の端末は worker-start --terminal で渡すので、Orca は外の端末と見て worker-stop で閉じなかった。
@@ -127,15 +135,55 @@ class LaunchTest(unittest.TestCase):
             open(self.log, "w").close()
             r = self.stop(said)
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(json.loads(r.stdout), {"dispatchId": "ctx_9", "terminal": "term_w", "closed": True})
-            self.assertEqual(self.calls()[-1], ["terminal", "close", "--terminal", "term_w", "--json"])
+            out = json.loads(r.stdout)
+            self.assertEqual((out["dispatchId"], out["terminal"], out["closed"]), ("ctx_9", "term_w", True))
+            self.assertEqual(self.closes(), [["terminal", "close", "--terminal", "term_w", "--json"]])
         # Orca が閉じたとき・外の端末でない理由で止められなかったときは、端末に触らない。
         for said, code in (({"ok": True, "result": {"dispatchId": "ctx_9", "state": "stopped", "processAction": "closed_agent_terminal"}}, 0),
                            ({"ok": True, "result": {"dispatchId": "ctx_9", "state": "stop_unknown", "lastError": "The recorded worker process is exited; no terminal was closed."}}, 1)):
             open(self.log, "w").close()
             r = self.stop(said)
             self.assertEqual(r.returncode, code, r.stderr)
-            self.assertFalse([c for c in self.calls() if c[:2] == ["terminal", "close"]])
+            self.assertFalse(self.closes())
+
+    def test_stop_closes_the_terminal_of_a_worker_that_already_reported(self):
+        # 2026-11-28: worker_done のあとの ctx_bf42b7ec6f92 に --stop を打つと、worker-stop は alreadySettled・processAction none を返し、
+        # 端末 term_885487e5 は running のまま残った。片付けの多くは worker_done のあとなので、ここで閉じる。
+        settled = {"ok": True, "result": {"dispatchId": "ctx_9", "state": "succeeded", "alreadySettled": True, "processAction": "none"}}
+        r = self.stop(settled, FAKE_WORKERS=json.dumps([{"dispatchId": "ctx_9", "state": "succeeded", "terminal": "term_w"},
+                                                        {"dispatchId": "ctx_8", "state": "ready", "terminal": "term_other"}]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), {**settled["result"], "terminal": "term_w", "closed": True})
+        self.assertEqual(self.closes(), [["terminal", "close", "--terminal", "term_w", "--json"]])
+        self.assertIn(["orchestration", "worker-list", "--run", "run_9", "--limit", "100", "--json"], self.calls())
+        # 端末がもう無い（terminal_handle_stale）なら、閉じたものとして扱う。
+        open(self.log, "w").close()
+        r = self.stop(settled, FAKE_CLOSE=json.dumps({"ok": False, "error": {"code": "terminal_handle_stale", "message": "terminal_handle_stale"}}))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["alreadyGone"], True)
+        # ほかの理由で閉じられなければ失敗にする。
+        open(self.log, "w").close()
+        r = self.stop(settled, FAKE_CLOSE=json.dumps({"ok": False, "error": {"code": "runtime_unavailable"}}))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("閉じられなかった", r.stderr)
+
+    def test_stop_leaves_a_terminal_that_is_not_its_own_to_close(self):
+        settled = {"ok": True, "result": {"dispatchId": "ctx_9", "state": "succeeded", "alreadySettled": True, "processAction": "none"}}
+        # 同じ端末で続きの Dispatch が動いていれば閉じない（続きの worker を止めてしまう）。
+        r = self.stop(settled, FAKE_WORKERS=json.dumps([{"dispatchId": "ctx_10", "state": "ready", "terminal": "term_w"},
+                                                        {"dispatchId": "ctx_9", "state": "succeeded", "terminal": "term_w"}]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual((out["closed"], out["usedBy"]), (False, ["ctx_10"]))
+        self.assertFalse(self.closes())
+        # orchestration dispatch で渡した端末（Orca の端末の記録が無い）と、Orca が持つ端末には触らない。
+        for shown in ({"dispatch": {"runId": "run_9"}, "terminal": {"handle": "term_w"}},
+                      {**self.SHOWN, "terminalResource": {"ownershipState": "owned", "terminalHandle": "term_w"}}):
+            open(self.log, "w").close()
+            r = self.stop(settled, shown)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(json.loads(r.stdout)["closed"], False)
+            self.assertFalse(self.closes())
 
     def test_name_over_the_limit_is_refused_before_anything_starts(self):
         # 頭の「作業｜」も含めて上限を超えたら、何も起こさずに断る（R146・R181）。上限ちょうどは通す。
