@@ -1265,6 +1265,57 @@ class StopKeepsUntouchedLines(Hook):
         self.assertEqual(self.calls, [])
 
 
+class StopFromAgy(Hook):
+    """agy-hook.py が transcript の代わりに渡す turn_writes（Claude の形の入力の一覧）から、書いたファイルを見つける（H3）。"""
+
+    LINE = StopKeepsUntouchedLines.LINE
+    setUp = StopKeepsUntouchedLines.setUp
+    every_line_rewritten = StopKeepsUntouchedLines.every_line_rewritten
+
+    def run_given(self, writes, transcript=""):
+        self.stub(self.every_line_rewritten)
+        return self.run_hook("stop", {"turn_writes": writes, "transcript_path": transcript, "cwd": self.dir})
+
+    def test_a_write_in_turn_writes_is_rewritten_without_a_claude_transcript(self):
+        path = self.write("note.md", self.before)
+        agy_log = self.write("transcript_full.jsonl", json.dumps({"step_index": 0, "type": "USER_INPUT"}) + "\n")
+        self.assertIn("1 ファイルを書き直した", self.run_given(
+            [{"tool_input": {"file_path": path, "content": self.before}, "original": None}], agy_log))
+        self.assertEqual(self.read(path), self.every_line_rewritten(self.before))
+
+    def test_an_edit_in_turn_writes_is_confined_to_its_fragment(self):
+        lines = list(self.lines)
+        lines[3] = "直した行の本文で、新しい。"
+        path = self.write("tooling.md", "\n".join(lines) + "\n")
+        self.assertIn("書き直した", self.run_given(
+            [{"tool_input": {"file_path": path, "old_string": self.LINE + "3", "new_string": lines[3]}, "original": None}]))
+        expected = list(lines)
+        expected[3] = "直した行の本文であり、新しい。"
+        self.assertEqual(self.read(path), "\n".join(expected) + "\n")
+
+    def test_the_original_keeps_lines_the_user_changed_before_the_turn(self):
+        git(self.dir, "init", "-q")
+        path = self.write("README.md", self.before)
+        git(self.dir, "add", "README.md")
+        git(self.dir, "commit", "-qm", "init")
+        lines = list(self.lines)
+        lines[1] = "利用者が先に直した行は本文で、未commit。"
+        start = "\n".join(lines) + "\n"
+        lines[8] = "agy が書いた行の本文で、新しい。"
+        after = "\n".join(lines) + "\n"
+        self.write("README.md", after)
+        self.assertIn("書き直した", self.run_given([{"tool_input": {"file_path": path, "content": after}, "original": start}]))
+        expected = list(lines)
+        expected[8] = "agyが書いた行の本文であり、新しい。"  # 採った行は ja_spacing で詰め直す
+        self.assertEqual(self.read(path), "\n".join(expected) + "\n")
+
+    def test_an_empty_list_wins_over_the_transcript(self):
+        path = self.write("a.md", self.before)
+        transcript = self.transcript([user_prompt(), tool_call("Write", {"file_path": path, "content": self.before})])
+        self.assertEqual(self.run_given([], transcript), "")
+        self.assertEqual(self.calls, [])
+
+
 class Pre(Hook):
     def setUp(self):
         Hook.setUp(self)

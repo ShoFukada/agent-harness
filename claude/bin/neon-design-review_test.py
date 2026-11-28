@@ -129,7 +129,8 @@ class Entry(unittest.TestCase):
                 f"m.REAL_AGY = {fake!r}\n"
                 "m.main(['agy'] + sys.argv[1:])\n")
         env = agy_testing.polluted_env(os.path.dirname(fake), NEON_DESIGN_REVIEW_TMP=private,
-                                       NEON_DESIGN_REVIEW_AS_AGY=shots, TMPDIR=private)
+                                       NEON_DESIGN_REVIEW_AS_AGY=shots, TMPDIR=private,
+                                       NEON_LAUNCH_TMP=private)
         r = subprocess.run([sys.executable, "-c", code, "--model", "gemini-4-neon-high", "--add-dir", shots,
                             "--input-format", "stream-json"], input="採点して", env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -154,8 +155,9 @@ class Entry(unittest.TestCase):
                 f"m.REAL_AGY = {fake!r}\n"
                 "m.main(['agy'] + sys.argv[1:])\n")
         env = agy_testing.polluted_env(os.path.dirname(fake), NEON_DESIGN_REVIEW_TMP=private,
-                                       NEON_DESIGN_REVIEW_AS_AGY=shots, TMPDIR=private)
-        env = {k: v for k, v in env.items() if "claude" not in (k + v).lower() or k in ("PATH", "TMPDIR", "NEON_DESIGN_REVIEW_TMP", "NEON_DESIGN_REVIEW_AS_AGY")}
+                                       NEON_DESIGN_REVIEW_AS_AGY=shots, TMPDIR=private,
+                                       NEON_LAUNCH_TMP=private)
+        env = {k: v for k, v in env.items() if "claude" not in (k + v).lower() or k in ("PATH", "TMPDIR", "NEON_DESIGN_REVIEW_TMP", "NEON_DESIGN_REVIEW_AS_AGY", "NEON_LAUNCH_TMP")}
         self.assertNotIn("ORCA_WORKER_SETTINGS", env)
         r = subprocess.run([sys.executable, "-c", code, "--model", "gemini-4-neon-high", "--add-dir", shots],
                            input="採点して", env=env, capture_output=True, text=True)

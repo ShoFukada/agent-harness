@@ -1,0 +1,29 @@
+{
+  "claude-hooks": {
+    "SessionStart": [
+      {"type": "command", "command": "../../../claude/hooks/agy-hook.py SessionStart", "timeout": 60}
+    ],
+    "PreInvocation": [
+      {"type": "command", "command": "../../../claude/hooks/agy-hook.py PreInvocation", "timeout": 120}
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "../../../claude/hooks/agy-hook.py PreToolUse", "timeout": 300}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "../../../claude/hooks/agy-hook.py PostToolUse", "timeout": 60}
+        ]
+      }
+    ],
+    "Stop": [
+      {"type": "command", "command": "../../../claude/hooks/agy-hook.py Stop", "timeout": 900}
+    ]
+  }
+}

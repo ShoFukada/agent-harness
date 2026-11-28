@@ -4,10 +4,14 @@ agy -p を第三者のコーディングエージェントで包む使い方を�
   sandbox の proxy（HTTP(S)_PROXY）が受け継がれる。proxy を渡さないのは、agy は sandbox の外でしか動かず、
   この環境の proxy の変数は sandbox のものだけだから
 - 使い捨ての cwd は利用者の一時フォルダ（/var/folders/…/T）に作る。agy は cwd を作業場所として扱う
+- HOME は利用者の一時フォルダの agy-neon-home にする（neon_home）。~/.gemini に置いた対話用の決まり（GEMINI.md・
+  AGENTS.md）と config/ の skill・プラグインの hook・MCP を、Neon の単発の呼び出しに読ませないため（R241）。
+  ANTIGRAVITY_CONFIG_REL_DIR では決まりと skill が分かれなかった（11/28 の試し）
 
   python3 -I agy_launch.py agy <agy の引数...>   環境を絞って agy に置き換わる
 """
 
+import fcntl
 import json
 import os
 import re
@@ -38,6 +42,50 @@ def user_tmp():
 def workdir_root():
     # NEON_LAUNCH_TMP: テストを Claude の sandbox の中で走らせるため（利用者の一時フォルダに書けない）
     return os.path.realpath(os.environ.get("NEON_LAUNCH_TMP") or user_tmp())
+
+
+NEON_HOME = "agy-neon-home"
+# config/ からは config.json（アカウントと既定の設定）だけを見せる。skills.json・plugins.json・hooks.json・mcp_config.json は対話用
+HIDDEN = {"GEMINI.md", "AGENTS.md", "config"}
+CONFIG_KEEP = {"config.json"}
+
+
+def _link(target, path):
+    """path を target への symlink にする。違うものがあれば置き換える。agy は設定を一時ファイルの rename で書くので、
+    前の呼び出しが symlink を普通のファイルに替えていることがある（残すと、ログインし直した ~/.gemini の認証を隠す）。"""
+    if os.path.islink(path) and os.readlink(path) == target:
+        return
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    tmp = "%s.%d.link" % (path, os.getpid())
+    os.symlink(target, tmp)
+    os.replace(tmp, path)
+
+
+def _mirror(src, dst, keep):
+    os.makedirs(dst, exist_ok=True)
+    names = set(keep(os.listdir(src))) if os.path.isdir(src) else set()
+    for name in names:
+        _link(os.path.join(src, name), os.path.join(dst, name))
+    for name in os.listdir(dst):
+        if name not in names and os.path.islink(os.path.join(dst, name)):
+            os.unlink(os.path.join(dst, name))
+
+
+def neon_home(real_home=None, root=None):
+    """Neon を起こすときの HOME。.gemini/ に本当の ~/.gemini の中身を symlink で並べ、HIDDEN を除く。
+    パスに claude を含めない（clean_env が HOME ごと捨て、agy が起動しない）。"""
+    real = os.path.join(real_home or os.path.expanduser("~"), ".gemini")
+    home = os.path.join(root or workdir_root(), NEON_HOME)
+    dst = os.path.join(home, ".gemini")
+    os.makedirs(home, exist_ok=True)
+    # Neon は並行に呼ばれる（ja-review と consult など）。並べ直しを直列にしないと、片方の掃除がもう片方の作りかけの
+    # symlink を消し、os.replace が落ちる
+    with open(os.path.join(home, ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _mirror(real, dst, lambda names: [n for n in names if n not in HIDDEN])
+        _mirror(os.path.join(real, "config"), os.path.join(dst, "config"), lambda names: [n for n in names if n in CONFIG_KEEP])
+    return home
 
 
 def clean_env(extra=None):
@@ -86,14 +134,15 @@ def pin_gemini(args):
 def run(args, input, timeout, prefix="neon-", extra_env=None):
     """agy を使い捨ての空の cwd で走らせ、subprocess.run の結果を返す。例外は subprocess.run のものをそのまま上げる。"""
     args = pin_gemini(args)
+    env = clean_env(dict(extra_env or {}, HOME=neon_home()))
     with tempfile.TemporaryDirectory(prefix=prefix, dir=workdir_root()) as cwd:
-        return subprocess.run(args, executable=_exe(args[0]), input=input, cwd=cwd, env=clean_env(extra_env),
+        return subprocess.run(args, executable=_exe(args[0]), input=input, cwd=cwd, env=env,
                               timeout=timeout, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def exec_(args):
     args = pin_gemini(args)
-    os.execve(_exe(args[0]), args, clean_env())
+    os.execve(_exe(args[0]), args, clean_env({"HOME": neon_home()}))
 
 
 if __name__ == "__main__":

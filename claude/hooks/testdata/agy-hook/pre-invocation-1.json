@@ -1,0 +1,12 @@
+{
+ "artifactDirectoryPath": "/Users/fukadasho/.gemini/antigravity-cli/brain/c12e81d0-b7fe-4b1d-8ff9-d0566dfc19a8",
+ "conversationId": "c12e81d0-b7fe-4b1d-8ff9-d0566dfc19a8",
+ "initialNumSteps": 5,
+ "invocationNum": 1,
+ "lastUserInput": "次を順に答えて。1) あなたの決まり（r…",
+ "modelName": "gemini-4-neon-high",
+ "transcriptPath": "/Users/fukadasho/.gemini/antigravity-cli/brain/c12e81d0-b7fe-4b1d-8ff9-d0566dfc19a8/.system_generated/logs/transcript_full.jsonl",
+ "workspacePaths": [
+  "/private/tmp/claude-501/-Users-fukadasho-orca-workspaces-nix-darwin-agy-main-lead/7f6a3567-8d75-4d51-ab29-0425287d4d56/scratchpad/spike/work"
+ ]
+}

@@ -22,7 +22,8 @@ stop は transcript から、最後のユーザープロンプト以降に成功
 apply_patch を拾い、重複を除いたパスのディスク上の現在の内容を見る。書き直しのうち採るのは、そのターンで
 変えた行（ターンで最初の書き込みの結果にある書き込む前の本文と、今の本文の行の差分。前の本文が分からなければ
 Edit の断片の位置と HEAD との git diff）の中に収まる変更だけで、触れていない行は、改行コードと末尾の空行も
-含めて書き換えない（PR の範囲の外の差分を混ぜないため）。
+含めて書き換えない（PR の範囲の外の差分を混ぜないため）。agy から呼ぶとき（agy-hook.py）は transcript の代わりに、
+入力の turn_writes（そのターンに書き込めた Write / Edit の入力と、書き込む前の本文の一覧）を読む。
 採った行は ja_spacing の規則で日本語と英数字の間の空白を詰め直す。変えた行が無いファイルは渡さない。
 書き直しを呼ぶのは地の文の日本語が 300 文字以上のファイルだけで、それ未満は単語表の閾値だけを見る。
 CLAUDE.md・CLAUDE.local.md・AGENTS.md・SKILL.md、agents/ skills/ .claude/ 配下、scratchpad 配下、
@@ -913,6 +914,24 @@ def is_user_prompt(entry):
     return False
 
 
+def given_writes(payload, cwd):
+    """agy-hook.py が渡す、そのターンに書き込めた書き込み（turn_writes。{"tool_input": Claude の形の入力,
+    "original": 書き込む前の本文か None} の一覧）を turn_writes() と同じ形にする。agy の会話記録は Claude の形でないので、
+    transcript から拾えない。turn_writes が無ければ None。"""
+    given = payload.get("turn_writes")
+    if not isinstance(given, list):
+        return None
+    writes = {}
+    for item in given:
+        tool_input = item.get("tool_input") if isinstance(item, dict) else None
+        if not isinstance(tool_input, dict):
+            continue
+        original = item.get("original") if isinstance(item.get("original"), str) else None
+        for path in written_paths(tool_input, cwd):
+            writes.setdefault(path, []).append((tool_input, original))
+    return list(writes.items())
+
+
 def turn_writes(transcript_path, cwd):
     """最後のユーザープロンプト以降に書き込めたパスごとに、(パス, [(書き込みの入力, 書き込む前の本文), ...])
     を現れた順に返す。本文は toolUseResult の originalFile で、分からなければ None。
@@ -1045,7 +1064,8 @@ def hook_stop(payload):
     unsafe = []
     skipped = []
     cwd = payload.get("cwd") or ""
-    for path, writes in turn_writes(payload.get("transcript_path"), cwd):
+    given = given_writes(payload, cwd)
+    for path, writes in turn_writes(payload.get("transcript_path"), cwd) if given is None else given:
         if not path.lower().endswith(TEXT_EXTENSIONS) or is_instruction_file(path):
             continue
         raw = read_raw(path)
