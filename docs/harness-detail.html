@@ -112,7 +112,7 @@ a{color:var(--focus)}
 <tr id="V2"><td class="n">V2</td><td>窓口</td><td>ワークスペースのメイン。深田さんと話し、帳簿を書く唯一のエージェント</td></tr>
 <tr id="V3"><td class="n">V3</td><td>担当</td><td>1つの仕事を終わりまで受け持つチャット。自分のRunを持ち、自分のworkerを立てる</td></tr>
 <tr id="V4"><td class="n">V4</td><td>worker</td><td>1つのworktreeの端末でコードを書くエージェント。worker用の設定（sandbox）で起こす</td></tr>
-<tr id="V5"><td class="n">V5</td><td>写しの会話</td><td>窓の「質問」から立つ、窓口の会話を写した相手（<code>claude --resume --fork-session</code>）。Read・Grep・Globだけを使い、帳簿に触れない</td></tr>
+<tr id="V5"><td class="n">V5</td><td>写しの会話</td><td>窓の「質問」から立つ、窓口の会話を写した相手（<code>claude --resume --fork-session</code>。窓口がGeminiなら文脈の束だけを渡した新しいclaude）。Read・Grep・Globだけを使い、帳簿に触れない</td></tr>
 <tr id="V6"><td class="n">V6</td><td>相談のタブ</td><td>担当のいないカードで「窓口と協議」を押すと立つ、そのカード専用の相談</td></tr>
 <tr id="V7"><td class="n">V7</td><td>郵便受けの端末</td><td>AIを動かさない端末（タブ名「操縦席｜郵便受け」）。窓や見張りのようなOrcaの外のプロセスが知らせを送るときの送り主</td></tr>
 <tr id="V8"><td class="n">V8</td><td>Run・Dispatch</td><td>Orcaのorchestrationの単位。Runは知らせで起こされる役（coordinator）が持ち、Dispatchはworkerや担当に渡した1回分の仕事</td></tr>
@@ -574,7 +574,7 @@ a{color:var(--focus)}
 <thead><tr><th>ID</th><th>何が起きるか</th><th>抜けたときに拾うもの</th></tr></thead>
 <tbody>
 <tr id="C1"><td class="n">C1</td><td>深田さんが窓の「質問」の欄（全体のタブの上・カードの詳細・タスクの詳細）に打つ。hookが発言の記録に <code>ask</code> 付きで残す</td><td>ほかの発言と同じく仕分けの対象（A3）</td></tr>
-<tr id="C2"><td class="n">C2</td><td>窓が <code>consult --ask</code> で、<code>main-session.json</code> の窓口の会話を写した相手を窓口のworktreeのタブに立てる。タブは前に出さない</td><td>窓口がまだ発言していないと立たず、窓が「窓口の会話が分かりません」と出す</td></tr>
+<tr id="C2"><td class="n">C2</td><td>窓が <code>consult --ask</code> で、<code>main-session.json</code> の窓口の会話を写した相手を窓口のworktreeのタブに立てる。窓口がGeminiなら会話を写せないので、文脈の束（<code>ask-context</code>）だけを渡した新しいclaudeを立てる。タブは前に出さない</td><td><code>main-session.json</code> が今のRunの窓口を指していないと立たず、窓が「窓口の会話が分かりません。窓口で compaction-keep.py switchを打つと直ります」と出す</td></tr>
 <tr id="C3"><td class="n">C3</td><td>相手はRead・Grep・Globだけで答える。hookがStopで答えを控え <code>ask-&lt;質問id&gt;.md</code> に足す</td><td>なし</td></tr>
 <tr id="C4"><td class="n">C4</td><td>窓が控えを読み、右の欄に答えを出す</td><td>なし</td></tr>
 <tr id="C5"><td class="n">C5</td><td>深田さんが「この答えを窓口に返す」を押す。窓が <code>ask_decide</code> の操作を書く</td><td>操作が残るので、相手が止まっても窓口が拾える</td></tr>
