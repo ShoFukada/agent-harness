@@ -20,8 +20,11 @@ export type Change = {
   owners?: Owner[]
   intake?: Intake
   applied_ops?: number[]
-  /** 窓口の Run だけを置き換える。main のほかの欄（agent・terminal）は今の値を保つ。Run は消せない（書いた結果に Run が要る）。 */
-  main?: { run_id: string | null }
+  /**
+   * 窓口の Run・種類・端末を、渡した欄だけ置き換える（渡さない欄は今の値を保つ）。Run は消せない（書いた結果に Run が要る）。
+   * 種類と端末は窓口を替える道具（compaction-keep.py switch）が書く。terminal の空文字はチャットの窓口（端末が無い）。
+   */
+  main?: { run_id?: string | null; agent?: string; terminal?: string }
   /** 窓からの質問の返しを反映した印（質問 id ごとの追加と置き換え。cockpit skill の「窓から質問する」）。 */
   asks?: AskRecord[]
   /** 案件の名前だけを置き換える（「顧客｜案件」の形のものだけ。R165）。milestones は今の値を保つ。 */
@@ -529,8 +532,8 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
       errors.push(`${k} は id のある行の配列で渡す`)
   if (change.applied_ops !== undefined && !(Array.isArray(change.applied_ops) && change.applied_ops.every((n) => Number.isInteger(n) && n > 0)))
     errors.push('applied_ops は op_id（正の整数）の配列で渡す')
-  if (change.main !== undefined && !(isObj(change.main) && Object.keys(change.main).join() === 'run_id' && (change.main.run_id === null || RUN_ID(change.main.run_id))))
-    errors.push('main は { run_id } だけを渡す（run_id は run_ で始まる文字列）')
+  if (change.main !== undefined && !mainShape(change.main))
+    errors.push(`main は { run_id・agent・terminal } のうち変える欄だけを渡す（run_id は run_ で始まる文字列、agent は ${MAIN_AGENTS.join('・')}、terminal は term_ で始まる handle かチャットなら空文字）`)
   if (change.workspace !== undefined) {
     if (!(isObj(change.workspace) && Object.keys(change.workspace).join() === 'name')) errors.push('workspace は { name } だけを渡す')
     else {
@@ -771,7 +774,7 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   const next: Cockpit = {
     ...c, streams, tasks, cards, ...(c.owners || ch.owners ? { owners } : {}), ...(c.requests || ch.requests ? { requests } : {}),
     ...(intake ? { intake } : {}),
-    ...(ch.main ? { main: withRun(c.main, ch.main.run_id) } : {}),
+    ...(ch.main ? { main: withMain(c.main, ch.main) } : {}),
     ...(ch.workspace ? { workspace: { ...c.workspace, name: ch.workspace.name } } : {}),
     ...(c.asks || ch.asks ? { asks: upsert(c.asks ?? [], ch.asks ?? []) } : {}),
     applied_ops: applied
@@ -798,9 +801,21 @@ export function applyChange(c: Cockpit, change: unknown, utterances: Utterance[]
   return { next, errors, warnings }
 }
 
-function withRun(main: Cockpit['main'], run: string | null): NonNullable<Cockpit['main']> {
+/** 窓口の種類。Orca の agent launch の --agent の名前（窓口を替える道具と、引き継ぎで新しい窓口を起こす hook が読む）。 */
+export const MAIN_AGENTS = ['claude', 'antigravity', 'codex']
+const MAIN_KEYS = ['run_id', 'agent', 'terminal']
+
+function mainShape(v: unknown): boolean {
+  if (!isObj(v) || !Object.keys(v).length || Object.keys(v).some((k) => !MAIN_KEYS.includes(k))) return false
+  if (v.run_id !== undefined && !(v.run_id === null || RUN_ID(v.run_id))) return false
+  if (v.agent !== undefined && !MAIN_AGENTS.includes(v.agent as string)) return false
+  return v.terminal === undefined || v.terminal === '' || (typeof v.terminal === 'string' && /^term_\S+$/.test(v.terminal))
+}
+
+function withMain(main: Cockpit['main'], ch: NonNullable<Change['main']>): NonNullable<Cockpit['main']> {
   const { run_id: _, ...rest } = main ?? {}
-  return run === null ? rest : { ...rest, run_id: run }
+  const run = ch.run_id === undefined ? main?.run_id : ch.run_id
+  return { ...rest, ...(ch.agent !== undefined && { agent: ch.agent }), ...(ch.terminal !== undefined && { terminal: ch.terminal }), ...(run != null && { run_id: run }) }
 }
 
 export type SortRow = { id: string; title: string; tasks: string; last?: string }

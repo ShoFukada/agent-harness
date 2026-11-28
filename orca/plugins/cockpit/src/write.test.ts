@@ -345,14 +345,21 @@ test('質問の返し: asks[] を質問 id ごとに足し・置き換え、そ�
   assert.match(parseCockpit(JSON.stringify({ ...c, asks: {} }), problems) && problems.join(), /asks が配列ではない/)
 })
 
-test('main.run_id: 窓口の Run だけを置き換え、ほかの欄は保つ。run_ で始まらない値・ほかの欄は断る。Run の無い帳簿は書けず、Run を一緒に書けば通る（R191）。読み込みも受ける', () => {
+test('main: 窓口の Run・種類・端末を渡した欄だけ置き換え、ほかの欄は保つ。run_ で始まらない Run・知らない種類と欄は断る。Run の無い帳簿は書けず、Run を一緒に書けば通る（R191）。読み込みも受ける', () => {
   const c = aoba()
   c.main = { agent: 'claude', terminal: 'term_main', run_id: 'run_old' }
   const r = applyChange(c, { main: { run_id: 'run_abc123' } })
   assert.deepEqual(r.errors, [])
   assert.deepEqual(r.next!.main, { agent: 'claude', terminal: 'term_main', run_id: 'run_abc123' })
-  assert.match(applyChange(c, { main: { run_id: 'ctx_1' } }).errors.join(), /main は \{ run_id \} だけ/)
-  assert.match(applyChange(c, { main: { run_id: 'run_1', terminal: 'x' } }).errors.join(), /main は \{ run_id \} だけ/)
+  const shape = /main は \{ run_id・agent・terminal \}/
+  assert.match(applyChange(c, { main: { run_id: 'ctx_1' } }).errors.join(), shape)
+  assert.match(applyChange(c, { main: { run_id: 'run_1', terminal: 'x' } }).errors.join(), shape)
+  assert.match(applyChange(c, { main: { agent: 'gemini' } }).errors.join(), shape)
+  assert.match(applyChange(c, { main: { seat: 'a' } as never }).errors.join(), shape)
+  assert.match(applyChange(c, { main: {} }).errors.join(), shape)
+  // 窓口を替える道具は種類と端末だけを置き換える（Run は保つ）。チャットの窓口の端末は空文字
+  assert.deepEqual(applyChange(c, { main: { agent: 'antigravity', terminal: 'term_gem' } }).next!.main, { agent: 'antigravity', terminal: 'term_gem', run_id: 'run_old' })
+  assert.deepEqual(applyChange(c, { main: { run_id: 'run_old', agent: 'claude', terminal: '' } }).next!.main, { agent: 'claude', terminal: '', run_id: 'run_old' })
   // 窓の合図は窓口の Run にだけ送るので、Run を消す・Run の無い帳簿に書くのは断る。
   const noRun = /main\.run_id が無い/
   assert.match(applyChange(c, { main: { run_id: null } }).errors.join(), noRun)

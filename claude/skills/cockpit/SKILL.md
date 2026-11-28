@@ -11,6 +11,7 @@ metadata:
 | 場面 | 読むもの |
 |---|---|
 | セッションの開始・圧縮のあと | [references/resume.md](references/resume.md)「セッションの開始・圧縮のあと」（ほかの作業の前に読む） |
+| 窓口を Claude と Gemini（agy）で乗り換える、新しい窓口として開かれた | [references/resume.md](references/resume.md)「窓口を替える」 |
 | 深田に話しかけられたターンに仕分けていない発言がある、依頼の済を証拠に結ぶ | [references/intake.md](references/intake.md)「受付と仕分け」 |
 | 操縦席を初めて作る、hook が「移し替えが要る」と出した、版 3 の欄に移す | [references/setup.md](references/setup.md) |
 | cockpit.json・カード・依頼の帳簿・state.ts の出力の欄を確かめる、書く道具の使い方、どの事実をどこが持つかを確かめる | [references/schema.md](references/schema.md)（全項目の例は `template.json`） |

@@ -14,6 +14,7 @@ hook（標準入力に Claude Code の hook の JSON）:
   PostCompact       記録と、要約の照合（撤回された判断の ID・却下した案・落ちたパス）
   SessionStart      ④ 組み直し（compact。最後の発言より後に届いた Orca の知らせの見出しも）と、引き継いだ新しいチャットへの組み直し（startup）
   PreToolUse(Bash)  ⑥ 照合を通るまで worker・担当への新しい指示（orca orchestration send / worker-start・orca-launch）を止める
+                    switch を打つ会話の id を控える（窓口を替える道具が読む。main_switch.py）
   PreToolUse(Write・Edit・MultiEdit)  帳簿（.orca/cockpit.json）の直書きを断り、書く道具 cockpit-write を案内する（COCKPIT_LEDGER_GUARD=1 のときだけ）
   PostToolUse       1 ターンで呼び出しや読んだファイルが多い窓口に、作業を出すよう 1 回促す（subagent は数えない）
   Stop              ① 判断の書き漏れ・⑤ state.md の大きさ・⑥ 未回答・仕分けていない発言（COCKPIT_LEDGER_GUARD=1 のときだけ）を、ターンの終わりに 1 回促す。
@@ -30,12 +31,15 @@ hook（標準入力に Claude Code の hook の JSON）:
   compaction-keep.py consult-return root カード < 返しの JSON  カードの相談の返しを、番号を付けて返しの記録 <カード id>.returns.jsonl に
                                                      保存し、窓口の Run に送る（return_id と送信の結果を 1 行ずつ出す）
   compaction-keep.py ask-context root 質問 [--since R<n> [--return <return_id>]]  窓からの質問の文脈（--since は増えた判断だけ）
+  compaction-keep.py switch [root] [--agent antigravity]  窓口を替える。新しい窓口の会話の中で 1 回打つ（Run の引き継ぎ・窓口の種類と
+                                                     会話 id の記録・再開の確かめ・受信箱の読み直し。main_switch.py。Claude は --agent を付けない）
   compaction-keep.py unreflected [root] [--json]     カードの相談と質問の返しの記録にあって、判断の記録か帳簿に入っていない返し・
                                                      返しの無い「この答えを窓口に返す」・担当に伝えていない返し（判定は state.ts の
                                                      checks.unreflected_returns。先に切り替え前のメモの返しを記録へ取り込む）
 
 操縦席のあるワークスペースのメインだけに効く（periodic-reminder.sh の find_cockpit_root と同じ判定。相談スレッドでは動かない）。
 メインの UserPromptSubmit は、Orca の今の Run が帳簿の main.run_id と同じときに、会話 id と席を main-session.json に書く（設計 11.6 の 4）。
+窓口の種類（claude・antigravity）を変えるのは switch だけで、hook は記録にある種類を保つ（main_switch.py）。
 例外はカードの相談（claude/bin/consult --card が CONSULT_CARD=<root>#<カード id> を付けて立てる。Orca のチャットで立てたものは
 環境変数の代わりに .orca/consult/chats.json の登録で見分ける。chat_card）で、UserPromptSubmit だけが
 発言を root の発言の記録に card 付きで足し、前のターンのあとに増えた関係する判断とカードの rev の変化を流す（設計 10.3・10.7）。
@@ -47,7 +51,8 @@ SessionStart(compact) が文脈を流し直す（設計 11 章）。
 モデルは呼ばない。hook はプロンプトを妨げないよう、壊れた入力でも exit 0 で黙る。
 
 このファイルは hook の振り分け・組み直し・照合・引き継ぎ・帳簿の直書き止め・道具の口を持つ。カードの相談と窓からの質問は
-consult_returns.py、判断と発言の記録・帳簿の読み取り・keep.json・state.ts の呼び出しは cockpit_records.py にある。
+consult_returns.py、判断と発言の記録・帳簿の読み取り・keep.json・state.ts の呼び出しは cockpit_records.py、
+窓口の会話の記録と窓口を替える道具は main_switch.py にある。
 """
 
 import datetime
@@ -71,6 +76,9 @@ from consult_returns import (  # noqa: E402
     ask_binding, ask_context, ask_since, chat_card, check_return, consult_ask_env, consult_card_env, consult_context, consult_scope,
     find_card, notify_main, on_ask_session_start, on_ask_stop, on_thread_prompt, related_rulings, returns_report, save_return,
     unreflected_lines, unreflected_returns
+)
+from main_switch import (  # noqa: E402
+    AGENTS, claim_switch, launch_args, main_agent, record_main_session, retired, switch, switch_command, switch_hint
 )
 
 
@@ -127,26 +135,6 @@ def orca_main_root(start):
             return d if os.path.isdir(git) and os.path.realpath(d) == os.path.realpath(own) else None
         d = os.path.dirname(d)
     return None
-
-
-# ---------- 窓口の会話の記録（設計 11.6 の 4・7） ----------
-
-def record_main_session(root, inp):
-    """窓口の会話 id・会話のファイル・席を main-session.json に 1 組で置き換える（consult --ask が写す元。11.1・11.6 の 4・7）。
-    同じ worktree で動く別の会話を窓口と取り違えないよう、Orca の今の Run が帳簿の main.run_id と同じときだけ書く。
-    呼ぶ側が locked(root) を取る（帳簿と保存値はロックの中で読む）。"""
-    run = (cockpit(root).get("main") or {}).get("run_id")
-    if not run:
-        return
-    row = {"run_id": run, "session_id": inp.get("session_id") or "", "transcript_path": inp.get("transcript_path") or "",
-           "config_dir": os.environ.get("CLAUDE_CONFIG_DIR") or "", "cwd": inp.get("cwd") or root}
-    path = path_of(root, "main-session.json")
-    old = read_json(path, {})
-    if not row["session_id"] or all(old.get(k) == v for k, v in row.items()):
-        return
-    if orca_result(["orchestration", "run-current"]).get("runId") != run:
-        return
-    write_json(path, {**row, "at": iso()})
 
 
 # ---------- ④ 組み直し ----------
@@ -491,13 +479,13 @@ def first_of_day(prior):
     return datetime.datetime.fromtimestamp(t, now().tzinfo).date() < now().date()
 
 
-def launch_chat(root, prompt):
-    """新しいチャットを起こし、深田さんの発言を最初のメッセージとして渡す（--prompt が無いと空のチャットのまま答えない）。"""
-    orca = orca_bin()
-    first ="（前のチャットから引き継いだ深田さんの発言。組み直しの記録を読み、再開の確かめを通してから答える）\n\n" + prompt
+def launch_chat(root, prompt, agent):
+    """帳簿に書いた種類の新しい窓口を起こし、深田さんの発言を最初のメッセージとして渡す（--prompt が無いと空のチャットのまま答えない）。
+    新しい窓口は、最初に窓口を替える道具で Run を引き継ぐ（起こしただけでは窓口の Run の知らせが届かない）。"""
+    first = ("（前のチャットから引き継いだ深田さんの発言。最初に `%s` を打って窓口を引き継ぎ、組み直しの記録を読み、"
+             "再開の確かめを通してから答える）\n\n" % switch_command(agent)) + prompt
     try:
-        done = subprocess.run([orca, "agent", "launch", "--agent", "claude", "--worktree", "path:" + root,
-                               "--surface", "chat", "--prompt", first, "--json"], capture_output=True, text=True, timeout=60)
+        done = subprocess.run([orca_bin()] + launch_args(agent, root, first), capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
     return done.returncode == 0, (done.stdout or done.stderr).strip()[:300]
@@ -579,14 +567,15 @@ def on_prompt(root, inp):
         attempt = iso()
         if go:
             # 起動より先に保存する。新しいチャットの SessionStart と最初の発言は起動の途中で走ることがある
-            keep["handoff"] = {"state": "launching", "at": attempt, "reason": reason, "from_session": session, "prompt": prompt}
+            agent = main_agent(root)
+            keep["handoff"] = {"state": "launching", "at": attempt, "reason": reason, "from_session": session, "prompt": prompt, "agent": agent}
         # 発言も起動より先に記録する。新しいチャットに渡した同じ発言が「その日の最初」と数えられないように
         append_utterance(root, {"at": attempt, "session": session, "prompt": prompt, **({"handoff": True} if go else {})})
         save_keep(root, keep)
     if not go:
         print("\n".join(order_lines(root)))
         return
-    ok, detail = launch_chat(root, prompt)
+    ok, detail = launch_chat(root, prompt, agent)
     with locked(root):
         keep = load_keep(root)
         h = keep.get("handoff") or {}
@@ -612,8 +601,9 @@ def on_prompt(root, inp):
     if ok:
         write_json(path_of(root, "handoff.json"), {"at": attempt, "reason": reason})
         out({"decision": "block",
-             "reason": "このチャットの記憶が崩れてきたため（%s）、同じワークスペースの新しいチャットに引き継ぎました。"
-                       "いまの発言は新しいチャットに渡してあります。Orca のチャットの一覧から新しいチャットを開いてください。" % reason})
+             "reason": "このチャットの記憶が崩れてきたため（%s）、同じワークスペースの新しい%sに引き継ぎました。"
+                       "いまの発言は新しい窓口に渡してあります。%s" % (reason, "Gemini の窓口" if agent == "antigravity" else "チャット",
+                       "Orca の端末のタブから新しい窓口を開いてください。" if agent == "antigravity" else "Orca のチャットの一覧から新しいチャットを開いてください。")})
     else:
         print("【引き継ぎ】%s ため新しいチャットへの引き継ぎを試みたが失敗した（%s）。このチャットのまま続いている。記録の元は .orca/cockpit/（state.md・rulings.jsonl・utterances.jsonl）" % (reason, detail))
         print("\n".join(order_lines(root)))
@@ -687,10 +677,16 @@ def on_session_start(root, inp):
             keep["verify"] = {"pending": True, "since": iso(), "session": session, "failures": 0, "required_paths": []}
             save_keep(root, keep)
             text = fit(reassembly(root, "前のチャットからの引き継ぎ（%s）" % h.get("reason", "")) + [
-                ("\n## 最初のメッセージ\n最初のメッセージは、前のチャットで受けた深田さんのこの日の最初の発言（原文）。答えるのは再開の確かめを通ったあと。", None, 0),
+                ("\n## 最初のメッセージ\n最初のメッセージは、前のチャットで受けた深田さんのこの日の最初の発言（原文）。まず `%s` を打って窓口の Run を引き継ぎ"
+                 "（打つまで担当・worker の知らせはこの会話に届かない）、答えるのは再開の確かめを通ったあと。" % switch_command(h.get("agent") or "claude", root), None, 0),
                 (resume_request(root), None, 0)])
             out({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}})
             return
+    if source == "startup":
+        hint = switch_hint(root, session)
+        if hint:
+            out({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": hint}})
+        return
     if source != "compact":
         return
     v = keep.get("verify") or {}
@@ -727,10 +723,24 @@ def strip_command(command):
 def on_pretool(root, inp):
     if inp.get("tool_name") != "Bash":
         return
+    command = strip_command((inp.get("tool_input") or {}).get("command") or "")
+    # 窓口を替える道具は、打った会話の id をここで控えて読む（agy の道具は自分の会話 id を受け取れない）。
+    # 道具が立てる再開の確かめは同じ呼び出しの後ろには効かないので、worker・担当への指示と 1 回にまとめたものは断る
+    if claim_switch(root, inp, command):
+        if WORKER_SEND.search(command):
+            out({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                        "permissionDecisionReason": "窓口を替える道具（compaction-keep.py switch）と worker・担当への指示を 1 回の呼び出しにまとめない。"
+                                                                    "switch だけを打ち、再開の確かめを通してから指示を出す"}})
+        return
+    if retired(root, inp.get("session_id")) and WORKER_SEND.search(command):
+        out({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                    "permissionDecisionReason": "この会話は窓口を退いた（compaction-keep.py switch で別の会話が窓口になった）。worker・担当への指示は今の窓口から出す。"
+                                                                "この会話を窓口に戻すなら、先に switch を打ち直す"}})
+        return
     v = load_keep(root).get("verify") or {}
     if not (v.get("pending") and v.get("session") == inp.get("session_id")):
         return
-    if WORKER_SEND.search(strip_command((inp.get("tool_input") or {}).get("command") or "")):
+    if WORKER_SEND.search(command):
         out({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                     "permissionDecisionReason": "圧縮のあとの再開の確かめ（compaction-keep.py resume）を通るまで、worker・担当への新しい指示（orca orchestration send / worker-start・orca-launch）を止めている。"
                                                                 "記録と操縦席を読み直し、cockpit skill の「圧縮のあと」の形で答えてから打ち直す"}})
@@ -998,9 +1008,14 @@ def tool(argv):
         print(start_context(sys.stdin.read(), rest))
         return
     thread = "compaction-keep: 相談スレッドは判断の記録を書かない。決まったことは窓口に返す（役割の「窓口に返す」）"
-    if cmd in ("rule", "resume") and (os.environ.get("CONSULT_THREAD") or chat_card(os.getcwd())):
+    if cmd in ("rule", "resume", "switch") and (os.environ.get("CONSULT_THREAD") or chat_card(os.getcwd())):
         sys.exit(thread)
-    since, own = None, None
+    since, own, agent = None, None, "claude"
+    if "--agent" in rest:
+        i = rest.index("--agent")
+        agent, rest = (rest[i + 1] if i + 1 < len(rest) else ""), rest[:i] + rest[i + 2:]
+        if agent not in AGENTS:
+            sys.exit("compaction-keep: --agent には %s を渡す" % "・".join(AGENTS))
     if "--return" in rest:
         i = rest.index("--return")
         own, rest = (rest[i + 1] if i + 1 < len(rest) else ""), rest[:i] + rest[i + 2:]
@@ -1015,7 +1030,7 @@ def tool(argv):
     root = cockpit_root_at(rest[0] if rest else os.getcwd())
     if not root:
         sys.exit("compaction-keep: 操縦席（.orca/cockpit.json）が見つからない")
-    if cmd in ("rule", "resume") and chat_card(root):
+    if cmd in ("rule", "resume", "switch") and chat_card(root):
         sys.exit(thread)
     session = os.environ.get("CLAUDE_SESSION_ID") or ""
     if cmd == "consult-context":
@@ -1085,6 +1100,13 @@ def tool(argv):
             if kind is None or r.get("kind") == kind:
                 print(ruling_line(r))
         return
+    if cmd == "switch":
+        text, err = switch(root, agent, lambda r: fit(reassembly(r, "窓口を替えたあとの組み直し") + [(resume_request(r), None, 0)]))
+        if text:
+            print(text)
+        if err:
+            sys.exit("compaction-keep switch: " + err)
+        return
     if cmd == "slots":
         print("\n".join(slot_lines(root, state_report(root))).strip())
         return
@@ -1121,7 +1143,7 @@ def tool(argv):
         if failures >= 2:
             print("2 回続けて合わないため、その日の最初の発言の前に新しいチャットへ引き継ぎます（それまではこのチャットで、読み直してから進める）")
         sys.exit(1)
-    sys.exit("compaction-keep: 知らないコマンド %s（rule / rulings / slots / relay / resume / consult-context / consult-return / ask-context / unreflected）" % cmd)
+    sys.exit("compaction-keep: 知らないコマンド %s（rule / rulings / slots / relay / resume / switch / consult-context / consult-return / ask-context / unreflected）" % cmd)
 
 
 if __name__ == "__main__":

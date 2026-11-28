@@ -23,7 +23,7 @@ cockpit skill の SKILL.md から分けた細部。cockpit.json を作る・欄�
 | `consult/<カード id>.returns.jsonl` | `compaction-keep.py consult-return` だけ | カードの相談の返しの記録（正本）。相談が渡した返しに、道具が return_id（同じ id のカードと質問の記録と、判断の記録の `from_return` の最大の次）・`card`・`saved_at` を付けて 1 行ずつ記録する。同じ `replaces`・同じ `op`・道具が付ける欄を除いて中身が同じ返しは 1 行にする（鍵は consult_returns.py の same_return）。切り替え前のメモの「窓口に返したもの」の返しのうち記録に無いものは、`compaction-keep.py` が読むたびに足す（`imported_from` 付き。return_id で冪等）。記録の同じ番号の返しと中身が違う返しは、新しい番号と元の番号（`conflict_of`）を付けて足し、反映し終えるまで `unreflected` が「番号の衝突」として出す。窓口と state.ts は返しをここだけから読む |
 | `consult/ask-<質問 id>.md` | `consult --ask`（先頭）と hook（質問と答え）だけ | 窓からの質問と答えの控え（表示専用）。先頭に、結んだカード（`- カード: d21`）とタスク（`- タスク: t50`）、写した窓口の会話を書く。続きに `### 質問 HH:MM（u-12）`・`### 答え HH:MM`・`### 知らせ HH:MM` の節を時刻順に足す。窓口はここから返しを探さない |
 | `consult/ask-<質問 id>.returns.jsonl` | hook だけ | 窓からの質問の返しの記録。相手の最後の返事の末尾にある `【窓口への返し】` の JSON に、hook が return_id（カードの相談と同じ数え方）と `ask`・`saved_at`・`session`・`reply` を足して 1 行ずつ記録する。同じ返事・同じ `replaces`・同じ `op`・中身が同じ返しは 1 行にする。窓口と state.ts は返しをここだけから読む |
-| `cockpit/main-session.json` | hook だけ | 窓からの質問が写す窓口の会話 `{ run_id, session_id, transcript_path, config_dir, cwd, at }`。Orca の今の Run が `main.run_id` と一致する窓口の発言のたびに置き換える（`config_dir` が空なら既定の席） |
+| `cockpit/main-session.json` | hook と `compaction-keep.py switch` だけ | 窓からの質問が写す窓口の会話 `{ run_id, agent, session_id, transcript_path, config_dir, cwd, terminal, at, retired }`。`agent` は窓口の種類（`claude`・`antigravity`。無ければ `claude`）で、書き換えるのは窓口を替える道具 `switch` だけ（references/resume.md「窓口を替える」）。hook は、Orca の今の Run が `main.run_id` と一致する窓口の発言のたびに、種類を保ったまま会話 id・会話のファイル・席を置き換える。`retired` は `switch` で退いた窓口の会話 id で、その会話の発言では書き換えない。`config_dir` は Claude の席（空なら既定の席。Gemini では空） |
 | `cockpit/firstseen.json` | 常駐の窓だけ | `at` の無い開いたカードを最初に見つけた時刻（30 分の猶予を数える） |
 | `cockpit/compactions.jsonl`・`keep.json`・`handoff.json` | hook と下のコマンドだけ | 圧縮の記録・再開の確認と引き継ぎの状態・引き継いだことの窓への知らせ。メインは手で書かない |
 
@@ -50,7 +50,7 @@ JSON
 `template.json` が全項目の例。必須は `version: 2`・`workspace.name`・`streams`・`tasks`・`cards`。窓と hook は版 2 だけを読み、版 1（`items`）のファイルには「移し替えが要る」と出す（references/setup.md の「移し替え」）。
 
 - `workspace`: `name`（表示名。形は worktree-flow skill の references/sidebar.md の案件の行）、`milestones[]`（`date`・`label`）。「案件の今」に今日以降の節目を近い順に 3 件出す
-- `main`: `{"agent": "claude", "terminal": "<自分の端末の term_…>", "run_id": "<窓口の Orca の Run の id>"}`。埋め方は references/setup.md の「最初に作るとき」。`run_id` は、窓の操作の知らせ（窓の郵便受けの端末から送る。R191）と、カードの相談と窓からの質問の返しの知らせの宛先（`--to run:<run_id>`）で、必須（無い帳簿は cockpit-write が断る）。hook が窓口の会話を `main-session.json` に書くときの照合にも使う（無いと質問のタブは立たない）
+- `main`: `{"agent": "claude", "terminal": "<自分の端末の term_…>", "run_id": "<窓口の Orca の Run の id>"}`。埋め方は references/setup.md の「最初に作るとき」。`agent` は窓口の種類（`claude`・`antigravity`・`codex`。Orca の `agent launch --agent` の名前）で、自動の引き継ぎはこの種類で新しい窓口を起こす。窓口を替えたときは `switch` が `agent` と `terminal` を書き換える（references/resume.md「窓口を替える」）。`run_id` は、窓の操作の知らせ（窓の郵便受けの端末から送る。R191）と、カードの相談と窓からの質問の返しの知らせの宛先（`--to run:<run_id>`）で、必須（無い帳簿は cockpit-write が断る）。hook が窓口の会話を `main-session.json` に書くときの照合にも使う（無いと質問のタブは立たない）
 - `phases[]`: 工程。5 つの固定の並び `["調査", "決定", "作成", "確認", "反映"]`（R83・R135）で、案件ごとに変えない。今の窓は工程の並びをここから読むので書いておく。窓の版 3 は読まないので、新しい窓に入れ替えたあとは省いてよい
 - `streams[]`: 仕事（`id`・`title`・`form`・`summary`・`sources[]`）。深田の案件の単位（管理表の行・顧客の指摘・依頼）でメインが決める。窓の「案件の今」は仕事ごとに 1 行（私待ち・止まっている・作業中・顧客待ち・出来事待ち・未着手・済と、次にやること・担当）を出し、Orca のサイドバーの表示名にもこの `title` を使う
   - `title`: 20 字以内の名詞句で、何の仕事かが先頭で分かる日本語（例「AWS 構成案」「配車画面の改修」）。超えると `checks.long_names` に出る。管理表の番号や指摘の日付は `summary` か `sources` に書く

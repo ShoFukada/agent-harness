@@ -7,8 +7,9 @@ cockpit skill の SKILL.md から分けた細部。ワークスペースに操�
    - `workspace.name` は「<顧客>｜<案件>」（社内は「社内｜<案件>」）の形で書く（worktree-flow skill の references/sidebar.md の案件の行）。リポジトリ名をそのまま書かない（窓のサイドバーに案件の名前として並ぶ）
 2. `main` を埋める: `{"agent": "claude", "terminal": "<自分の端末の handle。チャットなら空>", "run_id": "<窓口の Run の id>"}`
    - `run_id` は必ず書く。値は `orca orchestration run-current --json` の `runId`。深田が窓で操作すると、窓は郵便受けの端末（タブ名「操縦席｜郵便受け」。AI を動かさない端末を窓が窓口の worktree に作る）を送り主にして、この Run に知らせを送る（端末の窓口にもチャットの窓口にも同じ経路。経路の決まりは worktree-flow skill の「知らせの経路」）。カードの相談と窓からの質問の返しも、この Run に届く（references/consult.md）。Run が取れないうちは init しない（`run_id` の無い帳簿は cockpit-write が断る）
-   - `terminal`: Orca の端末で動いていれば環境変数 `ORCA_TERMINAL_HANDLE`（`term_…`）の値を書く。無ければ `orca terminal list --worktree active --json` で `agentIdentity` が自分の種類の行の `handle` を使う。チャットで動いていて端末が無いときは空にする。codex なら `agent` を `codex` にする
+   - `terminal`: Orca の端末で動いていれば環境変数 `ORCA_TERMINAL_HANDLE`（`term_…`）の値を書く。無ければ `orca terminal list --worktree active --json` で `agentIdentity` が自分の種類の行の `handle` を使う。チャットで動いていて端末が無いときは空にする。Gemini（agy）なら `agent` を `antigravity`、codex なら `codex` にする
    - 書けたら `cockpit-write init <root> --dry-run < 作業用のファイル` で検査を通し、`cockpit-write init <root> < 作業用のファイル` で `.orca/cockpit.json` を作る。形の合わない案件名・`run_id` の無い帳簿・既にある帳簿・待ちの書き方（R193）に合わないタスクは、理由を返して断られる
+   - Gemini の窓口は、作ったあとに `compaction-keep.py switch <root> --agent antigravity` を 1 回打つ（hook は窓口の種類を知らないので、打たないと窓からの質問が Gemini の会話を Claude の会話とみなして写そうとし、失敗する）
 3. ワークスペースのメインの題を「<案件の役割> 窓口」にする: チャットなら `orca chat rename --name "<役割> 窓口"`、端末なら `orca terminal rename --terminal "$ORCA_TERMINAL_HANDLE" --title "<役割> 窓口"`
 4. 画面が見えているかを深田に聞かない
 5. 0 から作り直すと頼まれたときは、前の cockpit.json を下敷きにせず、Slack・Teams・議事録・管理表の一連を読み直して今の状態から組む

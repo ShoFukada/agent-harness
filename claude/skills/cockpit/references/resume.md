@@ -1,6 +1,6 @@
 # セッションの開始・圧縮のあと
 
-cockpit skill の SKILL.md から分けた手順。cwd に `.orca/cockpit.json` があるセッションの開始・再開・圧縮のあとに、ほかの作業の前に読む。
+cockpit skill の SKILL.md から分けた手順。cwd に `.orca/cockpit.json` があるセッションの開始・再開・圧縮のあとに、ほかの作業の前に読む。窓口を Claude と Gemini で乗り換えるときは、末尾の「窓口を替える」も読む。
 
 cwd に `.orca/cockpit.json` があれば、ほかの作業の前に次をやる（hook が「操縦席あり・未反映の操作 n 件」か「移し替えが要る」と知らせる）。
 
@@ -23,3 +23,22 @@ cwd に `.orca/cockpit.json` があれば、ほかの作業の前に次をやる
 2. 判定済みの状態（SKILL.md の「状態を読む」のコマンド）・`cockpit.json`・`cockpit.user.json`・作業メモ `.orca/cockpit/state.md`・正の記録（questions.yaml・Issue・docs）を読み、食い違いを探す
 3. 未反映の操作を SKILL.md の「操作を反映する」で処理する
 4. 片付けて 14 日を過ぎたカードを `cockpit.archive.json`（`{ "cards": [...] }`）に移す
+
+## 窓口を替える
+窓口は、深田が Claude と Gemini（agy）のどちらでも立てられ、途中で乗り換えてもよい（R245）。操縦席・作業メモ・判断の記録・発言の記録（`.orca/` の中）はどちらの窓口も同じファイルを読む。替えるのは Orca の Run との結び付きと、窓口の種類・会話の記録だけで、それを次の道具が 1 回で行う。
+
+1. 前の窓口: 作業メモ（`.orca/cockpit/state.md`）を今の状態に書き直してから閉じる。閉じずに残った前の窓口が発言しても、記録は新しい窓口のまま変わらず、前の窓口からの worker・担当への指示は hook が止める
+2. 深田: Orca で同じワークスペースに新しい窓口を開く。Gemini は端末のタブで開く（Orca は agy をチャットで開けない）。開始の hook が、記録の窓口と違う会話に次の道具を案内する
+3. 新しい窓口: 会話の中で次を 1 回打つ。Claude は `--agent` を付けない。Gemini は agy の run_command から打つ
+   ```bash
+   ~/.claude/hooks/compaction-keep.py switch <ワークスペースの root> --agent antigravity
+   ```
+   - 帳簿の `main.run_id` が指す Run を `orca orchestration run-use` で引き継ぐ。担当・worker からの知らせは同じ Run に届く
+   - 窓口の種類と会話 id を `.orca/cockpit/main-session.json` に書く（窓からの質問が写す元）。帳簿の `main.agent`・`main.terminal` も書き換える
+   - 受信箱を `orca orchestration check` で読み直し、届いていた知らせを出す
+   - 再開の確かめを始め、組み直しの記録（作業メモ・開いているカード・有効な判断・直近の発言）と確かめの形を出す
+   - 失敗すると理由を出して止まる。直してから打ち直す（打ち直しても同じ値を書き直すだけ）
+4. 新しい窓口: 再開の確かめ（「セッションの開始・圧縮のあと」の 1）を `compaction-keep.py resume` で通す。通るまで worker・担当への新しい指示は hook が止める。出た知らせは処理したかを確かめる
+
+自動の引き継ぎ（「セッションの開始・圧縮のあと」の 1 の「2 回続けて合わない」とき）も、帳簿の `main.agent` と同じ種類の窓口を起こす（Gemini なら端末のタブで、Gemini のモデルで）。起こされた窓口は、最初のメッセージの案内に従って同じ道具を打つ。
+
