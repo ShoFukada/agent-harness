@@ -67,7 +67,7 @@ class ClientLeakTest(unittest.TestCase):
         self.assertEqual(client_leak.problems('<p>data-audience="A社さま向け" と書きます。確認待ち</p>'), [])
 
     def test_inline_code_tags_do_not_hide_the_text_between(self):
-        self.assertTrue(client_leak.problems(CLIENT_MD % "`<code>` と `</code>` で囲みます。貴社の回答待ちです。", markdown=True))
+        self.assertTrue(client_leak.problems(CLIENT_MD % "`<code>` で始め、貴社の回答待ちです。`</code>` で閉じます。", markdown=True))
 
     def test_status_label_wrapped_in_tags(self):
         self.assertEqual(client_leak.problems(CLIENT_HTML % "画面の「<strong>AI確認待ち</strong>」の欄"), [])
