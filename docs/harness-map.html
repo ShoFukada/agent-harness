@@ -234,7 +234,7 @@ a{color:var(--focus)}
 <details><summary>細部</summary>
 <ul>
 <li>チャットには1通ずつのメッセージで届き、端末には <code>orca orchestration check</code> を打つよう促す1文が届く。受け手は起こされたときだけ読み、見張りのスクリプトや <code>check</code> の繰り返しはしない</li>
-<li>Orcaの外のプロセス（窓・見張り）は送り主の端末を持たないので、AIを動かさない郵便受けの端末（タブ名「操縦席｜郵便受け」）を <code>--from</code> にする。launchdからは <code>bin/cockpit-mail</code> を使う</li>
+<li>Orcaの外のプロセス（窓・launchdのジョブ）は送り主の端末を持たないので、AIを動かさない郵便受けの端末（タブ名「操縦席｜郵便受け」）を <code>--from</code> にする。launchdからは <code>bin/cockpit-mail</code> を使う</li>
 <li>担当は <code>ask</code> を使わず、窓口は担当に <code>reply</code> しない（入れ子のcoordinatorには <code>reply</code> が届かない）</li>
 <li>決まりの本文は worktree-flow skillの references/notify.md「知らせの経路」</li>
 <li>窓の操作と窓からの質問が窓口に届く順番は、<a href="harness-detail.html#s5-2">詳しい図の5.2</a>・<a href="harness-detail.html#s5-3">5.3</a></li>

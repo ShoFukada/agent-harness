@@ -861,7 +861,7 @@ test('済んだ仕事に worker と担当を残さない（R240・t168）: 済�
   assert.match(run(c, { tasks: [done], ...closeO2 }, { [W1]: { error: 'connect ECONNREFUSED' } }).join('\n'), /タスク t1: Dispatch が動いているかを確かめられない（connect ECONNREFUSED）/)
   for (const [state, liveness] of [['ready', 'live'], ['dispatched', 'unverifiable']] as const)
     assert.match(run(c, { tasks: [done], ...closeO2 }, { [W1]: fact(state, liveness) }).join('\n'),
-      new RegExp(`タスク t1: worker の Dispatch ctx_aoba_list がまだ動いている（${state}・${liveness}）。.*worker-stop --dispatch ctx_aoba_list で止めてから済にする`))
+      new RegExp(`タスク t1: worker の Dispatch ctx_aoba_list がまだ動いている（${state}・${liveness}）。.*orca-launch --stop ctx_aoba_list（worker-stop と、Orca が閉じない端末の片付け）で止めてから済にする`))
   // 終わった（worker_done を返した・止めた・端末が消えた）worker と、Orca に無い Dispatch は残っていない。
   for (const close of [fact('succeeded', 'live'), fact('stopped', 'exited'), fact('ready', 'exited'), { fact: null }])
     assert.deepEqual(run(c, { tasks: [done], ...closeO2 }, { [W1]: close }), [], JSON.stringify(close))

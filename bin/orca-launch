@@ -8,6 +8,11 @@ worker の完了・質問・停止は Orca が呼んだ側（Run の coordinator
   orca-launch --worktree <selector> --title <短い題> --spec-file <brief> [--keep-open] [--run <run_id>] [-- <追加の引数>]
   orca-launch --worktree <selector> --cockpit-task <task id> --spec-file <brief> [--cockpit-root <root>] ...
   orca-launch --lead <仕事の id> --name <slug> --spec-file <brief> [--agent claude|antigravity] [--cockpit-root <root>]
+  orca-launch --stop <dispatch_id>
+
+--stop は orca-launch で立てた worker を止めて端末を閉じる。orca-launch は端末を自分で作って worker-start --terminal で渡すので、
+Orca はその端末を外のものと見て、worker-stop は端末を閉じずに stop_unknown（The worker terminal is external）を返す。
+そのときだけ、その Dispatch の端末を terminal close で閉じる。
 
 --lead は仕事（streams[]）の担当を立てる（t159）。表示名とチャットの題を「<形の頭>｜<仕事の題>」にし（頭は state.ts の NAME_HEAD を仕事の form で引く）、
 窓口の子の worktree（new-child）に立て、帳簿の owners[] にそのまま書ける担当の行（session か terminal と、受け取り worker）を出す。
@@ -371,8 +376,28 @@ def start_lead(a):
     sys.exit(0)
 
 
+def stop_worker(dispatch):
+    """worker-stop で止め、外の端末として残されたら、その Dispatch の端末を閉じる。"""
+    r = orca("orchestration", "worker-stop", "--dispatch", dispatch)
+    said = json.dumps(r, ensure_ascii=False)
+    if r.get("ok") and "stop_unknown" not in said:
+        print(json.dumps(r.get("result") or {}, ensure_ascii=False))
+        sys.exit(0)
+    if "stop_unknown" not in said or "terminal is external" not in said:
+        sys.exit("orca-launch: worker-stop が %s を止められなかった" % dispatch)
+    shown = orca("orchestration", "worker-show", "--dispatch", dispatch, "--full").get("result") or {}
+    handle = (shown.get("terminal") or {}).get("handle") or (shown.get("worker") or {}).get("agentTerminalHandle")
+    if not handle:
+        sys.exit("orca-launch: %s の端末が分からないので閉じていない（orca orchestration worker-show --dispatch %s --full で確かめる）" % (dispatch, dispatch))
+    if not orca("terminal", "close", "--terminal", handle).get("ok"):
+        sys.exit("orca-launch: %s の端末 %s を閉じられなかった" % (dispatch, handle))
+    print(json.dumps({"dispatchId": dispatch, "terminal": handle, "closed": True}, ensure_ascii=False))
+    sys.exit(0)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="orca-launch", description=__doc__.split("\n")[0])
+    ap.add_argument("--stop", metavar="DISPATCH", help="orca-launch で立てた worker を止め、端末を閉じる")
     ap.add_argument("--worktree", help="worker を置く worktree（orca の selector。先に orca worktree create で作る）。--lead では使わない")
     ap.add_argument("--lead", help="担当を立てる仕事の id（streams[]）。表示名の頭は仕事の形から決め、owners[] に書く行を出す")
     ap.add_argument("--name", help="--lead の担当の worktree の名前（slug）")
@@ -381,7 +406,7 @@ def main():
     ap.add_argument("--title", help="仕事の短い日本語名。端末と作業場所は「作業｜<題>」になり、頭も含めて上限（state.ts の NAME_MAX）を超えると断るので、何の仕事かを先頭に短く。--cockpit-task のときはタスクの題")
     ap.add_argument("--cockpit-task", help="操縦席のタスクの id。題・comment・親の worktree・済の条件・深田さんの発言の原文をそこから引く")
     ap.add_argument("--cockpit-root", help="操縦席のあるワークスペースの root（省くと探す）")
-    ap.add_argument("--spec-file", required=True, help="brief のファイル")
+    ap.add_argument("--spec-file", help="brief のファイル（--stop のほかは要る）")
     ap.add_argument("--task-title")
     ap.add_argument("--agent", choices=("claude", "codex", "antigravity"), default="claude",
                     help="antigravity（Gemini の agy）は --lead だけ。担当は Orca の端末に立つ")
@@ -393,6 +418,10 @@ def main():
     ap.add_argument("extra", nargs=argparse.REMAINDER, help="-- のあとは起動コマンドに足す")
     a = ap.parse_args()
     a.extra = a.extra[1:] if a.extra[:1] == ["--"] else a.extra
+    if a.stop:
+        stop_worker(a.stop)
+    if not a.spec_file:
+        sys.exit("orca-launch: --spec-file が要る")
     if not os.path.isfile(a.spec_file):
         sys.exit("orca-launch: brief が無い: %s" % a.spec_file)
     if a.lead:

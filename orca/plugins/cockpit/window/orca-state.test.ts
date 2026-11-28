@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { busyWorker, carryLast, coordinating, currentDispatches, openQuestions, readRuns, orcaAgents, pluginProblem, questionFacts, screenAsk, toolAsk, type PluginRow, type PsAgent, type PsRow, type RunPage, type RunWorker, type TaskLink, type WorkerShow } from './orca-state.ts'
+import { busyWorker, carryLast, coordinating, currentDispatches, openQuestions, readRuns, orcaAgents, pluginProblem, questionFacts, screenAsk, stopReason, toolAsk, type PluginRow, type PsAgent, type PsRow, type RunPage, type RunWorker, type TaskLink, type WorkerShow } from './orca-state.ts'
 
 const row = (o: Partial<PluginRow>): PluginRow => ({ pluginKey: 'local.cockpit', status: 'running', needsReconsent: false, isDev: false, ...o })
 
@@ -250,4 +250,24 @@ test('読み直した担当の行には、同じターンの最後の返事を�
   const bare = { session: 'f75b', kind: 'chat' as const, state: 'done' as const }
   assert.deepEqual(carryLast([bare], [{ ...bare, last: '前の問い？' }]), [bare])
   assert.deepEqual(carryLast([{ ...read[0]!, state: 'working' }], prev), [{ ...read[0]!, state: 'working' }])
+})
+
+test('11/28 13:44 の誤報: 200 字で切れた要約に上限の引用があっても、Orca が失敗と言っていなければ止まっていない。上限は Orca の失敗の failureKind と detail だけで決める', () => {
+  // 窓口が定時ジョブの失敗を報告した長い文。Orca の worktree ps は lastAssistantMessage を 200 字で切り、outcome は success だった。
+  const quoted = '受け取った依頼：\n- 失敗していた定時ジョブ knowledge-harvest（毎朝 6:00 に Claude で知識を集めるジョブ）をやり直す\n\n11/28 13:40 にいつもと同じ経路でやり直しましたが、同じ理由でまた失敗しました。Claude の週の利用枠を使い切っていて、ログには「You\'ve hit your weekly limit · resets Nov 30 at 4am (Asia/Tokyo)」と出ています。'.slice(0, 200)
+  const main: PsAgent = { paneKey: 'structured-agent-session-ae54:x', orcaSessionId: 'ae54', state: 'done', stateStartedAt: 0, lastAssistantMessage: quoted, mainAgent: { outcome: 'success' } }
+  assert.equal(stopReason(main), undefined)
+  // 失敗でも、要約の文は見ない（failureKind も detail も無ければただのエラー）。
+  assert.equal(stopReason({ ...main, mainAgent: { outcome: 'failure' } }), 'error')
+  // Orca が付けた失敗の理由は今までどおり。戻る時刻は detail から読む。
+  const f = { kind: 'usageLimitReached', detail: "You've hit your weekly limit · resets Nov 30 at 4am (Asia/Tokyo)", at: 0 }
+  assert.equal(stopReason({ ...main, mainAgent: { outcome: 'failure' } }, f), 'limit')
+  assert.equal(stopReason({ ...main, mainAgent: { outcome: 'failure' } }, { detail: f.detail, at: 0 }), 'limit')
+  const [w] = orcaAgents('/ws', [{ worktreeId: 'r::ws', path: '/ws', parentWorktreeId: null, agents: [] }, { worktreeId: 'r::w', path: '/ws/w', parentWorktreeId: 'r::ws', agents: [{ ...main, mainAgent: { outcome: 'failure' } }] }], new Map(), undefined, {}, {}, { ae54: f }).workers
+  assert.equal(w!.stop, 'limit')
+  assert.equal(w!.reset, '11/30 04:00')
+  // 成功のターンの要約に引用された上限から、戻る時刻を出さない。
+  const [ok] = orcaAgents('/ws', [{ worktreeId: 'r::ws', path: '/ws', parentWorktreeId: null, agents: [] }, { worktreeId: 'r::w', path: '/ws/w', parentWorktreeId: 'r::ws', agents: [main] }], new Map(), undefined).workers
+  assert.equal(ok!.stop, undefined)
+  assert.equal(ok!.reset, undefined)
 })

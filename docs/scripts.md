@@ -5,7 +5,11 @@ launchd で動かす常駐のスクリプト（worktree-sweep・orca-watch・acc
 ## stallwatch の知らせ
 
 - `--job` は終了コードとログの最後の行を見る。実行に失敗したあとでも launchctl が終了コード 0 を返したことがあるので、ログにだけ残った失敗も拾う
-- 窓口の判断が要るもの（worker が止まったあとメインが動いていない）だけは、`bin/cockpit-mail` で窓口の Run にも送る（R191）。launchd から送り手なしで `orca orchestration send` を打つと `no_active_sender_terminal` で断られるので、窓と同じ郵便受けの端末を送り手にする。窓口自身が止まったときの知らせは送らない
+- 知らせは通知と窓の上の帯に出すだけで、窓口の Run には送らない。worker の完了・停止で窓口を起こすのは Orca の worker_done と escalation で、見張りからも送ると同じ知らせが二重に届き、窓口の「対応不要」の返事は誰も読まなかった（2026-11-26〜27、郵便受けに未読 120 通。t178）
+- 「worker が止まったあとメインが動いていない」は、帳簿の済んでいないタスクの worker で、窓口が立てたものに限る。タスクの worker は、Task の Dispatch の受け手（`orca orchestration dispatch-show --task` の `assignee_pane_key`）で Orca の行と結ぶ（親の worktree では結ばない。担当の worktree の下に立てた worker は窓口の孫になる）。担当（帳簿の `owners[].session`。一緒に作る仕事の返事待ち・自分の worker を待つ担当）と担当が立てた worker（Dispatch の `creator_orca_session_id` が担当）・質問とカードの相談のタブ・入れ替えて帳簿から外れたチャットは出さない。問い合わせが失敗した回は前の回の答えを使う
+- 止まった時刻は、同じ worker の同じターン（最後の入力と発言）で最初に見た時刻を使う。Orca が stateStartedAt を付け直しても、出し直したり、消えて 10 分後に知らせ直したりしない
+- メインの利用枠・ログイン切れは、Orca が outcome: failure を付けたときに、窓口の会話記録（hook が書く `.orca/cockpit/main-session.json` の `transcript_path`）の最後の応答が API のエラー（`isApiErrorMessage`）のときだけ読む。Orca の `lastAssistantMessage` は 200 字で切った要約で、報告の中の上限の引用を拾った（2026-11-28 13:44 の誤報）
+- ログ（`~/Library/Logs/stallwatch.log`）には、出たもの・知らせたもの・消えたものだけを書く
 
 ## worktree の片付け
 

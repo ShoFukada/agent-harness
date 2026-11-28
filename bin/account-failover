@@ -16,6 +16,7 @@ keep（端末に何もしない）にしておく前提で、claude のプロセ
 import argparse
 import ctypes
 import fcntl
+import glob
 import importlib.util
 import json
 import os
@@ -375,42 +376,38 @@ def key_of(row):
     return "chat:" + row["chat"] if row["kind"] == "chat" and row["chat"] else row["handle"]
 
 
+def claude_projects():
+    """Claude の会話記録の置き場所。Orca はプロファイルごとに CLAUDE_CONFIG_DIR を分けるが、中の projects は共有のことがある。"""
+    homes = [os.path.expanduser("~/.claude"), os.environ.get("CLAUDE_CONFIG_DIR") or ""]
+    homes += glob.glob(os.path.expanduser("~/Library/Application Support/orca/claude-profiles/*/home"))
+    found = {}
+    for h in homes:
+        p = os.path.join(h, "projects")
+        if h and os.path.isdir(p):
+            found.setdefault(os.path.realpath(p), p)
+    return list(found.values())
+
+
 def last_reply(row):
-    """プロセスの会話の、会話記録の最後の assistant の (時刻, 本文)。そのあとに入力（user）があれば "input"、読めなければ None。"""
+    """プロセスの会話の、会話記録の最後の assistant の (時刻, 本文, API のエラーか)。そのあとに入力（user）があれば "input"、読めなければ None。"""
     if not row.get("session") or not row.get("cwd"):
         return None
     name = re.sub(r"[^A-Za-z0-9]", "-", row["cwd"].rstrip("/"))
-    homes = [os.path.join(row.get("home") or os.path.expanduser("~/.claude"), "projects")] + sw.claude_projects()
+    homes = [os.path.join(row.get("home") or os.path.expanduser("~/.claude"), "projects")] + claude_projects()
     for proj in homes:
         path = os.path.join(proj, name, row["session"] + ".jsonl")
-        try:
-            with open(path, "rb") as fh:
-                fh.seek(max(0, os.path.getsize(path) - sw.TRANSCRIPT_TAIL))
-                lines = fh.read().decode("utf-8", "replace").splitlines()
-        except OSError:
-            continue
-        for line in reversed(lines):
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(e, dict) and e.get("type") == "user":
-                return "input"  # 最後の応答より新しい入力がある（ターンの途中か、答えを待っている）
-            if isinstance(e, dict) and e.get("type") == "assistant":
-                content = (e.get("message") or {}).get("content")
-                text = content if isinstance(content, str) else "".join(
-                    c.get("text") or "" for c in content or [] if isinstance(c, dict) and c.get("type") == "text")
-                return sw.ms_of(e.get("timestamp")) or 0, text
-        return None
+        if os.path.exists(path):
+            return sw.last_assistant(path)
     return None
 
 
 def said_limit(reply):
-    """last_reply の結果から、会話記録が上限で止まったと言っているか。True・False、読めなければ None。"""
+    """last_reply の結果から、会話記録が上限で止まったと言っているか。True・False、読めなければ None。
+    API のエラーの応答だけを上限と読む（上限の 1 行を引用した普通の報告で席を切り替えない）。"""
     if reply == "input":
         return False
     if reply:
-        return (sw.stop_cause(reply[1], reply[0], sw.now_ms()) or "").startswith("利用枠の上限")
+        return (sw.api_stop(reply, sw.now_ms()) or "").startswith("利用枠の上限")
     return None
 
 

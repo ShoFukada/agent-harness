@@ -126,7 +126,7 @@ macOS、Orca 1.4.259 以降、Node 24 以降、Python 3.9 以降を前提とし�
    </array>
    <key>StartInterval</key><integer>300</integer>
    ```
-   `--job` は終了コードとログの最後の行を見る（ログにだけ残った失敗も拾う）。`--service` は動いているかを見る。知らせは macOS の通知と窓の上の帯に出し、窓口の判断が要るもの（worker が止まったあとメインが動いていない）だけは `bin/cockpit-mail` で窓口の Run にも送る
+   `--job` は終了コードとログの最後の行を見る（ログにだけ残った失敗も拾う）。`--service` は動いているかを見る。知らせは macOS の通知と窓の上の帯に出し、窓口の Run には送らない（窓口を起こすのは Orca。docs/scripts.md「stallwatch の知らせ」）
 
 6. worktree の定期確認（worktree-sweep）を launchd で毎晩 1 回 `--apply` 付きで動かす。PATH には orca CLI のある Orca.app の bin と git と gh を入れる。何を消すかは [docs/scripts.md](docs/scripts.md) の「worktree の片付け」にある
    ```xml

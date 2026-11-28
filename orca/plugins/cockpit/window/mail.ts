@@ -1,5 +1,5 @@
 /**
- * Orca の外のプロセス（窓・stallwatch）から窓口の Run に知らせる送り口（R191）。窓と bin/cockpit-mail が同じ郵便受けを使う。
+ * Orca の外のプロセス（窓・launchd のジョブ）から窓口の Run に知らせる送り口（R191）。窓と bin/cockpit-mail が同じ郵便受けを使う。
  *
  *   cockpit-mail <root> --subject <件名> [--body-file <path|->]
  *

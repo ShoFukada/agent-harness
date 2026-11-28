@@ -353,7 +353,7 @@ Orca ──workspace.changed / agent.status.changed──▶ パネルの worker
 - 送るのは窓の常駐のプロセスだけ。パネルは host API しか持たず Run に送れないので送らない
 - 取り消しの猶予（10 秒）が過ぎたら送る。窓口が作業中でも待たない（Orca が窓口の手の空いたときに届ける）。どこまで送ったかは `~/Library/Application Support/cockpit/notified.json` に案件ごとに持つ
 - 窓は Orca の外のプロセスなので、送り手の端末が無いと Orca が断る（`no_active_sender_terminal`）。窓は AI を動かさない「郵便受け」の端末（題「操縦席｜郵便受け」、`tail -f /dev/null`）を 1 つ持ち、それを `--from` にする。handle は `~/Library/Application Support/cockpit/mailbox.json` に控え、消えていれば作り直す
-- 送り口は `window/mail.ts` の 1 か所。Orca の外のほかのプロセス（`bin/stallwatch` など）は `bin/cockpit-mail <root> --subject <件名> [--body-file <path|->]` で同じ郵便受けから送る
+- 送り口は `window/mail.ts` の 1 か所。Orca の外のほかのプロセスは `bin/cockpit-mail <root> --subject <件名> [--body-file <path|->]` で同じ郵便受けから送る
 - 帳簿に `main.run_id` が無いと送れないので、cockpit-write は Run の無い帳簿を断る。送れなかったときは、窓の上の赤い帯に案件名と理由と「もう一度送る」を出す
 
 </details>

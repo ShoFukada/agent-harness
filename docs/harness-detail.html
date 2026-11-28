@@ -659,7 +659,6 @@ a{color:var(--focus)}
 <rect class="fa" x="560" y="136" width="208" height="104" rx="6"/><text class="h" x="576" y="162">stallwatch</text><text class="s" x="576" y="184">launchd・5分おき</text><text class="s" x="576" y="204">止まったものを見つけ、</text><text class="s" x="576" y="224">知らせを1つにまとめる</text>
 <rect class="box" x="816" y="24" width="208" height="64" rx="6"/><text class="h" x="832" y="50">窓の上の帯</text><text class="s" x="832" y="72">alerts.jsonを窓が読む</text>
 <rect class="box" x="816" y="156" width="208" height="64" rx="6"/><text class="h" x="832" y="182">macOSの通知</text><text class="s" x="832" y="204">3つのプロセスが出す</text>
-<rect class="box" x="816" y="264" width="208" height="64" rx="6"/><text class="h" x="832" y="290">窓口のRun</text><text class="s" x="832" y="312">cockpit-mailで送る</text>
 <line class="ar" x1="241" y1="72" x2="287" y2="72" marker-end="url(#dg-tip)"/>
 <line class="ar" x1="241" y1="192" x2="287" y2="192" marker-end="url(#dg-tip)"/>
 <path class="ar" d="M497,72 H520 Q524,72 524,76 V156 Q524,160 528,160 H559" marker-end="url(#dg-tip)"/>
@@ -667,11 +666,10 @@ a{color:var(--focus)}
 <path class="ar dash" d="M241,300 H520 Q524,300 524,296 V228 Q524,224 528,224 H559" marker-end="url(#dg-tip)"/>
 <path class="ar" d="M769,160 H788 Q792,160 792,156 V60 Q792,56 796,56 H815" marker-end="url(#dg-tip)"/><text class="s end" x="784" y="104">alerts.json</text>
 <line class="ar" x1="769" y1="188" x2="815" y2="188" marker-end="url(#dg-tip)"/>
-<path class="ar" d="M769,216 H788 Q792,216 792,220 V292 Q792,296 796,296 H815" marker-end="url(#dg-tip)"/><text class="s end" x="784" y="262">窓口の判断が要るとき</text>
 </svg></div>
-<figcaption><span class="id">図13</span>見張りの知らせが帯に出るまで。左が見張りのプロセスと見る対象、中が書くファイル、右が知らせの出口。青は帯の唯一の書き手、緑はファイル。実線は書く・送る、点線は読む。窓口のRunへ送るのは、workerが止まったあと窓口が動いていないときだけ。</figcaption>
+<figcaption><span class="id">図13</span>見張りの知らせが帯に出るまで。左が見張りのプロセスと見る対象、中が書くファイル、右が知らせの出口。青は帯の唯一の書き手、緑はファイル。実線は書く・送る、点線は読む。窓口の会話へは送らない。</figcaption>
 </figure>
-<p class="answer">見張りのプロセスはそれぞれ自分のファイルに書き、窓の上の帯へはstallwatchだけがまとめて書きます。窓口の会話へは、窓口の判断が要るときだけ送ります。</p>
+<p class="answer">見張りのプロセスはそれぞれ自分のファイルに書き、窓の上の帯へはstallwatchだけがまとめて書きます。窓口の会話へは送りません。worker の知らせで窓口を起こすのは Orca です。</p>
 <table>
 <thead><tr><th>ID</th><th>何が起きるか</th><th>使うもの</th></tr></thead>
 <tbody>
@@ -681,7 +679,7 @@ a{color:var(--focus)}
 <tr id="S4"><td class="n">S4</td><td>人のいないあいだにOrcaが落ちていたら起動し直し、<code>orca-watch.json</code> に書く。人が自分で終えたときは起動し直さない</td><td><code>orca-watch</code></td></tr>
 <tr id="S5"><td class="n">S5</td><td>Orca・各ワークスペースの窓口・窓のサーバー・定時ジョブの停止を見つけ、S3とS4のファイルと合わせて <code>alerts.json</code> に書く</td><td><code>stallwatch</code></td></tr>
 <tr id="S6"><td class="n">S6</td><td>窓が <code>alerts.json</code> を読み、上の帯に「止まっている: …」を出す</td><td>窓のサーバー</td></tr>
-<tr id="S7"><td class="n">S7</td><td>workerが止まったのに窓口が動いていないときだけ、窓口のRunへ知らせる。窓口自身が止まった知らせは送らない</td><td><code>bin/cockpit-mail</code>（郵便受けの端末を送り主にする）</td></tr>
+<tr id="S7"><td class="n">S7</td><td>workerが止まったのに窓口が動いていないものは、帳簿の済んでいないタスクのworkerで窓口が立てたものに限って帯と通知に出す（担当と担当が立てたworker・質問のタブ・入れ替えたチャットは出さない）。窓口のRunへは送らない。窓口を起こすのはOrcaのworker_doneとescalation</td><td><code>stallwatch</code>（タスクのworkerは <code>dispatch-show --task</code> の受け手で引く）</td></tr>
 </tbody>
 </table>
 <details><summary>細部</summary>

@@ -263,10 +263,9 @@ export const screenSig = (a: Pick<Ask, 'kind' | 'text' | 'body' | 'choices' | 'f
   JSON.stringify([a.kind, a.text, a.body ?? [], (a.choices ?? []).map((c) => [c.n, c.label, c.note ?? '']), a.free ?? 0])
 
 export type PsRow = { worktreeId: string; path: string; parentWorktreeId: string | null; displayName?: string | null; comment?: string | null; agents: PsAgent[] }
-// ログイン切れと利用枠は Orca が状態として持たないので、最後の発言の文から推す。
-// 長い発言は作業の報告で、文中の「limit」などを拾わないよう短いものだけを見る。
+// 道具の入力の 1 行を窓に渡すときの上限（server.ts の orcaCli が切る）。
 export const SHORT = 400
-// bin/stallwatch の LIMIT と同じ形にそろえる（Claude Code の上限の 1 行は「You've hit your 5-hour limit · resets …」「You've reached your Fable limit.」）。
+// Orca の失敗の detail の文に当てる。bin/stallwatch の LIMIT と同じ形にそろえる（Claude Code の上限の 1 行は「You've hit your 5-hour limit · resets …」「You've reached your Fable limit.」）。
 const LIMIT = /usage limit|rate limit|limit reached|out of extra usage|上限に達|hit your [\w -]*limit|reached your [\w -]*limit/i
 const AUTH = /\/login|not logged in|authentication_error|oauth token|invalid api key|\b401\b/i
 
@@ -281,14 +280,15 @@ export function stopReason(a: PsAgent, f?: Failure): StopReason | undefined {
   if (a.hasLivePty === false && (a.state !== 'done' || outcome !== 'success')) return 'dead'
   if (a.state === 'blocked' || a.state === 'waiting') return a.state
   if (a.state !== 'done') return undefined
-  // Orca の failureKind（usageLimitReached など）を先に見て、無ければ最後の発言と知らせの detail の文から推す。
-  if (outcome === 'failure' && f?.kind && /limit/i.test(f.kind)) return 'limit'
-  if (outcome === 'failure' && f?.kind && /auth|login|credential|unauthori/i.test(f.kind)) return 'auth'
-  for (const msg of [a.lastAssistantMessage ?? '', outcome === 'failure' ? f?.detail ?? '' : '']) {
-    if (msg.length <= SHORT && LIMIT.test(msg)) return 'limit'
-    if (msg.length <= SHORT && AUTH.test(msg)) return 'auth'
+  // 利用枠とログイン切れは、Orca がその失敗に付けた failureKind（usageLimitReached など）と detail だけで決める。
+  // 最後の発言（lastAssistantMessage）は Orca が 200 字で切った要約で、報告の中の上限の引用を拾う（2026-11-28 13:44 の誤報）。
+  if (outcome === 'failure') {
+    if (f?.kind && /limit/i.test(f.kind)) return 'limit'
+    if (f?.kind && /auth|login|credential|unauthori/i.test(f.kind)) return 'auth'
+    if (f?.detail && LIMIT.test(f.detail)) return 'limit'
+    if (f?.detail && AUTH.test(f.detail)) return 'auth'
+    return 'error'
   }
-  if (outcome === 'failure') return 'error'
   if (a.interrupted || outcome === 'interruption') return 'interrupted'
   return undefined
 }
@@ -319,7 +319,7 @@ function toAgent(a: PsAgent, row: PsRow, terms: Map<string, string>, c: Cockpit 
   const task = taskId ? c?.tasks.find((t) => t.id === taskId) : undefined
   const f = failureOf(a, failures)
   const stop = stopReason(a, f)
-  const reset = stop === 'limit' ? resetAt(a.lastAssistantMessage) ?? resetAt(f?.detail) : undefined
+  const reset = stop === 'limit' ? resetAt(f?.detail) : undefined
   // 画面から読めた問いを先に使う（選択肢の番号と文があり、窓から答えられる）。許可の確認を枠の無い画面から読んだときは、題を道具の欄の文（道具とコマンド）にする。
   const tool = stop === 'blocked' || stop === 'waiting' ? toolAsk(a) : undefined
   const ask = stop === 'blocked' || stop === 'waiting' ? (a.screen?.kind === 'permit' && tool && !a.screen.body?.length ? { ...a.screen, text: tool.text } : a.screen ?? tool) : undefined

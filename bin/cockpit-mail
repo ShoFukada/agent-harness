@@ -1,5 +1,5 @@
 #!/bin/sh
-# Orca の外のプロセス（stallwatch など）から、案件の窓口の Run に知らせる。郵便受けの端末を送り手にする（R191）。
+# Orca の外のプロセス（launchd のジョブなど）から、案件の窓口の Run に知らせる。郵便受けの端末を送り手にする（R191）。
 # 中身は orca/plugins/cockpit/window/mail.ts（使い方もそこに書いてある）。窓も同じ郵便受けを使う。
 here=$(cd "$(dirname "$0")" && pwd -P)
 exec node --disable-warning=ExperimentalWarning "$here/../orca/plugins/cockpit/window/mail.ts" "$@"

@@ -3,12 +3,12 @@
 
 launchd が数分おきに 1 回ずつ起こす。Orca や Claude の会話の中に置くと、Orca の更新や会話の終わりと一緒に止まるため外に置く。モデルは呼ばない。
 worker の生死は Orca の orchestration（worker-start の監督）が見て、worker_done・escalation でその coordinator を起こすので、ここでは見ない。
-知らせは通知と窓の上の帯に出す。窓口の判断が要るもの（worker が止まったあとメインが動いていない）だけは、cockpit-mail で
-窓口の Run にも送る（R191。Orca の外から送るので、窓と同じ郵便受けの端末を送り手にする）。窓口自身が止まった知らせは送らない。
+知らせは通知と窓の上の帯に出すだけで、窓口には送らない。worker が止まったあとメインが動いていないものは、帳簿の済んでいないタスクの
+窓口が立てた worker に限って人に知らせる（窓口を起こすのは Orca の escalation で、ここからも送ると同じ知らせが二重に届き、返事は誰も読まない。t178）。
 """
 
 import argparse
-import glob
+import hashlib
 import json
 import os
 import re
@@ -31,8 +31,7 @@ LOG_ERRORS = 3
 LOG_STICKY_MS = 60 * 60_000
 LOG_ERROR = re.compile(r"\b(Error|ENOENT|EACCES|EADDRINUSE|Unhandled|Traceback)\b")
 JOB_FAILED = re.compile(r"(?i)\b(error|failed|failure|fatal|traceback|unauthorized)\b|失敗|エラー")
-# orca-state.ts の stopReason と同じ。長い発言は作業の報告なので、短いものだけを見る。
-SHORT = 400
+# 会話記録の API のエラーの応答（isApiErrorMessage）の本文に当てる。orca-state.ts の stopReason が Orca の失敗の detail に当てるものと同じ。
 # Claude Code の上限の 1 行は「You've hit your 5-hour limit · resets 4:40pm (Asia/Tokyo)」「You've reached your Fable limit.」の形。
 LIMIT = re.compile(r"(?i)usage limit|rate limit|limit reached|out of extra usage|上限に達|hit your [\w -]*limit|reached your [\w -]*limit")
 AUTH = re.compile(r"(?i)/login|not logged in|authentication_error|oauth token|invalid api key|\b401\b")
@@ -40,7 +39,7 @@ RESETS = re.compile(r"resets (?:([A-Z][a-z]{2}) (\d{1,2}) at )?(\d{1,2})(?::(\d{
 MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
 # Orca は起動し直すと全員の stateStartedAt を数秒のうちに付け直す（2026-11-21 の再起動では 7 人が 3 秒以内）。
 RESTART_SKEW_MS = 5_000
-# Orca が outcome: failure を付けた時刻（stateStartedAt）と、会話記録の最後の応答の時刻の差。実測は 10ms 未満。
+# Orca が outcome: failure を付けた時刻（stateStartedAt）と、窓口の会話記録の最後の応答の時刻の差。実測は 10ms 未満。
 REPLY_SKEW_MS = 2 * 60_000
 TRANSCRIPT_TAIL = 256 * 1024
 LABEL = {"working": "作業中", "done": "止まった", "blocked": "許可待ち", "waiting": "返事待ち"}
@@ -173,10 +172,12 @@ def clock(ms, now):
     return time.strftime("%H:%M" if same_day else "%-m/%-d %H:%M", t)
 
 
-def stop_cause(text, at, now):
-    """短い発言から、利用枠の上限とログイン切れを見分ける。長い発言は作業の報告なので見ない。at はその発言の時刻。"""
-    if len(text) > SHORT:
+def api_stop(reply, now):
+    """会話記録の最後の応答（last_assistant の結果）から、利用枠の上限とログイン切れを見分ける。
+    Claude Code が API のエラーとして書いた応答だけを見る。普通の応答は、上限の 1 行を引用した報告でも止まった理由にしない（2026-11-28 13:44 の誤報）。"""
+    if not isinstance(reply, tuple) or not reply[2]:
         return None
+    at, text, _ = reply
     if LIMIT.search(text):
         reset = reset_at(text, at)
         if reset is None:
@@ -190,18 +191,6 @@ def stop_cause(text, at, now):
     return None
 
 
-def claude_projects():
-    """Claude の会話記録の置き場所。Orca はプロファイルごとに CLAUDE_CONFIG_DIR を分けるが、中の projects は共有のことがある。"""
-    homes = [os.path.expanduser("~/.claude"), os.environ.get("CLAUDE_CONFIG_DIR") or ""]
-    homes += glob.glob(os.path.expanduser("~/Library/Application Support/orca/claude-profiles/*/home"))
-    found = {}
-    for h in homes:
-        p = os.path.join(h, "projects")
-        if h and os.path.isdir(p):
-            found.setdefault(os.path.realpath(p), p)
-    return list(found.values())
-
-
 def ms_of(iso):
     try:
         return int(datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp() * 1000)
@@ -209,58 +198,51 @@ def ms_of(iso):
         return None
 
 
-def last_reply(root, at):
-    """root で動いた Claude の会話記録のうち、最後の応答の時刻が at に最も近いものの (時刻, 本文, API のエラーか)。"""
-    name = re.sub(r"[^A-Za-z0-9]", "-", root.rstrip("/"))
-    best = None
-    for proj in claude_projects():
-        for path in glob.glob(os.path.join(proj, name, "*.jsonl")):
-            try:
-                if os.path.getmtime(path) * 1000 < at - REPLY_SKEW_MS:
-                    continue
-                with open(path, "rb") as fh:
-                    fh.seek(max(0, os.path.getsize(path) - TRANSCRIPT_TAIL))
-                    lines = fh.read().decode("utf-8", "replace").splitlines()
-            except OSError:
-                continue
-            entry = None
-            for line in reversed(lines):
-                try:
-                    e = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(e, dict) and e.get("type") == "assistant":
-                    entry = e
-                    break
-            ts = entry and ms_of(entry.get("timestamp"))
-            if not ts or abs(ts - at) > REPLY_SKEW_MS or (best and abs(best[0] - at) <= abs(ts - at)):
-                continue
-            content = (entry.get("message") or {}).get("content")
+def last_assistant(path):
+    """会話記録の末尾の、最後の assistant の (時刻, 本文, API のエラーか)。そのあとに入力（user）があれば "input"、読めなければ None。"""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, os.path.getsize(path) - TRANSCRIPT_TAIL))
+            lines = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("type") == "user":
+            return "input"  # 最後の応答より新しい入力がある（ターンの途中か、答えを待っている）
+        if isinstance(e, dict) and e.get("type") == "assistant":
+            content = (e.get("message") or {}).get("content")
             text = content if isinstance(content, str) else "".join(
                 c.get("text") or "" for c in content or [] if isinstance(c, dict) and c.get("type") == "text")
-            best = (ts, text, bool(entry.get("isApiErrorMessage")))
-    return best
+            return ms_of(e.get("timestamp")) or 0, text, bool(e.get("isApiErrorMessage"))
+    return None
+
+
+def main_reply(root, at):
+    """窓口の会話記録の最後の応答。窓口の会話は hook が帳簿の横の main-session.json に書いたもので選ぶ（同じ root の質問のタブや
+    別のチャットと取り違えない）。その応答の時刻が Orca の失敗の時刻 at と合わなければ、別のターンなので None。"""
+    path = load(os.path.join(root, ".orca", "cockpit", "main-session.json"), {}).get("transcript_path")
+    reply = last_assistant(path) if path else None
+    return reply if isinstance(reply, tuple) and abs(reply[0] - at) <= REPLY_SKEW_MS else None
 
 
 def main_stop(a, root, now):
     if a.get("hasLivePty") is False:
         return "端末が終わった"
-    if a.get("state") != "done":
+    if a.get("state") != "done" or (a.get("mainAgent") or {}).get("outcome") != "failure":
         return None
-    at = a.get("stateStartedAt") or now
-    shown = stop_cause(a.get("lastAssistantMessage") or "", at, now)
-    if (a.get("mainAgent") or {}).get("outcome") != "failure":
-        return shown
-    # Orca の lastAssistantMessage には API のエラーの 1 行（上限・ログイン切れ）が入らず、前の報告が残るので、会話記録の最後の応答を先に見る。
-    reply = last_reply(root, at)
-    if reply:
-        ts, text, api_error = reply
-        cause = stop_cause(text, ts, now)
-        if cause:
-            return cause
-        if api_error:
-            return "API のエラーで止まった（%s）" % " ".join(text.split())[:100]
-    return shown or "エラーで止まった"
+    # 理由は窓口の会話記録の最後の応答から読む。Orca の lastAssistantMessage は 200 字で切った要約で、API のエラーの 1 行が入らず
+    # 前の報告が残る（2026-11-21）一方、報告の中の上限の引用は入る（2026-11-28）。
+    reply = main_reply(root, a.get("stateStartedAt") or now)
+    cause = api_stop(reply, now)
+    if cause:
+        return cause
+    if reply and reply[2]:
+        return "API のエラーで止まった（%s）" % " ".join(reply[1].split())[:100]
+    return "エラーで止まった"
 
 
 def note_restart(state, runtime, now):
@@ -294,6 +276,7 @@ def check_mains(now, state):
     # 前の回に作業中だったメインが、起動し直したあと動いていなければ知らせる（Orca が止まっていた回は記録を変えない）。
     restart = note_restart(state, runtime, now)
     state["main_state"] = {}
+    stopped = note_stops(state, rows)
     for row in rows:
         root = row.get("path")
         if not root or not os.path.isfile(os.path.join(root, ".orca", "cockpit.json")):
@@ -323,20 +306,84 @@ def check_mains(now, state):
             continue
         # メインが手を止めたあとに止まった worker。Orca がメインを起こしていれば、メインの stateStartedAt がそれより新しくなる。
         # 再起動でメインと一緒に付け直された worker は、止まった時刻が分からないので数えない。
-        kids = [r for r in rows if r.get("parentWorktreeId") and r["parentWorktreeId"] == row.get("worktreeId")]
-        workers = [(a, r) for r in kids for a in (r.get("agents") or [])] + [(a, row) for a in own if a is not m]
-        for a, r in workers:
-            # 窓からの質問とカードの相談のタブは、答えたら手を止めるのが正しく、窓口も閉じない（cockpit skill の consult.md）
-            if (a.get("conversationName") or "").startswith(CONSULT_TABS):
+        # worker は親の worktree でなく帳簿で引く（担当の worktree の下に立てた worker は窓口の孫になる）。
+        panes = None
+        for r in rows:
+            for a in r.get("agents") or []:
+                pane, started = a.get("paneKey"), stopped.get(a.get("paneKey"))
+                if a is m or started is None or started <= since or by_restart(restart, since, started) or now - started < UNHANDLED_MS:
+                    continue
+                # 人に知らせるのは、帳簿の済んでいないタスクの worker で、窓口が立てたものだけ。担当（一緒に作る仕事の返事待ちを含む）と
+                # 担当が立てた worker・質問とカードの相談のタブ・入れ替えて帳簿から外れたチャットは、止まっていても窓口の判断を待っていない。
+                panes = ledger_workers(root, state) if panes is None else panes
+                if pane not in panes or a.get("orcaSessionId") in panes[pane][1]:
+                    continue
+                title = a.get("conversationName") or a.get("displayName") or a.get("taskTitle") or os.path.basename(r.get("path", ""))
+                text = "「%s」の worker「%s」（タスク %s）が%sあと、メインが %d 分動いていない" % (
+                    name, title, panes[pane][0], LABEL.get(a.get("state"), a.get("state")), (now - started) // 60_000)
+                out.append(alert("main-unhandled:%s:%s:%s" % (root, pane, turn_of(a)), text, root))
+    return out
+
+
+def note_stops(state, rows):
+    """paneKey → 手を止めた worker の、今のターンで最初に見た止まった時刻。Orca は同じターンの stateStartedAt を付け直すことがある
+    （2026-11-26〜27 に同じ worker を 12 回知らせた）ので、ターンが変わるまで最初の時刻を使う。作業中と Orca から消えたものは捨てる。"""
+    prev, seen = state.get("stopped", {}), {}
+    for r in rows:
+        for a in r.get("agents") or []:
+            pane, turn, started = a.get("paneKey"), turn_of(a), a.get("stateStartedAt") or 0
+            if not pane or a.get("state") == "working":
                 continue
-            started = a.get("stateStartedAt") or 0
-            if (a.get("state") == "working" or started <= since or by_restart(restart, since, started)
-                    or now - started < UNHANDLED_MS):
-                continue
-            title = a.get("conversationName") or a.get("displayName") or a.get("taskTitle") or os.path.basename(r.get("path", ""))
-            text = "「%s」の worker「%s」が%sあと、メインが %d 分動いていない" % (
-                name, title, LABEL.get(a.get("state"), a.get("state")), (now - started) // 60_000)
-            out.append(alert("main-unhandled:%s:%s:%s" % (root, a.get("paneKey"), started), text, root))
+            first = prev.get(pane)
+            seen[pane] = [turn, min(first[1], started)] if isinstance(first, list) and first[0] == turn else [turn, started]
+    state["stopped"] = seen
+    return {k: v[1] for k, v in seen.items()}
+
+
+def turn_of(a):
+    """worker のターンの印（最後の入力と発言）。どちらも Orca に無ければ、ターンの始まった時刻で代える
+    （付け直しと、5 分の間に終わった新しいターンを見分けられないので、知らせ損ねるより知らせ直すほうを採る）。"""
+    said = "%s\n%s" % (a.get("prompt") or "", a.get("lastAssistantMessage") or "")
+    return hashlib.sha1(said.encode("utf-8")).hexdigest()[:12] if said.strip() else str(a.get("stateStartedAt") or 0)
+
+
+DISPATCH_KEYS = ("assignee_pane_key", "assignee_handle", "assignee_orca_session_id", "creator_orca_session_id", "creator_handle")
+
+
+def ledger_workers(root, state):
+    """帳簿の済んでいないタスクの worker の paneKey → (タスクの id, 担当の印の集合)。Task の Dispatch の受け手（assignee_pane_key）で引き、
+    担当が立てた Dispatch は除く。担当の印は、帳簿の owners[] の session・terminal と、担当を立てた Task の Dispatch の受け手
+    （帳簿に session が無い担当もいる。state.ts の ownerOf と同じ）。続きを send で頼んでも同じ端末・チャットに届くので、Task の Dispatch で足りる。
+    Orca への問い合わせが失敗した Task は前の回の答えを使う（一回の失敗で出ている知らせを消し、次の回に同じものを知らせ直さない）。"""
+    c = load(os.path.join(root, ".orca", "cockpit.json"), {})
+    c = c if isinstance(c, dict) else {}
+    known, seen = state.get("ledger", {}).get(root, {}), {}
+
+    def dispatch(task):
+        res = orca("orchestration", "dispatch-show", "--task", task)[0]
+        d = (res or {}).get("dispatch") or {}
+        seen[task] = known.get(task) if res is None else {k: d[k] for k in DISPATCH_KEYS if d.get(k)}
+        return seen[task] or {}
+
+    def task_of(x):
+        w = x.get("worker") if isinstance(x, dict) else None
+        return w.get("task_id") if isinstance(w, dict) else None
+
+    leads = set()
+    for o in c.get("owners") or []:
+        if isinstance(o, dict):
+            d = dispatch(task_of(o)) if task_of(o) else {}
+            leads |= {o.get("session"), o.get("terminal"), d.get("assignee_orca_session_id"), d.get("assignee_handle"), d.get("assignee_pane_key")}
+    leads.discard(None)
+    out = {}
+    for t in c.get("tasks") or []:
+        if not task_of(t) or t.get("state") == "ok":
+            continue
+        d = dispatch(task_of(t))
+        pane = d.get("assignee_pane_key")
+        if pane and pane not in leads and not leads & {d.get("creator_orca_session_id"), d.get("creator_handle")}:
+            out[pane] = (t.get("id"), leads)
+    state.setdefault("ledger", {})[root] = {k: v for k, v in seen.items() if v}
     return out
 
 
@@ -455,26 +502,6 @@ def notify(texts, title=None):
     return r.returncode == 0
 
 
-# 窓口の Run に送る知らせ（窓口が動いていて、判断すれば片付くもの）。窓口自身が止まった・Orca や窓が止まったものは、送っても読む人がいない。
-CONSULT_TABS = ("質問｜", "カード相談｜")
-MAIL_KINDS = ("main-unhandled:",)
-MAIL_SUBJECT = "【見張り】窓口の判断が要るものがあります"
-
-
-def mail(f):
-    """cockpit-mail で f の案件の窓口に送る。送れたら True。"""
-    cmd = os.environ.get("COCKPIT_MAIL") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "cockpit-mail")
-    body = "%s\n\n止まった worker を見て、続きを頼むか片付けるかを決めてください（見張り stallwatch から）。" % f["text"]
-    try:
-        r = subprocess.run([cmd, f["root"], "--subject", MAIL_SUBJECT, "--body-file", "-"], input=body, capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        print("cockpit-mail を起こせなかった（%s）: %s" % (f["root"], e))
-        return False
-    if r.returncode != 0:
-        print("cockpit-mail が失敗した（%s）: %s" % (f["root"], " ".join((r.stderr or r.stdout or "出力なし").split())[:300]))
-    return r.returncode == 0
-
-
 def run(a):
     now = now_ms()
     state_path = os.path.join(HOME, "state.json")
@@ -496,19 +523,19 @@ def run(a):
     sent = bool(fresh) and notify([f["text"] for f in fresh])
     # Orca に繋がらない回はメインの様子が分からないので、メインについての記録は解消と見なさずに残す。
     keep = lambda d: {k: v for k, v in d.items() if k.startswith("main-")} if any(f["id"] == "orca-down" for f in found) else {}
-    # 窓口に送ったものは、解消するまで送り直さない（通知と別に覚える。通知が出せなかった回にも送れていれば二度送らない）。
-    mailed = dict(keep(state.get("mailed", {})), **{k: v for k, v in state.get("mailed", {}).items() if any(f["id"] == k for f in active)})
-    for f in active:
-        if f["id"].startswith(MAIL_KINDS) and f.get("root") and f["id"] not in mailed and mail(f):
-            mailed[f["id"]] = stamp
-    state["mailed"] = mailed
     state["seen"] = dict(keep(seen), **{f["id"]: f["since"] for f in found})
     state["notified"] = dict(keep(notified), **{f["id"]: notified.get(f["id"], stamp) for f in active if f["id"] in notified or sent})
+    # ログには、出たもの・知らせたもの・消えたものだけを書く（出ているものを毎回全部書くと、同じ行が 5 分おきに数百回並んだ）。
+    shown = state.get("active", {})
+    lines = ["%s 出た: %s%s" % (stamp, f["text"], "（今回知らせた）" if sent and f in fresh else "")
+             for f in active if f["id"] not in shown or (sent and f in fresh)]
+    lines += ["%s 消えた: %s" % (stamp, text) for k, text in shown.items() if k not in state["seen"]]
+    state["active"] = dict(keep(shown), **{f["id"]: f["text"] for f in active})
     save(state_path, state)
     save(os.path.join(COCKPIT_DIR, "alerts.json"), {
         "at": stamp, "alerts": [{"id": f["id"], "text": f["text"], "root": f["root"], "since": f["since"]} for f in active]})
-    for f in active:
-        print("%s %s%s" % (f["since"], f["text"], "（今回知らせた）" if sent and f in fresh else ""))
+    for line in lines:
+        print(line)
 
 
 def main():

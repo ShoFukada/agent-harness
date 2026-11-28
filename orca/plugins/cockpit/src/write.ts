@@ -261,7 +261,7 @@ function closeErrors(c: Cockpit, next: Cockpit, ch: Change, log: UserLog, archiv
       const x = look(w, `タスク ${old.id}`)
       if (typeof x === 'string') errors.push(x)
       else if (x.fact && busyDispatch(x.fact))
-        errors.push(`タスク ${old.id}: worker の Dispatch ${x.dispatch} がまだ動いている（${state(x.fact)}）。worker_done を待って取り込むか、止めるなら orca orchestration worker-stop --dispatch ${x.dispatch} で止めてから${closing ? '済にする（済んだ仕事に worker を残さない）' : 'worker の記録を外す・替える'}`)
+        errors.push(`タスク ${old.id}: worker の Dispatch ${x.dispatch} がまだ動いている（${state(x.fact)}）。worker_done を待って取り込むか、止めるなら orca-launch --stop ${x.dispatch}（worker-stop と、Orca が閉じない端末の片付け）で止めてから${closing ? '済にする（済んだ仕事に worker を残さない）' : 'worker の記録を外す・替える'}`)
     }
   for (const { o, workers } of unbound)
     for (const w of workers) {

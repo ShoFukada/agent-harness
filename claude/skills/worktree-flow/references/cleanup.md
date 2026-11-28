@@ -17,6 +17,7 @@ worktree-flow skillのSKILL.mdから分けた詳細。workerや担当の結果�
 3. `orca worktree rm --worktree path:<path> --delete-branch` を実行する。Orcaはmainに入ったと確認できないブランチを残すので、取り込まないと決めたブランチは `git branch -D` で消し、戻すためのSHAを報告に書く
 
 - 終わったworkerの端末は、Orcaがworker_doneを受けてから約2分後に自動で片付ける（`--keep-open` で立てたものを除く）
+- worker_doneを返さないworkerを止めるときは、`orca-launch --stop <Dispatch>` を使う。orca-launchで立てたworkerの端末は、Orcaから外の端末に見えるので、`worker-stop` だけでは端末が閉じない（`stop_unknown: The worker terminal is external`）。`orca-launch --stop` は `worker-stop` を呼び、この返事のときだけその端末を `terminal close` で閉じる
 - 仕事を終えた担当は、`orca orchestration worker-release --dispatch <担当の今の Dispatch>` で片付ける。worker_doneを返さずにチャットを閉じた担当（Dispatchが `ready` のまま）は `worker-stop` で止める。担当の居場所のworktreeも上の手順で消す
 - stackが全部マージされる前など、worktreeを残したいときは消さずにcompletedにする（毎晩の見回りでもcompletedは消さない）
 
@@ -24,7 +25,7 @@ worktree-flow skillのSKILL.mdから分けた詳細。workerや担当の結果�
 
 cockpit-writeは、タスクを `ok` にする書き込みでOrcaの今のDispatch（RunのTaskの続きとやり直しをたどった先）を読み、次の場合は書き込まず、片付けの手順を返す（R240）。
 
-- タスクに紐づくworkerのDispatchがまだ動いている（worker_doneを返しておらず、端末も消えていない）: worker_doneを待って取り込むか、`worker-stop` で止める
+- タスクに紐づくworkerのDispatchがまだ動いている（worker_doneを返しておらず、端末も消えていない）: worker_doneを待って取り込むか、`orca-launch --stop` で止める
 - その書き込みで仕事のタスクが全部済になるのに、担当が開いたまま: 担当を `worker-release`（または `worker-stop`）で片付け、同じ書き込みで担当の `state` を `done` にする。`done` にした担当でも、Dispatchが動いているか、worker_doneのあとも端末が残っている（`worker-release` していない）場合は断る
 - 済にしないままタスクや担当の `worker` を外したり、別の受け取りに替えたりする書き込みも、前のDispatchが動いていれば断る（記録を外してから済にしてチェックをすり抜けないようにするため）
 
